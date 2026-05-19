@@ -72,12 +72,24 @@ export function extractVisibleSearchText(message: SDKMessage | Record<string, un
 		.join('\n\n');
 }
 
-export function buildFtsQuery(query: string): string {
-	const terms = query
+export const MESSAGE_SEARCH_MIN_TERM_LENGTH = 3;
+export const MESSAGE_SEARCH_BROAD_TERM_LENGTH = 4;
+
+export function buildFtsTerms(query: string): string[] {
+	return query
 		.trim()
 		.split(/\s+/)
 		.map((term) => term.replaceAll('"', '""').replace(/[^\p{L}\p{N}_-]/gu, ''))
-		.filter(Boolean)
+		.filter((term) => term.length >= MESSAGE_SEARCH_MIN_TERM_LENGTH)
 		.slice(0, 12);
+}
+
+export function isBroadMessageSearchQuery(query: string): boolean {
+	const terms = buildFtsTerms(query);
+	return terms.length <= 1 || terms.some((term) => term.length <= MESSAGE_SEARCH_BROAD_TERM_LENGTH);
+}
+
+export function buildFtsQuery(query: string): string {
+	const terms = buildFtsTerms(query);
 	return terms.map((term) => `"${term}"*`).join(' ');
 }

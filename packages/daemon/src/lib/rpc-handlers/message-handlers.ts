@@ -17,15 +17,21 @@ import {
 import type { SessionManager } from '../session-manager';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
 import type { Database } from '../../storage/database';
-import type { MessageSearchResponse } from '../../storage/message-search';
+import {
+	MESSAGE_SEARCH_MIN_TERM_LENGTH,
+	type MessageSearchResponse,
+} from '../../storage/message-search';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
+import { MessageSearchWorkerService } from '../message-search-worker-service';
 
 export function setupMessageHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	db?: Database
 ): void {
-	messageHub.onRequest('message.search', async (data) => {
+	const messageSearchWorker = db ? new MessageSearchWorkerService(db.getDbPath()) : null;
+
+	messageHub.onRequest('message.search', async (data, context) => {
 		if (!db) throw new Error('Database not available');
 		const request = data as {
 			query?: string;
@@ -41,11 +47,10 @@ export function setupMessageHandlers(
 		const offset = sanitizeInteger(request.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 		const from = sanitizeTimestamp(request.from, 'from');
 		const to = sanitizeTimestamp(request.to, 'to');
-		if (!query) {
+		if (query.length < MESSAGE_SEARCH_MIN_TERM_LENGTH) {
 			return { results: [], limit, offset };
 		}
-		const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
-		return sdkMessageRepo.searchMessages({
+		const params = {
 			query,
 			sessionId: request.sessionId,
 			limit,
@@ -53,7 +58,15 @@ export function setupMessageHandlers(
 			from,
 			to,
 			messageType: request.messageType,
-		}) satisfies MessageSearchResponse;
+		};
+		if (messageSearchWorker) {
+			return messageSearchWorker.search(
+				params,
+				context.clientId ?? request.sessionId ?? context.sessionId
+			) satisfies Promise<MessageSearchResponse>;
+		}
+		const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
+		return sdkMessageRepo.searchMessages(params) satisfies MessageSearchResponse;
 	});
 
 	// Remove large task output from a message to reduce session size

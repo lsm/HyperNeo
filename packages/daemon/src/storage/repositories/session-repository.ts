@@ -226,7 +226,9 @@ export class SessionRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
-			if (updates.title !== undefined) {
+			if (updates.status === 'archived') {
+				this.deleteMessageSearchRows(id);
+			} else if (updates.title !== undefined) {
 				this.updateMessageSearchSessionTitle(id, updates.title);
 			}
 		}
@@ -237,6 +239,13 @@ export class SessionRepository {
 		this.db
 			.prepare(`UPDATE message_search_fts SET title = ? WHERE kind = 'message' AND session_id = ?`)
 			.run(title, sessionId);
+	}
+
+	private deleteMessageSearchRows(sessionId: string): void {
+		if (!this.tableExists('message_search_fts')) return;
+		this.db
+			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND session_id = ?`)
+			.run(sessionId);
 	}
 
 	/**
@@ -276,6 +285,7 @@ export class SessionRepository {
 	archiveSession(id: string): void {
 		const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
 		stmt.run(id);
+		this.deleteMessageSearchRows(id);
 	}
 
 	/**

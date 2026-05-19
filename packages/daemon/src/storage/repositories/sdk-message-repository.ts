@@ -15,6 +15,7 @@ import { Logger } from '../../lib/logger';
 import {
 	buildFtsQuery,
 	extractVisibleSearchText,
+	isBroadMessageSearchQuery,
 	type MessageSearchParams,
 	type MessageSearchResponse,
 	type MessageSearchResult,
@@ -22,6 +23,19 @@ import {
 import type { SQLiteValue } from '../types';
 
 export type SendStatus = 'deferred' | 'enqueued' | 'consumed' | 'failed';
+
+const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const ROOM_SESSION_PREFIXES = ['room:chat:', 'planner:', 'coder:', 'leader:', 'general:'];
+const ROOM_SESSION_TYPES = new Set(['room_chat', 'planner', 'coder', 'leader', 'general']);
+const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed']);
+const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
+
+function isOlderThanMessageSearchTtl(value: string | number | null | undefined): boolean {
+	if (value === null || value === undefined) return false;
+	const timestamp = typeof value === 'number' ? value : Date.parse(value);
+	if (!Number.isFinite(timestamp)) return false;
+	return timestamp < Date.now() - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS;
+}
 
 /**
  * Compute the materialised value for `sdk_messages.is_renderable` from a parsed
@@ -104,22 +118,51 @@ export class SDKMessageRepository {
 		}
 	}
 
+	private tableHasColumn(tableName: string, columnName: string): boolean {
+		try {
+			const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+				name?: string;
+			}>;
+			return rows.some((row) => row.name === columnName);
+		} catch {
+			return false;
+		}
+	}
+
 	private upsertMessageSearchRow(rowId: string): void {
 		if (!this.hasMessageSearchIndex()) return;
 		const hasSessions = this.tableExists('sessions');
 		const hasSpaceTasks = this.tableExists('space_tasks');
-		const sessionTitleSelect = hasSessions
+		const hasSessionTitle = hasSessions && this.tableHasColumn('sessions', 'title');
+		const hasSessionStatus = hasSessions && this.tableHasColumn('sessions', 'status');
+		const hasSessionType = hasSessions && this.tableHasColumn('sessions', 'type');
+		const hasSessionLastActiveAt = hasSessions && this.tableHasColumn('sessions', 'last_active_at');
+		const hasSessionContext = hasSessions && this.tableHasColumn('sessions', 'session_context');
+		const hasTaskStatus = hasSpaceTasks && this.tableHasColumn('space_tasks', 'status');
+		const hasTaskCompletedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'completed_at');
+		const hasTaskUpdatedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'updated_at');
+		const sessionTitleSelect = hasSessionTitle
 			? 's.title AS session_title'
 			: 'sm.session_id AS session_title';
+		const sessionPolicySelect = `${hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
+			   ${hasSessionType ? 's.type' : 'NULL'} AS session_type,
+			   ${hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
+			   ${hasSessionContext ? 's.session_context' : 'NULL'} AS session_context`;
 		const spaceTaskSelect = hasSpaceTasks
-			? 'st.space_id, st.task_number'
-			: 'NULL AS space_id, NULL AS task_number';
+			? `st.space_id, st.task_number,
+			   ${hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
+			   ${hasTaskCompletedAt ? 'st.completed_at' : 'NULL'} AS task_completed_at,
+			   ${hasTaskUpdatedAt ? 'st.updated_at' : 'NULL'} AS task_updated_at`
+			: `NULL AS space_id, NULL AS task_number,
+			   NULL AS task_status,
+			   NULL AS task_completed_at,
+			   NULL AS task_updated_at`;
 		const sessionJoin = hasSessions ? 'LEFT JOIN sessions s ON s.id = sm.session_id' : '';
 		const spaceTaskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '';
 		const row = this.db
 			.prepare(
 				`SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.sdk_message, sm.timestamp,
-				        ${sessionTitleSelect}, ${spaceTaskSelect}
+				        ${sessionTitleSelect}, ${sessionPolicySelect}, ${spaceTaskSelect}
 				 FROM sdk_messages sm
 				 ${sessionJoin}
 				 ${spaceTaskJoin}
@@ -134,8 +177,15 @@ export class SDKMessageRepository {
 					sdk_message: string;
 					timestamp: string;
 					session_title: string | null;
+					session_status: string | null;
+					session_type: string | null;
+					session_last_active_at: string | null;
+					session_context: string | null;
 					space_id: string | null;
 					task_number: number | null;
+					task_status: string | null;
+					task_completed_at: number | null;
+					task_updated_at: number | null;
 			  }
 			| undefined;
 		if (!row) return;
@@ -150,6 +200,8 @@ export class SDKMessageRepository {
 		this.db
 			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND source_id = ?`)
 			.run(row.id);
+		if (!SEARCHABLE_MESSAGE_TYPES.has(row.message_type)) return;
+		if (!this.isMessageSearchIndexEligible(row)) return;
 		if (!body) return;
 		if (row.message_type === 'user' && !this.isSearchableUserMessageStatus(row.id)) {
 			return;
@@ -173,6 +225,55 @@ export class SDKMessageRepository {
 				body,
 				parseSearchTimestamp(row.timestamp)
 			);
+	}
+
+	private isMessageSearchIndexEligible(row: {
+		session_id: string;
+		session_status: string | null;
+		session_type: string | null;
+		session_last_active_at: string | null;
+		session_context: string | null;
+		task_status: string | null;
+		task_completed_at: number | null;
+		task_updated_at: number | null;
+	}): boolean {
+		if (ROOM_SESSION_PREFIXES.some((prefix) => row.session_id.startsWith(prefix))) {
+			return false;
+		}
+
+		if (row.session_status === 'archived') return false;
+		if (row.session_status === 'ended' && isOlderThanMessageSearchTtl(row.session_last_active_at)) {
+			return false;
+		}
+
+		if (row.session_type && ROOM_SESSION_TYPES.has(row.session_type)) return false;
+		if (row.session_context) {
+			try {
+				const context = JSON.parse(row.session_context) as { roomId?: unknown };
+				if (typeof context.roomId === 'string') return false;
+			} catch {
+				// Malformed historical context should not make an otherwise-normal session unsearchable.
+			}
+		}
+
+		const isSpaceSession =
+			row.session_id.startsWith('space:') ||
+			row.session_type === 'space_chat' ||
+			row.session_type === 'space_task_agent';
+		const isNormalSession =
+			!row.session_id.includes(':') && (!row.session_type || row.session_type === 'worker');
+		if (!isSpaceSession && !isNormalSession) return false;
+
+		if (row.task_status === 'archived') return false;
+		if (
+			row.task_status &&
+			TERMINAL_SPACE_TASK_STATUSES.has(row.task_status) &&
+			isOlderThanMessageSearchTtl(row.task_completed_at ?? row.task_updated_at)
+		) {
+			return false;
+		}
+
+		return true;
 	}
 
 	private deleteMessageSearchRow(rowId: string): void {
@@ -207,6 +308,13 @@ export class SDKMessageRepository {
 	 */
 	private resolveTaskIdForSession(sessionId: string): string | null {
 		try {
+			if (
+				!this.tableExists('sessions') ||
+				!this.tableHasColumn('sessions', 'session_context') ||
+				!this.tableHasColumn('sessions', 'type')
+			) {
+				return null;
+			}
 			const row = this.db
 				.prepare(
 					`SELECT
@@ -1097,38 +1205,62 @@ export class SDKMessageRepository {
 		const offset = Math.max(params.offset ?? 0, 0);
 		if (!ftsQuery) return { results: [], limit, offset };
 
-		let sql = `
+		const broadQuery = isBroadMessageSearchQuery(params.query);
+		let candidateSql = `
 			SELECT
-				kind, source_id, message_id, session_id, task_id, space_id, task_number,
-				message_type, title,
-				snippet(message_search_fts, 9, '<mark>', '</mark>', '…', 16) AS snippet,
+				rowid,
+				${broadQuery ? '0' : 'bm25(message_search_fts)'} AS rank,
 				timestamp,
-				bm25(message_search_fts) AS rank
+				source_id
 			FROM message_search_fts
 			WHERE message_search_fts MATCH ?`;
 		const values: SQLiteValue[] = [ftsQuery];
 
 		if (params.sessionId) {
-			sql += ` AND session_id = ?`;
+			candidateSql += ` AND session_id = ?`;
 			values.push(params.sessionId);
 		}
 		if (params.messageType) {
-			sql += ` AND message_type = ?`;
+			candidateSql += ` AND message_type = ?`;
 			values.push(params.messageType);
 		}
 		if (params.from !== undefined) {
-			sql += ` AND timestamp >= ?`;
+			candidateSql += ` AND timestamp >= ?`;
 			values.push(params.from);
 		}
 		if (params.to !== undefined) {
-			sql += ` AND timestamp <= ?`;
+			candidateSql += ` AND timestamp <= ?`;
 			values.push(params.to);
 		}
 
-		sql += ` ORDER BY rank ASC, timestamp DESC, source_id ASC LIMIT ? OFFSET ?`;
+		candidateSql += broadQuery
+			? ` ORDER BY timestamp DESC, source_id ASC LIMIT ? OFFSET ?`
+			: ` ORDER BY rank ASC, timestamp DESC, source_id ASC LIMIT ? OFFSET ?`;
 		values.push(limit, offset);
 
-		const rows = this.db.prepare(sql).all(...values) as Array<{
+		const candidates = this.db.prepare(candidateSql).all(...values) as Array<{
+			rowid: number;
+			rank: number;
+		}>;
+		if (candidates.length === 0) return { results: [], limit, offset };
+
+		const rankByRowId = new Map(candidates.map((row) => [row.rowid, row.rank]));
+		const orderByRowId = new Map(candidates.map((row, index) => [row.rowid, index]));
+		const placeholders = candidates.map(() => '?').join(', ');
+		const rows = this.db
+			.prepare(
+				`
+				SELECT
+					rowid, kind, source_id, message_id, session_id, task_id, space_id, task_number,
+					message_type, title,
+					snippet(message_search_fts, 9, '<mark>', '</mark>', '…', 16) AS snippet,
+					timestamp
+				FROM message_search_fts
+				WHERE rowid IN (${placeholders})
+				  AND message_search_fts MATCH ?`
+			)
+			.all(...candidates.map((row) => row.rowid), ftsQuery) as Array<{
+			rowid: number;
 			kind: 'message' | 'task';
 			source_id: string;
 			message_id: string | null;
@@ -1140,29 +1272,30 @@ export class SDKMessageRepository {
 			title: string | null;
 			snippet: string | null;
 			timestamp: string | null;
-			rank: number;
 		}>;
 
-		const results: MessageSearchResult[] = rows.map((row) => {
-			const timestamp = parseSearchTimestamp(row.timestamp);
-			return {
-				kind: row.kind,
-				sourceId: row.source_id,
-				messageId: row.message_id ?? row.source_id,
-				sessionId: row.session_id ?? undefined,
-				taskId: row.task_id ?? undefined,
-				spaceId: row.space_id ?? undefined,
-				taskNumber: row.task_number ?? undefined,
-				messageType: row.message_type ?? undefined,
-				title: row.title ?? (row.kind === 'task' ? 'Task' : 'Session'),
-				snippet: row.snippet ?? '',
-				timestamp,
-				loadTarget: row.session_id
-					? { sessionId: row.session_id, before: timestamp + 1 }
-					: undefined,
-				rank: row.rank,
-			};
-		});
+		const results: MessageSearchResult[] = rows
+			.sort((a, b) => (orderByRowId.get(a.rowid) ?? 0) - (orderByRowId.get(b.rowid) ?? 0))
+			.map((row) => {
+				const timestamp = parseSearchTimestamp(row.timestamp);
+				return {
+					kind: row.kind,
+					sourceId: row.source_id,
+					messageId: row.message_id ?? row.source_id,
+					sessionId: row.session_id ?? undefined,
+					taskId: row.task_id ?? undefined,
+					spaceId: row.space_id ?? undefined,
+					taskNumber: row.task_number ?? undefined,
+					messageType: row.message_type ?? undefined,
+					title: row.title ?? (row.kind === 'task' ? 'Task' : 'Session'),
+					snippet: row.snippet ?? '',
+					timestamp,
+					loadTarget: row.session_id
+						? { sessionId: row.session_id, before: timestamp + 1 }
+						: undefined,
+					rank: rankByRowId.get(row.rowid) ?? 0,
+				};
+			});
 
 		return { results, limit, offset };
 	}

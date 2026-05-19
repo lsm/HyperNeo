@@ -104,6 +104,44 @@ describe('SDKMessageRepository', () => {
 		`);
 	}
 
+	function createSearchPolicyTables(): void {
+		db.exec(`
+			CREATE TABLE sessions (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				status TEXT NOT NULL,
+				type TEXT,
+				last_active_at TEXT NOT NULL,
+				session_context TEXT
+			);
+			CREATE TABLE space_tasks (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				status TEXT NOT NULL,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL
+			);
+		`);
+	}
+
+	function insertSession(
+		id: string,
+		params: { status?: string; type?: string | null; context?: unknown; lastActiveAt?: string } = {}
+	): void {
+		db.prepare(
+			`INSERT INTO sessions (id, title, status, type, last_active_at, session_context)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run(
+			id,
+			id,
+			params.status ?? 'active',
+			params.type ?? 'worker',
+			params.lastActiveAt ?? new Date().toISOString(),
+			params.context ? JSON.stringify(params.context) : null
+		);
+	}
+
 	describe('saveSDKMessage', () => {
 		it('should save a user message and return true', () => {
 			const message = createUserMessage('Hello world');
@@ -910,6 +948,15 @@ describe('SDKMessageRepository', () => {
 			expect(result.results[0].snippet).toContain('<mark>alpha</mark>');
 		});
 
+		it('ignores search terms shorter than three characters', () => {
+			createSearchIndex();
+			repository.saveSDKMessage('session-1', createUserMessage('ui marker'));
+
+			const result = repository.searchMessages({ query: 'ui' });
+
+			expect(result.results).toEqual([]);
+		});
+
 		it('returns cross-session matches when no session filter is provided', () => {
 			createSearchIndex();
 			repository.saveSDKMessage('session-1', createUserMessage('global comet marker'));
@@ -944,6 +991,88 @@ describe('SDKMessageRepository', () => {
 			expect(result.results[0].snippet).toContain('<mark>beacon</mark>');
 			expect(result.results[0].loadTarget).toMatchObject({ sessionId: 'session-1' });
 			expect(result.results[0].loadTarget?.before).toBeGreaterThan(result.results[0].timestamp);
+		});
+
+		it('indexes only searchable message types', () => {
+			createSearchIndex();
+			repository.saveSDKMessage('session-1', createAssistantMessage('type marker assistant'));
+			repository.saveSDKMessage('session-1', {
+				type: 'result',
+				result: 'type marker result',
+			} as SDKMessage);
+
+			const result = repository.searchMessages({ query: 'type marker' });
+
+			expect(result.results.map((row) => row.messageType)).toEqual(['assistant']);
+		});
+
+		it('indexes only normal and Space sessions', () => {
+			createSearchIndex();
+			createSearchPolicyTables();
+			insertSession('session-1');
+			insertSession('space:space-1:task:task-1:exec:exec-1', {
+				context: { spaceId: 'space-1', taskId: 'task-1' },
+			});
+			insertSession('coder:room-1:task-1:exec-1', { type: 'coder' });
+			insertSession('archived-session', { status: 'archived' });
+			db.prepare(
+				`INSERT INTO space_tasks (id, space_id, task_number, status, completed_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			).run('task-1', 'space-1', 1, 'in_progress', null, Date.now());
+
+			repository.saveSDKMessage('session-1', createUserMessage('policy marker normal'));
+			repository.saveSDKMessage(
+				'space:space-1:task:task-1:exec:exec-1',
+				createUserMessage('policy marker space')
+			);
+			repository.saveSDKMessage(
+				'coder:room-1:task-1:exec-1',
+				createUserMessage('policy marker room')
+			);
+			repository.saveSDKMessage('archived-session', createUserMessage('policy marker archived'));
+
+			const result = repository.searchMessages({ query: 'policy marker' });
+
+			expect(result.results.map((row) => row.sessionId).sort()).toEqual([
+				'session-1',
+				'space:space-1:task:task-1:exec:exec-1',
+			]);
+		});
+
+		it('keeps terminal Space task session messages only within the retention window', () => {
+			createSearchIndex();
+			createSearchPolicyTables();
+			const recent = Date.now() - 2 * 24 * 60 * 60 * 1000;
+			const old = Date.now() - 45 * 24 * 60 * 60 * 1000;
+			insertSession('space:space-1:task:recent:exec:exec-1', {
+				context: { spaceId: 'space-1', taskId: 'recent' },
+			});
+			insertSession('space:space-1:task:old:exec:exec-1', {
+				context: { spaceId: 'space-1', taskId: 'old' },
+			});
+			db.prepare(
+				`INSERT INTO space_tasks (id, space_id, task_number, status, completed_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			).run('recent', 'space-1', 1, 'done', recent, recent);
+			db.prepare(
+				`INSERT INTO space_tasks (id, space_id, task_number, status, completed_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			).run('old', 'space-1', 2, 'cancelled', old, old);
+
+			repository.saveSDKMessage(
+				'space:space-1:task:recent:exec:exec-1',
+				createUserMessage('retention marker recent')
+			);
+			repository.saveSDKMessage(
+				'space:space-1:task:old:exec:exec-1',
+				createUserMessage('retention marker old')
+			);
+
+			const result = repository.searchMessages({ query: 'retention marker' });
+
+			expect(result.results.map((row) => row.sessionId)).toEqual([
+				'space:space-1:task:recent:exec:exec-1',
+			]);
 		});
 
 		it('returns task search rows from indexed titles and descriptions', () => {

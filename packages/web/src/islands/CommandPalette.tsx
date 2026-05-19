@@ -286,9 +286,9 @@ function stripSnippetMarks(snippet: string): string {
 	return snippet.replaceAll('<mark>', '').replaceAll('</mark>', '');
 }
 
-function shouldSearchMessages(query: string): boolean {
+function shouldSearchMessages(query: string, mode: CommandPaletteMode): boolean {
 	const trimmed = query.trim();
-	return trimmed.length >= 2 && !trimmed.startsWith('>');
+	return mode === 'quick-open' && trimmed.length >= 3 && !trimmed.startsWith('>');
 }
 
 export function CommandPalette() {
@@ -318,7 +318,7 @@ export function CommandPalette() {
 	}, [query, mode, open]);
 
 	useEffect(() => {
-		if (!open || !shouldSearchMessages(query)) {
+		if (!open || !shouldSearchMessages(query, mode)) {
 			requestIdRef.current += 1;
 			setMessageResults([]);
 			setLoadingMessages(false);
@@ -353,10 +353,10 @@ export function CommandPalette() {
 					setLoadingMessages(false);
 				}
 			}
-		}, 180);
+		}, 300);
 
 		return () => clearTimeout(timeout);
-	}, [open, query]);
+	}, [open, query, mode]);
 
 	const allSessions = sessions.value;
 	const spacesWithTasks = spaceStore.spacesWithTasks.value;
