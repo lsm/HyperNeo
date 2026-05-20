@@ -38,6 +38,7 @@ import {
 	navigateToSpaceConfigure,
 	navigateToSpaceSessions,
 	navigateToSpaceGoals,
+	navigateToSpaceForge,
 	navigateToSpaceTasks,
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
@@ -48,6 +49,7 @@ import {
 	createSpaceConfigurePath,
 	createSpaceSessionsPath,
 	createSpaceGoalsPath,
+	createSpaceForgePath,
 	createSpaceTasksPath,
 	createSpaceAgentPath,
 	createSpaceSessionPath,
@@ -152,23 +154,25 @@ export function App() {
 								? createSpaceSessionsPath(spaceId)
 								: spaceId && spaceViewMode === 'goals'
 									? createSpaceGoalsPath(spaceId)
-									: spaceId && spaceViewMode === 'tasks'
-										? createSpaceTasksPath(
-												spaceId,
-												spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
-											)
-										: spaceId && spaceViewMode === 'configure'
-											? createSpaceConfigurePath(
+									: spaceId && spaceViewMode === 'forge'
+										? createSpaceForgePath(spaceId)
+										: spaceId && spaceViewMode === 'tasks'
+											? createSpaceTasksPath(
 													spaceId,
-													spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
+													spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
 												)
-											: spaceId
-												? createSpacePath(spaceId)
-												: navSection === 'chats'
-													? '/sessions'
-													: navSection === 'settings'
-														? '/settings'
-														: '/spaces';
+											: spaceId && spaceViewMode === 'configure'
+												? createSpaceConfigurePath(
+														spaceId,
+														spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
+													)
+												: spaceId
+													? createSpacePath(spaceId)
+													: navSection === 'chats'
+														? '/sessions'
+														: navSection === 'settings'
+															? '/settings'
+															: '/spaces';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -190,6 +194,8 @@ export function App() {
 					navigateToSpaceSessions(spaceId, true);
 				} else if (spaceId && spaceViewMode === 'goals') {
 					navigateToSpaceGoals(spaceId, true);
+				} else if (spaceId && spaceViewMode === 'forge') {
+					navigateToSpaceForge(spaceId, true);
 				} else if (spaceId && spaceViewMode === 'tasks') {
 					navigateToSpaceTasks(spaceId, undefined, true);
 				} else if (spaceId && spaceViewMode === 'configure') {
