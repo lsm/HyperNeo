@@ -22,6 +22,8 @@ import type {
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { Logger } from '../../logger';
 import {
 	validatePostApproval,
@@ -444,6 +446,7 @@ export class SpaceWorkflowManager {
 		for (let i = 0; i < nodes.length; i++) {
 			const node = nodes[i];
 			this.validateNodeAgentRef(spaceId, node, i);
+			this.validateEventInterests(node, i);
 		}
 	}
 
@@ -474,6 +477,27 @@ export class SpaceWorkflowManager {
 		throw new WorkflowValidationError(
 			'Workflow node IDs are stable and cannot be duplicated, regenerated, or omitted during update'
 		);
+	}
+
+	private validateEventInterests(node: WorkflowNodeInput, index: number): void {
+		for (let j = 0; j < (node.agents ?? []).length; j++) {
+			const entry = node.agents![j];
+			const loc = `node[${index}].agents[${j}].eventInterests`;
+			const interests = entry.eventInterests ?? [];
+			if (interests.length > MAX_AGENT_SLOT_EVENT_INTERESTS) {
+				throw new WorkflowValidationError(
+					`${loc}: cannot contain more than ${MAX_AGENT_SLOT_EVENT_INTERESTS} entries`
+				);
+			}
+			for (let k = 0; k < interests.length; k++) {
+				const validation = validateGlobPattern(interests[k].topic);
+				if (!validation.valid) {
+					throw new WorkflowValidationError(
+						`${loc}[${k}].topic: ${validation.reason ?? 'invalid external-event topic pattern'}`
+					);
+				}
+			}
+		}
 	}
 
 	private validateNodeAgentRef(spaceId: string, node: WorkflowNodeInput, index: number): void {
