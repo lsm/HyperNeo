@@ -70,6 +70,8 @@ import {
 	ListAuditEntriesSchema,
 	PublishTaskSchema,
 	ArchiveTaskSchema,
+	SubscribeExternalEventSchema,
+	UnsubscribeExternalEventSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -87,6 +89,8 @@ import type {
 	ListAuditEntriesInput,
 	PublishTaskInput,
 	ArchiveTaskInput,
+	SubscribeExternalEventInput,
+	UnsubscribeExternalEventInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -231,6 +235,10 @@ export interface NodeAgentToolsConfig {
 	 * namespace.
 	 */
 	onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
+	/** Optional callback for dynamic external-event subscription requests. */
+	onSubscribeExternalEvent?: (args: SubscribeExternalEventInput) => Promise<ToolResult>;
+	/** Optional callback for dynamic external-event unsubscription requests. */
+	onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
 	/**
 	 * Optional callback for \`publish_task\`. When provided, node agents can
 	 * publish draft tasks (transition draft → open) without the broader
@@ -1309,6 +1317,39 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return result;
 		},
 
+		async subscribe_external_event(args: SubscribeExternalEventInput): Promise<ToolResult> {
+			if (!config.onSubscribeExternalEvent) {
+				return jsonResult({
+					success: false,
+					error: 'External event subscriptions are not available.',
+				});
+			}
+			const result = await config.onSubscribeExternalEvent(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				logAudit('subscribe_external_event', {
+					topicPattern: args.topicPattern,
+					label: args.label,
+				});
+			}
+			return result;
+		},
+
+		async unsubscribe_external_event(args: UnsubscribeExternalEventInput): Promise<ToolResult> {
+			if (!config.onUnsubscribeExternalEvent) {
+				return jsonResult({
+					success: false,
+					error: 'External event subscriptions are not available.',
+				});
+			}
+			const result = await config.onUnsubscribeExternalEvent(args);
+			const payload = decodeToolResultPayload(result);
+			if (payload?.success) {
+				logAudit('unsubscribe_external_event', { topicPattern: args.topicPattern });
+			}
+			return result;
+		},
+
 		async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
 			if (!config.onApproveTask) {
 				return jsonResult({
@@ -1560,6 +1601,23 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
 		),
+		...(config.onSubscribeExternalEvent && config.onUnsubscribeExternalEvent
+			? [
+					tool(
+						'subscribe_external_event',
+						'Subscribe to external events matching a topic pattern (e.g. github/*/*/pull_request.*). ' +
+							'Use this during execution to receive matching events directly in this node-agent session.',
+						SubscribeExternalEventSchema.shape,
+						(args) => handlers.subscribe_external_event(args)
+					),
+					tool(
+						'unsubscribe_external_event',
+						'Unsubscribe from external events for this node-agent session.',
+						UnsubscribeExternalEventSchema.shape,
+						(args) => handlers.unsubscribe_external_event(args)
+					),
+				]
+			: []),
 		tool(
 			'restore_node_agent',
 			'Self-heal primitive — call when you suspect the node-agent MCP server is unhealthy ' +

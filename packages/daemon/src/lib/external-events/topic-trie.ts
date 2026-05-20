@@ -1,8 +1,10 @@
 import type { NodeExecutionStatus } from '@neokai/shared';
 
 /**
- * Simple trie for topic-pattern matching.
- * Supports * (single segment wildcard) at any position.
+ * Trie for matching validated external-event topic glob patterns.
+ *
+ * Supports exact path segments and segment-local `*` wildcards, including dotted
+ * resource/action patterns such as `pull_request.*` and `pull_request.review_*`.
  *
  * This is a workflow-runtime utility, not an event-pipeline component.
  * The pipeline publishes events; the workflow runtime uses this trie
@@ -66,6 +68,28 @@ export class TopicTrie<T> {
 
 		walk(this.root, 0);
 		return results;
+	}
+
+	/**
+	 * Count all stored values matching a predicate.
+	 */
+	count(predicate: (value: T) => boolean): number {
+		let total = 0;
+
+		const walk = (node: TrieNode<T>): void => {
+			if (node.values) {
+				total += node.values.filter(predicate).length;
+			}
+			for (const child of node.exactChildren.values()) {
+				walk(child);
+			}
+			for (const child of node.globChildren.values()) {
+				walk(child);
+			}
+		};
+
+		walk(this.root);
+		return total;
 	}
 
 	/**

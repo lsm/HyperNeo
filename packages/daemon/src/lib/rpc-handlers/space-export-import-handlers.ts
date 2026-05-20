@@ -198,6 +198,7 @@ export function buildWorkflowCreateParams(
 				extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
 				timeoutMs?: number;
 				toolGuards?: import('@neokai/shared').DeclarativeToolGuard[];
+				eventInterests?: import('@neokai/shared').EventInterest[];
 			} = {
 				agentId: agentId ?? '',
 				name: a.name,
@@ -222,6 +223,7 @@ export function buildWorkflowCreateParams(
 				>;
 			if (typeof a.timeoutMs === 'number') entry.timeoutMs = a.timeoutMs;
 			if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
+			if (a.eventInterests !== undefined) entry.eventInterests = a.eventInterests;
 			return entry;
 		});
 

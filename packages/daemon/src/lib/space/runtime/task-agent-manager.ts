@@ -100,6 +100,7 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
 import {
 	buildCustomAgentTaskMessage,
@@ -3760,6 +3761,40 @@ export class TaskAgentManager {
 			}
 		};
 
+		const onSubscribeExternalEvent = async (args: { topicPattern: string; label?: string }) => {
+			const validation = validateGlobPattern(args.topicPattern.trim());
+			if (!validation.valid) {
+				return jsonResult({ success: false, error: validation.reason });
+			}
+			try {
+				const result = this.config.spaceRuntimeService.registerSubscription(
+					workflowRunId,
+					taskId,
+					workflowNodeId,
+					agentName,
+					args.topicPattern
+				);
+				return jsonResult(result);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		};
+		const onUnsubscribeExternalEvent = async (args: { topicPattern: string }) => {
+			const validation = validateGlobPattern(args.topicPattern.trim());
+			if (!validation.valid) {
+				return jsonResult({ success: false, error: validation.reason });
+			}
+			const result = this.config.spaceRuntimeService.unregisterSubscription(
+				workflowRunId,
+				taskId,
+				workflowNodeId,
+				agentName,
+				args.topicPattern
+			);
+			return jsonResult(result);
+		};
+
 		const onCreateStandaloneTask = async (args: {
 			title: string;
 			description: string;
@@ -3865,6 +3900,8 @@ export class TaskAgentManager {
 			onCreateStandaloneTask,
 			onPublishTask,
 			onArchiveTask,
+			onSubscribeExternalEvent,
+			onUnsubscribeExternalEvent,
 			artifactRepo: this.config.artifactRepo,
 			taskRepo: this.config.taskRepo,
 			auditLogRepo: this.auditLogRepo,
