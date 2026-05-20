@@ -45,8 +45,14 @@ import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-m
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
+import { createMemoryConsolidationHandler } from './lib/job-handlers/memory-consolidation.handler';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
-import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE, TASK_SCHEDULE_FIRE } from './lib/job-queue-constants';
+import {
+	JOB_QUEUE_CLEANUP,
+	MEMORY_CONSOLIDATION,
+	SKILL_VALIDATE,
+	TASK_SCHEDULE_FIRE,
+} from './lib/job-queue-constants';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
 import { SpaceRepository } from './storage/repositories/space-repository';
@@ -628,6 +634,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		createSkillValidateHandler(skillsManager, db.appMcpServers)
 	);
 	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
+	jobProcessor.register(MEMORY_CONSOLIDATION, createMemoryConsolidationHandler(db.agentMemory));
 
 	// Register task-schedule.fire handler.
 	const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());

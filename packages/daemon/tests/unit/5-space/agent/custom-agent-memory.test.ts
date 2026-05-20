@@ -63,6 +63,54 @@ const memories: AgentMemorySearchResult[] = [
 ];
 
 describe('buildCustomAgentTaskMessage memory injection', () => {
+	test('includes core memories before relevant memories and project context', () => {
+		const message = buildCustomAgentTaskMessage({
+			customAgent: agent,
+			task,
+			workflowRun: null,
+			workflow: null,
+			space,
+			sessionId: 'session-1',
+			workspacePath: '/tmp/space-1',
+			coreMemories: [{ ...memories[0].memory, key: 'core.conventions', score: 10 }],
+			relevantMemories: memories,
+		});
+
+		expect(message).toContain('## Core Memories');
+		expect(message).toContain('- core.conventions [forms, validation]: Use zod schemas');
+		expect(message.indexOf('## Core Memories')).toBeLessThan(
+			message.indexOf('## Relevant Memories')
+		);
+		expect(message.indexOf('## Core Memories')).toBeLessThan(message.indexOf('## Project Context'));
+	});
+
+	test('caps core memory prompt size', () => {
+		const message = buildCustomAgentTaskMessage({
+			customAgent: agent,
+			task,
+			workflowRun: null,
+			workflow: null,
+			space,
+			sessionId: 'session-1',
+			workspacePath: '/tmp/space-1',
+			coreMemories: [
+				{
+					...memories[0].memory,
+					key: 'core.large',
+					content: 'x'.repeat(3_000),
+					score: 10,
+				},
+			],
+		});
+		const coreStart = message.indexOf('## Core Memories');
+		const contextStart = message.indexOf('## Project Context');
+		const coreSection = message.slice(coreStart, contextStart);
+
+		expect(coreSection.length).toBeLessThanOrEqual(2_050);
+		expect(coreSection).toContain('…');
+		expect(coreSection).not.toContain('x'.repeat(2_001));
+	});
+
 	test('includes relevant memories before project context', () => {
 		const message = buildCustomAgentTaskMessage({
 			customAgent: agent,

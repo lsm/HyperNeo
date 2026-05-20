@@ -8,6 +8,7 @@ export const GITHUB_POLL = 'github.poll';
 export const ROOM_TICK = 'room.tick';
 export const JOB_QUEUE_CLEANUP = 'job_queue.cleanup';
 export const SKILL_VALIDATE = 'skill.validate';
+export const MEMORY_CONSOLIDATION = 'memory_consolidation';
 
 // ─── Task schedule ────────────────────────────────────────────────────────────
 export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';

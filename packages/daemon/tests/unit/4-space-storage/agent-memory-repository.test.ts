@@ -792,6 +792,67 @@ describe('AgentMemoryRepository', () => {
 		expect(page).toHaveLength(10);
 	});
 
+	test('consolidation merges duplicate memories and combines access counts', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.forms',
+			content: 'Use zod schemas for form validation.',
+			tags: ['forms'],
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'conventions.forms.copy',
+			content: 'Use zod schemas for form validation.',
+			tags: ['validation'],
+		});
+		repo.recordAccess('space-a', 'conventions.forms');
+		repo.recordAccess('space-a', 'conventions.forms.copy');
+		repo.recordAccess('space-a', 'conventions.forms.copy');
+
+		const result = repo.consolidate({ spaceId: 'space-a', staleTtlMs: 0 });
+		const memories = db
+			.prepare(`SELECT key, access_count, tags FROM space_agent_memory WHERE space_id = ?`)
+			.all('space-a') as Array<{ key: string; access_count: number; tags: string }>;
+
+		expect(result.duplicatesMerged).toBe(1);
+		expect(memories).toHaveLength(1);
+		expect(memories[0].access_count).toBe(3);
+		expect(JSON.parse(memories[0].tags)).toEqual(['validation', 'forms']);
+	});
+
+	test('consolidation prunes stale memories after TTL expiry', () => {
+		repo.write({ spaceId: 'space-a', key: 'old.memory', content: 'Outdated convention.' });
+		repo.write({ spaceId: 'space-a', key: 'fresh.memory', content: 'Current convention.' });
+		const now = Date.now();
+		db.prepare(
+			`UPDATE space_agent_memory SET created_at = ?, updated_at = ?, last_accessed_at = NULL WHERE key = ?`
+		).run(now - 1000, now - 1000, 'old.memory');
+		db.prepare(
+			`UPDATE space_agent_memory SET created_at = ?, updated_at = ?, last_accessed_at = NULL WHERE key = ?`
+		).run(now, now, 'fresh.memory');
+
+		const result = repo.consolidate({ spaceId: 'space-a', staleTtlMs: 500 });
+
+		expect(result.memoriesPruned).toBe(1);
+		expect(repo.read('space-a', 'old.memory', { recordAccess: false })).toBeNull();
+		expect(repo.read('space-a', 'fresh.memory', { recordAccess: false })?.key).toBe('fresh.memory');
+	});
+
+	test('consolidation writes core memories from frequent recent access', () => {
+		repo.write({ spaceId: 'space-a', key: 'rare.memory', content: 'Rarely used.' });
+		repo.write({ spaceId: 'space-a', key: 'hot.memory', content: 'Frequently used.' });
+		repo.recordAccess('space-a', 'rare.memory');
+		repo.recordAccess('space-a', 'hot.memory');
+		repo.recordAccess('space-a', 'hot.memory');
+
+		const result = repo.consolidate({ spaceId: 'space-a', coreLimit: 1, staleTtlMs: 0 });
+		const core = repo.listCoreMemories('space-a', 5);
+
+		expect(result.coreMemoriesWritten).toBe(1);
+		expect(core.map((memory) => memory.key)).toEqual(['hot.memory']);
+		expect(core[0].score).toBeGreaterThan(0);
+	});
+
 	test('filtered list keeps the default candidate pool for paginated hybrid ranking', async () => {
 		for (let index = 0; index < 120; index++) {
 			repo.write({

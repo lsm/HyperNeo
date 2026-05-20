@@ -787,6 +787,19 @@ function createAgentMemoryTables(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_core_memory (
+			space_id TEXT NOT NULL,
+			memory_id INTEGER NOT NULL,
+			score REAL NOT NULL,
+			rank INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (space_id, memory_id),
+			UNIQUE(space_id, rank),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
 		AFTER INSERT ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
@@ -857,6 +870,9 @@ function createIndexes(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
 	);
 
 	// Room indexes

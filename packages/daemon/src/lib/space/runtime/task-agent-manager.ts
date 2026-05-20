@@ -741,6 +741,9 @@ export class TaskAgentManager {
 				const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 
 				const memoryQuery = `${task.title}\n${task.description}`;
+				const coreMemories = this.config.memoryRepo
+					? this.config.memoryRepo.listCoreMemories(space.id, 10)
+					: [];
 				const relevantMemories = this.config.memoryRepo
 					? await this.config.memoryRepo.search(space.id, memoryQuery, 5)
 					: [];
@@ -757,6 +760,7 @@ export class TaskAgentManager {
 					nodeId: execution.workflowNodeId,
 					agentSlotName: execution.agentName,
 					gateData: gateDataSnapshot,
+					coreMemories,
 					relevantMemories,
 				});
 				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution, space);

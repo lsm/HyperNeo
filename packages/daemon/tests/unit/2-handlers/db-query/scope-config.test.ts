@@ -73,6 +73,7 @@ describe('scope-config', () => {
 				'mcp_audit_log',
 				'task_schedules',
 				'space_agent_memory',
+				'space_agent_core_memory',
 				'evolution_scopes',
 				'evolution_evidence',
 				'evolution_episodes',
@@ -85,7 +86,7 @@ describe('scope-config', () => {
 				'session_groups',
 				'session_group_members',
 			]);
-			expect(names).toHaveLength(25);
+			expect(names).toHaveLength(26);
 		});
 
 		it('all table configs have a description', () => {
