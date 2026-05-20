@@ -43,6 +43,8 @@ function setupDb(): BunDatabase {
 }
 
 class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionConfigStore {
+	readonly spaceConfigs = new Map<string, SpaceExternalEventSourceConfig>();
+
 	constructor(
 		private readonly options: { globallyEnabled?: boolean; webhooks?: boolean; polling?: boolean }
 	) {}
@@ -64,7 +66,14 @@ class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionC
 		spaceId: string,
 		source: string
 	): Promise<SpaceExternalEventSourceConfig | null> {
-		return { spaceId, source, enabled: true, settings: {} };
+		return (
+			this.spaceConfigs.get(`${spaceId}:${source}`) ?? {
+				spaceId,
+				source,
+				enabled: true,
+				settings: {},
+			}
+		);
 	}
 
 	async listEnabledSpaces(_source: string): Promise<SpaceExternalEventSourceConfig[]> {
@@ -77,10 +86,12 @@ class StaticExternalEventExtensionConfigStore implements ExternalEventExtensionC
 	): Promise<void> {}
 
 	async setSpaceConfig(
-		_spaceId: string,
-		_source: string,
-		_config: SpaceExternalEventSourceConfig
-	): Promise<void> {}
+		spaceId: string,
+		source: string,
+		config: SpaceExternalEventSourceConfig
+	): Promise<void> {
+		this.spaceConfigs.set(`${spaceId}:${source}`, config);
+	}
 }
 
 const baseRepo = {
@@ -344,6 +355,74 @@ describe('GitHubEventExtension', () => {
 		});
 
 		expect(extension.repo.listWatchedRepos('space-1')[0].enabled).toBe(false);
+		await extension.stop();
+	});
+
+	test('RPC unwatchRepo removes watched repositories', async () => {
+		const db = setupDb();
+		const extension = new GitHubEventExtension(db);
+		const clientHub = new MessageHub();
+		const hub = new MessageHub();
+		const [clientTransport, serverTransport] = InProcessTransport.createPair();
+		clientHub.registerTransport(clientTransport);
+		hub.registerTransport(serverTransport);
+		await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+		const context = {
+			publisher: { publish: async () => {} },
+			config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.registerRpcHandlers(hub, context);
+		await clientHub.request('space.github.watchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+		});
+
+		const result = await clientHub.request<{ removed: boolean }>('space.github.unwatchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+		});
+
+		expect(result.removed).toBe(true);
+		expect(extension.repo.listWatchedRepos('space-1')).toHaveLength(0);
+		await extension.stop();
+	});
+
+	test('RPC unwatchRepo preserves explicit space enablement after removing last repository', async () => {
+		const db = setupDb();
+		const extension = new GitHubEventExtension(db);
+		const clientHub = new MessageHub();
+		const hub = new MessageHub();
+		const [clientTransport, serverTransport] = InProcessTransport.createPair();
+		clientHub.registerTransport(clientTransport);
+		hub.registerTransport(serverTransport);
+		await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+		const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+		const context = {
+			publisher: { publish: async () => {} },
+			config,
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.registerRpcHandlers(hub, context);
+		await clientHub.request('space.github.enable', { spaceId: 'space-1' });
+		await clientHub.request('space.github.watchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+		});
+
+		await clientHub.request('space.github.unwatchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+		});
+
+		expect(extension.repo.listWatchedRepos('space-1')).toHaveLength(0);
+		expect((await config.getSpaceConfig('space-1', 'github'))?.enabled).toBe(true);
 		await extension.stop();
 	});
 
