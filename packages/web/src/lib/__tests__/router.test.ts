@@ -5,6 +5,7 @@ import {
 	createSpaceAgentPath,
 	createSpaceConfigurePath,
 	createSpaceGoalsPath,
+	createSpaceForgePath,
 	createSpacePath,
 	createSpaceSessionPath,
 	createSpaceSessionsPath,
@@ -14,6 +15,7 @@ import {
 	getSpaceAgentFromPath,
 	getSpaceConfigureTabFromPath,
 	getSpaceGoalsFromPath,
+	getSpaceForgeFromPath,
 	getSpaceIdFromPath,
 	getSpaceTaskIdFromPath,
 	getSpaceTaskViewFromPath,
@@ -25,6 +27,7 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceConfigure,
 	navigateToSpaceGoals,
+	navigateToSpaceForge,
 	navigateToSpaceSession,
 	navigateToSpacesPage,
 	navigateToSpaceTask,
@@ -98,6 +101,9 @@ describe('router', () => {
 		);
 		expect(createSpaceGoalsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/goals`);
 		expect(getSpaceGoalsFromPath(`/space/${SPACE_ID}/goals`)).toBe(SPACE_ID);
+		expect(createSpaceForgePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/forge`);
+		expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
+		expect(getSpaceIdFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
 		expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
 		expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
 		expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agent`);
@@ -177,6 +183,15 @@ describe('router', () => {
 
 		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
 		expect(currentSpaceViewModeSignal.value).toBe('goals');
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+
+		cleanupRouter();
+		setPath(`/space/${SPACE_ID}/forge`);
+		initializeRouter();
+
+		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+		expect(currentSpaceViewModeSignal.value).toBe('forge');
 		expect(currentSpaceSessionIdSignal.value).toBeNull();
 		expect(currentSpaceTaskIdSignal.value).toBeNull();
 	});
@@ -274,6 +289,17 @@ describe('router', () => {
 		expect(currentSpaceViewModeSignal.value).toBe('goals');
 		expect(currentSpaceSessionIdSignal.value).toBeNull();
 		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		finishNavigation();
+
+		navigateToSpaceForge(SPACE_ID);
+		expect(currentSpaceViewModeSignal.value).toBe('forge');
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(window.history.pushState).toHaveBeenLastCalledWith(
+			{ spaceId: SPACE_ID, path: `/space/${SPACE_ID}/forge` },
+			'',
+			`/space/${SPACE_ID}/forge`
+		);
 		finishNavigation();
 
 		navigateToSpaceConfigure(SPACE_ID, 'settings');
