@@ -275,10 +275,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
 describe('missingMcpServers', () => {
 	test('returns only required servers missing from the MCP map', () => {
 		expect(
-			missingMcpServers(
-				{ 'node-agent': {}, 'other-server': {} },
-				SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS
-			)
-		).toEqual(['space-agent-tools']);
+			missingMcpServers({ 'other-server': {} }, SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS)
+		).toEqual(['node-agent']);
 	});
 });

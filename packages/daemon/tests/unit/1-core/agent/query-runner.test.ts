@@ -315,11 +315,6 @@ describe('QueryRunner', () => {
 						name: 'node-agent',
 						instance: {},
 					},
-					'space-agent-tools': {
-						type: 'sdk',
-						name: 'space-agent-tools',
-						instance: {},
-					},
 				};
 				buildSpy
 					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
@@ -340,7 +335,6 @@ describe('QueryRunner', () => {
 
 				expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
 					'node-agent',
-					'space-agent-tools',
 				]);
 				expect(buildSpy).toHaveBeenCalledTimes(2);
 				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);

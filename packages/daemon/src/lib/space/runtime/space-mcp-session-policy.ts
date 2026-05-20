@@ -29,10 +29,7 @@ export interface SpaceMcpSessionPolicy {
 
 export const SPACE_COORDINATOR_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
 export const SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS = ['space-agent-tools'] as const;
-export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = [
-	'node-agent',
-	'space-agent-tools',
-] as const;
+export const SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS = ['node-agent'] as const;
 
 export function resolveSpaceMcpSessionPolicy(
 	session: Session,
