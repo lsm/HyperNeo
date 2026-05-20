@@ -58,6 +58,20 @@ const extensionResult = {
 	],
 };
 
+const disabledExtensionResult = {
+	extensions: [
+		{
+			source: 'github',
+			status: 'stopped',
+			config: {
+				source: 'github',
+				globallyEnabled: false,
+				capabilities: { webhooks: true, polling: false, rpcConfig: true },
+			},
+		},
+	],
+};
+
 const repoResult = {
 	repositories: [
 		{
@@ -111,6 +125,27 @@ describe('SpaceExternalEventsSettings', () => {
 		expect(mockRequest).toHaveBeenCalledWith('space.github.listWatchedRepos', {
 			spaceId: 'space-1',
 		});
+	});
+
+	it('keeps globally disabled GitHub manageable without calling GitHub RPCs', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list')
+				return Promise.resolve(disabledExtensionResult);
+			return Promise.reject(new Error('METHOD_NOT_FOUND'));
+		});
+
+		const { findByText, queryByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+
+		expect(await findByText('github')).toBeTruthy();
+		expect(await findByText('stopped')).toBeTruthy();
+		expect(queryByText('acme/widgets')).toBeNull();
+		expect(mockRequest).not.toHaveBeenCalledWith('space.github.listConfig', expect.anything());
+		expect(mockRequest).not.toHaveBeenCalledWith(
+			'space.github.listWatchedRepos',
+			expect.anything()
+		);
+		expect(mockToastError).not.toHaveBeenCalled();
 	});
 
 	it('toggles global enablement', async () => {

@@ -105,14 +105,25 @@ export function SpaceExternalEventsSettings({
 		}
 		try {
 			setLoading(true);
-			const [extensionResult, configResult, repoResult] = await Promise.all([
-				hub.request<{ extensions: ExtensionStatus[] }>('externalEvents.extensions.list', {}),
+			const extensionResult = await hub.request<{ extensions: ExtensionStatus[] }>(
+				'externalEvents.extensions.list',
+				{}
+			);
+			setExtensions(extensionResult.extensions);
+
+			const github = extensionResult.extensions.find((extension) => extension.source === 'github');
+			if (!github?.config.globallyEnabled || !github.config.capabilities.rpcConfig) {
+				setSpaceConfig(null);
+				setRepos([]);
+				return;
+			}
+
+			const [configResult, repoResult] = await Promise.all([
 				hub.request<GitHubSpaceConfig | null>('space.github.listConfig', { spaceId }),
 				hub.request<{ repositories: GitHubWatchedRepo[] }>('space.github.listWatchedRepos', {
 					spaceId,
 				}),
 			]);
-			setExtensions(extensionResult.extensions);
 			setSpaceConfig(configResult);
 			setRepos(repoResult.repositories);
 		} catch (err) {
