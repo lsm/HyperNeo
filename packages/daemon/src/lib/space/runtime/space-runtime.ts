@@ -314,12 +314,12 @@ const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
 );
 const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
 
-function parsePositiveIntegerEnv(name: string, fallback: number): number {
+export function parsePositiveIntegerEnv(name: string, fallback: number): number {
 	const raw = process.env[name];
 	if (!raw) return fallback;
 	const value = Number(raw);
-	if (!Number.isFinite(value) || value <= 0) return fallback;
-	return Math.floor(value);
+	if (!Number.isInteger(value) || value <= 0) return fallback;
+	return value;
 }
 
 // ---------------------------------------------------------------------------

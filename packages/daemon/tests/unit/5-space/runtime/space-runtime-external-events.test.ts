@@ -9,7 +9,10 @@ import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
+import {
+	parsePositiveIntegerEnv,
+	SpaceRuntime,
+} from '../../../../src/lib/space/runtime/space-runtime';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -20,6 +23,28 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 const SPACE_ID = 'space-runtime-events';
 const AGENT_ID = 'agent-runtime-events';
 const DEFAULT_TOPIC = 'github/*/*/pull_request.review_*';
+
+describe('parsePositiveIntegerEnv', () => {
+	test('rejects fractional and non-positive values', () => {
+		const previous = process.env.TEST_POSITIVE_INTEGER_ENV;
+		try {
+			process.env.TEST_POSITIVE_INTEGER_ENV = '0.5';
+			expect(parsePositiveIntegerEnv('TEST_POSITIVE_INTEGER_ENV', 10)).toBe(10);
+
+			process.env.TEST_POSITIVE_INTEGER_ENV = '0';
+			expect(parsePositiveIntegerEnv('TEST_POSITIVE_INTEGER_ENV', 10)).toBe(10);
+
+			process.env.TEST_POSITIVE_INTEGER_ENV = '11';
+			expect(parsePositiveIntegerEnv('TEST_POSITIVE_INTEGER_ENV', 10)).toBe(11);
+		} finally {
+			if (previous === undefined) {
+				delete process.env.TEST_POSITIVE_INTEGER_ENV;
+			} else {
+				process.env.TEST_POSITIVE_INTEGER_ENV = previous;
+			}
+		}
+	});
+});
 
 function makeDb(): Database {
 	const db = new Database(':memory:');
