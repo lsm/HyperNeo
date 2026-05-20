@@ -375,7 +375,7 @@ describe('SpaceTaskPane', () => {
 		render(<SpaceTaskPane taskId="task-1" />);
 
 		await waitFor(() => {
-			expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread');
+			expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread', true);
 		});
 		expect(mockCurrentSpaceTaskViewTabSignal.value).toBe('thread');
 	});

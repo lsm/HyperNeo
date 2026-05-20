@@ -717,6 +717,34 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(new Set(mapped.map((row) => row.id)).size).toBe(2);
 		});
 
+		test('actorMessages.byWorkflowRun preserves node handoff event for completed nodes', () => {
+			const workflowRunId = 'wr-node-history';
+			insertWorkflowRun(workflowRunId);
+			insertSpaceTask({ id: 'actor-history-task', workflowRunId, status: 'in_progress' });
+			insertNodeExecution({
+				id: 'actor-node-history',
+				workflowRunId,
+				workflowNodeId: 'node-coder',
+				agentName: 'coder',
+				status: 'done',
+			});
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+			const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+				string,
+				unknown
+			>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped.map((row) => row.id).sort()).toEqual([
+				'node:actor-node-history:done',
+				'node:actor-node-history:in_progress',
+			]);
+			expect(new Set(mapped.map((row) => row.title))).toEqual(
+				new Set(['Node handoff', 'Node completed'])
+			);
+		});
+
 		test('classifies by session type, not current task_agent_session_id pointer', () => {
 			// Simulate a scenario where the orchestration session was replaced
 			// (rehydrate self-heal) but historical messages still exist. The
@@ -2090,6 +2118,66 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				// Any scope filter here would be unsound — keep it absent.
 				const entry = NAMED_QUERY_REGISTRY.get('sessions.list')!;
 				expect(entry.buildScopeFilter).toBeUndefined();
+			});
+		});
+
+		describe('actor message queries', () => {
+			let scopedDb: BunDatabase;
+
+			beforeEach(() => {
+				scopedDb = new BunDatabase(':memory:');
+				scopedDb.exec(`
+					CREATE TABLE space_tasks (
+						id TEXT PRIMARY KEY,
+						workflow_run_id TEXT,
+						task_agent_session_id TEXT
+					);
+					CREATE TABLE node_executions (
+						id TEXT PRIMARY KEY,
+						workflow_run_id TEXT NOT NULL,
+						agent_session_id TEXT
+					);
+					CREATE TABLE sdk_messages (
+						id TEXT PRIMARY KEY,
+						session_id TEXT NOT NULL,
+						task_id TEXT
+					);
+				`);
+				scopedDb.exec(`
+					INSERT INTO space_tasks (id, workflow_run_id, task_agent_session_id)
+					VALUES ('task-a', 'run-a', 'task-session-a');
+					INSERT INTO node_executions (id, workflow_run_id, agent_session_id)
+					VALUES ('node-a', 'run-a', 'node-session-a');
+					INSERT INTO sdk_messages (id, session_id, task_id)
+					VALUES ('msg-a', 'message-session-a', 'task-a');
+				`);
+			});
+
+			afterEach(() => {
+				scopedDb.close();
+			});
+
+			test('task timeline uses the shared task scope filter', () => {
+				const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+				expect(entry.buildScopeFilter).toBeDefined();
+				const filter = entry.buildScopeFilter!(['task-a'], scopedDb)!;
+
+				expect(filter({ taskId: 'task-a' })).toBe(true);
+				expect(filter({ taskId: 'task-b' })).toBe(false);
+			});
+
+			test('workflow log filters out unrelated task and session writes', () => {
+				const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+				expect(entry.buildScopeFilter).toBeDefined();
+				const filter = entry.buildScopeFilter!(['run-a', 'run-a', 'run-a'], scopedDb)!;
+
+				expect(filter({ taskId: 'task-a' })).toBe(true);
+				expect(filter({ taskId: 'task-b' })).toBe(false);
+				expect(filter({ sessionId: 'task-session-a' })).toBe(true);
+				expect(filter({ sessionId: 'node-session-a' })).toBe(true);
+				expect(filter({ sessionId: 'message-session-a' })).toBe(true);
+				expect(filter({ sessionId: 'other-session' })).toBe(false);
+				expect(filter({})).toBe(true);
 			});
 		});
 

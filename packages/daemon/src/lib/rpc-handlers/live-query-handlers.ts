@@ -627,11 +627,20 @@ ORDER BY createdAt ASC, id ASC
 `.trim();
 
 const ACTOR_MESSAGES_BY_WORKFLOW_RUN_SQL = `
-WITH node_rows AS (
+WITH node_status_events AS (
+  SELECT 'in_progress' AS status, 'handoff' AS eventKind, 'Node handoff' AS title, 0 AS rank
+  UNION ALL SELECT 'idle', 'status', 'Node completed', 1
+  UNION ALL SELECT 'done', 'status', 'Node completed', 1
+  UNION ALL SELECT 'blocked', 'status', 'Node status', 1
+  UNION ALL SELECT 'cancelled', 'status', 'Node status', 1
+  UNION ALL SELECT 'waiting_rebind', 'retry', 'Node status', 1
+  UNION ALL SELECT 'pending', 'status', 'Node status', 0
+),
+node_rows AS (
   SELECT
-    'node:' || ne.id || ':' || ne.status AS id,
+    'node:' || ne.id || ':' || nse.status AS id,
     'workflow_log' AS scope,
-    CASE WHEN ne.status = 'in_progress' THEN 'handoff' ELSE 'status' END AS eventKind,
+    nse.eventKind AS eventKind,
     (SELECT st.id FROM space_tasks st WHERE st.workflow_run_id = ne.workflow_run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskId,
     (SELECT st.title FROM space_tasks st WHERE st.workflow_run_id = ne.workflow_run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskTitle,
     ne.workflow_run_id AS workflowRunId,
@@ -641,12 +650,15 @@ WITH node_rows AS (
     json_object('kind', 'worker', 'label', COALESCE(sa.name, ne.agent_name), 'role', ne.agent_name, 'sessionId', ne.agent_session_id, 'nodeExecutionId', ne.id) AS targetActor,
     'system' AS targetResolution,
     NULL AS deliveryState,
-    CASE WHEN ne.status = 'in_progress' THEN 'Node handoff' WHEN ne.status = 'done' THEN 'Node completed' ELSE 'Node status' END AS title,
-    ne.agent_name || ' is ' || ne.status AS summary,
-    ne.result AS details,
-    CASE WHEN ne.status IN ('blocked', 'cancelled') THEN 'warning' WHEN ne.status = 'done' THEN 'success' ELSE 'info' END AS severity,
-    COALESCE(ne.updated_at, ne.created_at) AS createdAt
+    nse.title AS title,
+    ne.agent_name || ' is ' || nse.status AS summary,
+    CASE WHEN nse.status = ne.status THEN ne.result ELSE NULL END AS details,
+    CASE WHEN nse.status IN ('blocked', 'cancelled') THEN 'warning' WHEN nse.status IN ('idle', 'done') THEN 'success' ELSE 'info' END AS severity,
+    CASE WHEN nse.status IN ('idle', 'done', 'blocked', 'cancelled') THEN COALESCE(ne.completed_at, ne.updated_at, ne.created_at) ELSE COALESCE(ne.started_at, ne.created_at) END AS createdAt
   FROM node_executions ne
+  JOIN node_status_events nse
+    ON nse.status = ne.status
+    OR (nse.status = 'in_progress' AND ne.status IN ('idle', 'done', 'blocked', 'cancelled', 'waiting_rebind'))
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE ne.workflow_run_id = ?
 ),
@@ -2237,6 +2249,60 @@ function buildTaskScopeFilter(
 // writes are infrequent compared to `sdk_messages`, so re-evaluating
 // `sessions.list` on every session write is cheap and correct.
 
+function buildWorkflowRunScopeFilter(
+	params: ReadonlyArray<unknown>,
+	db: BunDatabase
+): (scope: TableChangeScope) => boolean {
+	const workflowRunId = params[0] as string;
+	const taskIds = new Set<string>();
+	const sessionIds = new Set<string>();
+	const loadScope = () => {
+		taskIds.clear();
+		sessionIds.clear();
+		try {
+			const tasks = db
+				.prepare('SELECT id, task_agent_session_id FROM space_tasks WHERE workflow_run_id = ?')
+				.all(workflowRunId) as Array<{ id: string; task_agent_session_id: string | null }>;
+			for (const row of tasks) {
+				taskIds.add(row.id);
+				if (row.task_agent_session_id) sessionIds.add(row.task_agent_session_id);
+			}
+		} catch {
+			// space_tasks may not exist in minimal test schemas
+		}
+		try {
+			const executions = db
+				.prepare('SELECT agent_session_id FROM node_executions WHERE workflow_run_id = ?')
+				.all(workflowRunId) as Array<{ agent_session_id: string | null }>;
+			for (const row of executions) {
+				if (row.agent_session_id) sessionIds.add(row.agent_session_id);
+			}
+		} catch {
+			// node_executions may not exist in minimal test schemas
+		}
+		try {
+			const messages = db
+				.prepare(
+					'SELECT DISTINCT session_id FROM sdk_messages WHERE task_id IN (SELECT id FROM space_tasks WHERE workflow_run_id = ?)'
+				)
+				.all(workflowRunId) as Array<{ session_id: string | null }>;
+			for (const row of messages) {
+				if (row.session_id) sessionIds.add(row.session_id);
+			}
+		} catch {
+			// sdk_messages may not exist in minimal test schemas
+		}
+	};
+	loadScope();
+	return (scope) => {
+		if (scope.taskId) return taskIds.has(scope.taskId);
+		if (!scope.sessionId) return true;
+		if (sessionIds.has(scope.sessionId)) return true;
+		loadScope();
+		return sessionIds.has(scope.sessionId);
+	};
+}
+
 function buildSpaceSessionsScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
@@ -2390,6 +2456,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 3,
 			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
 			mapRow: mapActorMessageProjectionRow,
+			buildScopeFilter: buildWorkflowRunScopeFilter,
 		},
 	],
 	[
@@ -2571,7 +2638,8 @@ export function setupLiveQueryHandlers(
 			queryName === 'spaceTaskActivity.byTask' ||
 			queryName === 'spaceTaskMessages.byTask' ||
 			queryName === 'spaceTaskMessages.byTask.compact' ||
-			queryName === 'spaceTaskActiveTurn.byTask'
+			queryName === 'spaceTaskActiveTurn.byTask' ||
+			queryName === 'actorMessages.byTask'
 		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;
@@ -2584,6 +2652,21 @@ export function setupLiveQueryHandlers(
 			}
 			if (!spaceTask) {
 				throw new Error(`Unauthorized: space task "${taskId}" not found`);
+			}
+		} else if (queryName === 'actorMessages.byWorkflowRun') {
+			const workflowRunId = params[0] as string;
+			let workflowRun: { id: string } | null = null;
+			try {
+				workflowRun = db
+					.prepare('SELECT id FROM space_workflow_runs WHERE id = ?')
+					.get(workflowRunId) as {
+					id: string;
+				} | null;
+			} catch {
+				workflowRun = null;
+			}
+			if (!workflowRun) {
+				throw new Error(`Unauthorized: workflow run "${workflowRunId}" not found`);
 			}
 		} else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
 			const spaceId = params[0] as string;

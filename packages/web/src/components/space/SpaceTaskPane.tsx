@@ -205,7 +205,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		if (activeView === 'log' && task && !task.workflowRunId) {
-			navigateToSpaceTask(spaceId ?? currentSpaceIdSignal.value ?? task.spaceId, task.id, 'thread');
+			navigateToSpaceTask(
+				spaceId ?? currentSpaceIdSignal.value ?? task.spaceId,
+				task.id,
+				'thread',
+				true
+			);
 		}
 	}, [activeView, task, spaceId]);
 
