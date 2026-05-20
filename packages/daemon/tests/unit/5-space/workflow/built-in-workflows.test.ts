@@ -1856,6 +1856,38 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
 	});
 
+	test('re-stamp updates gate field writers in place', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflow = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+		const gateWithStaleWriters = workflow.gates!.map((gate) =>
+			gate.id !== 'review-approval-gate'
+				? gate
+				: {
+						...gate,
+						fields: gate.fields!.map((field) =>
+							field.name === 'approved' ? { ...field, writers: [] } : field
+						),
+					}
+		);
+
+		manager.updateWorkflow(workflow.id, { gates: gateWithStaleWriters });
+		db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+			'pre-review-gate-writers-hash',
+			workflow.id
+		);
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+		const after = manager.getWorkflow(workflow.id)!;
+		const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
+		const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
+		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(approvedField.check).toEqual({ op: '==', value: true });
+	});
+
 	test('re-stamp preserves node rows, layout, and updates toolGuards in place', () => {
 		// The narrow re-stamp explicitly does NOT regenerate node UUIDs because
 		// live workflow_run rows reference them. It also must not delete/reinsert
@@ -2959,6 +2991,15 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		// Same approval semantic clarifier so submit_for_approval is not
 		// treated as an escape hatch in the single-node case either.
 		expect(prompt).toMatch(/same approval semantic/i);
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate lets reviewer approve', () => {
+		const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+		const approvalField = gate.fields!.find((f) => f.name === 'approved')!;
+
+		expect(approvalField.type).toBe('boolean');
+		expect(approvalField.writers).toEqual(['reviewer']);
+		expect(approvalField.check).toEqual({ op: '==', value: true });
 	});
 
 	test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {

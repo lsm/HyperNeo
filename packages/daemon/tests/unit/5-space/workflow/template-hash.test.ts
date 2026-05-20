@@ -374,22 +374,26 @@ describe('buildWorkflowFingerprint', () => {
 		expect(parsed.poll.script).toHaveLength(100);
 	});
 
-	it('excludes writers from gate field serialization', () => {
+	it('includes sorted writers in gate field serialization', () => {
 		const wf = makeWorkflow({
 			gates: [
 				{
 					id: 'gate-1',
 					resetOnCycle: false,
 					fields: [
-						{ name: 'approved', type: 'boolean', writers: ['Coder'], check: { op: 'exists' } },
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['Reviewer', 'Coder'],
+							check: { op: 'exists' },
+						},
 					],
 				},
 			],
 		});
 		const fp = buildWorkflowFingerprint(wf);
 		const parsed = JSON.parse(fp.gates[0]);
-		// writers are not included in the fingerprint (agent-specific)
-		expect(parsed.fields[0].writers).toBeUndefined();
+		expect(parsed.fields[0].writers).toEqual(['Coder', 'Reviewer']);
 		expect(parsed.fields[0].name).toBe('approved');
 	});
 
@@ -640,6 +644,30 @@ describe('computeWorkflowHash', () => {
 					id: 'gate-1',
 					resetOnCycle: false,
 					fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate field writers change', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['reviewer'], check: { op: 'exists' } },
+					],
 				},
 			],
 		});

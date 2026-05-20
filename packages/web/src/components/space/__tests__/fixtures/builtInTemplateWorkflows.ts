@@ -241,7 +241,7 @@ export function makeBuiltInTemplateWorkflows(
 						{
 							name: 'approved',
 							type: 'boolean',
-							writers: [],
+							writers: ['reviewer'],
 							check: { op: '==', value: true },
 						},
 					],
