@@ -294,6 +294,62 @@ describe('Space messaging adapter', () => {
 		]);
 	});
 
+	it('resolves inactive long-term agents by handle and role', async () => {
+		const agent = spaceAgentRepo.create({ spaceId, name: 'Task Manager' });
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId }
+		);
+		const result = await resolver.resolveTargets({
+			...message,
+			workflowRunId: undefined,
+			targets: ['@task-manager', '@role:task-manager'],
+		});
+
+		expect(result.unresolved).toEqual([]);
+		expect(result.resolved.map((target) => target.actor)).toEqual([
+			expect.objectContaining({
+				actorId: `agent:${encodeURIComponent(agent.id)}`,
+				status: 'inactive',
+			}),
+			expect.objectContaining({
+				actorId: `agent:${encodeURIComponent(agent.id)}`,
+				status: 'inactive',
+			}),
+		]);
+	});
+
+	it('queues inactive long-term agent deliveries via activation callback', async () => {
+		const agent = spaceAgentRepo.create({ spaceId, name: 'Task Manager' });
+		const resolver = new SpaceMessageResolver(
+			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
+			{ spaceId }
+		);
+		const queued: string[] = [];
+		const facade = new SpaceDeliveryFacade({
+			resolver,
+			queueForActivation: async (actor) => {
+				queued.push(actor.actorId);
+				return 'inbox-1';
+			},
+		});
+
+		const result = await facade.routeMessage({
+			...message,
+			workflowRunId: undefined,
+			targets: ['@task-manager'],
+		});
+
+		expect(queued).toEqual([`agent:${encodeURIComponent(agent.id)}`]);
+		expect(result.deliveries).toHaveLength(1);
+		expect(result.deliveries[0]).toMatchObject({
+			targetActorId: `agent:${encodeURIComponent(agent.id)}`,
+			targetRef: '@task-manager',
+			state: 'queued',
+			deliveryId: 'delivery_inbox-1',
+		});
+	});
+
 	it('writes queued deliveries for inactive actors and failed rows for unresolved targets', async () => {
 		const resolver = new SpaceMessageResolver(
 			{ actorRegistry: registry, workflowRepo, workflowRunRepo },
