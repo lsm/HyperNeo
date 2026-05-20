@@ -536,11 +536,11 @@ export class SpaceRuntimeService {
 		const policy = this.resolveMcpSessionPolicy(session);
 		if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
 		const agentId = session.metadata.promptProvenance?.agentId;
-		const agentName = session.metadata.promptProvenance?.agentName;
-		if (!agentId || !agentName) return;
-		const [space, agentSession] = await Promise.all([
+		if (!agentId) return;
+		const [space, agentSession, persistedAgent] = await Promise.all([
 			this.config.spaceManager.getSpace(policy.spaceId),
 			sessionManager.getSessionAsync(session.id),
+			this.config.actorRegistryRepos?.spaceAgentRepo.getById(agentId) ?? null,
 		]);
 		if (!space) {
 			log.warn(
@@ -554,6 +554,8 @@ export class SpaceRuntimeService {
 			);
 			return;
 		}
+		const agentName =
+			session.metadata.promptProvenance?.agentName ?? persistedAgent?.name ?? 'Space Agent';
 		this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id);
 		agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
 			log.warn(

@@ -157,12 +157,39 @@ describe('resolveSpaceMcpSessionPolicy', () => {
 	test('resolves workflow worker space from task when session context lacks spaceId', () => {
 		const session = makeSession({ id: 'opaque-worker-session', context: { taskId: 'task-1' } });
 		const policy = resolveSpaceMcpSessionPolicy(session, {
-			nodeExecutionRepo: { getByAgentSessionId: () => makeNodeExecution() },
+			nodeExecutionRepo: {
+				getByAgentSessionId: () => makeNodeExecution(),
+				getById: () => null,
+			},
 			taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-from-task' }) },
 		});
 
 		expect(policy.role).toBe('workflow_worker');
 		expect(policy.spaceId).toBe('space-from-task');
+	});
+
+	test('routes workflow workers by embedded execution id when session id backfill is missing', () => {
+		const session = makeSession({
+			id: 'space:space-1:task:task-1:exec:exec-1',
+			type: 'worker',
+			context: { spaceId: 'space-1', taskId: 'task-1' },
+		});
+		const policy = resolveSpaceMcpSessionPolicy(session, {
+			nodeExecutionRepo: {
+				getByAgentSessionId: () => null,
+				getById: (id) => (id === 'exec-1' ? makeNodeExecution({ id, agentSessionId: null }) : null),
+			},
+			taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-1' }) },
+		});
+
+		expect(policy).toMatchObject({
+			role: 'workflow_worker',
+			spaceId: 'space-1',
+			owner: 'task-agent-manager',
+			attachGenericSpaceTools: false,
+			isWorkflowWorker: true,
+		});
+		expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
 	});
 
 	test('routes long-term agents using canonical session identity and prompt provenance', () => {

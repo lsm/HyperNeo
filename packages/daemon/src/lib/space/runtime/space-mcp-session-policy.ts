@@ -12,7 +12,7 @@ export type SpaceMcpSessionRole =
 	| 'outside_space';
 
 export interface SpaceMcpSessionPolicyContext {
-	readonly nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId'>;
+	readonly nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
 	readonly taskRepo?: Pick<SpaceTaskRepository, 'getTask'>;
 }
 
@@ -66,7 +66,7 @@ export function resolveSpaceMcpSessionPolicy(
 		};
 	}
 
-	const workflowExecution = context.nodeExecutionRepo?.getByAgentSessionId(session.id) ?? null;
+	const workflowExecution = resolveWorkflowExecution(session, context.nodeExecutionRepo);
 	if (workflowExecution) {
 		const taskId = session.context?.taskId;
 		const task = taskId ? (context.taskRepo?.getTask(taskId) ?? null) : null;
@@ -118,6 +118,28 @@ export function resolveSpaceMcpSessionPolicy(
 		attachLongTermAgentTools: false,
 		isWorkflowWorker: false,
 	};
+}
+
+function resolveWorkflowExecution(
+	session: Session,
+	nodeExecutionRepo: SpaceMcpSessionPolicyContext['nodeExecutionRepo']
+) {
+	const bySessionId = nodeExecutionRepo?.getByAgentSessionId(session.id) ?? null;
+	if (bySessionId) return bySessionId;
+
+	const executionId = parseExecutionIdFromSubSessionId(session.id);
+	if (!executionId) return null;
+
+	const byEmbeddedId = nodeExecutionRepo?.getById(executionId) ?? null;
+	return byEmbeddedId?.agentSessionId ? null : byEmbeddedId;
+}
+
+function parseExecutionIdFromSubSessionId(sessionId: string): string | null {
+	const marker = ':exec:';
+	const markerIndex = sessionId.indexOf(marker);
+	if (markerIndex === -1) return null;
+	const executionId = sessionId.slice(markerIndex + marker.length).split(':')[0];
+	return executionId || null;
 }
 
 function isLongTermAgentSession(session: Session, spaceId: string): boolean {

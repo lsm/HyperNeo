@@ -83,6 +83,7 @@ function buildConfig(
 function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
 	return {
 		getByAgentSessionId: mock(() => null),
+		getById: mock(() => null),
 	} as unknown as NodeExecutionRepository;
 }
 
@@ -757,7 +758,8 @@ describe('SpaceRuntimeService', () => {
 			sessionManager: SessionManager;
 			listSessionsResult?: Session[];
 			dbPath?: string;
-			nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId'>;
+			nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId' | 'getById'>;
+			actorRegistryRepos?: SpaceRuntimeServiceConfig['actorRegistryRepos'];
 		}): SpaceRuntimeServiceConfig {
 			if (opts.listSessionsResult) {
 				(opts.sessionManager as unknown as { listSessions: Mock<() => Session[]> }).listSessions =
@@ -780,6 +782,7 @@ describe('SpaceRuntimeService', () => {
 				nodeExecutionRepo:
 					(opts.nodeExecutionRepo as NodeExecutionRepository | undefined) ??
 					makeNoopNodeExecutionRepo(),
+				actorRegistryRepos: opts.actorRegistryRepos,
 			};
 		}
 
@@ -924,6 +927,48 @@ describe('SpaceRuntimeService', () => {
 			// session is filtered out before getSessionAsync is consulted.
 			expect(mergeMock).toHaveBeenCalledTimes(3);
 			expect(mergeMock.mock.calls[2][0]).toHaveProperty('space-agent-tools');
+
+			await svc.stop();
+		});
+
+		test('start() derives long-term agent names from repository when metadata lacks agentName', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const longTermSession = makeMemberSession({
+				id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+				metadata: {
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: 'agent-1',
+					},
+				},
+			});
+			const svc = new SpaceRuntimeService(
+				buildMemberConfig({
+					sessionManager,
+					listSessionsResult: [longTermSession],
+					actorRegistryRepos: {
+						spaceRepo: {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['spaceRepo'],
+						sessionRepo: {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['sessionRepo'],
+						spaceAgentRepo: {
+							getById: mock(() => ({ id: 'agent-1', spaceId: mockSpace.id, name: 'Repo Agent' })),
+						} as unknown as SpaceRuntimeServiceConfig['actorRegistryRepos']['spaceAgentRepo'],
+						workflowRepo: {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['workflowRepo'],
+						workflowRunRepo:
+							{} as SpaceRuntimeServiceConfig['actorRegistryRepos']['workflowRunRepo'],
+						nodeExecutionRepo: makeNoopNodeExecutionRepo(),
+					},
+				})
+			);
+
+			svc.start();
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			const [mcpArg] = (agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>)
+				.mock.calls[0];
+			expect(mcpArg).toHaveProperty('space-agent-tools');
 
 			await svc.stop();
 		});
