@@ -139,7 +139,7 @@ export class EvolutionScopeService {
 		if (!task) throw new Error(`Task not found: ${params.taskId}`);
 		const scope = params.scopeId
 			? this.requireScope(params.scopeId)
-			: this.requireScopeForTaskGoal(params.taskId, task.goalId ?? null);
+			: this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 		if (scope.spaceId !== task.spaceId)
 			throw new Error('Task and scope must belong to the same space');
 		return this.deps.evolutionRepo.createEvidence({
@@ -259,8 +259,13 @@ export class EvolutionScopeService {
 		return scope;
 	}
 
-	private requireScopeForTaskGoal(taskId: string, goalId: string | null): EvolutionScope {
-		if (!goalId) throw new Error(`Task is not linked to a SpaceGoal: ${taskId}`);
+	private requireScopeForTask(
+		taskId: string,
+		evolutionScopeId: string | null,
+		goalId: string | null
+	): EvolutionScope {
+		if (evolutionScopeId) return this.requireScope(evolutionScopeId);
+		if (!goalId) throw new Error(`Task is not linked to an EvolutionScope or SpaceGoal: ${taskId}`);
 		const scope = this.resolveScopeForGoal({ spaceGoalId: goalId });
 		if (!scope) throw new Error(`EvolutionScope not found for SpaceGoal: ${goalId}`);
 		return scope;
@@ -269,6 +274,6 @@ export class EvolutionScopeService {
 	private requireScopeForWorkflowRun(workflowRunId: string): EvolutionScope {
 		const task = this.deps.taskRepo.listByWorkflowRunIncludingArchived(workflowRunId)[0];
 		if (!task) throw new Error(`Task not found for workflow run: ${workflowRunId}`);
-		return this.requireScopeForTaskGoal(task.id, task.goalId ?? null);
+		return this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 	}
 }

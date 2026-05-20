@@ -97,6 +97,63 @@ describe('EvolutionScopeService', () => {
 		});
 	});
 
+	it('attaches task evidence through explicit evolutionScopeId before goal fallback', () => {
+		const scope = service.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Explicit task scope',
+			objective: 'Collect custom workflow evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Custom scoped task',
+			description: 'Has explicit evolution scope but no goal',
+			evolutionScopeId: scope.id,
+		});
+
+		const evidence = service.attachTaskEvidence({ taskId: task.id });
+
+		expect(evidence).toMatchObject({
+			scopeId: scope.id,
+			kind: 'task',
+			sourceId: task.id,
+		});
+	});
+
+	it('attaches workflow-run evidence through explicit evolutionScopeId parent task', () => {
+		const scope = service.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Explicit workflow scope',
+			objective: 'Collect workflow evidence',
+		});
+		const workflow = workflowRepo.createWorkflow({
+			spaceId,
+			name: 'Custom workflow',
+			description: 'Run custom scope',
+		});
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Custom run',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Custom workflow task',
+			description: 'Has explicit evolution scope but no goal',
+			evolutionScopeId: scope.id,
+		});
+		taskRepo.updateTask(task.id, { workflowRunId: run.id });
+
+		const evidence = service.attachWorkflowRunEvidence({ workflowRunId: run.id });
+
+		expect(evidence).toMatchObject({
+			scopeId: scope.id,
+			kind: 'workflow_run',
+			sourceId: run.id,
+		});
+	});
+
 	it('attaches workflow-run evidence through its goal-linked parent task', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Runtime check-in', type: 'recurring' });
 		const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
