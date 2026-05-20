@@ -213,9 +213,11 @@ function setupRequests(scope = makeScope()) {
 			return { episode: makeEpisode({ status: 'accepted' }) };
 		}
 		if (method === 'evolution.lesson.update') {
+			expect(data).toEqual({ id: 'lesson-1', params: { status: 'active' } });
 			return { lesson: makeLesson({ status: 'active' }) };
 		}
 		if (method === 'evolution.taskProposal.update') {
+			expect(data).toEqual({ id: 'proposal-1', params: { status: 'accepted' } });
 			return { proposal: makeProposal({ status: 'accepted' }) };
 		}
 		if (method === 'evolution.evidence.addManualNote') {
@@ -349,6 +351,36 @@ describe('SpaceForge', () => {
 		await waitFor(() =>
 			expect(mockRequest).toHaveBeenCalledWith('evolution.episode.update', {
 				id: 'episode-1',
+				params: { status: 'accepted' },
+			})
+		);
+	});
+
+	it('activates candidate lesson from review UI', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.click(await screen.findByRole('button', { name: 'Activate' }));
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.lesson.update', {
+				id: 'lesson-1',
+				params: { status: 'active' },
+			})
+		);
+	});
+
+	it('accepts task proposal from review UI', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.click((await screen.findAllByRole('button', { name: 'Accept' }))[1]);
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.taskProposal.update', {
+				id: 'proposal-1',
 				params: { status: 'accepted' },
 			})
 		);

@@ -19,6 +19,7 @@ import type {
 	MetricSnapshotValues,
 	SpaceGoal,
 	TaskProposal,
+	TaskProposalStatus,
 } from '@neokai/shared';
 import type { ComponentChild } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -30,7 +31,10 @@ import { Modal } from '../ui/Modal';
 
 type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'episodes';
 
-type ReviewActionKind = 'episode' | 'lesson' | 'proposal';
+type ReviewAction =
+	| { kind: 'episode'; id: string; status: EvolutionEpisode['status'] }
+	| { kind: 'lesson'; id: string; status: EvolutionLesson['status'] }
+	| { kind: 'proposal'; id: string; status: TaskProposalStatus };
 
 const SCOPE_KINDS: EvolutionScopeKind[] = ['mission', 'project', 'campaign', 'workflow', 'custom'];
 const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 'maintain'];
@@ -520,6 +524,7 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 		loadReview().catch(() => undefined);
 	}, [loadReview]);
 
+	// MVP review focuses on the newest draft; deeper episode history/selection can layer on later.
 	const latestEpisode = episodes[0] ?? null;
 	const groupedFindings = useMemo(
 		() => groupFindingsByDomain(latestEpisode?.findings ?? []),
@@ -565,15 +570,15 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 		}
 	};
 
-	const updateReviewItem = async (kind: ReviewActionKind, id: string, status: string) => {
+	const updateReviewItem = async (action: ReviewAction) => {
 		try {
 			setError(null);
-			if (kind === 'episode') {
+			if (action.kind === 'episode') {
 				const response = await request<{ episode: EvolutionEpisode | null }>(
 					'evolution.episode.update',
 					{
-						id,
-						params: { status },
+						id: action.id,
+						params: { status: action.status },
 					}
 				);
 				if (response.episode) {
@@ -581,12 +586,12 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 						current.map((item) => (item.id === response.episode?.id ? response.episode : item))
 					);
 				}
-			} else if (kind === 'lesson') {
+			} else if (action.kind === 'lesson') {
 				const response = await request<{ lesson: EvolutionLesson | null }>(
 					'evolution.lesson.update',
 					{
-						id,
-						params: { status },
+						id: action.id,
+						params: { status: action.status },
 					}
 				);
 				if (response.lesson) {
@@ -598,8 +603,8 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 				const response = await request<{ proposal: TaskProposal | null }>(
 					'evolution.taskProposal.update',
 					{
-						id,
-						params: { status },
+						id: action.id,
+						params: { status: action.status },
 					}
 				);
 				if (response.proposal) {
@@ -686,14 +691,18 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 						<div class="mt-4 flex gap-2">
 							<Button
 								size="sm"
-								onClick={() => updateReviewItem('episode', latestEpisode.id, 'accepted')}
+								onClick={() =>
+									updateReviewItem({ kind: 'episode', id: latestEpisode.id, status: 'accepted' })
+								}
 							>
 								Accept
 							</Button>
 							<Button
 								size="sm"
 								variant="secondary"
-								onClick={() => updateReviewItem('episode', latestEpisode.id, 'dismissed')}
+								onClick={() =>
+									updateReviewItem({ kind: 'episode', id: latestEpisode.id, status: 'dismissed' })
+								}
 							>
 								Dismiss
 							</Button>
@@ -741,14 +750,18 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 									<div class="mt-3 flex gap-2">
 										<Button
 											size="sm"
-											onClick={() => updateReviewItem('lesson', lesson.id, 'active')}
+											onClick={() =>
+												updateReviewItem({ kind: 'lesson', id: lesson.id, status: 'active' })
+											}
 										>
 											Activate
 										</Button>
 										<Button
 											size="sm"
 											variant="secondary"
-											onClick={() => updateReviewItem('lesson', lesson.id, 'dismissed')}
+											onClick={() =>
+												updateReviewItem({ kind: 'lesson', id: lesson.id, status: 'dismissed' })
+											}
 										>
 											Dismiss
 										</Button>
@@ -773,14 +786,18 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 									<div class="mt-3 flex gap-2">
 										<Button
 											size="sm"
-											onClick={() => updateReviewItem('proposal', proposal.id, 'accepted')}
+											onClick={() =>
+												updateReviewItem({ kind: 'proposal', id: proposal.id, status: 'accepted' })
+											}
 										>
 											Accept
 										</Button>
 										<Button
 											size="sm"
 											variant="secondary"
-											onClick={() => updateReviewItem('proposal', proposal.id, 'dismissed')}
+											onClick={() =>
+												updateReviewItem({ kind: 'proposal', id: proposal.id, status: 'dismissed' })
+											}
 										>
 											Dismiss
 										</Button>
