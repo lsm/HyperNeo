@@ -561,6 +561,130 @@ describe('SpaceTaskRepository', () => {
 
 			expect(searchIndexedTaskIds('nebula')).toEqual([]);
 		});
+
+		it('preserves linked message rows when a task enters terminal status', () => {
+			createSearchIndex();
+			const task = repo.createTask({
+				spaceId,
+				title: 'Task',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, task_id, space_id, task_number, message_type, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-1',
+				'uuid-1',
+				'space:space-1:task:task-1:exec:exec-1',
+				task.id,
+				spaceId,
+				task.taskNumber,
+				'user',
+				'Task',
+				'terminal task message marker',
+				Date.now()
+			);
+			expect(searchIndexedTaskIds('marker')).toEqual(['msg-1']);
+
+			repo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+
+			expect(searchIndexedTaskIds('marker')).toEqual(['msg-1']);
+		});
+
+		it('removes expired terminal task message rows when task status changes', () => {
+			createSearchIndex();
+			const task = repo.createTask({
+				spaceId,
+				title: 'Old task',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, task_id, space_id, task_number, message_type, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-old',
+				'uuid-old',
+				'space:space-1:task:task-1:exec:exec-1',
+				task.id,
+				spaceId,
+				task.taskNumber,
+				'user',
+				'Old task',
+				'expired terminal marker',
+				Date.now()
+			);
+			expect(searchIndexedTaskIds('expired')).toEqual(['msg-old']);
+
+			repo.updateTask(task.id, {
+				status: 'done',
+				completedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+			});
+
+			expect(searchIndexedTaskIds('expired')).toEqual([]);
+		});
+
+		it('removes linked message rows when task status changes to archived', () => {
+			createSearchIndex();
+			const task = repo.createTask({
+				spaceId,
+				title: 'Task',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, task_id, space_id, task_number, message_type, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-1',
+				'uuid-1',
+				'space:space-1:task:task-1:exec:exec-1',
+				task.id,
+				spaceId,
+				task.taskNumber,
+				'user',
+				'Task',
+				'archived task message marker',
+				Date.now()
+			);
+			expect(searchIndexedTaskIds('marker')).toEqual(['msg-1']);
+
+			repo.updateTask(task.id, { status: 'archived' });
+
+			expect(searchIndexedTaskIds('marker')).toEqual([]);
+			expect(searchIndexedTaskIds('task')).toEqual([task.id]);
+		});
+
+		it('removes linked message rows when archiveTask archives a task', () => {
+			createSearchIndex();
+			const task = repo.createTask({
+				spaceId,
+				title: 'Archive task',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, task_id, space_id, task_number, message_type, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-2',
+				'uuid-2',
+				'space:space-1:task:task-1:exec:exec-1',
+				task.id,
+				spaceId,
+				task.taskNumber,
+				'user',
+				'Task',
+				'archive helper marker',
+				Date.now()
+			);
+			expect(searchIndexedTaskIds('helper')).toEqual(['msg-2']);
+
+			repo.archiveTask(task.id);
+
+			expect(searchIndexedTaskIds('helper')).toEqual([]);
+		});
 	});
 
 	describe('labels field', () => {
