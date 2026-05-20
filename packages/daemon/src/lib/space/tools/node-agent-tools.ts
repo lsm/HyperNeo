@@ -1605,7 +1605,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			? [
 					tool(
 						'subscribe_external_event',
-						'Subscribe to external events matching a topic pattern (e.g. github/*/*/pull_request.*). ' +
+						'Subscribe to external events matching a topic pattern (e.g. github/*/*/pull_request/*.*). ' +
 							'Use this during execution to receive matching events directly in this node-agent session.',
 						SubscribeExternalEventSchema.shape,
 						(args) => handlers.subscribe_external_event(args)

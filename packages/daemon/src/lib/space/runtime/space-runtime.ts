@@ -438,6 +438,15 @@ function formatCommandError(error: unknown): string {
 	return JSON.stringify(error);
 }
 
+function legacyGitHubTopic(topic: string): string | null {
+	const segments = topic.split('/');
+	if (segments.length !== 5 || segments[0] !== 'github') return null;
+	const [source, owner, repo, resource, entityAction] = segments;
+	const dotIndex = entityAction.indexOf('.');
+	if (dotIndex <= 0 || dotIndex === entityAction.length - 1) return null;
+	return `${source}/${owner}/${repo}/${resource}.${entityAction.slice(dotIndex + 1)}`;
+}
+
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
 	return status === 'in_progress' || status === 'blocked';
 }
@@ -974,7 +983,7 @@ export class SpaceRuntime {
 	private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
 		const store = this.config.externalEventStore;
 		if (!store) return;
-		const matches = this.topicTrie.lookup(payload.topic).filter((target) => {
+		const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
 			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
 			if (!run || run.spaceId !== payload.spaceId) return false;
 			if (run.status === 'blocked') return this.hasActiveExecutionForRun(run.id);
@@ -2999,15 +3008,20 @@ export class SpaceRuntime {
 		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
 		topic: string
 	): boolean {
-		return this.topicTrie
-			.lookup(topic)
-			.some(
-				(match) =>
-					match.workflowRunId === target.workflowRunId &&
-					match.taskId === target.taskId &&
-					match.nodeId === target.nodeId &&
-					match.agentName === target.agentName
-			);
+		return this.lookupSubscriptionTargets(topic).some(
+			(match) =>
+				match.workflowRunId === target.workflowRunId &&
+				match.taskId === target.taskId &&
+				match.nodeId === target.nodeId &&
+				match.agentName === target.agentName
+		);
+	}
+
+	private lookupSubscriptionTargets(topic: string): SubscriptionTarget[] {
+		const matches = this.topicTrie.lookup(topic);
+		const legacyTopic = legacyGitHubTopic(topic);
+		if (!legacyTopic) return matches;
+		return matches.concat(this.topicTrie.lookup(legacyTopic));
 	}
 
 	private externalEventPayloadFromRecord(event: ExternalEvent): ExternalEventPublishedPayload {

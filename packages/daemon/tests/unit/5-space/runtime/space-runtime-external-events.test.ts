@@ -22,7 +22,8 @@ import { createSpaceTables } from '../../helpers/space-test-db';
 
 const SPACE_ID = 'space-runtime-events';
 const AGENT_ID = 'agent-runtime-events';
-const DEFAULT_TOPIC = 'github/*/*/pull_request.review_*';
+const DEFAULT_TOPIC = 'github/*/*/pull_request/*.review_*';
+const LEGACY_TOPIC = 'github/*/*/pull_request.review_*';
 
 describe('parsePositiveIntegerEnv', () => {
 	test('rejects fractional and non-positive values', () => {
@@ -66,7 +67,7 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 		id: `evt-${Math.random().toString(36).slice(2)}`,
 		spaceId: SPACE_ID,
 		source: 'github',
-		topic: 'github/lsm/neokai/pull_request.review_submitted',
+		topic: 'github/lsm/neokai/pull_request/42.review_submitted',
 		occurredAt: 1_700_000_000_000,
 		ingestedAt: 1_700_000_001_000,
 		dedupeKey: `dedupe-${Math.random().toString(36).slice(2)}`,
@@ -257,7 +258,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
 		await runtime.executeTick();
 
-		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
+		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
 		await eventService.publish(event);
 
 		expect(injected).toHaveLength(0);
@@ -279,7 +280,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 	test('throws for invalid static event interest topics during registration', async () => {
 		const workflow = createWorkflow();
-		workflow.nodes[0]!.agents![0]!.eventInterests = [{ topic: 'github/**/pull_request.opened' }];
+		workflow.nodes[0]!.agents![0]!.eventInterests = [{ topic: 'github/**/pull_request/*.opened' }];
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 		expect(() => runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes)).toThrow(
@@ -417,16 +418,28 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected[0]!.sessionId).toBe('session-restart');
 	});
 
+	test('delivers five-segment events to legacy four-segment GitHub subscriptions', async () => {
+		const { run } = await startRunWithSubscription(LEGACY_TOPIC);
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-legacy-topic',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-legacy-topic');
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe('session-legacy-topic');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
 	test('deduplicates dispatch attempts for overlapping interests', async () => {
-		const { run, task } = await startRunWithSubscription('github/*/*/pull_request.*');
+		const { run, task } = await startRunWithSubscription('github/*/*/pull_request/*.*');
 		// Register a second overlapping topic
-		runtime.registerSubscription(
-			run.id,
-			task.id,
-			'code',
-			'coder',
-			'github/*/*/pull_request.review_*'
-		);
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 		nodeExecutionRepo.update(execution.id, {
 			status: 'in_progress',
@@ -1350,7 +1363,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 	});
 
 	test('terminalizes mixed-outcome events after the final delivery succeeds', async () => {
-		const event = makeEvent({ topic: 'github/owner/repo/pull_request.review_submitted' });
+		const event = makeEvent({ topic: 'github/owner/repo/pull_request/42.review_submitted' });
 		eventStore.store(event);
 		const failedDeliveryKey = JSON.stringify([
 			'github',
@@ -1401,7 +1414,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		await runtime.stop();
 		runtime.start();
 
-		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
+		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
 		await eventService.publish(event);
 
 		expect(eventStore.getById(event.id)?.state).toBe('ignored');
@@ -1431,7 +1444,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		});
 		runtime.start();
 
-		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request.comment_created' });
+		const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
 		await eventService.publish(event);
 
 		expect(eventStore.getById(event.id)?.state).toBe('published');
@@ -1494,7 +1507,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		eventStore.store(
 			makeEvent({
 				id: 'evt-stranded-without-matches',
-				topic: 'github/lsm/neokai/pull_request.comment_created',
+				topic: 'github/lsm/neokai/pull_request/42.comment_created',
 			})
 		);
 
@@ -1600,9 +1613,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 	});
 
 	test('refreshes active run interests when subscriptions are rebuilt', async () => {
-		const { workflow, run, task } = await startRunWithSubscription(
-			'github/*/*/pull_request.review_*'
-		);
+		const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
 		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 		nodeExecutionRepo.update(execution.id, {
 			status: 'in_progress',
@@ -1613,20 +1624,14 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 		// Clear old dynamic interest and register new ones (simulates what a runtime
 		// caller would do after a workflow definition change)
-		runtime.unregisterSubscription(
-			run.id,
-			task.id,
-			'code',
-			'coder',
-			'github/*/*/pull_request.review_*'
-		);
+		runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
 		runtime.registerSubscription(
 			run.id,
 			task.id,
 			'code',
 			'coder',
-			'github/*/*/pull_request.comment_created'
+			'github/*/*/pull_request/*.comment_created'
 		);
 		await runtime.executeTick();
 
@@ -1638,7 +1643,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 		const addedInterestEvent = makeEvent({
 			id: 'evt-added-interest',
-			topic: 'github/lsm/neokai/pull_request.comment_created',
+			topic: 'github/lsm/neokai/pull_request/42.comment_created',
 		});
 		await eventService.publish(addedInterestEvent);
 		expect(eventStore.getById(addedInterestEvent.id)?.state).toBe('delivered');
@@ -1647,9 +1652,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 	});
 
 	test('clears stale queued deliveries when run interests are cleared', async () => {
-		const { workflow, run, task } = await startRunWithSubscription(
-			'github/*/*/pull_request.review_*'
-		);
+		const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
 		const event = makeEvent({ id: 'evt-queued-before-interest-update' });
 		await eventService.publish(event);
 		const queuedDelivery = eventStore.listDeliveries(event.id)[0]!;

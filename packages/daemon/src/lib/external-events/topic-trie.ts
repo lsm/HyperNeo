@@ -4,7 +4,7 @@ import type { NodeExecutionStatus } from '@neokai/shared';
  * Trie for matching validated external-event topic glob patterns.
  *
  * Supports exact path segments and segment-local `*` wildcards, including dotted
- * resource/action patterns such as `pull_request.*` and `pull_request.review_*`.
+ * entity/action patterns such as `42.*` and `*.review_*`.
  *
  * This is a workflow-runtime utility, not an event-pipeline component.
  * The pipeline publishes events; the workflow runtime uses this trie

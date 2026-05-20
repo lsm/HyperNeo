@@ -143,12 +143,14 @@ describe('GitHubEventExtension', () => {
 		)!;
 		expect(normalized.repoOwner).toBe('Acme');
 		expect(normalized.repoName).toBe('widgets');
-		expect(mapEventType(normalized.eventType, normalized.action)).toBe(
-			'pull_request.comment_created'
-		);
+		expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
+			resource: 'pull_request',
+			entityId: '7',
+			action: 'comment_created',
+		});
 
 		const event = toExternalEvent('space-1', normalized);
-		expect(event.topic).toBe('github/acme/widgets/pull_request.comment_created');
+		expect(event.topic).toBe('github/acme/widgets/pull_request/7.comment_created');
 		expect(event.source).toBe('github');
 		expect(event.payload.prNumber).toBe(7);
 		expect(event.payload.repoOwner).toBe('acme');
@@ -202,7 +204,7 @@ describe('GitHubEventExtension', () => {
 		);
 		expect(ok.status).toBe(200);
 		expect(received).toHaveLength(1);
-		expect(received[0].topic).toBe('github/acme/widgets/pull_request.comment_created');
+		expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_created');
 		expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
 
 		const duplicate = await extension.routes[0].handle(
