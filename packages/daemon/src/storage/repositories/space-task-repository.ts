@@ -499,7 +499,7 @@ export class SpaceTaskRepository {
 			const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
 			this.upsertTaskSearchRow(id);
-			if (params.status !== undefined || params.completedAt !== undefined) {
+			if (params.status === 'archived') {
 				this.deleteTaskMessageRows(id);
 			}
 

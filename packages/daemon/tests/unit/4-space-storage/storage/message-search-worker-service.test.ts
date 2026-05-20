@@ -54,4 +54,18 @@ describe('MessageSearchWorkerService', () => {
 		expect(result.results).toHaveLength(1);
 		expect(result.results[0].sourceId).toBe('msg-1');
 	});
+
+	test('resolves canceled searches with their original pagination params', async () => {
+		const dbPath = createSearchDb();
+		dbPaths.push(dbPath);
+		const service = new MessageSearchWorkerService(dbPath, 2_000);
+
+		const canceled = service.search({ query: 'worker', limit: 7, offset: 3 }, 'test-client');
+		const current = service.search({ query: 'worker', limit: 2, offset: 1 }, 'test-client');
+
+		expect(await canceled).toMatchObject({ results: [], limit: 7, offset: 3 });
+		const currentResult = await current;
+		expect(currentResult.limit).toBe(2);
+		expect(currentResult.offset).toBe(1);
+	});
 });

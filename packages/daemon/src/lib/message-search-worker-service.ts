@@ -6,6 +6,7 @@ const DEFAULT_MESSAGE_SEARCH_TIMEOUT_MS = 2_000;
 type ActiveSearch = {
 	worker: Worker;
 	timer: ReturnType<typeof setTimeout>;
+	params: MessageSearchParams;
 	resolve: (response: MessageSearchResponse) => void;
 };
 
@@ -28,7 +29,7 @@ export class MessageSearchWorkerService {
 	) {}
 
 	search(params: MessageSearchParams, coalesceKey: string): Promise<MessageSearchResponse> {
-		this.cancel(coalesceKey, params);
+		this.cancel(coalesceKey);
 
 		const requestId = generateUUID();
 		const worker = new Worker(new URL('./message-search-worker.ts', import.meta.url).href, {
@@ -50,7 +51,7 @@ export class MessageSearchWorkerService {
 				resolve(emptySearchResponse(params));
 			}, this.timeoutMs);
 
-			this.activeByKey.set(coalesceKey, { worker, timer, resolve });
+			this.activeByKey.set(coalesceKey, { worker, timer, params, resolve });
 
 			worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
 				const message = event.data;
@@ -68,12 +69,12 @@ export class MessageSearchWorkerService {
 		});
 	}
 
-	private cancel(coalesceKey: string, params: MessageSearchParams): void {
+	private cancel(coalesceKey: string): void {
 		const active = this.activeByKey.get(coalesceKey);
 		if (!active) return;
 		clearTimeout(active.timer);
 		active.worker.terminate();
 		this.activeByKey.delete(coalesceKey);
-		active.resolve(emptySearchResponse(params));
+		active.resolve(emptySearchResponse(active.params));
 	}
 }

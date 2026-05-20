@@ -562,7 +562,37 @@ describe('SpaceTaskRepository', () => {
 			expect(searchIndexedTaskIds('nebula')).toEqual([]);
 		});
 
-		it('removes linked message rows when task status changes', () => {
+		it('preserves linked message rows when a task enters terminal status', () => {
+			createSearchIndex();
+			const task = repo.createTask({
+				spaceId,
+				title: 'Task',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, task_id, space_id, task_number, message_type, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-1',
+				'uuid-1',
+				'space:space-1:task:task-1:exec:exec-1',
+				task.id,
+				spaceId,
+				task.taskNumber,
+				'user',
+				'Task',
+				'terminal task message marker',
+				Date.now()
+			);
+			expect(searchIndexedTaskIds('marker')).toEqual(['msg-1']);
+
+			repo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+
+			expect(searchIndexedTaskIds('marker')).toEqual(['msg-1']);
+		});
+
+		it('removes linked message rows when task status changes to archived', () => {
 			createSearchIndex();
 			const task = repo.createTask({
 				spaceId,
