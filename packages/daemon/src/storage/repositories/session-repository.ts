@@ -226,6 +226,13 @@ export class SessionRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			const shouldRebuildSearchRows =
+				updates.status !== undefined || updates.type !== undefined || 'context' in updates;
+			if (updates.status === 'archived') {
+				this.deleteMessageSearchRows(id);
+			} else if (shouldRebuildSearchRows) {
+				this.rebuildMessageSearchRows(id);
+			}
 			if (updates.title !== undefined) {
 				this.updateMessageSearchSessionTitle(id, updates.title);
 			}
@@ -237,6 +244,74 @@ export class SessionRepository {
 		this.db
 			.prepare(`UPDATE message_search_fts SET title = ? WHERE kind = 'message' AND session_id = ?`)
 			.run(title, sessionId);
+	}
+
+	private deleteMessageSearchRows(sessionId: string): void {
+		if (!this.tableExists('message_search_fts')) return;
+		this.db
+			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND session_id = ?`)
+			.run(sessionId);
+	}
+
+	private rebuildMessageSearchRows(sessionId: string): void {
+		if (!this.tableExists('message_search_fts') || !this.tableExists('sdk_messages')) return;
+		const hasSpaceTasks = this.tableExists('space_tasks');
+		const spaceTaskColumns = hasSpaceTasks
+			? 'st.space_id, st.task_number'
+			: 'NULL AS space_id, NULL AS task_number';
+		const spaceTaskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '';
+		const spaceTaskPolicy = hasSpaceTasks
+			? `AND COALESCE(st.status, '') != 'archived'
+				  AND NOT (
+					COALESCE(st.status, '') IN ('done', 'cancelled', 'completed')
+					AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
+				  )`
+			: '';
+		this.deleteMessageSearchRows(sessionId);
+		this.db
+			.prepare(
+				`INSERT INTO message_search_fts (
+					kind, source_id, message_id, session_id, task_id, space_id, task_number,
+					message_type, title, body, timestamp
+				)
+				SELECT
+					'message', sm.id,
+					COALESCE(json_extract(sm.sdk_message, '$.uuid'), sm.id), sm.session_id,
+					sm.task_id, ${spaceTaskColumns}, sm.message_type, s.title,
+					CASE
+						WHEN json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
+							SELECT GROUP_CONCAT(
+								COALESCE(json_extract(value, '$.text'), json_extract(value, '$.thinking')),
+								char(10)
+							)
+							FROM json_each(sm.sdk_message, '$.message.content')
+							WHERE json_extract(value, '$.type') IN ('text', 'thinking')
+						)
+						WHEN json_type(sm.sdk_message, '$.message.content') = 'text' THEN
+							json_extract(sm.sdk_message, '$.message.content')
+						ELSE NULL
+					END,
+					CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
+						+ CAST(substr(strftime('%f', sm.timestamp), 4, 3) AS INTEGER)
+				FROM sdk_messages sm
+				JOIN sessions s ON s.id = sm.session_id
+				${spaceTaskJoin}
+				WHERE sm.session_id = ?
+				  AND json_valid(sm.sdk_message)
+				  AND sm.message_type IN ('system', 'user', 'assistant')
+				  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+				  AND COALESCE(s.status, '') != 'archived'
+				  AND NOT (COALESCE(s.status, '') = 'ended' AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days'))
+				  AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'planner', 'coder', 'leader', 'general')
+				  AND (s.session_context IS NULL OR json_valid(s.session_context) = 0 OR COALESCE(json_extract(s.session_context, '$.roomId'), '') = '')
+				  AND (
+					(sm.session_id NOT LIKE '%:%' AND COALESCE(s.type, 'worker') = 'worker')
+					OR sm.session_id LIKE 'space:%'
+					OR s.type IN ('space_chat', 'space_task_agent')
+				  )
+				  ${spaceTaskPolicy}`
+			)
+			.run(sessionId);
 	}
 
 	/**
@@ -276,6 +351,7 @@ export class SessionRepository {
 	archiveSession(id: string): void {
 		const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
 		stmt.run(id);
+		this.deleteMessageSearchRows(id);
 	}
 
 	/**

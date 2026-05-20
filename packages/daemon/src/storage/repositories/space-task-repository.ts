@@ -80,6 +80,31 @@ export class SpaceTaskRepository {
 		this.db.prepare(`DELETE FROM message_search_fts WHERE task_id = ?`).run(taskId);
 	}
 
+	private deleteTaskMessageRows(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db
+			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND task_id = ?`)
+			.run(taskId);
+	}
+
+	private deleteExpiredTerminalTaskMessageRows(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db
+			.prepare(
+				`DELETE FROM message_search_fts
+				 WHERE kind = 'message'
+				   AND task_id = ?
+				   AND EXISTS (
+					 SELECT 1
+					 FROM space_tasks st
+					 WHERE st.id = message_search_fts.task_id
+					   AND st.status IN ('done', 'cancelled', 'completed')
+					   AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
+				   )`
+			)
+			.run(taskId);
+	}
+
 	/**
 	 * Create a new space task
 	 */
@@ -492,6 +517,11 @@ export class SpaceTaskRepository {
 			const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
 			this.upsertTaskSearchRow(id);
+			if (params.status === 'archived') {
+				this.deleteTaskMessageRows(id);
+			} else if (params.status !== undefined || params.completedAt !== undefined) {
+				this.deleteExpiredTerminalTaskMessageRows(id);
+			}
 
 			this.reactiveDb?.notifyChange('space_tasks');
 		}
@@ -510,6 +540,7 @@ export class SpaceTaskRepository {
 		);
 		stmt.run(now, now, id);
 		this.upsertTaskSearchRow(id);
+		this.deleteTaskMessageRows(id);
 		this.reactiveDb?.notifyChange('space_tasks');
 		return this.getTask(id);
 	}

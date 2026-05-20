@@ -642,8 +642,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 136: Add agent-memory embedding status and vector storage.
 	runMigration136(db);
 
-	// Migration 137: Add durable inbox for long-term Space agents.
+	// Migration 137: Prune message search rows to current search retention policy.
 	runMigration137(db);
+
+	// Migration 138: Add durable inbox for long-term Space agents.
+	runMigration138(db);
 }
 
 /**
@@ -9117,6 +9120,99 @@ export function runMigration134(db: BunDatabase): void {
 	}
 }
 
+export function runMigration137(db: BunDatabase): void {
+	if (!tableExists(db, 'message_search_fts')) return;
+
+	let prunedRows = 0;
+	const recordPrune = (result: { changes?: number }): void => {
+		prunedRows += result.changes ?? 0;
+	};
+	const terminalCutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+	const terminalCutoffIso = new Date(terminalCutoffMs).toISOString();
+
+	recordPrune(
+		db
+			.prepare(
+				`DELETE FROM message_search_fts
+				 WHERE kind = 'message'
+				   AND COALESCE(message_type, '') NOT IN ('system', 'user', 'assistant')`
+			)
+			.run()
+	);
+
+	const deleteRoomNamespacedRows = db.prepare(`
+		DELETE FROM message_search_fts
+		WHERE kind = 'message'
+		  AND (
+			session_id LIKE 'room:chat:%'
+			OR session_id LIKE 'planner:%'
+			OR session_id LIKE 'coder:%'
+			OR session_id LIKE 'leader:%'
+			OR session_id LIKE 'general:%'
+			OR (instr(session_id, ':') > 0 AND session_id NOT LIKE 'space:%')
+		  )
+	`);
+	recordPrune(deleteRoomNamespacedRows.run());
+
+	if (
+		tableExists(db, 'sessions') &&
+		tableHasColumn(db, 'sessions', 'status') &&
+		tableHasColumn(db, 'sessions', 'type') &&
+		tableHasColumn(db, 'sessions', 'last_active_at') &&
+		tableHasColumn(db, 'sessions', 'session_context')
+	) {
+		recordPrune(
+			db
+				.prepare(
+					`
+					DELETE FROM message_search_fts
+					WHERE kind = 'message'
+					  AND session_id IN (
+						SELECT id
+						FROM sessions
+						WHERE status = 'archived'
+						   OR (status = 'ended' AND last_active_at < ?)
+						   OR type IN ('room_chat', 'planner', 'coder', 'leader', 'general')
+						   OR (json_valid(session_context) AND json_extract(session_context, '$.roomId') IS NOT NULL)
+						   OR (id NOT LIKE 'space:%' AND instr(id, ':') > 0)
+						   OR (id NOT LIKE 'space:%' AND type NOT IN ('worker', 'space_chat', 'space_task_agent'))
+					  )
+				`
+				)
+				.run(terminalCutoffIso)
+		);
+	}
+
+	if (
+		tableExists(db, 'space_tasks') &&
+		tableHasColumn(db, 'space_tasks', 'status') &&
+		tableHasColumn(db, 'space_tasks', 'completed_at') &&
+		tableHasColumn(db, 'space_tasks', 'updated_at')
+	) {
+		recordPrune(
+			db
+				.prepare(
+					`
+					DELETE FROM message_search_fts
+					WHERE kind = 'message'
+					  AND task_id IN (
+						SELECT id
+						FROM space_tasks
+						WHERE status = 'archived'
+						   OR (status IN ('done', 'cancelled', 'completed')
+						       AND COALESCE(completed_at, updated_at, 0) < ?)
+					  )
+				`
+				)
+				.run(terminalCutoffMs)
+		);
+	}
+
+	if (prunedRows > 0) {
+		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('optimize')`);
+	}
+}
+
 function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
 	const row = db.prepare(`SELECT 1 AS present FROM message_search_fts LIMIT 1`).get() as
 		| { present: number }
@@ -9224,6 +9320,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 			${sessionJoin}
 			${taskJoin}
 			WHERE json_valid(sm.sdk_message)
+			  AND sm.message_type IN ('system', 'user', 'assistant')
 			  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 		`);
 	}
@@ -9438,13 +9535,13 @@ export function runMigration135(db: BunDatabase): void {
 }
 
 /**
- * Migration 137: Add durable inbox for long-term Space agents.
+ * Migration 138: Add durable inbox for long-term Space agents.
  *
  * Workflow-node pending messages are scoped to a workflow run. Long-term Space
  * agents are space-scoped and can receive DMs from ad-hoc sessions or workers,
  * so they need a separate inbox that can wake/replay their stable session.
  */
-export function runMigration137(db: BunDatabase): void {
+export function runMigration138(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_inbox_messages (
 			id TEXT PRIMARY KEY,
