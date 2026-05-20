@@ -24,6 +24,7 @@ import type { SpaceTaskRepository } from '../../../../src/storage/repositories/s
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type { McpServerConfig, Session, Space } from '@neokai/shared';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -73,8 +74,15 @@ function buildConfig(
 		spaceWorkflowManager: {} as SpaceWorkflowManager,
 		workflowRunRepo: {} as SpaceWorkflowRunRepository,
 		taskRepo: {} as SpaceTaskRepository,
+		nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 		tickIntervalMs,
 	};
+}
+
+function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
+	return {
+		getByAgentSessionId: mock(() => null),
+	} as unknown as NodeExecutionRepository;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -436,6 +444,7 @@ describe('SpaceRuntimeService', () => {
 				spaceWorkflowManager: makeWorkflowManager(),
 				workflowRunRepo: {} as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 				internalEventBus,
@@ -662,11 +671,10 @@ describe('SpaceRuntimeService', () => {
 
 	// ─── attachSpaceToolsToMemberSession ─────────────────────────────────────
 	//
-	// These tests cover the wider scope introduced for Task #31 Part B:
-	// every session whose `context.spaceId` is set (other than space_chat,
-	// which has its own full-prompt setup, and space_task_agent, which is
-	// managed by TaskAgentManager) should get `space-agent-tools` merged
-	// into its runtime MCP map — without touching its system prompt.
+	// These tests cover the role policy used for SpaceRuntime-owned sessions:
+	// ad-hoc Space members get `space-agent-tools` merged into their runtime MCP
+	// map without touching their system prompt; coordinator and workflow-worker
+	// sessions are owned by other paths and skipped here.
 
 	describe('attachSpaceToolsToMemberSession()', () => {
 		function makeMemberAgentSession() {
@@ -688,6 +696,7 @@ describe('SpaceRuntimeService', () => {
 			sessionManager: SessionManager;
 			listSessionsResult?: Session[];
 			dbPath?: string;
+			nodeExecutionRepo?: Pick<NodeExecutionRepository, 'getByAgentSessionId'>;
 		}): SpaceRuntimeServiceConfig {
 			if (opts.listSessionsResult) {
 				(opts.sessionManager as unknown as { listSessions: Mock<() => Session[]> }).listSessions =
@@ -707,6 +716,9 @@ describe('SpaceRuntimeService', () => {
 				taskRepo: {} as SpaceTaskRepository,
 				tickIntervalMs: 60_000,
 				sessionManager: opts.sessionManager,
+				nodeExecutionRepo:
+					(opts.nodeExecutionRepo as NodeExecutionRepository | undefined) ??
+					makeNoopNodeExecutionRepo(),
 			};
 		}
 
@@ -726,7 +738,7 @@ describe('SpaceRuntimeService', () => {
 			} as unknown as Session;
 		}
 
-		test('attaches space-agent-tools to a worker session with context.spaceId', async () => {
+		test('attaches space-agent-tools to an ad-hoc Space member session', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
 			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
@@ -776,7 +788,7 @@ describe('SpaceRuntimeService', () => {
 			}
 		});
 
-		test('skips sessions without context.spaceId', async () => {
+		test('skips sessions outside Space policy', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
 			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
@@ -800,19 +812,20 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 		});
 
-		test('skips workflow node-agent sub-sessions (session ID contains :task:…:exec:)', async () => {
+		test('skips workflow workers identified by node execution ownership', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
-			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+			const workflowSession = makeMemberSession({ id: 'opaque-workflow-worker' });
+			const nodeExecutionRepo = {
+				getByAgentSessionId: mock((sessionId: string) =>
+					sessionId === workflowSession.id ? { id: 'exec-1' } : null
+				),
+			};
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager, nodeExecutionRepo }));
 
-			// Simulate a workflow sub-session ID: space:<spaceId>:task:<taskId>:exec:<execId>
-			await svc.attachSpaceToolsToMemberSession(
-				makeMemberSession({
-					type: 'worker',
-					id: `space:${mockSpace.id}:task:task-1:exec:exec-a`,
-				})
-			);
+			await svc.attachSpaceToolsToMemberSession(workflowSession);
 
+			expect(nodeExecutionRepo.getByAgentSessionId).toHaveBeenCalledWith(workflowSession.id);
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 		});
 
@@ -931,6 +944,7 @@ describe('SpaceRuntimeService', () => {
 				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
 				workflowRunRepo: {} as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 				internalEventBus,
@@ -955,7 +969,7 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
-		test('does NOT attach for sessions without context.spaceId (non-space sessions)', async () => {
+		test('does NOT attach for sessions outside Space policy', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = {
 				getSessionAsync: mock(async () => agent),
@@ -970,6 +984,7 @@ describe('SpaceRuntimeService', () => {
 				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
 				workflowRunRepo: {} as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 				internalEventBus,
@@ -1003,6 +1018,7 @@ describe('SpaceRuntimeService', () => {
 				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
 				workflowRunRepo: {} as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 				internalEventBus,
@@ -1024,13 +1040,21 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
-		test('does NOT attach for workflow node-agent sub-sessions (session ID contains :task:…:exec:)', async () => {
+		test('does NOT attach for workflow workers identified by node execution ownership', async () => {
+			const agent = makeMemberAgentSession();
 			const sessionManager = {
-				getSessionAsync: mock(async () => null),
+				getSessionAsync: mock(async () => agent),
 				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
-			const internalEventBus = await createTestInternalEventBus('space-rts-test-sub-session-guard');
-			const agent = makeMemberAgentSession();
+			const internalEventBus = await createTestInternalEventBus(
+				'space-rts-test-sub-session-policy'
+			);
+			const subSession = makeMemberSession({ id: 'opaque-workflow-worker' });
+			const nodeExecutionRepo = {
+				getByAgentSessionId: mock((sessionId: string) =>
+					sessionId === subSession.id ? { id: 'exec-1' } : null
+				),
+			};
 			const svc = new SpaceRuntimeService({
 				db: {} as BunDatabase,
 				spaceManager: createMockSpaceManager(mockSpace),
@@ -1041,22 +1065,18 @@ describe('SpaceRuntimeService', () => {
 				tickIntervalMs: 60_000,
 				sessionManager,
 				internalEventBus,
-				getSessionAsync: mock(async () => agent),
+				nodeExecutionRepo: nodeExecutionRepo as unknown as NodeExecutionRepository,
 			});
 
 			svc.start();
 
-			// Simulate a workflow sub-session ID: space:<spaceId>:task:<taskId>:exec:<execId>
-			const subSession = makeMemberSession({
-				type: 'worker',
-				id: `space:${mockSpace.id}:task:task-1:exec:exec-a`,
-			});
 			await internalEventBus.publish('session.created', {
 				sessionId: subSession.id,
 				session: subSession,
 			});
 			await new Promise<void>((resolve) => setTimeout(resolve, 10));
 
+			expect(nodeExecutionRepo.getByAgentSessionId).toHaveBeenCalledWith(subSession.id);
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 
 			await svc.stop();
@@ -1079,6 +1099,7 @@ describe('SpaceRuntimeService', () => {
 				spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
 				workflowRunRepo: {} as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 				internalEventBus,
@@ -1198,6 +1219,7 @@ describe('SpaceRuntimeService', () => {
 					getActiveRuns: mock(() => []),
 				} as unknown as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 			});
@@ -1265,6 +1287,7 @@ describe('SpaceRuntimeService', () => {
 				} as unknown as SpaceWorkflowManager,
 				workflowRunRepo: {} as SpaceWorkflowRunRepository,
 				taskRepo: {} as SpaceTaskRepository,
+				nodeExecutionRepo: makeNoopNodeExecutionRepo(),
 				tickIntervalMs: 60_000,
 				sessionManager,
 			});

@@ -105,6 +105,14 @@ describe('QueryRunner', () => {
 			getMessagesByStatus: getMessagesByStatusSpy,
 			getSDKMessages: getSDKMessagesSpy,
 			updateMessageStatus: updateMessageStatusSpy,
+			getNodeExecutionRepo: mock(() => ({
+				getByAgentSessionId: (sessionId: string) =>
+					sessionId === 'space:s1:task:t1:exec:e1' ? { id: 'exec-1' } : null,
+			})),
+			getSpaceTaskRepo: mock(() => ({
+				getTask: (taskId: string) =>
+					taskId === 't1' ? { id: 't1', spaceId: 's1', workflowRunId: 'run-1' } : null,
+			})),
 		} as unknown as Database;
 
 		// MessageHub spies
@@ -306,6 +314,11 @@ describe('QueryRunner', () => {
 						name: 'node-agent',
 						instance: {},
 					},
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
 				};
 				buildSpy
 					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
@@ -326,6 +339,7 @@ describe('QueryRunner', () => {
 
 				expect(onMissingWorkflowMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
 					'node-agent',
+					'space-agent-tools',
 				]);
 				expect(buildSpy).toHaveBeenCalledTimes(2);
 				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
@@ -581,7 +595,7 @@ describe('QueryRunner', () => {
 			});
 		});
 
-		it('self-heals missing member Space MCP for workflow sub-sessions', async () => {
+		it('skips member Space MCP invariant for workflow sub-sessions', async () => {
 			await withAnthropicApiKey(async () => {
 				mockSession.id = 'space:s1:task:t1:exec:e1';
 				mockSession.workspacePath = tmpdir();
@@ -624,11 +638,9 @@ describe('QueryRunner', () => {
 				runner.start();
 				await ctx.queryPromise?.catch(() => {});
 
-				expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith('space:s1:task:t1:exec:e1', [
-					'space-agent-tools',
-				]);
-				expect(buildSpy).toHaveBeenCalledTimes(2);
-				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+				expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
+				expect(buildSpy).toHaveBeenCalledTimes(1);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
 			});
 		});
 	});

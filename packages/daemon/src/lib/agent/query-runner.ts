@@ -25,6 +25,12 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from './transient-error-patterns';
+import {
+	missingMcpServers,
+	resolveSpaceMcpSessionPolicy,
+	SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
+	SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
+} from '../space/runtime/space-mcp-session-policy';
 import type { OriginalEnvVars } from '../provider-service';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
@@ -86,7 +92,7 @@ function getStartupTimeoutMs(): number {
 // in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 
-const REQUIRED_SPACE_CHAT_MCP_SERVERS = ['space-agent-tools'] as const;
+const REQUIRED_SPACE_CHAT_MCP_SERVERS = SPACE_COORDINATOR_REQUIRED_MCP_SERVERS;
 const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
 	'create_standalone_task',
 	'get_task_detail',
@@ -97,8 +103,6 @@ const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
 	'suggest_workflow',
 	'get_workflow_detail',
 ] as const;
-const REQUIRED_MEMBER_SPACE_MCP_SERVERS = ['space-agent-tools'] as const;
-
 /**
  * Context interface - what QueryRunner needs from AgentSession
  * Handlers take AgentSession instance directly via this context pattern
@@ -161,10 +165,10 @@ export interface QueryRunnerContext {
 	onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
 	/**
-	 * Self-heal hook for Space member sessions (ad-hoc worker sessions with
-	 * `context.spaceId`) missing their `space-agent-tools` MCP server.
-	 * SpaceRuntimeService wires this in `attachSpaceToolsToMemberSession()` so
-	 * cache eviction / DB reload cannot silently start a degraded turn.
+	 * Self-heal hook for SpaceRuntime-owned member sessions missing their
+	 * `space-agent-tools` MCP server. SpaceRuntimeService wires this in
+	 * `attachSpaceToolsToMemberSession()` so cache eviction / DB reload cannot
+	 * silently start a degraded turn.
 	 */
 	onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
@@ -337,23 +341,19 @@ export class QueryRunner {
 			// (joinable by sessionId/taskId/workflowRunId) so monitoring can detect
 			// regressions without grepping prose log lines.
 			const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-			const isWorkflowSubSession = !!(
-				session.context?.spaceId &&
-				session.id.includes(':task:') &&
-				session.id.includes(':exec:')
-			);
-			// Best-effort taskId / workflowRunId extraction from sub-session ids.
-			// Sub-session id shape: "space:<spaceId>:task:<taskId>:exec:<execId>".
-			// The fields are diagnostic only — never used to drive behavior.
-			const subSessionTaskId = isWorkflowSubSession
-				? session.id.split(':task:')[1]?.split(':')[0]
-				: undefined;
-			const sessionTaskId = (session.context?.taskId as string | undefined) ?? subSessionTaskId;
+			const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
+				nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
+				taskRepo: this.ctx.db.getSpaceTaskRepo(),
+			});
+			const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
+			const sessionTaskId = session.context?.taskId as string | undefined;
 			const snapshotPayload = {
 				event: 'query.mcp.snapshot',
 				sessionId: session.id,
 				sessionType: session.type,
-				...(session.context?.spaceId ? { spaceId: session.context.spaceId } : {}),
+				role: spacePolicy.role,
+				owner: spacePolicy.owner,
+				...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
 				...(sessionTaskId ? { taskId: sessionTaskId } : {}),
 				...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
 				mcpServers: mcpServerNames,
@@ -377,15 +377,20 @@ export class QueryRunner {
 			// No health check on healthy starts — the outer condition is strictly
 			// `missingServers.length > 0` to avoid false-positive throws.
 			if (isWorkflowSubSession) {
-				const requiredServers = ['node-agent'] as const;
-				const missingServers = requiredServers.filter((name) => !mcpServerNames.includes(name));
+				const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
+				const missingServers = missingMcpServers(
+					queryOptions.mcpServers as Record<string, unknown> | undefined,
+					requiredServers
+				);
 
 				if (missingServers.length > 0) {
 					const diagnosticPayload = {
 						event: 'workflow.mcp.missing',
 						sessionId: session.id,
-						spaceId: session.context?.spaceId,
+						spaceId: spacePolicy.spaceId,
 						sessionType: session.type,
+						role: spacePolicy.role,
+						owner: spacePolicy.owner,
 						requiredServers,
 						missingServers,
 						presentServers: mcpServerNames,
@@ -1087,48 +1092,37 @@ export class QueryRunner {
 	}
 
 	/**
-	 * Ensure Space member sessions (ad-hoc worker sessions with `context.spaceId`)
-	 * have their required `space-agent-tools` MCP server attached before the SDK
-	 * query starts.
+	 * Ensure sessions owned by SpaceRuntimeService have their role-specific
+	 * `space-agent-tools` MCP server attached before the SDK query starts.
 	 *
-	 * This is the member-session counterpart to `ensureSpaceChatMcpInvariant`.
-	 * Space chat sessions get their tools + system prompt from
-	 * `setupSpaceAgentSession`; member sessions get only the MCP tools from
-	 * `attachSpaceToolsToMemberSession`. Both paths are vulnerable to losing
-	 * runtime-only MCP config after cache eviction / DB reload, so both need a
-	 * deterministic pre-query guard.
-	 *
-	 * Skipped for:
-	 *   - space_chat sessions (handled by ensureSpaceChatMcpInvariant)
-	 *   - space_task_agent sessions (legacy, intentionally not provisioned by
-	 *     attachSpaceToolsToMemberSession)
-	 *   - sessions without context.spaceId
-	 *
-	 * Workflow sub-sessions are included because they are also Space members;
-	 * TaskAgentManager provides the specialised self-heal callback for them.
+	 * This guard follows the central Space MCP session policy instead of inferring
+	 * ownership from broad Space context or session ID shape. Workflow workers are
+	 * guarded separately above because TaskAgentManager owns their node-agent and
+	 * workflow-scoped space-agent-tools attachment.
 	 */
 	private async ensureMemberSpaceMcpInvariant(queryOptions: Options): Promise<Options> {
 		const { session, logger } = this.ctx;
-		// Only applies to member sessions that belong to a Space but are not the
-		// Space chat session itself or a legacy task-agent session. Workflow
-		// sub-sessions are still Space members, but TaskAgentManager wires their
-		// specialised space-agent-tools server and callback.
-		if (!session.context?.spaceId) return queryOptions;
-		if (session.type === 'space_chat') return queryOptions;
-		if (session.type === 'space_task_agent') return queryOptions;
+		const policy = resolveSpaceMcpSessionPolicy(session, {
+			nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
+			taskRepo: this.ctx.db.getSpaceTaskRepo(),
+		});
+		if (!policy.attachGenericSpaceTools) return queryOptions;
 
 		const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-		const missingServers = REQUIRED_MEMBER_SPACE_MCP_SERVERS.filter(
-			(name) => !serverNames.includes(name)
+		const missingServers = missingMcpServers(
+			queryOptions.mcpServers as Record<string, unknown> | undefined,
+			policy.requiredServers
 		);
 		if (missingServers.length === 0) return queryOptions;
 
 		const payload = {
 			event: 'member_space.mcp.missing',
 			sessionId: session.id,
-			spaceId: session.context.spaceId,
+			spaceId: policy.spaceId,
 			sessionType: session.type,
-			requiredServers: REQUIRED_MEMBER_SPACE_MCP_SERVERS,
+			role: policy.role,
+			owner: policy.owner,
+			requiredServers: policy.requiredServers,
 			missingServers,
 			presentServers: serverNames,
 			liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
@@ -1145,9 +1139,9 @@ export class QueryRunner {
 			await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
 			const rebuilt = await this.ctx.optionsBuilder.build();
 			const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
-			const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
-			const stillMissing = REQUIRED_MEMBER_SPACE_MCP_SERVERS.filter(
-				(name) => !repairedServerNames.includes(name)
+			const stillMissing = missingMcpServers(
+				repairedOptions.mcpServers as Record<string, unknown> | undefined,
+				policy.requiredServers
 			);
 			if (stillMissing.length > 0) {
 				throw new Error(

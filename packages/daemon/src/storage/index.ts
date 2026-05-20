@@ -38,6 +38,8 @@ import {
 import { JobQueueRepository } from './repositories/job-queue-repository';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 import { TaskRepository } from './repositories/task-repository';
+import { SpaceTaskRepository } from './repositories/space-task-repository';
+import { NodeExecutionRepository } from './repositories/node-execution-repository';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 import { SkillRepository } from './repositories/skill-repository';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
@@ -99,6 +101,8 @@ export class Database {
 	private jobQueueRepo!: JobQueueRepository;
 	private appMcpServerRepo!: AppMcpServerRepository;
 	private taskRepo!: TaskRepository;
+	private spaceTaskRepo!: SpaceTaskRepository;
+	private nodeExecutionRepo!: NodeExecutionRepository;
 	private mcpEnablementRepo!: McpEnablementRepository;
 	private skillRepo!: SkillRepository;
 	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
@@ -128,6 +132,8 @@ export class Database {
 		this.inboxItemRepo = new InboxItemRepository(db);
 		this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
 		this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
+		this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
+		this.nodeExecutionRepo = new NodeExecutionRepository(db);
 		this.jobQueueRepo = new JobQueueRepository(db);
 		this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
 		this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
@@ -511,6 +517,22 @@ export class Database {
 	 */
 	getTaskRepo(): TaskRepository {
 		return this.taskRepo;
+	}
+
+	/**
+	 * Get the Space task repository
+	 * Used for Space workflow session-role policy checks
+	 */
+	getSpaceTaskRepo(): SpaceTaskRepository {
+		return this.spaceTaskRepo;
+	}
+
+	/**
+	 * Get the Space node execution repository
+	 * Used for workflow worker session-role policy checks
+	 */
+	getNodeExecutionRepo(): NodeExecutionRepository {
+		return this.nodeExecutionRepo;
 	}
 
 	/**
