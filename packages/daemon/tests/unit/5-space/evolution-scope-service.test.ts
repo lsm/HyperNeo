@@ -160,6 +160,21 @@ describe('EvolutionScopeService', () => {
 		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
 	});
 
+	it('returns no active lessons for tasks with stale goalId', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Stale goal task',
+			description: 'References missing goal',
+			goalId: 'missing-goal',
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			'EvolutionScope not found for SpaceGoal: missing-goal'
+		);
+	});
+
 	it('returns no active lessons for tasks with stale evolutionScopeId', () => {
 		const task = taskRepo.createTask({
 			spaceId,

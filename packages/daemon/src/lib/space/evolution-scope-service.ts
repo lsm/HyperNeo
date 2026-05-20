@@ -296,7 +296,11 @@ export class EvolutionScopeService {
 	): EvolutionScope | null {
 		if (evolutionScopeId) return this.deps.evolutionRepo.getScope(evolutionScopeId) ?? null;
 		if (!goalId) return null;
-		return this.resolveScopeForGoal({ spaceGoalId: goalId });
+		const goal = this.deps.goalRepo.getById(goalId);
+		if (!goal) return null;
+		return (
+			this.deps.evolutionRepo.listScopes({ spaceId: goal.spaceId, spaceGoalId: goal.id })[0] ?? null
+		);
 	}
 
 	private requireScopeForTask(
