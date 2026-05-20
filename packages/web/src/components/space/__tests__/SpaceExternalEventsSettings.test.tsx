@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
@@ -67,6 +67,20 @@ const disabledExtensionResult = {
 				source: 'github',
 				globallyEnabled: false,
 				capabilities: { webhooks: true, polling: false, rpcConfig: true },
+			},
+		},
+	],
+};
+
+const rpcDisabledExtensionResult = {
+	extensions: [
+		{
+			source: 'github',
+			status: 'started',
+			config: {
+				source: 'github',
+				globallyEnabled: true,
+				capabilities: { webhooks: true, polling: false, rpcConfig: false },
 			},
 		},
 	],
@@ -148,8 +162,50 @@ describe('SpaceExternalEventsSettings', () => {
 		expect(mockToastError).not.toHaveBeenCalled();
 	});
 
+	it('disables GitHub controls when RPC config capability is disabled', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list')
+				return Promise.resolve(rpcDisabledExtensionResult);
+			return Promise.reject(new Error('METHOD_NOT_FOUND'));
+		});
+
+		const { findByText, getByPlaceholderText, getByText } = render(
+			<SpaceExternalEventsSettings spaceId="space-1" />
+		);
+
+		expect(await findByText('github')).toBeTruthy();
+		expect(screen.getAllByRole('checkbox')[1]).toHaveProperty('disabled', true);
+		expect(getByPlaceholderText('owner/repository')).toHaveProperty('disabled', true);
+		expect(getByPlaceholderText('Webhook secret (optional)')).toHaveProperty('disabled', true);
+		expect(getByText('Add watch')).toHaveProperty('disabled', true);
+		expect(mockRequest).not.toHaveBeenCalledWith('space.github.listConfig', expect.anything());
+		expect(mockRequest).not.toHaveBeenCalledWith(
+			'space.github.listWatchedRepos',
+			expect.anything()
+		);
+	});
+
 	it('toggles space enablement', async () => {
 		setupRequests();
+		const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await findByText('github');
+
+		fireEvent.click(getByText('Enabled for this space'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('space.github.disable', { spaceId: 'space-1' });
+		});
+	});
+
+	it('treats missing space config as enabled by default', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') return Promise.resolve(null);
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
+			return Promise.resolve({});
+		});
 		const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
 		await findByText('github');
 
@@ -176,6 +232,43 @@ describe('SpaceExternalEventsSettings', () => {
 				webhookEnabled: true,
 				pollingEnabled: true,
 			});
+		});
+	});
+
+	it('ignores stale refresh responses when the space changes', async () => {
+		let resolveRepos!: (value: { repositories: typeof repoResult.repositories }) => void;
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method, params) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: params.spaceId,
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos' && params.spaceId === 'space-1') {
+				return new Promise((resolve) => {
+					resolveRepos = resolve;
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') {
+				return Promise.resolve({
+					repositories: [{ ...repoResult.repositories[0], id: 'repo-2', owner: 'beta' }],
+				});
+			}
+			return Promise.resolve({});
+		});
+
+		const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await waitFor(() => expect(resolveRepos).toBeTypeOf('function'));
+		view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
+		resolveRepos(repoResult);
+
+		expect(await view.findByText('beta/widgets')).toBeTruthy();
+		await waitFor(() => {
+			expect(view.queryByText('acme/widgets')).toBeNull();
 		});
 	});
 
@@ -215,7 +308,7 @@ describe('SpaceExternalEventsSettings', () => {
 		});
 	});
 
-	it('adds repository watches from owner/repo input', async () => {
+	it('adds repository watches with webhooks when a secret is provided', async () => {
 		setupRequests();
 		const { findByText, getByPlaceholderText, getByText } = render(
 			<SpaceExternalEventsSettings spaceId="space-1" />
@@ -236,6 +329,28 @@ describe('SpaceExternalEventsSettings', () => {
 				webhookSecret: 'secret',
 				webhookEnabled: true,
 				pollingEnabled: false,
+			});
+		});
+	});
+
+	it('adds repository watches with polling when no webhook secret is provided', async () => {
+		setupRequests();
+		const { findByText, getByPlaceholderText, getByText } = render(
+			<SpaceExternalEventsSettings spaceId="space-1" />
+		);
+		await findByText('github');
+
+		fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+		fireEvent.click(getByText('Add watch'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('space.github.watchRepo', {
+				spaceId: 'space-1',
+				owner: 'foo',
+				repo: 'bar',
+				webhookSecret: undefined,
+				webhookEnabled: false,
+				pollingEnabled: true,
 			});
 		});
 	});

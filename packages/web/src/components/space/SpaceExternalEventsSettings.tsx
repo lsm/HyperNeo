@@ -2,7 +2,7 @@
  * SpaceExternalEventsSettings — external event source configuration for a Space.
  */
 
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
@@ -90,17 +90,27 @@ export function SpaceExternalEventsSettings({
 	const [repoInput, setRepoInput] = useState('');
 	const [webhookSecret, setWebhookSecret] = useState('');
 	const [formError, setFormError] = useState<string | null>(null);
+	const refreshTokenRef = useRef(0);
 
 	const githubExtension = extensions.find((extension) => extension.source === 'github');
 	const githubGloballyEnabled = githubExtension?.config.globallyEnabled ?? false;
-	const githubSpaceEnabled = spaceConfig?.enabled ?? repos.some((repo) => repo.enabled);
+	const githubRpcConfigEnabled = githubExtension?.config.capabilities.rpcConfig ?? false;
+	const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
+	const githubSpaceEnabled = spaceConfig?.enabled ?? true;
 	const webhookUrl = useMemo(getWebhookUrl, []);
 
 	async function refresh(): Promise<void> {
+		const refreshToken = refreshTokenRef.current + 1;
+		refreshTokenRef.current = refreshToken;
+		const refreshSpaceId = spaceId;
+		const isCurrentRefresh = () =>
+			refreshTokenRef.current === refreshToken && refreshSpaceId === spaceId;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
-			toast.error('Not connected to server');
-			setLoading(false);
+			if (isCurrentRefresh()) {
+				toast.error('Not connected to server');
+				setLoading(false);
+			}
 			return;
 		}
 		try {
@@ -109,6 +119,7 @@ export function SpaceExternalEventsSettings({
 				'externalEvents.extensions.list',
 				{}
 			);
+			if (!isCurrentRefresh()) return;
 			setExtensions(extensionResult.extensions);
 
 			const github = extensionResult.extensions.find((extension) => extension.source === 'github');
@@ -119,19 +130,23 @@ export function SpaceExternalEventsSettings({
 			}
 
 			const [configResult, repoResult] = await Promise.all([
-				hub.request<GitHubSpaceConfig | null>('space.github.listConfig', { spaceId }),
+				hub.request<GitHubSpaceConfig | null>('space.github.listConfig', {
+					spaceId: refreshSpaceId,
+				}),
 				hub.request<{ repositories: GitHubWatchedRepo[] }>('space.github.listWatchedRepos', {
-					spaceId,
+					spaceId: refreshSpaceId,
 				}),
 			]);
+			if (!isCurrentRefresh()) return;
 			setSpaceConfig(configResult);
 			setRepos(repoResult.repositories);
 		} catch (err) {
+			if (!isCurrentRefresh()) return;
 			toast.error(
 				`Failed to load external event sources: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			setLoading(false);
+			if (isCurrentRefresh()) setLoading(false);
 		}
 	}
 
@@ -194,13 +209,14 @@ export function SpaceExternalEventsSettings({
 		try {
 			setBusy('repo:add');
 			setFormError(null);
+			const secret = webhookSecret.trim();
 			await hub.request('space.github.watchRepo', {
 				spaceId,
 				owner: parsed.owner,
 				repo: parsed.repo,
-				webhookSecret: webhookSecret.trim() || undefined,
-				webhookEnabled: true,
-				pollingEnabled: false,
+				webhookSecret: secret || undefined,
+				webhookEnabled: Boolean(secret),
+				pollingEnabled: !secret,
 			});
 			setRepoInput('');
 			setWebhookSecret('');
@@ -319,7 +335,7 @@ export function SpaceExternalEventsSettings({
 								<input
 									type="checkbox"
 									checked={githubSpaceEnabled}
-									disabled={disabled || !githubGloballyEnabled || busy === 'space:github'}
+									disabled={disabled || !githubControlsEnabled || busy === 'space:github'}
 									onChange={() => setSpaceEnabled(!githubSpaceEnabled)}
 									class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 								/>
@@ -349,7 +365,7 @@ export function SpaceExternalEventsSettings({
 								value={repoInput}
 								onInput={(event) => setRepoInput((event.target as HTMLInputElement).value)}
 								placeholder="owner/repository"
-								disabled={disabled || !githubGloballyEnabled}
+								disabled={disabled || !githubControlsEnabled}
 								class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
 							/>
 							<input
@@ -357,14 +373,14 @@ export function SpaceExternalEventsSettings({
 								value={webhookSecret}
 								onInput={(event) => setWebhookSecret((event.target as HTMLInputElement).value)}
 								placeholder="Webhook secret (optional)"
-								disabled={disabled || !githubGloballyEnabled}
+								disabled={disabled || !githubControlsEnabled}
 								class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
 							/>
 							<Button
 								type="submit"
 								size="sm"
 								loading={busy === 'repo:add'}
-								disabled={disabled || !githubGloballyEnabled || busy === 'repo:add'}
+								disabled={disabled || !githubControlsEnabled || busy === 'repo:add'}
 							>
 								Add watch
 							</Button>
@@ -381,7 +397,7 @@ export function SpaceExternalEventsSettings({
 									<GitHubRepoRow
 										key={repo.id}
 										repo={repo}
-										disabled={disabled || busy === `repo:${repo.id}` || !githubGloballyEnabled}
+										disabled={disabled || busy === `repo:${repo.id}` || !githubControlsEnabled}
 										onUpdate={(patch) => updateRepo(repo, patch)}
 										onRemove={() => removeRepo(repo)}
 									/>
