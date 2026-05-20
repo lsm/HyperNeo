@@ -240,7 +240,7 @@ describe('Space GitHub integration', () => {
 		);
 		expect((calls[0].headers as Record<string, string>).Authorization).toBe('Bearer token');
 		expect(published).toHaveLength(1);
-		expect(published[0]!.topic).toBe('github/acme/widgets/pull_request.comment_polled');
+		expect(published[0]!.topic).toBe('github/acme/widgets/pull_request/7.comment_polled');
 		await extension.pollWatchedRepo(
 			extension.repo.listPollingRepos()[0],
 			fakeFetch as typeof fetch

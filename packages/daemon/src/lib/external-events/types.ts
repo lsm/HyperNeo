@@ -30,7 +30,7 @@ export interface ExternalEvent {
 	id: string;
 	/** Space this event belongs to. Required to prevent cross-space delivery. */
 	spaceId: string;
-	/** Fully qualified topic: 'github/owner/repo/resource.action'. */
+	/** Fully qualified topic: 'github/owner/repo/resource/entityId.action'. */
 	topic: string;
 	/** Timestamp when the event occurred at the source (epoch ms). */
 	occurredAt: number;

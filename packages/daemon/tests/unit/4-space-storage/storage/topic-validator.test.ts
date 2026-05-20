@@ -89,11 +89,6 @@ describe('validateLiteralTopic', () => {
 		expect(r.valid).toBe(true);
 	});
 
-	test('accepts 4-segment topic (source-agnostic)', () => {
-		const r = validateLiteralTopic('github/lsm/neokai/pull_request.review_submitted');
-		expect(r.valid).toBe(true);
-	});
-
 	test('rejects topic with only one segment', () => {
 		const r = validateLiteralTopic('github');
 		expect(r.valid).toBe(false);
