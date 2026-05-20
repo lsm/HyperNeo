@@ -1,6 +1,6 @@
 {
 	"name": "@neokai/shared",
-	"version": "0.27.1",
+	"version": "0.28.0",
 	"type": "module",
 	"license": "Apache-2.0",
 	"main": "src/mod.ts",

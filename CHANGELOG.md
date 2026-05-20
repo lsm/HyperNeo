@@ -2,6 +2,37 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.28.0] - 2026-05-20
+
+Space agent infrastructure, external event system, and semantic memory search. 19 commits since v0.27.1.
+
+### Added
+
+- **Space goals UI**: Frontend for Space-native goal tracking
+- **Dynamic external event subscriptions**: Agents subscribe to GitHub/webhook events at runtime via MCP tools
+- **External event source settings UI**: Configure event sources (GitHub repos, topics) in the Space settings panel
+- **External event backpressure**: Rate-limiting and queue depth controls for external event ingestion
+- **Hybrid semantic memory search**: Agents recall context via combined keyword + vector search
+- **Long-term Space agent inbox**: Persistent event queue for Space agents across sessions
+- **Space actor registry adapter**: Unified actor model for Space members and agents
+- **Space messaging resolver facade**: Actor-targeted message routing abstraction
+- **Space folder browse button**: Quick-access button to browse Space folders
+
+### Changed
+
+- Space messaging tools now wrap around actor targets instead of raw session IDs
+- Routine task events no longer pollute Space chat channels
+- Steer and queue controls polished for better usability
+- Legacy Space GitHub service removed (replaced by dynamic subscription system)
+
+### Fixed
+
+- GitHub external event topic format corrected
+- Worker session Space MCP reattach after disconnect
+- Agent slot event interest cap prevents unbounded subscription growth
+- Message search indexing constrained to prevent runaway index size
+- Transformers web backend loading failure
+
 ## [0.27.1] - 2026-05-18
 
 ### Fixed
