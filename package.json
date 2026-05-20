@@ -19,6 +19,7 @@
 		"knip:all": "knip",
 		"check:session-guards": "./scripts/check-session-deletion-callers.sh",
 		"check": "bun run lint && bun run typecheck && bun run knip && bun run check:session-guards",
+		"db:maintain-message-search": "bun run scripts/maintain-message-search-db.ts",
 		"test:proxy:start": "./scripts/dev-proxy.sh start",
 		"test:proxy:stop": "./scripts/dev-proxy.sh stop",
 		"test:proxy:status": "./scripts/dev-proxy.sh status",
