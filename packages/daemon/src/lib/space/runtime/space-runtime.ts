@@ -272,6 +272,23 @@ interface PendingExternalEvent {
 	event: ExternalEventPublishedPayload;
 	deliveryKey: string;
 	deliveryMode: 'immediate' | 'defer';
+	createdAt: number;
+}
+
+interface ExternalEventDigestItem {
+	target: SubscriptionTarget;
+	event: ExternalEventPublishedPayload;
+	deliveryKey: string;
+	deliveryMode: 'immediate' | 'defer';
+	createdAt: number;
+	allowTargetSessionFallback: boolean;
+}
+
+interface ExternalEventRateLimitState {
+	timestamps: number[];
+	pendingDigest: ExternalEventDigestItem[];
+	digestTimer: Timer | null;
+	cleanupTimer: Timer | null;
 }
 
 interface AgentStuckRecoveryState {
@@ -290,6 +307,20 @@ interface AgentStuckRecoveryState {
 
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
+const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
+const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
+	'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
+	10
+);
+const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
+
+export function parsePositiveIntegerEnv(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (!raw) return fallback;
+	const value = Number(raw);
+	if (!Number.isInteger(value) || value <= 0) return fallback;
+	return value;
+}
 
 // ---------------------------------------------------------------------------
 // Internal notification event shape
@@ -689,6 +720,7 @@ export class SpaceRuntime {
 	private readonly externalEventRetryTimers = new Map<string, Timer>();
 	private readonly externalEventRetryCounts = new Map<string, number>();
 	private readonly externalEventDeliveriesInFlight = new Set<string>();
+	private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
 	private unsubscribeExternalEventPublished?: () => void;
 	private unsubscribeSdkToolUseCreated?: () => void;
 	private unsubscribeSdkToolUseConsumed?: () => void;
@@ -925,13 +957,26 @@ export class SpaceRuntime {
 
 	flushPendingNodeQueue(target: SubscriptionTarget): void {
 		if (!target.sessionId) return;
+		const targetWithExecution = this.resolveSubscriptionTarget(target);
 		const key = this.buildQueueKey(target);
 		const queued = this.pendingExternalEventQueue.get(key);
 		if (!queued) return;
 		this.pendingExternalEventQueue.delete(key);
+		const now = Date.now();
 		for (const item of queued) {
+			if (this.isQueuedExternalEventExpired(item, now)) {
+				this.failQueuedDeliveryForTtl(item, key);
+				continue;
+			}
 			this.clearExternalEventRetry(item.deliveryKey);
-			void this.deliverToSession(target, item.event, item.deliveryKey, item.deliveryMode);
+			void this.enqueueDeliverableExternalEvent(
+				targetWithExecution,
+				item.event,
+				item.deliveryKey,
+				item.deliveryMode,
+				item.createdAt,
+				true
+			);
 		}
 	}
 
@@ -977,9 +1022,9 @@ export class SpaceRuntime {
 				}
 
 				if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
-					await this.deliverToSession(target, payload, deliveryKey, 'immediate');
+					await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'immediate');
 				} else if (target.sessionId) {
-					await this.deliverToSession(target, payload, deliveryKey, 'defer');
+					await this.enqueueDeliverableExternalEvent(target, payload, deliveryKey, 'defer');
 				} else if (this.isPending(target)) {
 					this.queueForPendingNode(target, payload, deliveryKey);
 				} else if (
@@ -1001,6 +1046,156 @@ export class SpaceRuntime {
 				);
 			}
 		}
+	}
+
+	private async enqueueDeliverableExternalEvent(
+		target: SubscriptionTarget,
+		event: ExternalEventPublishedPayload,
+		deliveryKey: string,
+		deliveryMode: 'immediate' | 'defer',
+		createdAt = Date.now(),
+		allowTargetSessionFallback = false
+	): Promise<void> {
+		const now = Date.now();
+		const rateLimitKey = this.buildRateLimitKey(target);
+		const state = this.getExternalEventRateLimitState(rateLimitKey);
+		state.timestamps = state.timestamps.filter(
+			(timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+		);
+		state.timestamps.push(now);
+		if (state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN) {
+			await this.deliverToSession(target, event, deliveryKey, deliveryMode);
+			this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+			return;
+		}
+
+		state.pendingDigest.push({
+			target,
+			event,
+			deliveryKey,
+			deliveryMode,
+			createdAt,
+			allowTargetSessionFallback,
+		});
+		if (!state.digestTimer) {
+			state.digestTimer = setTimeout(() => {
+				state.digestTimer = null;
+				void this.flushExternalEventDigest(rateLimitKey);
+			}, 0);
+		}
+	}
+
+	private async flushExternalEventDigest(rateLimitKey: string): Promise<void> {
+		const state = this.externalEventRateLimits.get(rateLimitKey);
+		if (!state || state.pendingDigest.length === 0) return;
+		const now = Date.now();
+		const digestItems = state.pendingDigest.splice(0);
+		state.timestamps = state.timestamps.filter(
+			(timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+		);
+		if (state.digestTimer) {
+			clearTimeout(state.digestTimer);
+			state.digestTimer = null;
+		}
+		this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+		await this.deliverDigestToSession(digestItems);
+	}
+
+	private async deliverDigestToSession(items: ExternalEventDigestItem[]): Promise<void> {
+		const store = this.config.externalEventStore;
+		if (!store || items.length === 0) return;
+		const target = this.resolveDigestDeliveryTarget(items[0]!);
+		if (!target.sessionId) {
+			for (const item of items) {
+				store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+					terminal: false,
+					reason: `deliveryMode:${item.deliveryMode}; digest requeued after session loss`,
+				});
+				this.queueForPendingNode(
+					item.target,
+					item.event,
+					item.deliveryKey,
+					item.deliveryMode,
+					item.createdAt
+				);
+			}
+			return;
+		}
+		const deliveryKeys = items.map((item) => item.deliveryKey);
+		for (const deliveryKey of deliveryKeys) {
+			this.externalEventDeliveriesInFlight.add(deliveryKey);
+		}
+		try {
+			if (!this.config.commandBus) {
+				throw new MissingCommandHandlerError('agent.message.inject');
+			}
+			const result = await this.config.commandBus.dispatch('agent.message.inject', {
+				sessionId: target.sessionId,
+				message: this.formatExternalEventDigestMessage(items),
+				deliveryMode: items.some((item) => item.deliveryMode === 'immediate')
+					? 'immediate'
+					: 'defer',
+				metadata: {
+					workflowRunId: target.workflowRunId,
+					taskId: target.taskId,
+					nodeId: target.nodeId,
+					agentName: target.agentName,
+					source: 'external_event_digest',
+					eventIds: items.map((item) => item.event.eventId),
+					topics: [...new Set(items.map((item) => item.event.topic))],
+				},
+			});
+			if (!result?.ok) {
+				throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
+			}
+			for (const item of items) {
+				this.clearExternalEventRetry(item.deliveryKey);
+				this.clearQueuedDelivery(item.target, item.deliveryKey);
+				store.markDeliveryDelivered(item.event.eventId, item.deliveryKey);
+				store.markEventDeliveredIfAllDeliveriesDelivered(item.event.eventId);
+				store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+			}
+		} catch (err) {
+			const rawFailureReason = err instanceof Error ? err.message : String(err);
+			const terminal = err instanceof MissingCommandHandlerError;
+			for (const item of items) {
+				const failureReason = `deliveryMode:${item.deliveryMode}; digest; ${rawFailureReason}`;
+				store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+					terminal,
+					reason: failureReason,
+				});
+				if (terminal) {
+					this.clearExternalEventRetry(item.deliveryKey);
+					this.clearQueuedDelivery(item.target, item.deliveryKey);
+					store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+					continue;
+				}
+				this.queueForRetry(
+					target,
+					item.event,
+					item.deliveryKey,
+					item.deliveryMode,
+					failureReason,
+					item.createdAt
+				);
+			}
+		} finally {
+			for (const deliveryKey of deliveryKeys) {
+				this.externalEventDeliveriesInFlight.delete(deliveryKey);
+			}
+		}
+	}
+
+	private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): SubscriptionTarget {
+		const target = item.target;
+		const resolved = this.resolveSubscriptionTarget({
+			workflowRunId: target.workflowRunId,
+			taskId: target.taskId,
+			nodeId: target.nodeId,
+			agentName: target.agentName,
+		});
+		if (resolved.sessionId) return resolved;
+		return item.allowTargetSessionFallback ? target : resolved;
 	}
 
 	private async deliverToSession(
@@ -1071,7 +1266,15 @@ export class SpaceRuntime {
 				this.clearQueuedDelivery(target, deliveryKey);
 				return;
 			}
-			this.queueForRetry(target, event, deliveryKey, deliveryMode, failureReason);
+			const queued = this.getQueuedDelivery(target, deliveryKey);
+			this.queueForRetry(
+				target,
+				event,
+				deliveryKey,
+				deliveryMode,
+				failureReason,
+				queued?.createdAt
+			);
 		} finally {
 			this.externalEventDeliveriesInFlight.delete(deliveryKey);
 		}
@@ -1082,10 +1285,18 @@ export class SpaceRuntime {
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
 		deliveryMode: 'immediate' | 'defer',
-		failureReason: string
+		failureReason: string,
+		createdAt = Date.now()
 	): void {
-		this.queueForPendingNode(target, event, deliveryKey, deliveryMode);
-		this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason);
+		const queuedItem = { event, deliveryKey, deliveryMode, createdAt };
+		if (this.isQueuedExternalEventExpired(queuedItem)) {
+			this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+			return;
+		}
+		this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
+		this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
+			createdAt,
+		});
 	}
 
 	private scheduleExternalEventRetry(
@@ -1094,7 +1305,7 @@ export class SpaceRuntime {
 		deliveryKey: string,
 		deliveryMode: 'immediate' | 'defer',
 		failureReason: string,
-		options: { preserveAttemptCount?: boolean } = {}
+		options: { preserveAttemptCount?: boolean; createdAt?: number } = {}
 	): void {
 		if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
 		const currentAttempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
@@ -1120,7 +1331,19 @@ export class SpaceRuntime {
 			if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
 				this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
 					preserveAttemptCount: true,
+					createdAt: options.createdAt,
 				});
+				return;
+			}
+			const queued = this.getQueuedDelivery(target, deliveryKey);
+			const queuedItem = queued ?? {
+				event,
+				deliveryKey,
+				deliveryMode,
+				createdAt: options.createdAt ?? Date.now(),
+			};
+			if (this.isQueuedExternalEventExpired(queuedItem)) {
+				this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
 				return;
 			}
 			// Re-check run deliverability before dispatching — the run may have
@@ -1147,6 +1370,10 @@ export class SpaceRuntime {
 			const target = parseSubscriptionQueueKey(queueKey);
 			if (!target) continue;
 			for (const item of queue) {
+				if (this.isQueuedExternalEventExpired(item)) {
+					this.failQueuedDeliveryForTtl(item, queueKey);
+					continue;
+				}
 				const resolved = this.resolveSubscriptionTarget(target);
 				if (!resolved.sessionId) continue;
 				this.scheduleExternalEventRetry(
@@ -1155,7 +1382,7 @@ export class SpaceRuntime {
 					item.deliveryKey,
 					item.deliveryMode,
 					`deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`,
-					{ preserveAttemptCount: true }
+					{ preserveAttemptCount: true, createdAt: item.createdAt }
 				);
 			}
 		}
@@ -1168,8 +1395,20 @@ export class SpaceRuntime {
 		this.externalEventRetryCounts.delete(deliveryKey);
 	}
 
+	private getQueuedDelivery(
+		target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+		deliveryKey: string
+	): PendingExternalEvent | undefined {
+		return this.pendingExternalEventQueue
+			.get(this.buildQueueKey(target))
+			?.find((item) => item.deliveryKey === deliveryKey);
+	}
+
 	private clearQueuedDelivery(target: SubscriptionTarget, deliveryKey: string): void {
-		const key = this.buildQueueKey(target);
+		this.clearQueuedDeliveryByKey(this.buildQueueKey(target), deliveryKey);
+	}
+
+	private clearQueuedDeliveryByKey(key: string, deliveryKey: string): void {
 		const queue = this.pendingExternalEventQueue.get(key);
 		if (!queue) return;
 		const remaining = queue.filter((item) => item.deliveryKey !== deliveryKey);
@@ -1180,11 +1419,25 @@ export class SpaceRuntime {
 		}
 	}
 
+	private preservePendingDigestItem(item: ExternalEventDigestItem): void {
+		const key = this.buildQueueKey(item.target);
+		const queue = this.pendingExternalEventQueue.get(key) ?? [];
+		if (queue.some((queued) => queued.deliveryKey === item.deliveryKey)) return;
+		queue.push({
+			event: item.event,
+			deliveryKey: item.deliveryKey,
+			deliveryMode: item.deliveryMode,
+			createdAt: item.createdAt,
+		});
+		this.pendingExternalEventQueue.set(key, queue);
+	}
+
 	private queueForPendingNode(
 		target: SubscriptionTarget,
 		event: ExternalEventPublishedPayload,
 		deliveryKey: string,
-		deliveryMode: 'immediate' | 'defer' = 'immediate'
+		deliveryMode: 'immediate' | 'defer' = 'immediate',
+		createdAt = Date.now()
 	): void {
 		const key = this.buildQueueKey(target);
 		const queue = this.pendingExternalEventQueue.get(key) ?? [];
@@ -1209,8 +1462,25 @@ export class SpaceRuntime {
 				`SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`
 			);
 		}
-		queue.push({ event, deliveryKey, deliveryMode });
+		queue.push({ event, deliveryKey, deliveryMode, createdAt });
 		this.pendingExternalEventQueue.set(key, queue);
+	}
+
+	private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
+		return now - item.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
+	}
+
+	private failQueuedDeliveryForTtl(item: PendingExternalEvent, queueKey: string): void {
+		this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+			terminal: true,
+			reason: 'ttl_expired',
+		});
+		this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
+		this.clearExternalEventRetry(item.deliveryKey);
+		this.clearQueuedDeliveryByKey(queueKey, item.deliveryKey);
+		log.warn(
+			`SpaceRuntime: dropped expired external event ${item.event.eventId} from pending queue ${queueKey}`
+		);
 	}
 
 	private failQueuedDeliveriesForTarget(
@@ -1314,6 +1584,62 @@ export class SpaceRuntime {
 		return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
 	}
 
+	private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {
+		const existing = this.externalEventRateLimits.get(rateLimitKey);
+		if (existing) {
+			if (existing.cleanupTimer) {
+				clearTimeout(existing.cleanupTimer);
+				existing.cleanupTimer = null;
+			}
+			return existing;
+		}
+		const created = {
+			timestamps: [],
+			pendingDigest: [],
+			digestTimer: null,
+			cleanupTimer: null,
+		};
+		this.externalEventRateLimits.set(rateLimitKey, created);
+		return created;
+	}
+
+	private scheduleExternalEventRateLimitCleanup(rateLimitKey: string): void {
+		const state = this.externalEventRateLimits.get(rateLimitKey);
+		if (!state || state.pendingDigest.length > 0 || state.cleanupTimer) return;
+		const now = Date.now();
+		state.timestamps = state.timestamps.filter(
+			(timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+		);
+		if (state.timestamps.length === 0) {
+			this.externalEventRateLimits.delete(rateLimitKey);
+			return;
+		}
+		const oldest = Math.min(...state.timestamps);
+		state.cleanupTimer = setTimeout(
+			() => {
+				const current = this.externalEventRateLimits.get(rateLimitKey);
+				if (!current) return;
+				current.cleanupTimer = null;
+				if (current.pendingDigest.length > 0) return;
+				const cleanupNow = Date.now();
+				current.timestamps = current.timestamps.filter(
+					(timestamp) => cleanupNow - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+				);
+				if (current.timestamps.length === 0) {
+					this.externalEventRateLimits.delete(rateLimitKey);
+				} else {
+					this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+				}
+			},
+			Math.max(0, EXTERNAL_EVENT_RATE_WINDOW_MS - (now - oldest) + 1)
+		);
+	}
+
+	private buildRateLimitKey(target: SubscriptionTarget): string {
+		const executionId = this.getCurrentQueueableOrActiveExecution(target)?.id;
+		return executionId ?? `${target.workflowRunId}:${target.nodeId}:${target.agentName}`;
+	}
+
 	private buildDeliveryKey(
 		target: SubscriptionTarget,
 		event: ExternalEventPublishedPayload
@@ -1343,6 +1669,16 @@ export class SpaceRuntime {
 			null,
 			2
 		);
+	}
+
+	private formatExternalEventDigestMessage(items: ExternalEventDigestItem[]): string {
+		const topics = [...new Set(items.map((item) => item.event.topic))].sort();
+		const occurredAtValues = items.map((item) => item.event.occurredAt);
+		const oldest = new Date(Math.min(...occurredAtValues)).toISOString();
+		const newest = new Date(Math.max(...occurredAtValues)).toISOString();
+		return `${items.length} events received for topics: ${topics.join(
+			', '
+		)} (oldest: ${oldest}, newest: ${newest}). Use subscribe_external_event to get details.`;
 	}
 
 	/**
@@ -2027,6 +2363,18 @@ export class SpaceRuntime {
 		}
 		this.externalEventRetryTimers.clear();
 		this.externalEventRetryCounts.clear();
+		for (const state of this.externalEventRateLimits.values()) {
+			if (state.digestTimer) clearTimeout(state.digestTimer);
+			if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
+			for (const item of state.pendingDigest) {
+				this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
+					terminal: false,
+					reason: `deliveryMode:${item.deliveryMode}; digest pending during runtime stop`,
+				});
+				this.preservePendingDigestItem(item);
+			}
+		}
+		this.externalEventRateLimits.clear();
 		this.acceptingExternalEvents = false;
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
@@ -2613,11 +2961,27 @@ export class SpaceRuntime {
 				continue;
 			}
 
-			const mode = delivery.failureReason?.startsWith('deliveryMode:defer;')
+			const mode: 'immediate' | 'defer' = delivery.failureReason?.startsWith('deliveryMode:defer;')
 				? 'defer'
 				: 'immediate';
 			const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-			this.queueForPendingNode(target, eventPayload, delivery.deliveryKey, mode);
+			const queuedItem = {
+				event: eventPayload,
+				deliveryKey: delivery.deliveryKey,
+				deliveryMode: mode,
+				createdAt: eventRecord.createdAt,
+			};
+			if (this.isQueuedExternalEventExpired(queuedItem)) {
+				this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
+				continue;
+			}
+			this.queueForPendingNode(
+				target,
+				eventPayload,
+				delivery.deliveryKey,
+				mode,
+				eventRecord.createdAt
+			);
 			const resolved = this.resolveSubscriptionTarget(target);
 			if (resolved.sessionId) {
 				this.scheduleExternalEventRetry(
@@ -2626,7 +2990,7 @@ export class SpaceRuntime {
 					delivery.deliveryKey,
 					mode,
 					delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after runtime rehydrate`,
-					{ preserveAttemptCount: true }
+					{ preserveAttemptCount: true, createdAt: eventRecord.createdAt }
 				);
 			}
 		}
