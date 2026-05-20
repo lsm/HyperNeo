@@ -1,4 +1,4 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import type { McpServerConfig } from '@neokai/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
@@ -29,21 +29,6 @@ function makeSession(mcpServers: Record<string, McpServerConfig>) {
 	};
 }
 
-function makeSpaceToolsManager(): TaskAgentManager {
-	return Object.create(TaskAgentManager.prototype, {
-		config: {
-			value: {},
-		},
-		reinjectSpaceAgentToolsMcpServer: {
-			value: mock(async (session) => {
-				session.mergeRuntimeMcpServers({
-					'space-agent-tools': { type: 'sdk' } as McpServerConfig,
-				});
-			}),
-		},
-	}) as TaskAgentManager;
-}
-
 describe('TaskAgentManager agent-memory MCP wiring', () => {
 	test('builds agent-memory server when memory repo is configured', () => {
 		const manager = makeManager({});
@@ -60,13 +45,9 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
 	});
 
 	test('requires agent-memory only when memory repo is configured', () => {
-		expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual([
-			'node-agent',
-			'space-agent-tools',
-		]);
+		expect(makeManager().requiredWorkflowSubSessionMcpServers()).toEqual(['node-agent']);
 		expect(makeManager({}).requiredWorkflowSubSessionMcpServers()).toEqual([
 			'node-agent',
-			'space-agent-tools',
 			'agent-memory',
 		]);
 	});
@@ -75,7 +56,6 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
 		const manager = makeManager({});
 		const session = makeSession({
 			'node-agent': { type: 'sdk' } as McpServerConfig,
-			'space-agent-tools': { type: 'sdk' } as McpServerConfig,
 		});
 
 		await manager.ensureNodeAgentAttached(session as never, {
@@ -92,32 +72,7 @@ describe('TaskAgentManager agent-memory MCP wiring', () => {
 		expect(Object.keys(session.session.config.mcpServers).sort()).toEqual([
 			'agent-memory',
 			'node-agent',
-			'space-agent-tools',
 		]);
 		expect(session.restartCount).toBe(1);
-	});
-
-	test('reattaches space-agent-tools and wires member self-heal callback', async () => {
-		const manager = makeSpaceToolsManager();
-		const session = makeSession({
-			'node-agent': { type: 'sdk' } as McpServerConfig,
-		});
-
-		await manager.ensureNodeAgentAttached(session as never, {
-			taskId: 'task-a',
-			subSessionId: 'session-a',
-			agentName: 'coder',
-			spaceId: 'space-a',
-			workflowRunId: 'run-a',
-			workspacePath: '/tmp/space-a',
-			workflowNodeId: 'node-a',
-			phase: 'rehydrate',
-		});
-
-		expect(Object.keys(session.session.config.mcpServers).sort()).toEqual([
-			'node-agent',
-			'space-agent-tools',
-		]);
-		expect(typeof session.onMissingMemberSpaceMcpServers).toBe('function');
 	});
 });
