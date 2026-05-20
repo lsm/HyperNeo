@@ -138,28 +138,27 @@ export function setupEvolutionHandlers(
 		service.listTimeline(readRequiredString(data, 'scopeId'))
 	);
 
-	messageHub.onRequest<EvolutionMetricSnapshotCreateRequest, EvolutionMetricSnapshotCreateResponse>(
-		'evolution.metricSnapshot.create',
-		async (data) => {
-			const payload = readRecord(data);
-			const params = readRecord(
-				payload.params
-			) as unknown as EvolutionMetricSnapshotCreateRequest['params'];
-			const { snapshot } = service.addMetricSnapshotEvidence({
-				scopeId: params.scopeId,
-				values: params.values,
-				source: params.source,
-				note: params.note,
-				capturedAt: params.capturedAt,
-			});
-			return { snapshot };
-		}
-	);
+	messageHub.onRequest<
+		EvolutionMetricSnapshotCreateRequest,
+		EvolutionMetricSnapshotCreateResponse & EvolutionEvidenceCreateResponse
+	>('evolution.metricSnapshot.create', async (data) => {
+		const payload = readRecord(data);
+		const params = readRecord(
+			payload.params
+		) as unknown as EvolutionMetricSnapshotCreateRequest['params'];
+		return service.addMetricSnapshotEvidence({
+			scopeId: params.scopeId,
+			values: params.values,
+			source: params.source,
+			note: params.note,
+			capturedAt: params.capturedAt,
+		});
+	});
 
 	messageHub.onRequest<EvolutionMetricSnapshotListRequest, EvolutionMetricSnapshotListResponse>(
 		'evolution.metricSnapshot.list',
 		async (data) => ({
-			snapshots: service.listTimeline(readRequiredString(data, 'scopeId')).metricSnapshots,
+			snapshots: service.listMetricSnapshots(readRequiredString(data, 'scopeId')),
 		})
 	);
 }

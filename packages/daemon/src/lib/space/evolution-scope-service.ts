@@ -217,6 +217,11 @@ export class EvolutionScopeService {
 		return this.deps.evolutionRepo.listEvidence(scopeId);
 	}
 
+	listMetricSnapshots(scopeId: string): MetricSnapshot[] {
+		this.requireScope(scopeId);
+		return this.deps.evolutionRepo.listMetricSnapshots(scopeId);
+	}
+
 	listTimeline(scopeId: string): ScopeTimeline {
 		const scope = this.requireScope(scopeId);
 		return {

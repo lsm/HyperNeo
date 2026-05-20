@@ -18,13 +18,14 @@ describe('EvolutionScopeService', () => {
 	let taskRepo: SpaceTaskRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let workflowRepo: SpaceWorkflowRepository;
+	let spaceRepo: SpaceRepository;
 	let spaceId: string;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
 		createSpaceTables(db);
 
-		const spaceRepo = new SpaceRepository(db as never);
+		spaceRepo = new SpaceRepository(db as never);
 		evolutionRepo = new EvolutionRepository(db as never);
 		goalRepo = new SpaceGoalRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
@@ -211,5 +212,57 @@ describe('EvolutionScopeService', () => {
 		expect(timeline.evidence.map((item) => item.id)).toContain(note.id);
 		expect(timeline.evidence.map((item) => item.id)).toContain(evidence.id);
 		expect(timeline.metricSnapshots[0]?.id).toBe(snapshot.id);
+		expect(service.listMetricSnapshots(scope.id)[0]?.id).toBe(snapshot.id);
+	});
+
+	it('rejects scope creation for a non-existent space', () => {
+		expect(() =>
+			service.createScope({
+				spaceId: 'missing-space',
+				kind: 'custom',
+				name: 'Missing space',
+				objective: 'Should fail',
+			})
+		).toThrow('Space not found: missing-space');
+	});
+
+	it('rejects evidence for a non-existent scope', () => {
+		expect(() =>
+			service.addManualNoteEvidence({
+				scopeId: 'missing-scope',
+				summary: 'Should fail',
+			})
+		).toThrow('EvolutionScope not found: missing-scope');
+	});
+
+	it('rejects task evidence when task has no evolution scope or goal linkage', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Unlinked task',
+			description: 'No goal or scope',
+		});
+
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			`Task is not linked to an EvolutionScope or SpaceGoal: ${task.id}`
+		);
+	});
+
+	it('rejects scope creation when linked goal belongs to a different space', () => {
+		const otherSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/other-forge-service-test',
+			slug: 'other-forge-service-test',
+			name: 'Other Forge Service Test',
+		}).id;
+		const otherGoal = goalRepo.create({ spaceId: otherSpaceId, title: 'Other goal' });
+
+		expect(() =>
+			service.createScope({
+				spaceId,
+				spaceGoalId: otherGoal.id,
+				kind: 'mission',
+				name: 'Wrong goal space',
+				objective: 'Should fail',
+			})
+		).toThrow(`SpaceGoal not found in space: ${otherGoal.id}`);
 	});
 });
