@@ -592,6 +592,39 @@ describe('SpaceTaskRepository', () => {
 			expect(searchIndexedTaskIds('marker')).toEqual(['msg-1']);
 		});
 
+		it('removes expired terminal task message rows when task status changes', () => {
+			createSearchIndex();
+			const task = repo.createTask({
+				spaceId,
+				title: 'Old task',
+				description: '',
+				status: 'in_progress',
+			});
+			db.prepare(
+				`INSERT INTO message_search_fts (kind, source_id, message_id, session_id, task_id, space_id, task_number, message_type, title, body, timestamp)
+				 VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-old',
+				'uuid-old',
+				'space:space-1:task:task-1:exec:exec-1',
+				task.id,
+				spaceId,
+				task.taskNumber,
+				'user',
+				'Old task',
+				'expired terminal marker',
+				Date.now()
+			);
+			expect(searchIndexedTaskIds('expired')).toEqual(['msg-old']);
+
+			repo.updateTask(task.id, {
+				status: 'done',
+				completedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+			});
+
+			expect(searchIndexedTaskIds('expired')).toEqual([]);
+		});
+
 		it('removes linked message rows when task status changes to archived', () => {
 			createSearchIndex();
 			const task = repo.createTask({

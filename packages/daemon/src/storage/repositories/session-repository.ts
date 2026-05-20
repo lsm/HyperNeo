@@ -226,9 +226,11 @@ export class SessionRepository {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
+			const shouldRebuildSearchRows =
+				updates.status !== undefined || updates.type !== undefined || 'context' in updates;
 			if (updates.status === 'archived') {
 				this.deleteMessageSearchRows(id);
-			} else if (updates.status !== undefined) {
+			} else if (shouldRebuildSearchRows) {
 				this.rebuildMessageSearchRows(id);
 			}
 			if (updates.title !== undefined) {
@@ -290,6 +292,7 @@ export class SessionRepository {
 						ELSE NULL
 					END,
 					CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
+						+ CAST(substr(strftime('%f', sm.timestamp), 4, 3) AS INTEGER)
 				FROM sdk_messages sm
 				JOIN sessions s ON s.id = sm.session_id
 				${spaceTaskJoin}

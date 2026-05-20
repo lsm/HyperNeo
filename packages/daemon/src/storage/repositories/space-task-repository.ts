@@ -87,6 +87,24 @@ export class SpaceTaskRepository {
 			.run(taskId);
 	}
 
+	private deleteExpiredTerminalTaskMessageRows(taskId: string): void {
+		if (!this.hasMessageSearchIndex()) return;
+		this.db
+			.prepare(
+				`DELETE FROM message_search_fts
+				 WHERE kind = 'message'
+				   AND task_id = ?
+				   AND EXISTS (
+					 SELECT 1
+					 FROM space_tasks st
+					 WHERE st.id = message_search_fts.task_id
+					   AND st.status IN ('done', 'cancelled', 'completed')
+					   AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
+				   )`
+			)
+			.run(taskId);
+	}
+
 	/**
 	 * Create a new space task
 	 */
@@ -501,6 +519,8 @@ export class SpaceTaskRepository {
 			this.upsertTaskSearchRow(id);
 			if (params.status === 'archived') {
 				this.deleteTaskMessageRows(id);
+			} else if (params.status !== undefined || params.completedAt !== undefined) {
+				this.deleteExpiredTerminalTaskMessageRows(id);
 			}
 
 			this.reactiveDb?.notifyChange('space_tasks');
