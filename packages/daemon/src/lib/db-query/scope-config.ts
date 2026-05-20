@@ -493,6 +493,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	// read MCP state through the resolver rather than hitting the table directly.
 	'mcp_enablement',
 	// Message search FTS projection and FTS5 shadow tables — queried through message.search RPC.
+	'message_search_content',
 	'message_search_fts',
 	'message_search_fts_config',
 	'message_search_fts_content',

@@ -13,13 +13,14 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { dirname, join } from 'node:path';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 import { Logger } from '../lib/logger';
-import { createTables, runMigrations } from './schema';
+import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { DatabaseLock } from './database-lock';
 
 export class DatabaseCore {
 	private db: BunDatabase;
 	private logger = new Logger('Database');
 	private lock: DatabaseLock;
+	private messageSearchMergeTimer: Timer | null = null;
 
 	constructor(private dbPath: string) {
 		// Initialize as null until initialize() is called
@@ -73,6 +74,25 @@ export class DatabaseCore {
 
 		// Create any missing tables (will be no-ops if migrations already created them)
 		createTables(this.db);
+
+		configureMessageSearchFts(this.db);
+		this.startMessageSearchMergeTimer();
+	}
+
+	private startMessageSearchMergeTimer(): void {
+		if (this.messageSearchMergeTimer) return;
+		this.messageSearchMergeTimer = setInterval(() => {
+			try {
+				this.db.exec(
+					`INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', 4096)`
+				);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				if (!/no such table/i.test(message)) {
+					this.logger.warn('message_search_fts background merge failed:', err);
+				}
+			}
+		}, 30_000);
 	}
 
 	/**
@@ -100,6 +120,10 @@ export class DatabaseCore {
 	 * were not yet checkpointed.
 	 */
 	close(): void {
+		if (this.messageSearchMergeTimer) {
+			clearInterval(this.messageSearchMergeTimer);
+			this.messageSearchMergeTimer = null;
+		}
 		try {
 			this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
 		} catch {

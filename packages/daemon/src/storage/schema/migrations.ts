@@ -654,6 +654,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 140: Add Space agent core memory table for consolidation.
 	runMigration140(db);
+
+	// Migration 141: Rebuild message search FTS with detail=column and external content.
+	runMigration141(db);
 }
 
 /**
@@ -9027,10 +9030,6 @@ export function runMigration131(db: BunDatabase): void {
 
 /**
  * Migration 134: Add FTS5-backed message and Space task search.
- *
- * `message_search_fts` is a denormalized projection rather than an external-content table because
- * searched text is derived from SDK JSON. Repository writes maintain rows for new messages; this
- * migration backfills existing messages and task titles/descriptions.
  */
 export function runMigration136(db: BunDatabase): void {
 	if (!tableExists(db, 'space_agent_memory')) return;
@@ -9121,15 +9120,25 @@ function recreateMemoryVectorsWithNamedParentKey(db: BunDatabase): void {
 
 export function runMigration134(db: BunDatabase): void {
 	const existed = tableExists(db, 'message_search_fts');
+	createMessageSearchContentTable(db);
 	createMessageSearchFtsTable(db);
+	createMessageSearchSyncTriggers(db);
 	if (!existed || isMessageSearchFtsEmpty(db)) {
 		backfillMessageSearchFts(db);
 	}
+	configureMessageSearchFts(db, { automerge: 16 });
 }
 
 export function runMigration137(db: BunDatabase): void {
-	if (!tableExists(db, 'message_search_fts')) return;
+	if (!tableExists(db, 'message_search_content')) return;
+	const prunedRows = pruneMessageSearchFts(db);
 
+	if (prunedRows > 0 && tableExists(db, 'message_search_fts')) {
+		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('optimize')`);
+	}
+}
+
+function pruneMessageSearchFts(db: BunDatabase): number {
 	let prunedRows = 0;
 	const recordPrune = (result: { changes?: number }): void => {
 		prunedRows += result.changes ?? 0;
@@ -9140,7 +9149,7 @@ export function runMigration137(db: BunDatabase): void {
 	recordPrune(
 		db
 			.prepare(
-				`DELETE FROM message_search_fts
+				`DELETE FROM message_search_content
 				 WHERE kind = 'message'
 				   AND COALESCE(message_type, '') NOT IN ('system', 'user', 'assistant')`
 			)
@@ -9148,7 +9157,7 @@ export function runMigration137(db: BunDatabase): void {
 	);
 
 	const deleteRoomNamespacedRows = db.prepare(`
-		DELETE FROM message_search_fts
+		DELETE FROM message_search_content
 		WHERE kind = 'message'
 		  AND (
 			session_id LIKE 'room:chat:%'
@@ -9172,7 +9181,7 @@ export function runMigration137(db: BunDatabase): void {
 			db
 				.prepare(
 					`
-					DELETE FROM message_search_fts
+					DELETE FROM message_search_content
 					WHERE kind = 'message'
 					  AND session_id IN (
 						SELECT id
@@ -9200,7 +9209,7 @@ export function runMigration137(db: BunDatabase): void {
 			db
 				.prepare(
 					`
-					DELETE FROM message_search_fts
+					DELETE FROM message_search_content
 					WHERE kind = 'message'
 					  AND task_id IN (
 						SELECT id
@@ -9215,9 +9224,7 @@ export function runMigration137(db: BunDatabase): void {
 		);
 	}
 
-	if (prunedRows > 0) {
-		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('optimize')`);
-	}
+	return prunedRows;
 }
 
 function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
@@ -9227,27 +9234,77 @@ function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
 	return !row;
 }
 
+function createMessageSearchContentTable(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS message_search_content (
+			kind TEXT NOT NULL CHECK(kind IN ('message', 'task')),
+			source_id TEXT NOT NULL,
+			message_id TEXT,
+			session_id TEXT,
+			task_id TEXT,
+			space_id TEXT,
+			task_number INTEGER,
+			message_type TEXT,
+			title TEXT,
+			body TEXT,
+			timestamp INTEGER,
+			PRIMARY KEY (kind, source_id)
+		)
+	`);
+}
+
 function createMessageSearchFtsTable(db: BunDatabase): void {
 	db.exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS message_search_fts USING fts5(
-			kind UNINDEXED,
-			source_id UNINDEXED,
-			message_id UNINDEXED,
-			session_id UNINDEXED,
-			task_id UNINDEXED,
-			space_id UNINDEXED,
-			task_number UNINDEXED,
-			message_type UNINDEXED,
 			title,
 			body,
-			timestamp UNINDEXED,
+			content='message_search_content',
+			content_rowid='rowid',
+			detail=column,
 			tokenize = 'unicode61'
 		)
 	`);
 }
 
+function createMessageSearchSyncTriggers(db: BunDatabase): void {
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS message_search_content_ai
+		AFTER INSERT ON message_search_content BEGIN
+			INSERT INTO message_search_fts(rowid, title, body)
+			VALUES (new.rowid, new.title, new.body);
+		END
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS message_search_content_ad
+		AFTER DELETE ON message_search_content BEGIN
+			INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
+			VALUES ('delete', old.rowid, old.title, old.body);
+		END
+	`);
+	db.exec(`
+		CREATE TRIGGER IF NOT EXISTS message_search_content_au
+		AFTER UPDATE OF title, body ON message_search_content BEGIN
+			INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
+			VALUES ('delete', old.rowid, old.title, old.body);
+			INSERT INTO message_search_fts(rowid, title, body)
+			VALUES (new.rowid, new.title, new.body);
+		END
+	`);
+}
+
+export function configureMessageSearchFts(
+	db: BunDatabase,
+	options: { automerge?: 0 | 16 } = {}
+): void {
+	if (!tableExists(db, 'message_search_fts')) return;
+	db.exec(
+		`INSERT INTO message_search_fts(message_search_fts, rank) VALUES('automerge', ${options.automerge ?? 0})`
+	);
+	db.exec(`INSERT INTO message_search_fts(message_search_fts, rank) VALUES('crisismerge', 64)`);
+}
+
 function backfillMessageSearchFts(db: BunDatabase): void {
-	db.exec(`DELETE FROM message_search_fts`);
+	db.exec(`DELETE FROM message_search_content`);
 
 	if (tableExists(db, 'sdk_messages')) {
 		const sessionTitleSelect = tableExists(db, 'sessions')
@@ -9263,7 +9320,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 			? 'LEFT JOIN space_tasks st ON st.id = sm.task_id'
 			: '';
 		db.exec(`
-			INSERT INTO message_search_fts (
+			INSERT INTO message_search_content (
 				kind, source_id, message_id, session_id, task_id, space_id, task_number,
 				message_type, title, body, timestamp
 			)
@@ -9334,7 +9391,7 @@ function backfillMessageSearchFts(db: BunDatabase): void {
 
 	if (tableExists(db, 'space_tasks')) {
 		db.exec(`
-			INSERT INTO message_search_fts (
+			INSERT INTO message_search_content (
 				kind, source_id, task_id, space_id, task_number, title, body, timestamp
 			)
 			SELECT
@@ -9421,6 +9478,30 @@ function migrateNeoSessions(db: BunDatabase): void {
  * Stores lifecycle and state-change events for Space goals so agents and
  * humans can inspect why the current rolling goal state changed.
  */
+
+export function runMigration141(db: BunDatabase): void {
+	const ftsSql = tableCreateSql(db, 'message_search_fts');
+	const hasOptimizedFts =
+		ftsSql?.includes("content='message_search_content'") && ftsSql.includes('detail=column');
+	createMessageSearchContentTable(db);
+	if (!hasOptimizedFts) {
+		dropMessageSearchTriggers(db);
+		db.exec(`DROP TABLE IF EXISTS message_search_fts`);
+		backfillMessageSearchFts(db);
+		pruneMessageSearchFts(db);
+		createMessageSearchFtsTable(db);
+		createMessageSearchSyncTriggers(db);
+		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('rebuild')`);
+	}
+	configureMessageSearchFts(db);
+}
+
+function dropMessageSearchTriggers(db: BunDatabase): void {
+	db.exec(`DROP TRIGGER IF EXISTS message_search_content_ai`);
+	db.exec(`DROP TRIGGER IF EXISTS message_search_content_ad`);
+	db.exec(`DROP TRIGGER IF EXISTS message_search_content_au`);
+}
+
 export function runMigration133(db: BunDatabase): void {
 	if (!tableExists(db, 'space_goals')) return;
 
