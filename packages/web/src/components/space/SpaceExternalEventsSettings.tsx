@@ -111,6 +111,8 @@ export function SpaceExternalEventsSettings({
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
 			if (isCurrentRefresh()) {
+				setSpaceConfig(null);
+				setRepos([]);
 				toast.error('Not connected to server');
 				setLoading(false);
 			}
@@ -182,7 +184,7 @@ export function SpaceExternalEventsSettings({
 				`Failed to update ${source}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			if (isActionCurrent(actionSpaceId)) setBusy(null);
+			setBusy(null);
 		}
 	}
 
@@ -207,7 +209,7 @@ export function SpaceExternalEventsSettings({
 				`Failed to update GitHub events: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			if (isActionCurrent(actionSpaceId)) setBusy(null);
+			setBusy(null);
 		}
 	}
 
@@ -249,7 +251,7 @@ export function SpaceExternalEventsSettings({
 			if (!isActionCurrent(actionSpaceId)) return;
 			setFormError(err instanceof Error ? err.message : String(err));
 		} finally {
-			if (isActionCurrent(actionSpaceId)) setBusy(null);
+			setBusy(null);
 		}
 	}
 
@@ -291,7 +293,7 @@ export function SpaceExternalEventsSettings({
 				`Failed to update ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			if (isActionCurrent(actionSpaceId)) setBusy(null);
+			setBusy(null);
 		}
 	}
 
@@ -318,7 +320,7 @@ export function SpaceExternalEventsSettings({
 				`Failed to remove ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			if (isActionCurrent(actionSpaceId)) setBusy(null);
+			setBusy(null);
 		}
 	}
 

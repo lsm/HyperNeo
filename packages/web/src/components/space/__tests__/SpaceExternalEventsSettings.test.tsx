@@ -354,6 +354,67 @@ describe('SpaceExternalEventsSettings', () => {
 		});
 	});
 
+	it('clears stale space-scoped data when disconnected', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: 'space-1',
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+			return Promise.resolve({});
+		});
+		const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		expect(await view.findByText('acme/widgets')).toBeTruthy();
+
+		mockGetHubIfConnected.mockReturnValue(null);
+		view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
+
+		await waitFor(() => {
+			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
+			expect(view.queryByText('acme/widgets')).toBeNull();
+		});
+	});
+
+	it('clears busy state after stale action closures complete', async () => {
+		let resolveDisable!: (value: unknown) => void;
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method, params) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: params.spaceId,
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+			if (method === 'space.github.disable') {
+				return new Promise((resolve) => {
+					resolveDisable = resolve;
+				});
+			}
+			return Promise.resolve({});
+		});
+
+		const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await view.findByText('acme/widgets');
+		fireEvent.click(view.getByText('Enabled for this space'));
+		await waitFor(() => expect(resolveDisable).toBeTypeOf('function'));
+		view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
+		resolveDisable({});
+
+		await waitFor(() => {
+			expect(screen.getAllByRole('checkbox')[1]).toHaveProperty('disabled', false);
+		});
+	});
+
 	it('clears stale space-scoped data when loading fails', async () => {
 		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
 		mockRequest.mockImplementation((method) => {
