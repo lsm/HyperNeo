@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with the fully-migrated production schema (after M86).
+ * Keep in sync with the fully-migrated production schema (after all migrations).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -605,40 +605,6 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_schedules_goal ON task_schedules(goal_id)`);
 
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_goals (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'paused', 'completed', 'archived')),
-			type TEXT NOT NULL DEFAULT 'one_shot'
-				CHECK(type IN ('one_shot', 'measurable', 'recurring')),
-			priority TEXT NOT NULL DEFAULT 'normal'
-				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-			labels TEXT NOT NULL DEFAULT '[]',
-			metrics TEXT NOT NULL DEFAULT '{}',
-			summary TEXT NOT NULL DEFAULT '',
-			progress INTEGER NOT NULL DEFAULT 0,
-			next_steps TEXT NOT NULL DEFAULT '[]',
-			preferred_workflow_id TEXT,
-			task_schedule_id TEXT,
-			auto_trigger_next INTEGER NOT NULL DEFAULT 0,
-			pending_next_run INTEGER NOT NULL DEFAULT 0,
-			active_task_id TEXT,
-			last_task_id TEXT,
-			last_check_in_at INTEGER,
-			next_check_in_at INTEGER,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			completed_at INTEGER,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goal_events (
 			id TEXT PRIMARY KEY,
