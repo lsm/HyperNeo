@@ -28,6 +28,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
+import { DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -87,24 +88,6 @@ function extractCopyText(content: string | Array<Record<string, unknown>>): stri
 		.map((block) => (block.type === 'text' ? (block.text as string) : ''))
 		.filter(Boolean)
 		.join('\n');
-}
-
-function DeliveryStateBadge({ state }: { state?: ActorMessageDeliveryState | null }) {
-	if (!state) return null;
-	const className =
-		state === 'failed' || state === 'expired'
-			? 'border-red-500/40 bg-red-500/10 text-red-200'
-			: state === 'queued'
-				? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-				: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
-	return (
-		<span
-			class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${className}`}
-			data-testid="synthetic-delivery-state"
-		>
-			{state}
-		</span>
-	);
 }
 
 export function SyntheticMessageBlock({
@@ -212,7 +195,7 @@ export function SyntheticMessageBlock({
 								</span>
 							</>
 						)}
-						<DeliveryStateBadge state={deliveryState} />
+						<DeliveryStateBadge state={deliveryState} test-id="synthetic-delivery-state" />
 					</div>
 
 					{/* Body — capped preview + gradient fade + show more / less. */}

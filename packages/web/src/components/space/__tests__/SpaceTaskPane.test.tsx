@@ -368,6 +368,18 @@ describe('SpaceTaskPane', () => {
 		expect(getByTestId('space-task-unified-thread')).toBeTruthy();
 	});
 
+	it('redirects log view to thread when task has no workflow run', async () => {
+		mockCurrentSpaceTaskViewTabSignal.value = 'log';
+		mockTasks.value = [makeTask({ workflowRunId: null })];
+
+		render(<SpaceTaskPane taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread');
+		});
+		expect(mockCurrentSpaceTaskViewTabSignal.value).toBe('thread');
+	});
+
 	it('shows unavailable-thread copy when no task session exists', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);

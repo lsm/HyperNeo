@@ -57,6 +57,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask.compact')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActiveTurn.byTask')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('actorMessages.byTask')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('actorMessages.byWorkflowRun')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(false);
 	});
 
@@ -66,6 +68,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!.paramCount).toBe(3);
 	});
 
 	test('retired Room-scoped query names are not active contracts', () => {
@@ -205,6 +209,50 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					id TEXT PRIMARY KEY,
 					space_id TEXT NOT NULL,
 					name TEXT NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS space_workflow_runs (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					workflow_id TEXT NOT NULL,
+					title TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					current_step_index INTEGER NOT NULL DEFAULT 0,
+					current_step_id TEXT,
+					status TEXT NOT NULL DEFAULT 'pending',
+					config TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					completed_at INTEGER
+				);
+				CREATE TABLE IF NOT EXISTS pending_agent_messages (
+					id TEXT PRIMARY KEY,
+					workflow_run_id TEXT NOT NULL,
+					space_id TEXT NOT NULL,
+					task_id TEXT,
+					source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
+					target_kind TEXT NOT NULL,
+					target_agent_name TEXT NOT NULL,
+					message TEXT NOT NULL,
+					idempotency_key TEXT,
+					attempts INTEGER NOT NULL DEFAULT 0,
+					max_attempts INTEGER NOT NULL DEFAULT 5,
+					last_attempt_at INTEGER,
+					last_error TEXT,
+					status TEXT NOT NULL DEFAULT 'pending',
+					delivered_at INTEGER,
+					delivered_session_id TEXT,
+					expires_at INTEGER NOT NULL,
+					created_at INTEGER NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
+					id TEXT PRIMARY KEY NOT NULL,
+					run_id TEXT NOT NULL,
+					node_id TEXT NOT NULL,
+					artifact_type TEXT NOT NULL,
+					artifact_key TEXT NOT NULL DEFAULT '',
+					data TEXT NOT NULL DEFAULT '{}',
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
 				);
 				CREATE TABLE IF NOT EXISTS space_tasks (
 					id TEXT PRIMARY KEY,
@@ -517,6 +565,99 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(node!.messageCount).toBe(0);
 			expect(node!.label).toBe('Coder');
 			expect(node!.role).toBe('coder');
+		});
+
+		function insertPendingAgentMessage(overrides: Record<string, unknown>): void {
+			db.exec(`
+				INSERT INTO pending_agent_messages (
+					id, workflow_run_id, space_id, task_id, source_agent_name, target_kind,
+					target_agent_name, message, attempts, last_attempt_at, last_error, status,
+					delivered_at, delivered_session_id, expires_at, created_at
+				) VALUES (
+					'${String(overrides.id)}', '${String(overrides.workflowRunId)}', '${spaceId}',
+					${overrides.taskId ? `'${String(overrides.taskId)}'` : 'NULL'},
+					'${String(overrides.sourceAgentName ?? 'coder')}',
+					'${String(overrides.targetKind ?? 'node_agent')}',
+					'${String(overrides.targetAgentName ?? 'reviewer')}',
+					'${String(overrides.message ?? 'please review').replace(/'/g, "''")}',
+					${Number(overrides.attempts ?? 1)},
+					${overrides.lastAttemptAt === null ? 'NULL' : Number(overrides.lastAttemptAt ?? now + 5000)},
+					${overrides.lastError ? `'${String(overrides.lastError).replace(/'/g, "''")}'` : 'NULL'},
+					'${String(overrides.status ?? 'delivered')}',
+					${overrides.deliveredAt === null ? 'NULL' : Number(overrides.deliveredAt ?? now + 7000)},
+					${overrides.deliveredSessionId ? `'${String(overrides.deliveredSessionId)}'` : 'NULL'},
+					${Number(overrides.expiresAt ?? now + 60000)},
+					${Number(overrides.createdAt ?? now)}
+				)
+			`);
+		}
+
+		function insertWorkflowRun(id: string): void {
+			db.exec(`
+				INSERT INTO space_workflow_runs (
+					id, space_id, workflow_id, title, description, current_step_index,
+					current_step_id, status, config, created_at, updated_at, completed_at
+				) VALUES (
+					'${id}', '${spaceId}', 'workflow-test', 'Workflow test', '', 0,
+					NULL, 'in_progress', '{}', ${now}, ${now}, NULL
+				)
+			`);
+		}
+
+		test('actorMessages.byTask timestamps delivery outcomes by attempt time', () => {
+			const workflowRunId = 'wr-actor-task';
+			const taskId = insertSpaceTask({ id: 'actor-task', workflowRunId, status: 'in_progress' });
+			insertPendingAgentMessage({
+				id: 'pm-delivered',
+				workflowRunId,
+				taskId,
+				status: 'delivered',
+				createdAt: now + 1000,
+				lastAttemptAt: now + 9000,
+				deliveredAt: now + 7000,
+			});
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('delivery:pm-delivered');
+			expect(mapped[0].createdAt).toBe(now + 9000);
+		});
+
+		test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
+			const workflowRunId = 'wr-actor-run';
+			insertWorkflowRun(workflowRunId);
+			insertSpaceTask({ id: 'actor-run-task-a', workflowRunId, status: 'in_progress' });
+			insertSpaceTask({ id: 'actor-run-task-b', workflowRunId, status: 'in_progress' });
+			insertNodeExecution({
+				id: 'actor-node',
+				workflowRunId,
+				workflowNodeId: 'node-coder',
+				agentName: 'coder',
+				status: 'in_progress',
+			});
+			db.exec(`
+				INSERT INTO workflow_run_artifacts (
+					id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at
+				) VALUES (
+					'artifact-actor', '${workflowRunId}', 'node-coder', 'result', '', '{}', ${now + 2000}, ${now + 2000}
+				)
+			`);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+			const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+				string,
+				unknown
+			>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped.map((row) => row.id)).toEqual([
+				'node:actor-node:in_progress',
+				'artifact:artifact-actor',
+			]);
+			expect(new Set(mapped.map((row) => row.id)).size).toBe(2);
 		});
 
 		test('classifies by session type, not current task_agent_session_id pointer', () => {

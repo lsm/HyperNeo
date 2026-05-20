@@ -192,8 +192,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const turnUserMessageId =
 		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 	const origin = typeof row.origin === 'string' ? row.origin : null;
-	const deliveryState =
-		messageType === 'user' ? (row.deliveryState === 'failed' ? 'failed' : 'delivered') : null;
+	const deliveryState = messageType === 'user' && row.deliveryState === 'failed' ? 'failed' : null;
 	// Optional backward-compat field from older compact-query variants.
 	// Current compact SQL no longer emits this, but keep tolerant parsing so
 	// historical rows/tests and alternate query variants remain safe.
@@ -568,7 +567,7 @@ pending_rows AS (
     pm.message AS summary,
     pm.last_error AS details,
     CASE WHEN pm.status IN ('failed', 'expired') THEN 'error' WHEN pm.status = 'delivered' THEN 'success' ELSE 'info' END AS severity,
-    pm.created_at AS createdAt
+    COALESCE(pm.last_attempt_at, pm.delivered_at, pm.created_at) AS createdAt
   FROM target_task tt
   JOIN pending_agent_messages pm ON pm.task_id = tt.id
 ),
@@ -607,8 +606,8 @@ WITH node_rows AS (
     'node:' || ne.id || ':' || ne.status AS id,
     'workflow_log' AS scope,
     CASE WHEN ne.status = 'in_progress' THEN 'handoff' ELSE 'status' END AS eventKind,
-    st.id AS taskId,
-    st.title AS taskTitle,
+    (SELECT st.id FROM space_tasks st WHERE st.workflow_run_id = ne.workflow_run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskId,
+    (SELECT st.title FROM space_tasks st WHERE st.workflow_run_id = ne.workflow_run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskTitle,
     ne.workflow_run_id AS workflowRunId,
     NULL AS messageId,
     ne.id AS eventRef,
@@ -623,7 +622,6 @@ WITH node_rows AS (
     COALESCE(ne.updated_at, ne.created_at) AS createdAt
   FROM node_executions ne
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
-  LEFT JOIN space_tasks st ON st.workflow_run_id = ne.workflow_run_id
   WHERE ne.workflow_run_id = ?
 ),
 delivery_rows AS (
@@ -654,8 +652,8 @@ artifact_rows AS (
     'artifact:' || wra.id AS id,
     'workflow_log' AS scope,
     'artifact' AS eventKind,
-    st.id AS taskId,
-    st.title AS taskTitle,
+    (SELECT st.id FROM space_tasks st WHERE st.workflow_run_id = wra.run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskId,
+    (SELECT st.title FROM space_tasks st WHERE st.workflow_run_id = wra.run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskTitle,
     wra.run_id AS workflowRunId,
     NULL AS messageId,
     wra.id AS eventRef,
@@ -669,7 +667,6 @@ artifact_rows AS (
     'success' AS severity,
     wra.created_at AS createdAt
   FROM workflow_run_artifacts wra
-  LEFT JOIN space_tasks st ON st.workflow_run_id = wra.run_id
   WHERE wra.run_id = ?
 )
 SELECT * FROM node_rows

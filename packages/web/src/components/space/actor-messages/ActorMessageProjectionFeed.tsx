@@ -1,5 +1,6 @@
-import type { ActorMessageDeliveryState, ActorMessageProjectionRow } from '@neokai/shared';
+import type { ActorMessageProjectionRow } from '@neokai/shared';
 import { useActorMessageProjections } from '../../../hooks/useActorMessageProjections';
+import { DeliveryStateBadge } from '../../ui/DeliveryStateBadge';
 
 const EVENT_LABELS: Record<string, string> = {
 	message: 'Message',
@@ -14,14 +15,6 @@ const EVENT_LABELS: Record<string, string> = {
 	ci: 'CI',
 	system: 'System',
 	github: 'GitHub',
-};
-
-const DELIVERY_CLASSES: Record<ActorMessageDeliveryState, string> = {
-	queued: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
-	delivered: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
-	failed: 'border-red-500/45 bg-red-500/10 text-red-200',
-	expired: 'border-red-500/45 bg-red-500/10 text-red-200',
-	skipped: 'border-gray-500/40 bg-gray-500/10 text-gray-300',
 };
 
 const SEVERITY_DOT: Record<string, string> = {
@@ -64,18 +57,6 @@ function TargetBadge({ row }: { row: ActorMessageProjectionRow }) {
 	);
 }
 
-function DeliveryBadge({ state }: { state?: ActorMessageDeliveryState | null }) {
-	if (!state) return null;
-	return (
-		<span
-			class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${DELIVERY_CLASSES[state]}`}
-			data-testid="delivery-state-badge"
-		>
-			{state}
-		</span>
-	);
-}
-
 function ProjectionRow({ row }: { row: ActorMessageProjectionRow }) {
 	const eventLabel = EVENT_LABELS[row.eventKind] ?? row.eventKind;
 	const dotClass = SEVERITY_DOT[row.severity ?? 'info'] ?? SEVERITY_DOT.info;
@@ -89,7 +70,7 @@ function ProjectionRow({ row }: { row: ActorMessageProjectionRow }) {
 					</span>
 					<ActorLabel row={row} />
 					<TargetBadge row={row} />
-					<DeliveryBadge state={row.deliveryState} />
+					<DeliveryStateBadge state={row.deliveryState} class="text-[11px]" />
 					<span class="ml-auto text-[11px] text-gray-500">{formatClock(row.createdAt)}</span>
 				</div>
 				<div class="mt-2 text-sm font-medium text-gray-100">{row.title}</div>

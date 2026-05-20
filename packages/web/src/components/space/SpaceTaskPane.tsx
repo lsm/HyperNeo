@@ -204,6 +204,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const activeView = currentSpaceTaskViewTabSignal.value;
 
 	useEffect(() => {
+		if (activeView === 'log' && task && !task.workflowRunId) {
+			navigateToSpaceTask(spaceId ?? currentSpaceIdSignal.value ?? task.spaceId, task.id, 'thread');
+		}
+	}, [activeView, task, spaceId]);
+
+	useEffect(() => {
 		setThreadSendError(null);
 		setSelectedTargetId(null);
 		setTargetLocked(false);
