@@ -102,6 +102,10 @@ export class Database {
 		this.core = new DatabaseCore(dbPath);
 	}
 
+	getDbPath(): string {
+		return this.core.getDbPath();
+	}
+
 	async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
 		await this.core.initialize();
 
