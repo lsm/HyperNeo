@@ -485,6 +485,31 @@ const ACTOR_MESSAGES_BY_TASK_SQL = `
 WITH target_task AS (
   SELECT * FROM space_tasks WHERE id = ?
 ),
+session_node_exec AS (
+  SELECT
+    ne.id,
+    ne.workflow_run_id,
+    ne.agent_session_id,
+    ne.agent_id,
+    ne.agent_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY ne.workflow_run_id, ne.agent_session_id
+      ORDER BY
+        CASE ne.status
+          WHEN 'in_progress' THEN 0
+          WHEN 'waiting_rebind' THEN 1
+          WHEN 'blocked' THEN 2
+          WHEN 'pending' THEN 3
+          ELSE 4
+        END,
+        ne.updated_at DESC,
+        ne.created_at DESC,
+        ne.id DESC
+    ) AS rn
+  FROM node_executions ne
+  JOIN target_task tt ON tt.workflow_run_id = ne.workflow_run_id
+  WHERE ne.agent_session_id IS NOT NULL
+),
 sdk_rows AS (
   SELECT
     'msg:' || sm.id AS id,
@@ -543,9 +568,10 @@ sdk_rows AS (
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
   JOIN sdk_messages sm ON sm.task_id = tt.id
-  LEFT JOIN node_executions ne
+  LEFT JOIN session_node_exec ne
     ON ne.workflow_run_id = tt.workflow_run_id
    AND ne.agent_session_id = sm.session_id
+   AND ne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 ),

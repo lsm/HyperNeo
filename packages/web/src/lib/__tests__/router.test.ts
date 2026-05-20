@@ -140,6 +140,16 @@ describe('router', () => {
 			taskId: TASK_ID,
 			view: 'canvas',
 		});
+		expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/timeline`)).toEqual({
+			spaceId: SPACE_ID,
+			taskId: TASK_ID,
+			view: 'timeline',
+		});
+		expect(getSpaceTaskViewFromPath(`/space/${SPACE_ID}/task/${TASK_ID}/log`)).toEqual({
+			spaceId: SPACE_ID,
+			taskId: TASK_ID,
+			view: 'log',
+		});
 	});
 
 	it('initializes space configure and task list tabs', () => {

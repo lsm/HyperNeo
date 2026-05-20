@@ -604,6 +604,26 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			`);
 		}
 
+		function insertSdkMessageAt(
+			id: string,
+			sessionIdValue: string,
+			timestampMs: number,
+			messageType = 'assistant'
+		): void {
+			const iso = new Date(timestampMs).toISOString();
+			const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
+			db.exec(`
+				INSERT INTO sdk_messages (
+					id, session_id, message_type, message_subtype, sdk_message, timestamp,
+					send_status, origin, task_id
+				) VALUES (
+					'${id}', '${sessionIdValue}', '${messageType}', NULL,
+					'{"type":"${messageType}","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
+					'${iso}', 'consumed', 'system', ${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
+				)
+			`);
+		}
+
 		test('actorMessages.byTask timestamps delivery outcomes by attempt time', () => {
 			const workflowRunId = 'wr-actor-task';
 			const taskId = insertSpaceTask({ id: 'actor-task', workflowRunId, status: 'in_progress' });
@@ -624,6 +644,43 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(mapped).toHaveLength(1);
 			expect(mapped[0].id).toBe('delivery:pm-delivered');
 			expect(mapped[0].createdAt).toBe(now + 9000);
+		});
+
+		test('actorMessages.byTask does not fan out SDK rows across node execution history', () => {
+			const workflowRunId = 'wr-actor-sdk';
+			const nodeSessionId = 'node-agent-actor-sdk';
+			const taskId = insertSpaceTask({
+				id: 'actor-sdk-task',
+				workflowRunId,
+				status: 'in_progress',
+			});
+			insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+			sessionTaskIds.set(nodeSessionId, taskId);
+			insertNodeExecution({
+				id: 'actor-sdk-old',
+				workflowRunId,
+				workflowNodeId: 'node-coder-old',
+				agentName: 'coder-old',
+				agentSessionId: nodeSessionId,
+				status: 'done',
+			});
+			insertNodeExecution({
+				id: 'actor-sdk-current',
+				workflowRunId,
+				workflowNodeId: 'node-coder-current',
+				agentName: 'coder-current',
+				agentSessionId: nodeSessionId,
+				status: 'in_progress',
+			});
+			insertSdkMessageAt('sdk-actor-one', nodeSessionId, now + 1000);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('msg:sdk-actor-one');
+			expect((mapped[0].from as Record<string, unknown>).nodeExecutionId).toBe('actor-sdk-current');
 		});
 
 		test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {

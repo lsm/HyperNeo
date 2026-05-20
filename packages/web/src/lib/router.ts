@@ -19,6 +19,7 @@ import {
 	navSectionSignal,
 	type SettingsSection,
 	type SpaceOverlayTaskContext,
+	type SpaceTaskViewTab,
 	settingsSectionSignal,
 	spaceOverlayAgentNameSignal,
 	spaceOverlayHighlightMessageIdSignal,
@@ -176,13 +177,13 @@ export function getSpaceTaskIdFromPath(path: string): { spaceId: string; taskId:
 
 export function getSpaceTaskViewFromPath(
 	path: string
-): { spaceId: string; taskId: string; view: 'thread' | 'canvas' | 'artifacts' } | null {
+): { spaceId: string; taskId: string; view: SpaceTaskViewTab } | null {
 	const match = path.match(SPACE_TASK_VIEW_ROUTE_PATTERN);
 	if (!match) return null;
 	return {
 		spaceId: match[1],
 		taskId: match[2],
-		view: match[3] as 'thread' | 'canvas' | 'artifacts',
+		view: match[3] as SpaceTaskViewTab,
 	};
 }
 
