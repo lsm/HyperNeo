@@ -1171,7 +1171,7 @@ export class SpaceRuntime {
 					continue;
 				}
 				this.queueForRetry(
-					item.target,
+					target,
 					item.event,
 					item.deliveryKey,
 					item.deliveryMode,

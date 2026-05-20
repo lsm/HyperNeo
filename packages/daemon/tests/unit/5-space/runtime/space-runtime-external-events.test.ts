@@ -646,6 +646,72 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(events[10]!.id)?.state).toBe('delivered');
 	});
 
+	test('retries digest failures against the resolved flush target', async () => {
+		const { workflow, run, task } = await startRunWithSubscription();
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-digest-stale-retry',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-digest-stale-retry');
+		await runtime.stop();
+		let failNext = true;
+		const commandBus = createInternalCommandBus();
+		commandBus.register('agent.message.inject', async (command) => {
+			if (failNext && command.metadata?.source === 'external_event_digest') {
+				failNext = false;
+				return { ok: false, error: 'temporary digest target failure' };
+			}
+			injected.push({
+				sessionId: command.sessionId,
+				message: command.message,
+				deliveryMode: command.deliveryMode,
+			});
+			return { ok: true };
+		});
+		runtime = new SpaceRuntime({
+			db,
+			spaceManager: new SpaceManager(db),
+			spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			internalEventBus: bus,
+			commandBus,
+			externalEventStore: eventStore,
+			taskAgentManager: tam as never,
+		});
+		runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+		const events = Array.from({ length: 11 }, (_, index) =>
+			makeEvent({
+				id: `evt-digest-resolved-retry-${index}`,
+				dedupeKey: `dedupe-digest-resolved-retry-${index}`,
+			})
+		);
+
+		for (const event of events) {
+			await eventService.publish(event);
+		}
+		tam.alive.delete('session-digest-stale-retry');
+		tam.alive.add('session-digest-fresh-retry');
+		nodeExecutionRepo.update(execution.id, {
+			agentSessionId: 'session-digest-fresh-retry',
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(injected).toHaveLength(10);
+		const digestDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
+		expect(digestDelivery.failureReason).toBe(
+			'deliveryMode:immediate; digest; temporary digest target failure'
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		expect(injected).toHaveLength(11);
+		expect(injected[10]!.sessionId).toBe('session-digest-fresh-retry');
+		expect(eventStore.getById(events[10]!.id)?.state).toBe('delivered');
+	});
+
 	test('preserves deferred mode when digest delivery is retried after rehydrate', async () => {
 		const { workflow, run, task } = await startRunWithSubscription();
 		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
