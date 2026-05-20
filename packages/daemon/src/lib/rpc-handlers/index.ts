@@ -212,8 +212,11 @@ export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies
 				throw error;
 			}
 		} else {
-			await deps.externalEventExtensionManager.stopExtension(params.source);
-			await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
+			try {
+				await deps.externalEventExtensionManager.stopExtension(params.source);
+			} finally {
+				await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
+			}
 		}
 		return { source: params.source, globallyEnabled: params.enabled };
 	});

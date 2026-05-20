@@ -99,6 +99,30 @@ describe('external event extension RPC handlers', () => {
 		expect((await configStore.getGlobalConfig('github')).globallyEnabled).toBe(false);
 	});
 
+	test('persists global disable when extension stop fails', async () => {
+		const extension = createExtension('github');
+		extensionManager.register(extension);
+		await configStore.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: true,
+			capabilities: { webhooks: true, rpcConfig: true },
+		});
+		await extensionManager.startExtension('github', extensionContext);
+		extension.failStop = true;
+		setupExternalEventExtensionHandlers(makeDeps());
+
+		await expect(
+			handlers.get('externalEvents.extensions.setGlobalEnabled')!({
+				source: 'github',
+				enabled: false,
+			})
+		).rejects.toThrow('stop failed');
+
+		expect(extension.stops).toBe(1);
+		expect(extensionManager.isStarted('github')).toBe(false);
+		expect((await configStore.getGlobalConfig('github')).globallyEnabled).toBe(false);
+	});
+
 	test('keeps config and handlers unchanged when extension start fails', async () => {
 		const extension = createExtension('github');
 		extension.failStart = true;
@@ -158,6 +182,7 @@ function createExtension(sourceId: string): TestExtension {
 		starts: 0,
 		stops: 0,
 		failStart: false,
+		failStop: false,
 		routes: [
 			{
 				method: 'POST',
@@ -171,6 +196,7 @@ function createExtension(sourceId: string): TestExtension {
 		},
 		async stop() {
 			this.stops += 1;
+			if (this.failStop) throw new Error('stop failed');
 		},
 		registerRpcHandlers(hubLike) {
 			hubLike.onRequest(`${sourceId}.test`, () => ({ ok: true }));
@@ -182,6 +208,7 @@ interface TestExtension extends HttpExternalEventExtension, RpcExternalEventExte
 	starts: number;
 	stops: number;
 	failStart: boolean;
+	failStop: boolean;
 }
 
 function makeDeps(): RPCHandlerDependencies {

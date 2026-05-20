@@ -52,6 +52,20 @@ const extensionResult = {
 			config: {
 				source: 'github',
 				globallyEnabled: true,
+				capabilities: { webhooks: true, polling: true, rpcConfig: true },
+			},
+		},
+	],
+};
+
+const pollingDisabledExtensionResult = {
+	extensions: [
+		{
+			source: 'github',
+			status: 'started',
+			config: {
+				source: 'github',
+				globallyEnabled: true,
 				capabilities: { webhooks: true, polling: false, rpcConfig: true },
 			},
 		},
@@ -282,14 +296,30 @@ describe('SpaceExternalEventsSettings', () => {
 		});
 	});
 
-	it('shows RPC failures when loading fails', async () => {
+	it('clears stale space-scoped data when loading fails', async () => {
 		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-		mockRequest.mockRejectedValue(new Error('boom'));
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: 'space-1',
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+			return Promise.resolve({});
+		});
+		const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		expect(await view.findByText('acme/widgets')).toBeTruthy();
 
-		render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		mockRequest.mockRejectedValue(new Error('boom'));
+		view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
 
 		await waitFor(() => {
 			expect(mockToastError).toHaveBeenCalledWith('Failed to load external event sources: boom');
+			expect(view.queryByText('acme/widgets')).toBeNull();
 		});
 	});
 
@@ -353,6 +383,37 @@ describe('SpaceExternalEventsSettings', () => {
 				pollingEnabled: true,
 			});
 		});
+	});
+
+	it('requires a webhook secret when polling capability is disabled', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list') {
+				return Promise.resolve(pollingDisabledExtensionResult);
+			}
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: 'space-1',
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve({ repositories: [] });
+			return Promise.resolve({});
+		});
+		const { findByText, getByPlaceholderText, getByText } = render(
+			<SpaceExternalEventsSettings spaceId="space-1" />
+		);
+		await findByText('github');
+
+		fireEvent.input(getByPlaceholderText('owner/repository'), { target: { value: 'foo/bar' } });
+		fireEvent.click(getByText('Add watch'));
+
+		expect(
+			await findByText('Webhook secret is required because polling is disabled for GitHub')
+		).toBeTruthy();
+		expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
 	});
 
 	it('removes watched repositories', async () => {

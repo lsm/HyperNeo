@@ -95,6 +95,7 @@ export function SpaceExternalEventsSettings({
 	const githubExtension = extensions.find((extension) => extension.source === 'github');
 	const githubGloballyEnabled = githubExtension?.config.globallyEnabled ?? false;
 	const githubRpcConfigEnabled = githubExtension?.config.capabilities.rpcConfig ?? false;
+	const githubPollingEnabled = githubExtension?.config.capabilities.polling === true;
 	const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
 	const githubSpaceEnabled = spaceConfig?.enabled ?? true;
 	const webhookUrl = useMemo(getWebhookUrl, []);
@@ -142,6 +143,8 @@ export function SpaceExternalEventsSettings({
 			setRepos(repoResult.repositories);
 		} catch (err) {
 			if (!isCurrentRefresh()) return;
+			setSpaceConfig(null);
+			setRepos([]);
 			toast.error(
 				`Failed to load external event sources: ${err instanceof Error ? err.message : String(err)}`
 			);
@@ -210,6 +213,10 @@ export function SpaceExternalEventsSettings({
 			setBusy('repo:add');
 			setFormError(null);
 			const secret = webhookSecret.trim();
+			if (!secret && !githubPollingEnabled) {
+				setFormError('Webhook secret is required because polling is disabled for GitHub');
+				return;
+			}
 			await hub.request('space.github.watchRepo', {
 				spaceId,
 				owner: parsed.owner,
