@@ -54,6 +54,12 @@ vi.mock('../export-import-utils', () => ({
 	downloadBundle: (...args) => mockDownloadBundle(...args),
 }));
 
+vi.mock('../SpaceExternalEventsSettings', () => ({
+	SpaceExternalEventsSettings: ({ spaceId }) => (
+		<div data-testid="space-external-events-settings">External events for {spaceId}</div>
+	),
+}));
+
 vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 	WorkflowModelSelect: ({ value, onChange, testId, className }) => (
 		<select

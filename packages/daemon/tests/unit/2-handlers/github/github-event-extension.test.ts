@@ -347,6 +347,39 @@ describe('GitHubEventExtension', () => {
 		await extension.stop();
 	});
 
+	test('RPC unwatchRepo removes watched repositories', async () => {
+		const db = setupDb();
+		const extension = new GitHubEventExtension(db);
+		const clientHub = new MessageHub();
+		const hub = new MessageHub();
+		const [clientTransport, serverTransport] = InProcessTransport.createPair();
+		clientHub.registerTransport(clientTransport);
+		hub.registerTransport(serverTransport);
+		await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+		const context = {
+			publisher: { publish: async () => {} },
+			config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+			onSourceConfigChanged() {},
+		};
+		await extension.start(context);
+		extension.registerRpcHandlers(hub, context);
+		await clientHub.request('space.github.watchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+		});
+
+		const result = await clientHub.request<{ removed: boolean }>('space.github.unwatchRepo', {
+			spaceId: 'space-1',
+			owner: 'acme',
+			repo: 'widgets',
+		});
+
+		expect(result.removed).toBe(true);
+		expect(extension.repo.listWatchedRepos('space-1')).toHaveLength(0);
+		await extension.stop();
+	});
+
 	test('space-scoped pollOnce respects global polling disable', async () => {
 		const db = setupDb();
 		const extension = new GitHubEventExtension(db);

@@ -115,6 +115,16 @@ export class GitHubEventExtensionRepository {
 			.run(enabled ? 1 : 0, now, spaceId).changes;
 	}
 
+	removeWatchedRepo(spaceId: string, owner: string, repo: string): boolean {
+		return (
+			this.db
+				.prepare(
+					`DELETE FROM space_github_watched_repos WHERE space_id = ? AND lower(owner)=lower(?) AND lower(repo)=lower(?)`
+				)
+				.run(spaceId, owner, repo).changes > 0
+		);
+	}
+
 	isSpaceEnabled(spaceId: string): boolean {
 		const row = this.db
 			.prepare(`SELECT enabled FROM space_github_source_settings WHERE space_id = ?`)

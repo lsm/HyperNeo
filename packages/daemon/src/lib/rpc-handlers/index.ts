@@ -102,6 +102,13 @@ import { ScheduleService } from '../space/schedule/schedule-service';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
+import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
+import type { ExternalEventExtensionManager } from '../external-events/extension-manager';
+import type {
+	ExternalEventExtensionContext,
+	HttpExternalEventExtension,
+	RpcExternalEventExtension,
+} from '../external-events/types';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -115,6 +122,9 @@ export interface RPCHandlerDependencies {
 	externalEventStore: ExternalEventStore;
 	/** External event service available to runtime subscribers when direct publishing is needed. */
 	externalEventService: ExternalEventService;
+	externalEventExtensionManager: ExternalEventExtensionManager;
+	externalEventExtensionConfigStore: ExternalEventExtensionConfigStore;
+	externalEventExtensionContext: ExternalEventExtensionContext;
 	db: Database;
 	gitHubService?: GitHubService;
 	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
@@ -147,6 +157,68 @@ export interface RPCHandlerDependencies {
 }
 
 const log = new Logger('rpc-handlers');
+
+function isHttpExternalEventExtension(extension: unknown): extension is HttpExternalEventExtension {
+	return 'routes' in (extension as Record<string, unknown>);
+}
+
+function isRpcExternalEventExtension(extension: unknown): extension is RpcExternalEventExtension {
+	return 'registerRpcHandlers' in (extension as Record<string, unknown>);
+}
+
+function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
+	deps.messageHub.onRequest('externalEvents.extensions.list', async () => {
+		const extensions = [];
+		for (const extension of deps.externalEventExtensionManager.getAll()) {
+			const config = await deps.externalEventExtensionConfigStore.getGlobalConfig(
+				extension.sourceId
+			);
+			extensions.push({
+				source: extension.sourceId,
+				status: deps.externalEventExtensionManager.isStarted(extension.sourceId)
+					? 'started'
+					: 'stopped',
+				config,
+			});
+		}
+		return { extensions };
+	});
+
+	deps.messageHub.onRequest('externalEvents.extensions.setGlobalEnabled', async (data) => {
+		const params = data as { source?: string; enabled?: boolean };
+		if (!params.source || typeof params.enabled !== 'boolean') {
+			throw new Error('source and enabled are required');
+		}
+		const extension = deps.externalEventExtensionManager.getExtension(params.source);
+		if (!extension)
+			throw new Error(`External event extension "${params.source}" is not registered`);
+		const current = await deps.externalEventExtensionConfigStore.getGlobalConfig(params.source);
+		const config = { ...current, globallyEnabled: params.enabled };
+		await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
+		if (params.enabled) {
+			if (isHttpExternalEventExtension(extension)) {
+				deps.externalEventExtensionManager.registerRoutes(
+					extension.routes,
+					deps.externalEventExtensionContext
+				);
+			}
+			if (isRpcExternalEventExtension(extension) && config.capabilities.rpcConfig) {
+				deps.externalEventExtensionManager.registerRpcHandlers(
+					params.source,
+					deps.messageHub,
+					deps.externalEventExtensionContext
+				);
+			}
+			await deps.externalEventExtensionManager.startExtension(
+				params.source,
+				deps.externalEventExtensionContext
+			);
+		} else {
+			await deps.externalEventExtensionManager.stopExtension(params.source);
+		}
+		return { source: params.source, globallyEnabled: params.enabled };
+	});
+}
 
 /**
  * Cleanup function type for RPC handlers.
@@ -236,6 +308,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Per-space MCP enablement RPC handlers + `.mcp.json` import refresh.
 	setupSpaceMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, deps.spaceManager);
 	setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
+	setupExternalEventExtensionHandlers(deps);
 
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.internalEventBus, undefined);

@@ -136,6 +136,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 			};
 		});
 
+		hub.onRequest('space.github.unwatchRepo', async (data) => {
+			await assertRpcConfigEnabled(context, this.sourceId);
+			const params = data as { spaceId?: string; owner?: string; repo?: string };
+			if (!params.spaceId || !params.owner || !params.repo) {
+				throw new Error('spaceId, owner and repo are required');
+			}
+			const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
+			await this.persistSpaceConfig(context, params.spaceId);
+			context.onSourceConfigChanged({
+				source: this.sourceId,
+				spaceId: params.spaceId,
+				kind: 'watched_repo_removed',
+			});
+			return { removed };
+		});
+
 		hub.onRequest('space.github.listConfig', async (data) => {
 			await assertRpcConfigEnabled(context, this.sourceId);
 			const params = data as { spaceId?: string };
