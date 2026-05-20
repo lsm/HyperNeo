@@ -355,17 +355,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		error: string;
 		inboxItemId: string;
 	};
-	'space.githubEvent.routed': {
-		sessionId: string;
-		taskId: string;
-		event: {
-			repo: string;
-			prNumber: number;
-			eventType: string;
-			summary: string;
-			externalUrl: string;
-		};
-	};
 
 	// App-level MCP registry events
 	/**
