@@ -20,13 +20,16 @@ vi.mock('../../../lib/toast', () => ({
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceForge } from '../SpaceForge';
 
+const mockSpaceId = signal<string | null>('space-1');
 const mockGoals = signal<SpaceGoal[]>([]);
 const mockListGoals = vi.fn(async () => [] as SpaceGoal[]);
 
 const mutableSpaceStore = spaceStore as unknown as {
+	spaceId: Signal<string | null>;
 	goals: Signal<SpaceGoal[]>;
 	listGoals: typeof mockListGoals;
 };
+mutableSpaceStore.spaceId = mockSpaceId;
 mutableSpaceStore.goals = mockGoals;
 mutableSpaceStore.listGoals = mockListGoals;
 
@@ -138,6 +141,7 @@ function setupRequests(scope = makeScope()) {
 
 describe('SpaceForge', () => {
 	beforeEach(() => {
+		mockSpaceId.value = 'space-1';
 		mockGoals.value = [makeGoal()];
 		mockListGoals.mockResolvedValue(mockGoals.value);
 		setupRequests();

@@ -712,7 +712,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
-	const goals = spaceStore.goals.value;
+	const goals = spaceStore.spaceId.value === spaceId ? spaceStore.goals.value : [];
 
 	const loadScopes = useCallback(async () => {
 		setLoading(true);
