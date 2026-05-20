@@ -23,7 +23,7 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import type { ActiveTurnSummary, ActivityEntry } from '@neokai/shared';
+import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@neokai/shared';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
@@ -219,6 +219,8 @@ interface MessageFeedTurn {
 	isSynthetic: boolean;
 	/** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
 	sessionId: string | null;
+	/** User-message delivery state, shown as a small send-state badge. */
+	deliveryState?: ActorMessageDeliveryState | null;
 	/** SDK message UUID, used to deep-link the slide-over. */
 	highlightMessageUuid?: string;
 	/**
@@ -636,6 +638,7 @@ function buildMessageTurn(
 		bodyIsFallback: fallback,
 		createdAt: row.createdAt,
 		isSynthetic,
+		deliveryState: row.deliveryState ?? null,
 		sessionId: row.sessionId,
 		highlightMessageUuid: highlightUuid,
 		sessionInit,
@@ -828,6 +831,24 @@ function StatusPill({ color, status }: { color: string; status: string }) {
 		<span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
 			<PulseDot color={color} />
 			<span style={{ color }}>{status}</span>
+		</span>
+	);
+}
+
+function DeliveryStatePill({ state }: { state?: ActorMessageDeliveryState | null }) {
+	if (!state) return null;
+	const className =
+		state === 'failed' || state === 'expired'
+			? 'border-red-500/40 bg-red-500/10 text-red-200'
+			: state === 'queued'
+				? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+				: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
+	return (
+		<span
+			class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${className}`}
+			data-testid="minimal-thread-delivery-state"
+		>
+			{state}
 		</span>
 	);
 }
@@ -1212,6 +1233,9 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				    session-init dropdown + copy. Replaces the bare
 				    timestamp so the human bubble has parity with synthetic
 				    messages and agent reply bubbles. */}
+				<div class="mt-1 flex justify-end">
+					<DeliveryStatePill state={turn.deliveryState} />
+				</div>
 				<SpaceTaskThreadMessageActions
 					timestamp={turn.createdAt}
 					copyText={turn.body}
@@ -1256,6 +1280,7 @@ function SyntheticMessageTurn({
 			data-to-label={turn.toLabel}
 		>
 			<SyntheticMessageBlock
+				deliveryState={turn.deliveryState}
 				content={turn.body ?? ''}
 				timestamp={turn.createdAt}
 				uuid={turn.highlightMessageUuid}

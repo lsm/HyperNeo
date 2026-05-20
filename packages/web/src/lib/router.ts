@@ -45,7 +45,7 @@ const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-fA-F0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
 const SPACE_TASK_VIEW_ROUTE_PATTERN =
-	/^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)\/(thread|canvas|artifacts)$/;
+	/^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)\/(thread|timeline|log|canvas|artifacts)$/;
 const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
 	'general',
@@ -519,7 +519,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 export function navigateToSpaceTask(
 	spaceId: string,
 	taskId: string,
-	view?: 'thread' | 'canvas' | 'artifacts',
+	view?: 'thread' | 'timeline' | 'log' | 'canvas' | 'artifacts',
 	replace = false
 ): void {
 	if (routerState.isNavigating) return;

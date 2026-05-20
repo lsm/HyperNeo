@@ -1,0 +1,165 @@
+import type { ActorMessageDeliveryState, ActorMessageProjectionRow } from '@neokai/shared';
+import { useActorMessageProjections } from '../../../hooks/useActorMessageProjections';
+
+const EVENT_LABELS: Record<string, string> = {
+	message: 'Message',
+	decision: 'Decision',
+	question: 'Question',
+	answer: 'Answer',
+	artifact: 'Artifact',
+	status: 'Status',
+	handoff: 'Handoff',
+	gate: 'Gate',
+	retry: 'Retry',
+	ci: 'CI',
+	system: 'System',
+	github: 'GitHub',
+};
+
+const DELIVERY_CLASSES: Record<ActorMessageDeliveryState, string> = {
+	queued: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+	delivered: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
+	failed: 'border-red-500/45 bg-red-500/10 text-red-200',
+	expired: 'border-red-500/45 bg-red-500/10 text-red-200',
+	skipped: 'border-gray-500/40 bg-gray-500/10 text-gray-300',
+};
+
+const SEVERITY_DOT: Record<string, string> = {
+	info: 'bg-blue-400',
+	success: 'bg-emerald-400',
+	warning: 'bg-amber-400',
+	error: 'bg-red-400',
+};
+
+function formatClock(timestamp: number): string {
+	return new Date(timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function shorten(value: string | null | undefined, max = 220): string {
+	const collapsed = (value ?? '').replace(/\s+/g, ' ').trim();
+	if (collapsed.length <= max) return collapsed;
+	return `${collapsed.slice(0, max - 1)}…`;
+}
+
+function ActorLabel({ row }: { row: ActorMessageProjectionRow }) {
+	return (
+		<span class="inline-flex items-center gap-1.5 rounded-md border border-dark-700 bg-dark-800/70 px-2 py-0.5 text-[11px] font-medium text-gray-200">
+			<span class="uppercase tracking-wide text-gray-500">{row.from.kind}</span>
+			<span>{row.from.label}</span>
+		</span>
+	);
+}
+
+function TargetBadge({ row }: { row: ActorMessageProjectionRow }) {
+	if (!row.target) return null;
+	return (
+		<span
+			class="inline-flex items-center gap-1 rounded-md border border-dark-700 bg-dark-900/70 px-2 py-0.5 text-[11px] font-medium text-gray-300"
+			data-testid="actor-target-badge"
+		>
+			<span class="text-gray-600">→</span>
+			<span>{row.target.label}</span>
+			{row.targetResolution ? <span class="text-gray-500">({row.targetResolution})</span> : null}
+		</span>
+	);
+}
+
+function DeliveryBadge({ state }: { state?: ActorMessageDeliveryState | null }) {
+	if (!state) return null;
+	return (
+		<span
+			class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${DELIVERY_CLASSES[state]}`}
+			data-testid="delivery-state-badge"
+		>
+			{state}
+		</span>
+	);
+}
+
+function ProjectionRow({ row }: { row: ActorMessageProjectionRow }) {
+	const eventLabel = EVENT_LABELS[row.eventKind] ?? row.eventKind;
+	const dotClass = SEVERITY_DOT[row.severity ?? 'info'] ?? SEVERITY_DOT.info;
+	return (
+		<li class="relative pl-7" data-testid="actor-message-projection-row">
+			<span class={`absolute left-0 top-2 h-2.5 w-2.5 rounded-full ${dotClass}`} />
+			<div class="rounded-lg border border-dark-700 bg-dark-850/70 px-3 py-2.5 shadow-sm shadow-black/10">
+				<div class="flex flex-wrap items-center gap-2">
+					<span class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+						{eventLabel}
+					</span>
+					<ActorLabel row={row} />
+					<TargetBadge row={row} />
+					<DeliveryBadge state={row.deliveryState} />
+					<span class="ml-auto text-[11px] text-gray-500">{formatClock(row.createdAt)}</span>
+				</div>
+				<div class="mt-2 text-sm font-medium text-gray-100">{row.title}</div>
+				{row.summary ? (
+					<p class="mt-1 text-sm leading-relaxed text-gray-300">{shorten(row.summary)}</p>
+				) : null}
+				{row.details ? (
+					<p class="mt-1 text-xs leading-relaxed text-gray-500">{shorten(row.details, 160)}</p>
+				) : null}
+			</div>
+		</li>
+	);
+}
+
+interface ActorMessageProjectionFeedProps {
+	scope: 'task_timeline' | 'workflow_log';
+	taskId?: string | null;
+	workflowRunId?: string | null;
+	topInsetClass?: string;
+	bottomInsetPx?: number;
+	emptyLabel: string;
+	loadingLabel: string;
+	reconnectingLabel: string;
+}
+
+export function ActorMessageProjectionFeed({
+	scope,
+	taskId,
+	workflowRunId,
+	topInsetClass = 'pt-12',
+	bottomInsetPx = 0,
+	emptyLabel,
+	loadingLabel,
+	reconnectingLabel,
+}: ActorMessageProjectionFeedProps) {
+	const { rows, isLoading, isReconnecting } = useActorMessageProjections({
+		scope,
+		taskId,
+		workflowRunId,
+	});
+
+	const paddingStyle = bottomInsetPx > 0 ? { paddingBottom: `${bottomInsetPx}px` } : undefined;
+
+	if (isReconnecting || isLoading) {
+		return (
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-500">
+					{isReconnecting ? reconnectingLabel : loadingLabel}
+				</div>
+			</div>
+		);
+	}
+
+	if (rows.length === 0) {
+		return (
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-500">
+					{emptyLabel}
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div class={`h-full overflow-y-auto ${topInsetClass}`} style={paddingStyle}>
+			<ol class="min-h-[calc(100%+1px)] space-y-3 px-4 py-4">
+				{rows.map((row) => (
+					<ProjectionRow key={row.id} row={row} />
+				))}
+			</ol>
+		</div>
+	);
+}

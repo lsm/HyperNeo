@@ -23,6 +23,7 @@
  *   placement as the human bubble for visual consistency).
  */
 
+import type { ActorMessageDeliveryState } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
@@ -50,6 +51,8 @@ interface Props {
 	fromShort?: string;
 	/** Optional shorter label for the TO badge (defaults to `toAgent`). */
 	toShort?: string;
+	/** Optional delivery state for synthetic actor messages. */
+	deliveryState?: ActorMessageDeliveryState | null;
 	/** When provided, an "open in session" icon appears in the actions row. */
 	onOpenSession?: () => void;
 	/** When provided, a session-info dropdown appears in the actions row,
@@ -86,6 +89,24 @@ function extractCopyText(content: string | Array<Record<string, unknown>>): stri
 		.join('\n');
 }
 
+function DeliveryStateBadge({ state }: { state?: ActorMessageDeliveryState | null }) {
+	if (!state) return null;
+	const className =
+		state === 'failed' || state === 'expired'
+			? 'border-red-500/40 bg-red-500/10 text-red-200'
+			: state === 'queued'
+				? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+				: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
+	return (
+		<span
+			class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${className}`}
+			data-testid="synthetic-delivery-state"
+		>
+			{state}
+		</span>
+	);
+}
+
 export function SyntheticMessageBlock({
 	content,
 	timestamp,
@@ -96,6 +117,7 @@ export function SyntheticMessageBlock({
 	toColor,
 	fromShort,
 	toShort,
+	deliveryState,
 	onOpenSession,
 	sessionInit,
 	renderAsPlainText = false,
@@ -190,6 +212,7 @@ export function SyntheticMessageBlock({
 								</span>
 							</>
 						)}
+						<DeliveryStateBadge state={deliveryState} />
 					</div>
 
 					{/* Body — capped preview + gradient fade + show more / less. */}
