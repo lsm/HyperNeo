@@ -62,6 +62,7 @@ import {
 	isReservedWorkflowAgentName,
 	type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
 import {
@@ -95,7 +96,7 @@ import {
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
-import { TopicTrie } from './topic-trie';
+import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
@@ -262,6 +263,8 @@ interface SubscriptionTarget {
 	taskId: string;
 	nodeId: string;
 	agentName: string;
+	topic?: string;
+	subscriptionKind?: 'static' | 'dynamic';
 	sessionId?: string;
 }
 
@@ -795,15 +798,43 @@ export class SpaceRuntime {
 	registerRunInterests(
 		workflowRunId: string,
 		taskId: string,
-		_nodes: WorkflowNode[],
+		nodes: WorkflowNode[],
 		options: { clearQueuedDeliveries?: boolean } = {}
 	): void {
-		this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
+		this.topicTrie.remove(
+			(target) => target.workflowRunId === workflowRunId && target.subscriptionKind !== 'dynamic'
+		);
 		if (options.clearQueuedDeliveries) {
 			this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
 		}
-		// Subscription insertion is now driven by runtime callers
-		// (MCP tool, gate/artifact scripts) via registerSubscription().
+		for (const node of nodes) {
+			for (const agentEntry of resolveNodeAgents(node)) {
+				for (const interest of agentEntry.eventInterests ?? []) {
+					const result = this.registerSubscription(
+						workflowRunId,
+						taskId,
+						node.id,
+						agentEntry.name,
+						interest.topic,
+						{
+							subscriptionKind: 'static',
+						}
+					);
+					if (!result.success) {
+						throw new Error(
+							`Invalid static external event interest for ${workflowRunId}/${node.id}/${agentEntry.name}: ` +
+								(result.error ?? 'invalid pattern')
+						);
+					}
+				}
+			}
+		}
+	}
+
+	private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
+		const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
+		if (!task) return;
+		this.registerRunInterests(run.id, task.id, workflow.nodes);
 	}
 
 	/**
@@ -818,19 +849,77 @@ export class SpaceRuntime {
 		taskId: string,
 		nodeId: string,
 		agentName: string,
-		topic: string
-	): void {
+		topic: string,
+		options: { subscriptionKind?: 'static' | 'dynamic' } = {}
+	): { success: boolean; error?: string } {
 		const trimmed = topic?.trim();
-		if (!trimmed) return;
+		if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
 		const validation = validateGlobPattern(trimmed);
 		if (!validation.valid) {
 			log.warn(
 				`SpaceRuntime: skipping invalid subscription topic "${trimmed}" for ` +
 					`${workflowRunId}/${nodeId}/${agentName}: ${validation.reason ?? 'invalid pattern'}`
 			);
-			return;
+			return { success: false, error: validation.reason ?? 'invalid pattern' };
 		}
-		this.topicTrie.insert(trimmed, { workflowRunId, taskId, nodeId, agentName });
+		const normalized = trimmed.toLowerCase();
+		const subscriptionKind = options.subscriptionKind ?? 'dynamic';
+		this.topicTrie.remove(
+			(target) =>
+				target.workflowRunId === workflowRunId &&
+				target.taskId === taskId &&
+				target.nodeId === nodeId &&
+				target.agentName === agentName &&
+				target.subscriptionKind === subscriptionKind &&
+				target.topic?.toLowerCase() === normalized
+		);
+		const existingInterests = this.topicTrie.count(
+			(target) =>
+				target.workflowRunId === workflowRunId &&
+				target.nodeId === nodeId &&
+				target.agentName === agentName
+		);
+		if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
+			throw new Error(
+				`Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
+					`${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+			);
+		}
+		this.topicTrie.insert(trimmed, {
+			workflowRunId,
+			taskId,
+			nodeId,
+			agentName,
+			topic: trimmed,
+			subscriptionKind,
+		});
+		return { success: true };
+	}
+
+	unregisterSubscription(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string,
+		topic: string
+	): { success: boolean; error?: string } {
+		const trimmed = topic?.trim();
+		if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
+		const validation = validateGlobPattern(trimmed);
+		if (!validation.valid) {
+			return { success: false, error: validation.reason ?? 'invalid pattern' };
+		}
+		const normalized = trimmed.toLowerCase();
+		this.topicTrie.remove(
+			(target) =>
+				target.workflowRunId === workflowRunId &&
+				target.taskId === taskId &&
+				target.nodeId === nodeId &&
+				target.agentName === agentName &&
+				target.subscriptionKind === 'dynamic' &&
+				target.topic?.toLowerCase() === normalized
+		);
+		return { success: true };
 	}
 
 	unregisterExecution(
@@ -2027,6 +2116,9 @@ export class SpaceRuntime {
 		nextStatus: SpaceWorkflowRun['status']
 	): Promise<SpaceWorkflowRun> {
 		const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
+		if (nextStatus === 'done' || nextStatus === 'cancelled') {
+			this.clearRunInterests(runId);
+		}
 		await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
 		return updated;
 	}
@@ -2732,6 +2824,7 @@ export class SpaceRuntime {
 		};
 		this.executorMeta.set(run.id, meta);
 		this.executors.set(run.id, this.buildExecutor(workflow, run, space.id, space.workspacePath));
+		this.registerRunInterestsFromWorkflow(run, workflow);
 		return true;
 	}
 

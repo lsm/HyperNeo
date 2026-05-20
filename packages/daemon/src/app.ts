@@ -585,20 +585,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				return extensionRoute.handle(req);
 			}
 
-			// Legacy room GitHub webhook endpoint (kept as a compatibility alias only).
-			if (url.pathname === '/webhook/github' && req.method === 'POST') {
-				if (gitHubService?.hasWebhookHandler()) {
-					return gitHubService.handleWebhook(req);
-				}
-				return new Response(JSON.stringify({ error: 'GitHub webhook not configured' }), {
-					status: 404,
-					headers: {
-						'Content-Type': 'application/json',
-						'Access-Control-Allow-Origin': '*',
-					},
-				});
-			}
-
 			// Hello world endpoint
 			if (url.pathname === '/hello' && req.method === 'GET') {
 				return new Response('Hello World', {

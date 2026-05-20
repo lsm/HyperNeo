@@ -11,6 +11,7 @@ import type {
 	ImageContent,
 	ListRuntimeMcpServersRequest,
 	ListRuntimeMcpServersResponse,
+	MessageContent,
 	MessageDeliveryMode,
 	MessageHub,
 	MessageImage,
@@ -57,6 +58,30 @@ function extractMessageText(content: unknown): string {
 		})
 		.filter(Boolean)
 		.join('\n');
+}
+
+function toReplayContent(
+	content: string | Array<{ type: string; text?: string }>
+): string | MessageContent[] | null {
+	if (typeof content === 'string') {
+		return content || null;
+	}
+
+	if (Array.isArray(content)) {
+		if (content.some((block) => block.type !== 'text')) {
+			return content as MessageContent[];
+		}
+
+		const textContent = content
+			.filter(
+				(block): block is { type: 'text'; text: string } => block.type === 'text' && !!block.text
+			)
+			.map((block) => block.text)
+			.join('\n');
+		return textContent || null;
+	}
+
+	return null;
 }
 
 export function setupSessionHandlers(
@@ -1027,6 +1052,130 @@ export function setupSessionHandlers(
 			}));
 
 		return { messages };
+	});
+
+	// Remove a message that has not yet been consumed by the SDK.
+	messageHub.onRequest('session.messages.removePending', async (data) => {
+		const { sessionId: targetSessionId, messageDbId } = data as {
+			sessionId?: string;
+			messageDbId?: string;
+		};
+
+		if (!targetSessionId || !messageDbId) {
+			throw new Error('sessionId and messageDbId are required');
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+		const removed = db.deletePendingUserMessage(targetSessionId, messageDbId);
+		if (!removed) {
+			return { removed: false };
+		}
+
+		const removedFromMemory = removed.uuid ? agentSession.removeQueuedMessage(removed.uuid) : false;
+		await internalEventBus.publish('messages.statusChanged', {
+			sessionId: targetSessionId,
+			messageIds: [removed.dbId],
+			status: 'removed',
+		});
+
+		return {
+			removed: true,
+			messageId: removed.dbId,
+			status: removed.status,
+			removedFromMemory,
+		};
+	});
+
+	// Move one current-turn steer message back to the next-turn queue.
+	messageHub.onRequest('session.messages.deferPending', async (data) => {
+		const { sessionId: targetSessionId, messageDbId } = data as {
+			sessionId?: string;
+			messageDbId?: string;
+		};
+
+		if (!targetSessionId || !messageDbId) {
+			throw new Error('sessionId and messageDbId are required');
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+		const message = db
+			.getMessagesByStatus(targetSessionId, 'enqueued')
+			.find((queuedMessage) => queuedMessage.dbId === messageDbId);
+
+		if (!message || !isSDKUserMessage(message) || !message.uuid) {
+			return { deferred: false };
+		}
+
+		const removedFromMemory = agentSession.removeQueuedMessage(message.uuid);
+		db.updateMessageStatus([message.dbId], 'deferred');
+		await internalEventBus.publish('messages.statusChanged', {
+			sessionId: targetSessionId,
+			messageIds: [message.dbId],
+			status: 'deferred',
+		});
+
+		return {
+			deferred: true,
+			messageId: message.dbId,
+			status: 'deferred',
+			removedFromMemory,
+		};
+	});
+
+	// Promote one next-turn message into the current steer queue.
+	messageHub.onRequest('session.messages.promotePending', async (data) => {
+		const { sessionId: targetSessionId, messageDbId } = data as {
+			sessionId?: string;
+			messageDbId?: string;
+		};
+
+		if (!targetSessionId || !messageDbId) {
+			throw new Error('sessionId and messageDbId are required');
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+		const message = db
+			.getMessagesByStatus(targetSessionId, 'deferred')
+			.find((queuedMessage) => queuedMessage.dbId === messageDbId);
+
+		if (!message || !isSDKUserMessage(message) || !message.uuid) {
+			return { promoted: false };
+		}
+
+		const replayContent = toReplayContent(message.message.content);
+		if (!replayContent) {
+			return { promoted: false };
+		}
+
+		db.updateMessageStatus([message.dbId], 'enqueued');
+		await internalEventBus.publish('messages.statusChanged', {
+			sessionId: targetSessionId,
+			messageIds: [message.dbId],
+			status: 'enqueued',
+		});
+
+		await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+
+		return {
+			promoted: true,
+			messageId: message.dbId,
+			status: 'enqueued',
+		};
 	});
 
 	/**

@@ -159,6 +159,26 @@ export class MessageQueue {
 	}
 
 	/**
+	 * Remove a single pending message before the SDK consumes it.
+	 *
+	 * Returns false when the message is already gone from the in-memory queue
+	 * (usually because it was consumed, timed out, or was only persisted for replay).
+	 */
+	remove(messageId: string): boolean {
+		const index = this.queue.findIndex((msg) => msg.id === messageId);
+		if (index === -1) {
+			return false;
+		}
+
+		const [msg] = this.queue.splice(index, 1);
+		if (msg.timeoutId) {
+			clearTimeout(msg.timeoutId);
+		}
+		msg.resolve(messageId);
+		return true;
+	}
+
+	/**
 	 * Get queue size (for monitoring)
 	 */
 	size(): number {

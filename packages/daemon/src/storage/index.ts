@@ -102,6 +102,10 @@ export class Database {
 		this.core = new DatabaseCore(dbPath);
 	}
 
+	getDbPath(): string {
+		return this.core.getDbPath();
+	}
+
 	async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
 		await this.core.initialize();
 
@@ -219,6 +223,13 @@ export class Database {
 
 	updateMessageTimestamp(messageId: string, timestampMs?: number): void {
 		this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
+	}
+
+	deletePendingUserMessage(
+		sessionId: string,
+		messageId: string
+	): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
+		return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId);
 	}
 
 	beginTransaction?(): void;
