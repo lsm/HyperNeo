@@ -1,8 +1,20 @@
 import type {
+	EvolutionEpisodeCreateFromEvidenceRequest,
+	EvolutionEpisodeCreateRequest,
+	EvolutionEpisodeCreateResponse,
+	EvolutionEpisodeListRequest,
+	EvolutionEpisodeListResponse,
+	EvolutionEpisodeReviewBundleResponse,
+	EvolutionEpisodeUpdateRequest,
+	EvolutionEpisodeUpdateResponse,
 	EvolutionEvidenceCreateRequest,
 	EvolutionEvidenceCreateResponse,
 	EvolutionEvidenceListRequest,
 	EvolutionEvidenceListResponse,
+	EvolutionLessonListRequest,
+	EvolutionLessonListResponse,
+	EvolutionLessonUpdateRequest,
+	EvolutionLessonUpdateResponse,
 	EvolutionMetricSnapshotCreateRequest,
 	EvolutionMetricSnapshotCreateResponse,
 	EvolutionMetricSnapshotListRequest,
@@ -15,8 +27,13 @@ import type {
 	EvolutionScopeListResponse,
 	EvolutionScopeUpdateRequest,
 	EvolutionScopeUpdateResponse,
+	EvolutionTaskProposalListRequest,
+	EvolutionTaskProposalListResponse,
+	EvolutionTaskProposalUpdateRequest,
+	EvolutionTaskProposalUpdateResponse,
 	MessageHub,
 } from '@neokai/shared';
+import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import type {
 	AddManualNoteEvidenceParams,
 	AddMetricSnapshotEvidenceParams,
@@ -33,7 +50,8 @@ interface RecordPayload {
 
 export function setupEvolutionHandlers(
 	messageHub: MessageHub,
-	service: EvolutionScopeService
+	service: EvolutionScopeService,
+	episodeService?: EvolutionEpisodeService
 ): void {
 	messageHub.onRequest<EvolutionScopeCreateRequest, EvolutionScopeCreateResponse>(
 		'evolution.scope.create',
@@ -160,6 +178,83 @@ export function setupEvolutionHandlers(
 		async (data) => ({
 			snapshots: service.listMetricSnapshots(readRequiredString(data, 'scopeId')),
 		})
+	);
+
+	if (!episodeService) return;
+
+	messageHub.onRequest<EvolutionEpisodeCreateRequest, EvolutionEpisodeCreateResponse>(
+		'evolution.episode.create',
+		async (data) => {
+			const payload = readRecord(data);
+			const params = readRecord(
+				payload.params
+			) as unknown as EvolutionEpisodeCreateRequest['params'];
+			return { episode: episodeService.createEpisode(params) };
+		}
+	);
+
+	messageHub.onRequest<EvolutionEpisodeCreateFromEvidenceRequest, EvolutionEpisodeCreateResponse>(
+		'evolution.episode.createFromEvidence',
+		async (data) => {
+			const payload = readRecord(data) as unknown as EvolutionEpisodeCreateFromEvidenceRequest;
+			return episodeService.createFromEvidence(payload);
+		}
+	);
+
+	messageHub.onRequest<EvolutionEpisodeListRequest, EvolutionEpisodeListResponse>(
+		'evolution.episode.list',
+		async (data) => ({ episodes: episodeService.listEpisodes(readRequiredString(data, 'scopeId')) })
+	);
+
+	messageHub.onRequest<EvolutionEpisodeListRequest, EvolutionEpisodeReviewBundleResponse>(
+		'evolution.review.get',
+		async (data) => episodeService.listReviewBundle(readRequiredString(data, 'scopeId'))
+	);
+
+	messageHub.onRequest<EvolutionEpisodeUpdateRequest, EvolutionEpisodeUpdateResponse>(
+		'evolution.episode.update',
+		async (data) => {
+			const payload = readRecord(data);
+			const id = readRequiredString(payload, 'id');
+			const params = readRecord(payload.params) as EvolutionEpisodeUpdateRequest['params'];
+			return { episode: episodeService.updateEpisode(id, params) };
+		}
+	);
+
+	messageHub.onRequest<EvolutionLessonListRequest, EvolutionLessonListResponse>(
+		'evolution.lesson.list',
+		async (data) => {
+			const payload = readRecord(data) as unknown as EvolutionLessonListRequest;
+			return { lessons: episodeService.listLessons(payload.scopeId, payload.status) };
+		}
+	);
+
+	messageHub.onRequest<EvolutionLessonUpdateRequest, EvolutionLessonUpdateResponse>(
+		'evolution.lesson.update',
+		async (data) => {
+			const payload = readRecord(data);
+			const id = readRequiredString(payload, 'id');
+			const params = readRecord(payload.params) as EvolutionLessonUpdateRequest['params'];
+			return { lesson: episodeService.updateLesson(id, params) };
+		}
+	);
+
+	messageHub.onRequest<EvolutionTaskProposalListRequest, EvolutionTaskProposalListResponse>(
+		'evolution.taskProposal.list',
+		async (data) => {
+			const payload = readRecord(data) as unknown as EvolutionTaskProposalListRequest;
+			return { proposals: episodeService.listTaskProposals(payload.scopeId, payload.status) };
+		}
+	);
+
+	messageHub.onRequest<EvolutionTaskProposalUpdateRequest, EvolutionTaskProposalUpdateResponse>(
+		'evolution.taskProposal.update',
+		async (data) => {
+			const payload = readRecord(data);
+			const id = readRequiredString(payload, 'id');
+			const params = readRecord(payload.params) as EvolutionTaskProposalUpdateRequest['params'];
+			return { proposal: episodeService.updateTaskProposal(id, params) };
+		}
 	);
 }
 

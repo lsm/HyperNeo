@@ -1,4 +1,12 @@
-import type { EvolutionScope, EvidenceRef, MetricSnapshot, SpaceGoal } from '@neokai/shared';
+import type {
+	EvolutionEpisode,
+	EvolutionLesson,
+	EvolutionScope,
+	EvidenceRef,
+	MetricSnapshot,
+	SpaceGoal,
+	TaskProposal,
+} from '@neokai/shared';
 import type { Signal } from '@preact/signals';
 import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
@@ -110,13 +118,106 @@ function makeSnapshot(overrides: Partial<MetricSnapshot> = {}): MetricSnapshot {
 	};
 }
 
+function makeEpisode(overrides: Partial<EvolutionEpisode> = {}): EvolutionEpisode {
+	const now = Date.now();
+	return {
+		id: 'episode-1',
+		scopeId: 'scope-1',
+		status: 'draft',
+		title: 'Review loop episode',
+		timeWindow: { start: now - 1000, end: now },
+		evidenceIds: ['evidence-1'],
+		outcomeSummary: 'Reviewer feedback identified recurring friction.',
+		findings: [
+			{
+				domain: 'workflow',
+				kind: 'optimization',
+				impact: 'medium',
+				confidence: 0.8,
+				evidence: ['evidence-1'],
+				proposedAction: 'Keep checklist before review',
+			},
+			{
+				domain: 'neokai_product',
+				kind: 'friction',
+				impact: 'high',
+				confidence: 0.9,
+				evidence: ['evidence-1'],
+				proposedAction: 'Make review actions clearer',
+			},
+		],
+		createdAt: now,
+		updatedAt: now,
+		...overrides,
+	};
+}
+
+function makeLesson(overrides: Partial<EvolutionLesson> = {}): EvolutionLesson {
+	const now = Date.now();
+	return {
+		id: 'lesson-1',
+		scopeId: 'scope-1',
+		status: 'candidate',
+		appliesTo: ['workflow'],
+		rule: 'Use checklist before PR',
+		why: 'Checklist reduced comments',
+		evidenceEpisodeIds: ['episode-1'],
+		confidence: 0.7,
+		createdAt: now,
+		updatedAt: now,
+		...overrides,
+	};
+}
+
+function makeProposal(overrides: Partial<TaskProposal> = {}): TaskProposal {
+	const now = Date.now();
+	return {
+		id: 'proposal-1',
+		scopeId: 'scope-1',
+		title: 'Improve review UI',
+		description: 'Make accept/dismiss actions clearer',
+		reason: 'Reduce NeoKai friction',
+		priority: 'high',
+		status: 'proposed',
+		evidenceEpisodeIds: ['episode-1'],
+		createdTaskId: null,
+		createdAt: now,
+		updatedAt: now,
+		...overrides,
+	};
+}
+
 function setupRequests(scope = makeScope()) {
 	const evidence = [makeEvidence()];
 	const snapshot = makeSnapshot();
+	const episode = makeEpisode();
+	const lesson = makeLesson();
+	const proposal = makeProposal();
 	mockRequest.mockImplementation(async (method: string, data?: unknown) => {
 		if (method === 'evolution.scope.list') return { scopes: [scope] };
 		if (method === 'evolution.evidence.list') return { evidence };
 		if (method === 'evolution.metricSnapshot.list') return { snapshots: [snapshot] };
+		if (method === 'evolution.review.get') {
+			return { episodes: [episode], lessons: [lesson], proposals: [proposal] };
+		}
+		if (method === 'evolution.episode.createFromEvidence') {
+			expect(data).toEqual({ scopeId: scope.id, evidenceIds: ['evidence-1'] });
+			return {
+				episode: makeEpisode({ id: 'episode-2', title: 'Generated episode' }),
+				lessons: [makeLesson({ id: 'lesson-2', rule: 'Generated lesson' })],
+				proposals: [makeProposal({ id: 'proposal-2', title: 'Generated proposal' })],
+			};
+		}
+		if (method === 'evolution.episode.update') {
+			expect(data).toEqual({ id: 'episode-1', params: { status: 'accepted' } });
+			return { episode: makeEpisode({ status: 'accepted' }) };
+		}
+		if (method === 'evolution.lesson.update') {
+			return { lesson: makeLesson({ status: 'active' }) };
+		}
+		if (method === 'evolution.taskProposal.update') {
+			return { proposal: makeProposal({ status: 'accepted' }) };
+		}
 		if (method === 'evolution.evidence.addManualNote') {
 			expect(data).toEqual({ scopeId: scope.id, summary: 'Manual proof' });
 			return { evidence: makeEvidence({ id: 'evidence-2', summary: 'Manual proof' }) };
@@ -206,6 +307,51 @@ describe('SpaceForge', () => {
 				note: 'Improved',
 			},
 		});
+	});
+
+	it('renders episode review and generates episode from selected evidence', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+
+		expect(
+			await screen.findByText('Reviewer feedback identified recurring friction.')
+		).toBeTruthy();
+		expect(screen.getByText('Findings by domain')).toBeTruthy();
+		expect(screen.getByText('NeoKai friction findings')).toBeTruthy();
+		expect(screen.getByText('Use checklist before PR')).toBeTruthy();
+		expect(screen.getByText('Improve review UI')).toBeTruthy();
+
+		fireEvent.click(screen.getByLabelText(/Reviewer found regression before merge/));
+		fireEvent.click(screen.getByRole('button', { name: 'Create episode' }));
+
+		await waitFor(() =>
+			expect(mockToastSuccess).toHaveBeenCalledWith('Episode "Generated episode" drafted')
+		);
+		expect(mockRequest).toHaveBeenCalledWith(
+			'evolution.episode.createFromEvidence',
+			{
+				scopeId: 'scope-1',
+				evidenceIds: ['evidence-1'],
+			},
+			{ timeout: 120000 }
+		);
+	});
+
+	it('accepts latest episode draft from review UI', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.click((await screen.findAllByRole('button', { name: 'Accept' }))[0]);
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.episode.update', {
+				id: 'episode-1',
+				params: { status: 'accepted' },
+			})
+		);
 	});
 
 	it('creates scope with linked recurring goal and metrics', async () => {

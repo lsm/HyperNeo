@@ -1,4 +1,10 @@
 import type {
+	EvolutionEpisode,
+	EvolutionEpisodeCreateResponse,
+	EvolutionEpisodeReviewBundleResponse,
+	EvolutionFinding,
+	EvolutionFindingDomain,
+	EvolutionLesson,
 	EvolutionScope,
 	EvolutionScopeCreateResponse,
 	EvolutionScopeKind,
@@ -12,7 +18,9 @@ import type {
 	MetricSnapshot,
 	MetricSnapshotValues,
 	SpaceGoal,
+	TaskProposal,
 } from '@neokai/shared';
+import type { ComponentChild } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { spaceStore } from '../../lib/space-store';
@@ -20,10 +28,13 @@ import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
-type ScopeTab = 'overview' | 'evidence' | 'metrics';
+type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'episodes';
+
+type ReviewActionKind = 'episode' | 'lesson' | 'proposal';
 
 const SCOPE_KINDS: EvolutionScopeKind[] = ['mission', 'project', 'campaign', 'workflow', 'custom'];
 const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 'maintain'];
+const EPISODE_JUDGE_TIMEOUT_MS = 120000;
 
 interface SpaceForgeProps {
 	spaceId: string;
@@ -464,6 +475,381 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 	);
 }
 
+function EpisodesTab({ scope }: { scope: EvolutionScope }) {
+	const { request } = useMessageHub();
+	const [episodes, setEpisodes] = useState<EvolutionEpisode[]>([]);
+	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
+	const [proposals, setProposals] = useState<TaskProposal[]>([]);
+	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+	const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
+	const [loading, setLoading] = useState(false);
+	const [submitting, setSubmitting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const requestVersion = useRef(0);
+
+	const loadReview = useCallback(async () => {
+		const version = ++requestVersion.current;
+		setLoading(true);
+		setError(null);
+		try {
+			const [reviewResponse, evidenceResponse] = await Promise.all([
+				request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
+					scopeId: scope.id,
+				}),
+				request<EvolutionEvidenceListResponse>('evolution.evidence.list', { scopeId: scope.id }),
+			]);
+			if (requestVersion.current !== version) return;
+			setEpisodes(reviewResponse.episodes ?? []);
+			setLessons(reviewResponse.lessons ?? []);
+			setProposals(reviewResponse.proposals ?? []);
+			setEvidence(evidenceResponse.evidence ?? []);
+			setSelectedEvidenceIds((current) =>
+				current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
+			);
+		} catch (err) {
+			if (requestVersion.current === version) {
+				setError(err instanceof Error ? err.message : 'Failed to load episode review');
+			}
+		} finally {
+			if (requestVersion.current === version) setLoading(false);
+		}
+	}, [request, scope.id]);
+
+	useEffect(() => {
+		setSelectedEvidenceIds([]);
+		loadReview().catch(() => undefined);
+	}, [loadReview]);
+
+	const latestEpisode = episodes[0] ?? null;
+	const groupedFindings = useMemo(
+		() => groupFindingsByDomain(latestEpisode?.findings ?? []),
+		[latestEpisode]
+	);
+	const frictionFindings = (latestEpisode?.findings ?? []).filter(
+		(finding) => finding.kind === 'friction'
+	);
+	const candidateLessons = lessons.filter((lesson) => lesson.status === 'candidate');
+	const proposedTasks = proposals.filter((proposal) => proposal.status === 'proposed');
+
+	const toggleEvidence = (id: string) => {
+		setSelectedEvidenceIds((current) =>
+			current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+		);
+	};
+
+	const handleCreateEpisode = async () => {
+		if (selectedEvidenceIds.length === 0) {
+			setError('Select at least one evidence item');
+			return;
+		}
+		try {
+			setSubmitting(true);
+			setError(null);
+			const response = await request<EvolutionEpisodeCreateResponse>(
+				'evolution.episode.createFromEvidence',
+				{
+					scopeId: scope.id,
+					evidenceIds: selectedEvidenceIds,
+				},
+				{ timeout: EPISODE_JUDGE_TIMEOUT_MS }
+			);
+			setEpisodes((current) => [response.episode, ...current]);
+			setLessons((current) => [...(response.lessons ?? []), ...current]);
+			setProposals((current) => [...(response.proposals ?? []), ...current]);
+			setSelectedEvidenceIds([]);
+			toast.success(`Episode "${response.episode.title}" drafted`);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to create episode');
+		} finally {
+			setSubmitting(false);
+		}
+	};
+
+	const updateReviewItem = async (kind: ReviewActionKind, id: string, status: string) => {
+		try {
+			setError(null);
+			if (kind === 'episode') {
+				const response = await request<{ episode: EvolutionEpisode | null }>(
+					'evolution.episode.update',
+					{
+						id,
+						params: { status },
+					}
+				);
+				if (response.episode) {
+					setEpisodes((current) =>
+						current.map((item) => (item.id === response.episode?.id ? response.episode : item))
+					);
+				}
+			} else if (kind === 'lesson') {
+				const response = await request<{ lesson: EvolutionLesson | null }>(
+					'evolution.lesson.update',
+					{
+						id,
+						params: { status },
+					}
+				);
+				if (response.lesson) {
+					setLessons((current) =>
+						current.map((item) => (item.id === response.lesson?.id ? response.lesson : item))
+					);
+				}
+			} else {
+				const response = await request<{ proposal: TaskProposal | null }>(
+					'evolution.taskProposal.update',
+					{
+						id,
+						params: { status },
+					}
+				);
+				if (response.proposal) {
+					setProposals((current) =>
+						current.map((item) => (item.id === response.proposal?.id ? response.proposal : item))
+					);
+				}
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to update review item');
+		}
+	};
+
+	return (
+		<div class="space-y-4">
+			<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+				<div class="mb-3 flex items-start justify-between gap-3">
+					<div>
+						<h3 class="text-sm font-medium text-gray-100">Generate episode draft</h3>
+						<p class="mt-1 text-xs text-gray-500">
+							Select scoped evidence. Judge creates draft only; lessons and proposals remain
+							candidates.
+						</p>
+					</div>
+					<Button
+						type="button"
+						size="sm"
+						onClick={handleCreateEpisode}
+						disabled={submitting || selectedEvidenceIds.length === 0}
+					>
+						{submitting ? 'Judging…' : 'Create episode'}
+					</Button>
+				</div>
+				{evidence.length === 0 ? (
+					<p class="text-sm text-gray-500">No evidence available.</p>
+				) : (
+					<div class="grid gap-2 md:grid-cols-2">
+						{evidence.map((item) => (
+							<label
+								key={item.id}
+								class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+							>
+								<input
+									type="checkbox"
+									checked={selectedEvidenceIds.includes(item.id)}
+									onChange={() => toggleEvidence(item.id)}
+									class="mt-1"
+								/>
+								<span>
+									<span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
+									{item.summary}
+								</span>
+							</label>
+						))}
+					</div>
+				)}
+			</section>
+
+			{error && (
+				<div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+					{error}
+				</div>
+			)}
+
+			{loading ? (
+				<p class="text-sm text-gray-500">Loading review…</p>
+			) : !latestEpisode ? (
+				<div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
+					No episode drafts yet.
+				</div>
+			) : (
+				<div class="space-y-4">
+					<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+						<div class="flex items-start justify-between gap-3">
+							<div>
+								<p class="text-xs uppercase tracking-wide text-gray-500">Outcome summary</p>
+								<h3 class="mt-1 text-base font-semibold text-gray-100">{latestEpisode.title}</h3>
+							</div>
+							<span class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
+								{latestEpisode.status}
+							</span>
+						</div>
+						<p class="mt-3 text-sm text-gray-300">{latestEpisode.outcomeSummary}</p>
+						<div class="mt-4 flex gap-2">
+							<Button
+								size="sm"
+								onClick={() => updateReviewItem('episode', latestEpisode.id, 'accepted')}
+							>
+								Accept
+							</Button>
+							<Button
+								size="sm"
+								variant="secondary"
+								onClick={() => updateReviewItem('episode', latestEpisode.id, 'dismissed')}
+							>
+								Dismiss
+							</Button>
+						</div>
+					</section>
+
+					<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+						<h3 class="mb-3 text-sm font-medium text-gray-100">Findings by domain</h3>
+						<div class="space-y-3">
+							{Object.entries(groupedFindings).map(([domain, findings]) => (
+								<div key={domain} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+									<h4 class="mb-2 text-sm font-medium text-cyan-200">{formatKind(domain)}</h4>
+									<div class="space-y-2">
+										{findings.map((finding, index) => (
+											<FindingCard key={`${domain}-${index}`} finding={finding} />
+										))}
+									</div>
+								</div>
+							))}
+						</div>
+					</section>
+
+					<section class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
+						<h3 class="mb-3 text-sm font-medium text-orange-100">NeoKai friction findings</h3>
+						{frictionFindings.length === 0 ? (
+							<p class="text-sm text-orange-200/70">No friction findings in latest episode.</p>
+						) : (
+							<div class="space-y-2">
+								{frictionFindings.map((finding, index) => (
+									<FindingCard key={`friction-${index}`} finding={finding} />
+								))}
+							</div>
+						)}
+					</section>
+
+					<div class="grid gap-4 lg:grid-cols-2">
+						<ReviewList
+							title="Candidate lessons"
+							empty="No candidate lessons."
+							items={candidateLessons}
+							render={(lesson) => (
+								<div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+									<p class="text-sm text-gray-100">{lesson.rule}</p>
+									<p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
+									<div class="mt-3 flex gap-2">
+										<Button
+											size="sm"
+											onClick={() => updateReviewItem('lesson', lesson.id, 'active')}
+										>
+											Activate
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											onClick={() => updateReviewItem('lesson', lesson.id, 'dismissed')}
+										>
+											Dismiss
+										</Button>
+									</div>
+								</div>
+							)}
+						/>
+						<ReviewList
+							title="Next action proposals"
+							empty="No proposed actions."
+							items={proposedTasks}
+							render={(proposal) => (
+								<div key={proposal.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+									<div class="flex items-start justify-between gap-2">
+										<p class="text-sm font-medium text-gray-100">{proposal.title}</p>
+										<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400">
+											{proposal.priority}
+										</span>
+									</div>
+									<p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
+									<p class="mt-2 text-xs text-gray-500">Reason: {proposal.reason}</p>
+									<div class="mt-3 flex gap-2">
+										<Button
+											size="sm"
+											onClick={() => updateReviewItem('proposal', proposal.id, 'accepted')}
+										>
+											Accept
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											onClick={() => updateReviewItem('proposal', proposal.id, 'dismissed')}
+										>
+											Dismiss
+										</Button>
+									</div>
+								</div>
+							)}
+						/>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function FindingCard({ finding }: { finding: EvolutionFinding }) {
+	return (
+		<div class="rounded-md border border-white/10 bg-black/20 p-3">
+			<div class="mb-2 flex flex-wrap gap-2">
+				<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+					{formatKind(finding.kind)}
+				</span>
+				<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+					{finding.impact} impact
+				</span>
+				<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+					{Math.round(finding.confidence * 100)}% confidence
+				</span>
+			</div>
+			<p class="text-sm text-gray-200">{finding.proposedAction}</p>
+			{finding.evidence.length > 0 && (
+				<p class="mt-2 text-xs text-gray-500">Evidence: {finding.evidence.join(', ')}</p>
+			)}
+		</div>
+	);
+}
+
+function ReviewList<T>({
+	title,
+	empty,
+	items,
+	render,
+}: {
+	title: string;
+	empty: string;
+	items: T[];
+	render: (item: T) => ComponentChild;
+}) {
+	return (
+		<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+			<h3 class="mb-3 text-sm font-medium text-gray-100">{title}</h3>
+			{items.length === 0 ? (
+				<p class="text-sm text-gray-500">{empty}</p>
+			) : (
+				<div class="space-y-3">{items.map(render)}</div>
+			)}
+		</section>
+	);
+}
+
+function groupFindingsByDomain(
+	findings: EvolutionFinding[]
+): Record<EvolutionFindingDomain, EvolutionFinding[]> {
+	return {
+		workflow: findings.filter((finding) => finding.domain === 'workflow'),
+		target_artifact: findings.filter((finding) => finding.domain === 'target_artifact'),
+		neokai_product: findings.filter((finding) => finding.domain === 'neokai_product'),
+	};
+}
+
 function MetricsTab({ scope }: { scope: EvolutionScope }) {
 	const { request } = useMessageHub();
 	const [snapshots, setSnapshots] = useState<MetricSnapshot[]>([]);
@@ -663,7 +1049,7 @@ function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal
 				<p class="mt-1 text-sm text-gray-400">{scope.objective}</p>
 			</div>
 			<div class="flex gap-2 border-b border-white/10 px-5 py-3">
-				{(['overview', 'evidence', 'metrics'] as const).map((item) => (
+				{(['overview', 'evidence', 'metrics', 'episodes'] as const).map((item) => (
 					<button
 						key={item}
 						type="button"
@@ -700,6 +1086,7 @@ function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal
 				)}
 				{tab === 'evidence' && <EvidenceTab scope={scope} />}
 				{tab === 'metrics' && <MetricsTab scope={scope} />}
+				{tab === 'episodes' && <EpisodesTab scope={scope} />}
 			</div>
 		</div>
 	);
