@@ -653,8 +653,22 @@ export interface EvolutionEpisodeCreateRequest {
 	params: CreateEvolutionEpisodeParams;
 }
 
+export interface EvolutionEpisodeCreateFromEvidenceRequest {
+	scopeId: string;
+	evidenceIds: string[];
+	timeWindow?: EvolutionEpisode['timeWindow'];
+}
+
 export interface EvolutionEpisodeCreateResponse {
 	episode: EvolutionEpisode;
+	lessons?: EvolutionLesson[];
+	proposals?: TaskProposal[];
+}
+
+export interface EvolutionEpisodeReviewBundleResponse {
+	episodes: EvolutionEpisode[];
+	lessons: EvolutionLesson[];
+	proposals: TaskProposal[];
 }
 
 export interface EvolutionEpisodeUpdateRequest {

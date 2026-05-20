@@ -99,6 +99,7 @@ import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers';
 import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { setupEvolutionHandlers } from './evolution-handlers';
+import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
@@ -538,7 +539,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 	});
-	setupEvolutionHandlers(deps.messageHub, evolutionScopeService);
+	const evolutionEpisodeService = new EvolutionEpisodeService({
+		evolutionRepo: deps.db.evolution,
+		taskRepo: spaceTaskRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		artifactRepo,
+	});
+	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
 
 	// Register Space RPC handlers now that spaceRuntimeService exists.
 	// spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()
