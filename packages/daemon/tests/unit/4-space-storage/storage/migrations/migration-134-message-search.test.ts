@@ -194,4 +194,51 @@ describe('Migration 134: message search FTS', () => {
 			'task:task-1',
 		]);
 	});
+
+	test('migration 141 prunes policy-excluded rows after legacy FTS upgrade', () => {
+		runMigration134(db);
+		db.prepare(`INSERT INTO sessions (id, title) VALUES (?, ?)`).run('coder:old', 'Coder');
+		db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run(
+			'msg-coder',
+			'coder:old',
+			'user',
+			JSON.stringify({
+				type: 'user',
+				uuid: 'uuid-coder',
+				message: { content: [{ type: 'text', text: 'excluded coder marker' }] },
+			}),
+			new Date().toISOString(),
+			'consumed'
+		);
+
+		runMigration141(db);
+
+		const rows = db
+			.prepare(`SELECT source_id FROM message_search_content WHERE source_id = ?`)
+			.all('msg-coder') as Array<{ source_id: string }>;
+		expect(rows).toEqual([]);
+	});
+
+	test('migration 141 skips rebuild once optimized FTS schema exists', () => {
+		seedSearchFixtures(db);
+		runMigration134(db);
+		runMigration141(db);
+		db.prepare(`INSERT INTO message_search_content (kind, source_id, title, body, timestamp)
+			 VALUES ('task', 'manual-row', 'Manual', 'manual marker', ?)`).run(Date.now());
+
+		runMigration141(db);
+
+		const rows = db
+			.prepare(
+				`SELECT msc.source_id
+				 FROM message_search_fts
+				 JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				 WHERE message_search_fts MATCH ?`
+			)
+			.all('manual') as Array<{ source_id: string }>;
+		expect(rows.map((row) => row.source_id)).toEqual(['manual-row']);
+	});
 });

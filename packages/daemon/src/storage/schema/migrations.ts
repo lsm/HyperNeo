@@ -9130,8 +9130,15 @@ export function runMigration134(db: BunDatabase): void {
 }
 
 export function runMigration137(db: BunDatabase): void {
-	if (!tableExists(db, 'message_search_fts')) return;
+	if (!tableExists(db, 'message_search_content')) return;
+	const prunedRows = pruneMessageSearchFts(db);
 
+	if (prunedRows > 0 && tableExists(db, 'message_search_fts')) {
+		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('optimize')`);
+	}
+}
+
+function pruneMessageSearchFts(db: BunDatabase): number {
 	let prunedRows = 0;
 	const recordPrune = (result: { changes?: number }): void => {
 		prunedRows += result.changes ?? 0;
@@ -9217,9 +9224,7 @@ export function runMigration137(db: BunDatabase): void {
 		);
 	}
 
-	if (prunedRows > 0) {
-		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('optimize')`);
-	}
+	return prunedRows;
 }
 
 function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
@@ -9475,15 +9480,19 @@ function migrateNeoSessions(db: BunDatabase): void {
  */
 
 export function runMigration141(db: BunDatabase): void {
-	dropMessageSearchTriggers(db);
-	db.exec(`DROP TABLE IF EXISTS message_search_fts`);
+	const ftsSql = tableCreateSql(db, 'message_search_fts');
+	const hasOptimizedFts =
+		ftsSql?.includes("content='message_search_content'") && ftsSql.includes('detail=column');
 	createMessageSearchContentTable(db);
-	if (isMessageSearchContentEmpty(db)) {
+	if (!hasOptimizedFts) {
+		dropMessageSearchTriggers(db);
+		db.exec(`DROP TABLE IF EXISTS message_search_fts`);
 		backfillMessageSearchFts(db);
+		pruneMessageSearchFts(db);
+		createMessageSearchFtsTable(db);
+		createMessageSearchSyncTriggers(db);
+		db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('rebuild')`);
 	}
-	createMessageSearchFtsTable(db);
-	createMessageSearchSyncTriggers(db);
-	db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('rebuild')`);
 	configureMessageSearchFts(db);
 }
 
@@ -9491,14 +9500,6 @@ function dropMessageSearchTriggers(db: BunDatabase): void {
 	db.exec(`DROP TRIGGER IF EXISTS message_search_content_ai`);
 	db.exec(`DROP TRIGGER IF EXISTS message_search_content_ad`);
 	db.exec(`DROP TRIGGER IF EXISTS message_search_content_au`);
-}
-
-function isMessageSearchContentEmpty(db: BunDatabase): boolean {
-	if (!tableExists(db, 'message_search_content')) return true;
-	const row = db.prepare(`SELECT 1 AS present FROM message_search_content LIMIT 1`).get() as
-		| { present: number }
-		| undefined;
-	return !row;
 }
 
 export function runMigration133(db: BunDatabase): void {
