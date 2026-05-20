@@ -186,27 +186,34 @@ export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies
 			throw new Error(`External event extension "${params.source}" is not registered`);
 		const current = await deps.externalEventExtensionConfigStore.getGlobalConfig(params.source);
 		const config = { ...current, globallyEnabled: params.enabled };
-		await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
 		if (params.enabled) {
-			if (isHttpExtension(extension)) {
-				deps.externalEventExtensionManager.registerRoutes(
-					extension.routes,
-					deps.externalEventExtensionContext
-				);
-			}
-			if (isRpcExtension(extension) && config.capabilities.rpcConfig) {
-				deps.externalEventExtensionManager.registerRpcHandlers(
+			await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
+			try {
+				await deps.externalEventExtensionManager.startExtension(
 					params.source,
-					deps.messageHub,
 					deps.externalEventExtensionContext
 				);
+				if (isHttpExtension(extension)) {
+					deps.externalEventExtensionManager.registerRoutes(
+						extension.routes,
+						deps.externalEventExtensionContext
+					);
+				}
+				if (isRpcExtension(extension) && config.capabilities.rpcConfig) {
+					deps.externalEventExtensionManager.registerRpcHandlers(
+						params.source,
+						deps.messageHub,
+						deps.externalEventExtensionContext
+					);
+				}
+			} catch (error) {
+				await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, current);
+				await deps.externalEventExtensionManager.stopExtension(params.source);
+				throw error;
 			}
-			await deps.externalEventExtensionManager.startExtension(
-				params.source,
-				deps.externalEventExtensionContext
-			);
 		} else {
 			await deps.externalEventExtensionManager.stopExtension(params.source);
+			await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
 		}
 		return { source: params.source, globallyEnabled: params.enabled };
 	});

@@ -98,6 +98,32 @@ describe('external event extension RPC handlers', () => {
 		expect(handlers.has('github.test')).toBe(false);
 		expect((await configStore.getGlobalConfig('github')).globallyEnabled).toBe(false);
 	});
+
+	test('keeps config and handlers unchanged when extension start fails', async () => {
+		const extension = createExtension('github');
+		extension.failStart = true;
+		extensionManager.register(extension);
+		await configStore.setGlobalConfig('github', {
+			source: 'github',
+			globallyEnabled: false,
+			capabilities: { webhooks: true, rpcConfig: true },
+		});
+		setupExternalEventExtensionHandlers(makeDeps());
+
+		await expect(
+			handlers.get('externalEvents.extensions.setGlobalEnabled')!({
+				source: 'github',
+				enabled: true,
+			})
+		).rejects.toThrow('start failed');
+
+		expect(extension.starts).toBe(1);
+		expect(extension.stops).toBe(0);
+		expect(extensionManager.isStarted('github')).toBe(false);
+		expect(extensionManager.getRegisteredRoutes()).toHaveLength(0);
+		expect(handlers.has('github.test')).toBe(false);
+		expect((await configStore.getGlobalConfig('github')).globallyEnabled).toBe(false);
+	});
 });
 
 function createMockHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
@@ -131,6 +157,7 @@ function createExtension(sourceId: string): TestExtension {
 		sourceId,
 		starts: 0,
 		stops: 0,
+		failStart: false,
 		routes: [
 			{
 				method: 'POST',
@@ -140,6 +167,7 @@ function createExtension(sourceId: string): TestExtension {
 		],
 		async start() {
 			this.starts += 1;
+			if (this.failStart) throw new Error('start failed');
 		},
 		async stop() {
 			this.stops += 1;
@@ -153,6 +181,7 @@ function createExtension(sourceId: string): TestExtension {
 interface TestExtension extends HttpExternalEventExtension, RpcExternalEventExtension {
 	starts: number;
 	stops: number;
+	failStart: boolean;
 }
 
 function makeDeps(): RPCHandlerDependencies {

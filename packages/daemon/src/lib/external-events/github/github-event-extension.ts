@@ -306,7 +306,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 		await context.config.setSpaceConfig(spaceId, this.sourceId, {
 			spaceId,
 			source: this.sourceId,
-			enabled: repos.some((repo) => repo.enabled),
+			enabled: this.repo.isSpaceEnabled(spaceId),
 			settings: {
 				watchedRepos: repos.map((repo) => ({
 					id: repo.id,
