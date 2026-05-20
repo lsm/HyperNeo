@@ -244,6 +244,10 @@ const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
 		table: 'sdk_messages',
 		extractScope: (args, db) => messageIdScope(db, args[0]),
 	},
+	deletePendingUserMessage: {
+		table: 'sdk_messages',
+		extractScope: (args) => ({ sessionId: args[0] as string }),
+	},
 	deleteMessagesAfter: {
 		table: 'sdk_messages',
 		extractScope: (args) => ({ sessionId: args[0] as string }),
