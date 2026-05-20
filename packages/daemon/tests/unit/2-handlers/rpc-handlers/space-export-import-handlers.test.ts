@@ -708,6 +708,52 @@ describe('Space Export/Import RPC Handlers', () => {
 			]);
 		});
 
+		it('rejects invalid static external event interest topics during import', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[
+					{
+						name: 'Pipeline',
+						nodes: [
+							{
+								agentRef: 'Coder',
+								name: 'Code',
+								eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+							},
+						],
+					},
+				]
+			);
+
+			await expect(
+				call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+			).rejects.toThrow('Invalid bundle');
+		});
+
+		it('rejects too many static external event interests during import', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[
+					{
+						name: 'Pipeline',
+						nodes: [
+							{
+								agentRef: 'Coder',
+								name: 'Code',
+								eventInterests: Array.from({ length: 11 }, (_, index) => ({
+									topic: `github/*/*/pull_request_${index}.opened`,
+								})),
+							},
+						],
+					},
+				]
+			);
+
+			await expect(
+				call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+			).rejects.toThrow('Invalid bundle');
+		});
+
 		it('creates agents and workflows with no conflicts', async () => {
 			const bundle = makeBundle(
 				[{ name: 'Coder', role: 'coder', customPrompt: 'You code.' }],

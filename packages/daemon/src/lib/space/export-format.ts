@@ -18,6 +18,7 @@
  */
 
 import { z } from 'zod';
+import { validateGlobPattern } from '../external-events/topic-validator';
 import type {
 	SpaceAgent,
 	SpaceWorkflow,
@@ -78,8 +79,15 @@ const declarativeToolGuardSchema = z.object({
 	reason: z.string().min(1),
 });
 
+export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
+
 const eventInterestSchema = z.object({
-	topic: z.string().min(1),
+	topic: z
+		.string()
+		.min(1)
+		.refine((topic) => validateGlobPattern(topic).valid, {
+			message: 'topic must be a valid external-event glob pattern',
+		}),
 	label: z.string().optional(),
 });
 
@@ -107,7 +115,7 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	/** Declarative tool guards (e.g. deny `gh pr merge` for coder agents). */
 	toolGuards: z.array(declarativeToolGuardSchema).optional(),
 	/** Static external-event subscription interests for this slot. */
-	eventInterests: z.array(eventInterestSchema).optional(),
+	eventInterests: z.array(eventInterestSchema).max(MAX_AGENT_SLOT_EVENT_INTERESTS).optional(),
 });
 
 /**

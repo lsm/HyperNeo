@@ -252,16 +252,14 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 
-	test('skips invalid event interest topics during registration', async () => {
-		const { run, task } = await startRunWithSubscription('github/lsm/neokai/pull_request');
-		await runtime.executeTick();
+	test('throws for invalid static event interest topics during registration', async () => {
+		const workflow = createWorkflow();
+		workflow.nodes[0]!.agents![0]!.eventInterests = [{ topic: 'github/**/pull_request.opened' }];
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		const event = makeEvent();
-		await eventService.publish(event);
-
-		expect(injected).toHaveLength(0);
-		expect(eventStore.getById(event.id)?.state).toBe('ignored');
-		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+		expect(() => runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes)).toThrow(
+			'Invalid static external event interest'
+		);
 	});
 
 	test('allows the first 10 event interests for an agent slot', async () => {

@@ -3766,14 +3766,19 @@ export class TaskAgentManager {
 			if (!validation.valid) {
 				return jsonResult({ success: false, error: validation.reason });
 			}
-			const result = this.config.spaceRuntimeService.registerSubscription(
-				workflowRunId,
-				taskId,
-				workflowNodeId,
-				agentName,
-				args.topicPattern
-			);
-			return jsonResult(result);
+			try {
+				const result = this.config.spaceRuntimeService.registerSubscription(
+					workflowRunId,
+					taskId,
+					workflowNodeId,
+					agentName,
+					args.topicPattern
+				);
+				return jsonResult(result);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
 		};
 		const onUnsubscribeExternalEvent = async (args: { topicPattern: string }) => {
 			const validation = validateGlobPattern(args.topicPattern.trim());

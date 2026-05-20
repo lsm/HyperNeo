@@ -62,6 +62,7 @@ import {
 	isReservedWorkflowAgentName,
 	type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { CompletionDetector } from './completion-detector';
 import {
@@ -102,7 +103,6 @@ import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
 const log = new Logger('space-runtime');
-const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
 	urgent: 0,
 	high: 1,
@@ -778,7 +778,7 @@ export class SpaceRuntime {
 		for (const node of nodes) {
 			for (const agentEntry of resolveNodeAgents(node)) {
 				for (const interest of agentEntry.eventInterests ?? []) {
-					this.registerSubscription(
+					const result = this.registerSubscription(
 						workflowRunId,
 						taskId,
 						node.id,
@@ -788,6 +788,12 @@ export class SpaceRuntime {
 							subscriptionKind: 'static',
 						}
 					);
+					if (!result.success) {
+						throw new Error(
+							`Invalid static external event interest for ${workflowRunId}/${node.id}/${agentEntry.name}: ` +
+								(result.error ?? 'invalid pattern')
+						);
+					}
 				}
 			}
 		}
