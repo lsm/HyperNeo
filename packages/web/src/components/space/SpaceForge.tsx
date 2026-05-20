@@ -13,7 +13,7 @@ import type {
 	MetricSnapshotValues,
 	SpaceGoal,
 } from '@neokai/shared';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
@@ -365,19 +365,23 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 	const [loading, setLoading] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const requestVersion = useRef(0);
 
 	const loadEvidence = useCallback(async () => {
+		const version = ++requestVersion.current;
 		setLoading(true);
 		setError(null);
 		try {
 			const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
 				scopeId: scope.id,
 			});
-			setEvidence(response.evidence ?? []);
+			if (requestVersion.current === version) setEvidence(response.evidence ?? []);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to load evidence');
+			if (requestVersion.current === version) {
+				setError(err instanceof Error ? err.message : 'Failed to load evidence');
+			}
 		} finally {
-			setLoading(false);
+			if (requestVersion.current === version) setLoading(false);
 		}
 	}, [request, scope.id]);
 
@@ -470,8 +474,10 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
 	const [loading, setLoading] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const requestVersion = useRef(0);
 
 	const loadSnapshots = useCallback(async () => {
+		const version = ++requestVersion.current;
 		setLoading(true);
 		setError(null);
 		try {
@@ -481,11 +487,13 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
 					scopeId: scope.id,
 				}
 			);
-			setSnapshots(response.snapshots ?? []);
+			if (requestVersion.current === version) setSnapshots(response.snapshots ?? []);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to load metric snapshots');
+			if (requestVersion.current === version) {
+				setError(err instanceof Error ? err.message : 'Failed to load metric snapshots');
+			}
 		} finally {
-			setLoading(false);
+			if (requestVersion.current === version) setLoading(false);
 		}
 	}, [request, scope.id]);
 
@@ -710,10 +718,12 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 		setLoading(true);
 		setError(null);
 		try {
-			const [scopeResponse] = await Promise.all([
-				request<EvolutionScopeListResponse>('evolution.scope.list', { spaceId }),
-				spaceStore.listGoals({ includeArchived: false }).catch(() => []),
-			]);
+			const scopeResponse = await request<EvolutionScopeListResponse>('evolution.scope.list', {
+				spaceId,
+			});
+			if (spaceStore.spaceId.value === spaceId) {
+				await spaceStore.listGoals({ includeArchived: false }).catch(() => []);
+			}
 			const nextScopes = scopeResponse.scopes ?? [];
 			setScopes(nextScopes);
 			setSelectedScopeId((current) => current ?? nextScopes[0]?.id ?? null);
