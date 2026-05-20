@@ -22,7 +22,10 @@ import type {
 } from '@neokai/shared';
 import type { SkillEnablementOverride } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
-import type { AgentMemorySearchResult } from '../../../storage/repositories/agent-memory-repository';
+import type {
+	AgentMemoryCoreEntry,
+	AgentMemorySearchResult,
+} from '../../../storage/repositories/agent-memory-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
@@ -47,6 +50,7 @@ const CLAUDE_CODE_BUILTIN_TOOLS = [
  */
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
 const MEMORY_PROMPT_CONTENT_LIMIT = 500;
+const CORE_MEMORY_PROMPT_CHAR_LIMIT = 2_000;
 
 const log = new Logger('custom-agent');
 
@@ -160,6 +164,8 @@ export interface CustomAgentConfig {
 	 * Absent when running outside a workflow or when no data has been written.
 	 */
 	gateData?: GateDataSnapshot[];
+	/** Space-scoped core memories selected by background consolidation. */
+	coreMemories?: AgentMemoryCoreEntry[];
 	/** Relevant persistent memories to inject into the task prompt. */
 	relevantMemories?: AgentMemorySearchResult[];
 }
@@ -248,6 +254,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		nodeId,
 		agentSlotName,
 		gateData,
+		coreMemories,
 		relevantMemories,
 	} = config;
 
@@ -312,7 +319,16 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// 5. Relevant persistent memories.
+	// 5. Core memories are space-scoped and selected by background consolidation.
+	const coreMemoryLines = buildCoreMemoryLines(coreMemories);
+	if (coreMemoryLines.length > 0) {
+		sections.push('');
+		sections.push('## Core Memories');
+		sections.push('');
+		sections.push(...coreMemoryLines);
+	}
+
+	// 6. Relevant persistent memories.
 	if (relevantMemories && relevantMemories.length > 0) {
 		sections.push('');
 		sections.push('## Relevant Memories');
@@ -382,6 +398,26 @@ function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): stri
 function truncateMemoryPromptContent(content: string): string {
 	if (content.length <= MEMORY_PROMPT_CONTENT_LIMIT) return content;
 	return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
+}
+
+function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined): string[] {
+	if (!coreMemories || coreMemories.length === 0) return [];
+	const lines: string[] = [];
+	let used = 0;
+	for (const memory of coreMemories) {
+		const tags = memory.tags.length > 0 ? ` [${memory.tags.join(', ')}]` : '';
+		const prefix = `- ${memory.key}${tags}: `;
+		const remaining = CORE_MEMORY_PROMPT_CHAR_LIMIT - used - prefix.length;
+		if (remaining <= 1) continue;
+		const content =
+			memory.content.length > remaining
+				? `${memory.content.slice(0, Math.max(0, remaining - 1))}…`
+				: memory.content;
+		const line = `${prefix}${content}`;
+		lines.push(line);
+		used += line.length + 1;
+	}
+	return lines;
 }
 
 /**

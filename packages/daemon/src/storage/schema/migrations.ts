@@ -651,6 +651,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 139: Add Forge MVP evolution storage.
 	runMigration139(db);
+
+	// Migration 140: Add Space agent core memory table for consolidation.
+	runMigration140(db);
 }
 
 /**
@@ -9597,6 +9600,26 @@ export function runMigration138(db: BunDatabase): void {
 				`ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`
 		);
 	}
+}
+
+export function runMigration140(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agent_memory')) return;
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_core_memory (
+			space_id TEXT NOT NULL,
+			memory_id INTEGER NOT NULL,
+			score REAL NOT NULL,
+			rank INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (space_id, memory_id),
+			UNIQUE(space_id, rank),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
+	);
 }
 
 function migrateNeoMessageOrigins(db: BunDatabase): void {

@@ -342,6 +342,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 			'Persistent agent-written Space memories with keys, content, tags, and access metadata.',
 	},
 	{
+		tableName: 'space_agent_core_memory',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Space-scoped core memory ranking table populated by background consolidation jobs.',
+	},
+	{
 		tableName: 'evolution_scopes',
 		scopeColumn: 'space_id',
 		blacklistedColumns: [],
