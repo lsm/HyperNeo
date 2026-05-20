@@ -79,7 +79,7 @@ export function buildFtsTerms(query: string): string[] {
 	return query
 		.trim()
 		.split(/\s+/)
-		.map((term) => term.replaceAll('"', '""').replace(/[^\p{L}\p{N}_-]/gu, ''))
+		.map((term) => term.replace(/[^\p{L}\p{N}_-]/gu, ''))
 		.filter((term) => term.length >= MESSAGE_SEARCH_MIN_TERM_LENGTH)
 		.slice(0, 12);
 }
