@@ -508,8 +508,8 @@ describe('SpaceRuntime external event subscriptions', () => {
 				dedupeKey: `dedupe-rate-limit-${index}`,
 				topic:
 					index % 2 === 0
-						? 'github/lsm/neokai/pull_request.review_submitted'
-						: 'github/lsm/neokai/pull_request.review_comment',
+						? 'github/lsm/neokai/pull_request/42.review_submitted'
+						: 'github/lsm/neokai/pull_request/42.review_comment',
 				occurredAt: 1_700_000_000_000 + index,
 			})
 		);
@@ -524,7 +524,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			events.slice(0, 10).map((event) => event.id)
 		);
 		expect(injected[10]!.message).toBe(
-			'5 events received for topics: github/lsm/neokai/pull_request.review_comment, github/lsm/neokai/pull_request.review_submitted (oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z). Use subscribe_external_event to get details.'
+			'5 events received for topics: github/lsm/neokai/pull_request/42.review_comment, github/lsm/neokai/pull_request/42.review_submitted (oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z). Use subscribe_external_event to get details.'
 		);
 		for (const event of events) {
 			expect(eventStore.getById(event.id)?.state).toBe('delivered');
@@ -604,7 +604,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
 			expect(injected).toHaveLength(12);
 			expect(injected[11]!.message).toContain(
-				'3 events received for topics: github/lsm/neokai/pull_request.review_submitted'
+				'3 events received for topics: github/lsm/neokai/pull_request/42.review_submitted'
 			);
 		} finally {
 			Date.now = originalNow;
@@ -641,7 +641,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(injected).toHaveLength(11);
 		expect(injected[10]!.sessionId).toBe('session-digest-fresh');
 		expect(injected[10]!.message).toContain(
-			'1 events received for topics: github/lsm/neokai/pull_request.review_submitted'
+			'1 events received for topics: github/lsm/neokai/pull_request/42.review_submitted'
 		);
 		expect(eventStore.getById(events[10]!.id)?.state).toBe('delivered');
 	});
@@ -1317,7 +1317,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			events.slice(1, 11).map((event) => event.id)
 		);
 		expect(injected[10]!.message).toContain(
-			'40 events received for topics: github/lsm/neokai/pull_request.review_submitted'
+			'40 events received for topics: github/lsm/neokai/pull_request/42.review_submitted'
 		);
 		expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
 	});
