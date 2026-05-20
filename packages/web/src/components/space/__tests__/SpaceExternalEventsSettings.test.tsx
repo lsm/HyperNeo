@@ -148,6 +148,58 @@ describe('SpaceExternalEventsSettings', () => {
 		expect(mockToastError).not.toHaveBeenCalled();
 	});
 
+	it('toggles space enablement', async () => {
+		setupRequests();
+		const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await findByText('github');
+
+		fireEvent.click(getByText('Enabled for this space'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('space.github.disable', { spaceId: 'space-1' });
+		});
+	});
+
+	it('updates repository toggles', async () => {
+		setupRequests();
+		const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await findByText('acme/widgets');
+
+		fireEvent.click(getByText('Polling'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('space.github.watchRepo', {
+				spaceId: 'space-1',
+				owner: 'acme',
+				repo: 'widgets',
+				enabled: true,
+				webhookEnabled: true,
+				pollingEnabled: true,
+			});
+		});
+	});
+
+	it('shows connection errors when disconnected', async () => {
+		mockGetHubIfConnected.mockReturnValue(null);
+
+		render(<SpaceExternalEventsSettings spaceId="space-1" />);
+
+		await waitFor(() => {
+			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
+		});
+	});
+
+	it('shows RPC failures when loading fails', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockRejectedValue(new Error('boom'));
+
+		render(<SpaceExternalEventsSettings spaceId="space-1" />);
+
+		await waitFor(() => {
+			expect(mockToastError).toHaveBeenCalledWith('Failed to load external event sources: boom');
+		});
+	});
+
 	it('toggles global enablement', async () => {
 		setupRequests();
 		const { findByText, getAllByRole } = render(<SpaceExternalEventsSettings spaceId="space-1" />);

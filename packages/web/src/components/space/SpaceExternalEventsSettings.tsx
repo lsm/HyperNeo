@@ -66,7 +66,7 @@ function formatCapabilities(capabilities: ExtensionConfig['capabilities']): stri
 	].filter(Boolean) as string[];
 }
 
-function formatRelativeTime(value: number | null): string {
+function formatTimestamp(value: number | null): string {
 	if (!value) return 'never';
 	return new Date(value).toLocaleString();
 }
@@ -471,8 +471,8 @@ function GitHubRepoRow({ repo, disabled, onUpdate, onRemove }: GitHubRepoRowProp
 					</div>
 					<div class="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-500">
 						<span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
-						<span>last webhook {formatRelativeTime(repo.lastWebhookAt)}</span>
-						<span>last poll {formatRelativeTime(repo.lastPollAt)}</span>
+						<span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
+						<span>last poll {formatTimestamp(repo.lastPollAt)}</span>
 					</div>
 				</div>
 				<button

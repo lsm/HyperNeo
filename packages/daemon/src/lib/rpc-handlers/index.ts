@@ -103,12 +103,12 @@ import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
-import type { ExternalEventExtensionManager } from '../external-events/extension-manager';
-import type {
-	ExternalEventExtensionContext,
-	HttpExternalEventExtension,
-	RpcExternalEventExtension,
-} from '../external-events/types';
+import {
+	isHttpExtension,
+	isRpcExtension,
+	type ExternalEventExtensionManager,
+} from '../external-events/extension-manager';
+import type { ExternalEventExtensionContext } from '../external-events/types';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -158,15 +158,7 @@ export interface RPCHandlerDependencies {
 
 const log = new Logger('rpc-handlers');
 
-function isHttpExternalEventExtension(extension: unknown): extension is HttpExternalEventExtension {
-	return 'routes' in (extension as Record<string, unknown>);
-}
-
-function isRpcExternalEventExtension(extension: unknown): extension is RpcExternalEventExtension {
-	return 'registerRpcHandlers' in (extension as Record<string, unknown>);
-}
-
-function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
+export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
 	deps.messageHub.onRequest('externalEvents.extensions.list', async () => {
 		const extensions = [];
 		for (const extension of deps.externalEventExtensionManager.getAll()) {
@@ -196,13 +188,13 @@ function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void
 		const config = { ...current, globallyEnabled: params.enabled };
 		await deps.externalEventExtensionConfigStore.setGlobalConfig(params.source, config);
 		if (params.enabled) {
-			if (isHttpExternalEventExtension(extension)) {
+			if (isHttpExtension(extension)) {
 				deps.externalEventExtensionManager.registerRoutes(
 					extension.routes,
 					deps.externalEventExtensionContext
 				);
 			}
-			if (isRpcExternalEventExtension(extension) && config.capabilities.rpcConfig) {
+			if (isRpcExtension(extension) && config.capabilities.rpcConfig) {
 				deps.externalEventExtensionManager.registerRpcHandlers(
 					params.source,
 					deps.messageHub,

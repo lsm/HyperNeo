@@ -27,11 +27,11 @@ import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
 import { ExternalEventService, ExternalEventStore } from './lib/external-events';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store';
-import { ExternalEventExtensionManager } from './lib/external-events/extension-manager';
-import type {
-	HttpExternalEventExtension,
-	RpcExternalEventExtension,
-} from './lib/external-events/types';
+import {
+	ExternalEventExtensionManager,
+	isHttpExtension,
+	isRpcExtension,
+} from './lib/external-events/extension-manager';
 import { GitHubEventExtension } from './lib/external-events/github';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
@@ -454,24 +454,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		)
 	);
 
-	function isHttpExternalEventExtension(
-		extension: unknown
-	): extension is HttpExternalEventExtension {
-		return 'routes' in (extension as Record<string, unknown>);
-	}
-
-	function isRpcExternalEventExtension(extension: unknown): extension is RpcExternalEventExtension {
-		return 'registerRpcHandlers' in (extension as Record<string, unknown>);
-	}
-
 	for (const extension of extensionManager.getAll()) {
 		const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
 		if (!globalConfig.globallyEnabled) continue;
 
-		if (isHttpExternalEventExtension(extension)) {
+		if (isHttpExtension(extension)) {
 			extensionManager.registerRoutes(extension.routes, extensionContext);
 		}
-		if (isRpcExternalEventExtension(extension) && globalConfig.capabilities.rpcConfig) {
+		if (isRpcExtension(extension) && globalConfig.capabilities.rpcConfig) {
 			extensionManager.registerRpcHandlers(extension.sourceId, messageHub, extensionContext);
 		}
 
