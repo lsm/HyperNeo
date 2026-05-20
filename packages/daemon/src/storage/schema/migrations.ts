@@ -13,6 +13,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { slugify, validateSlug } from '../../lib/space/slug';
+import { createEvolutionTables } from './evolution';
 
 /**
  * Run all database migrations
@@ -647,6 +648,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 138: Add durable inbox for long-term Space agents.
 	runMigration138(db);
+
+	// Migration 139: Add Forge MVP evolution storage.
+	runMigration139(db);
 }
 
 /**
@@ -9541,6 +9545,18 @@ export function runMigration135(db: BunDatabase): void {
  * agents are space-scoped and can receive DMs from ad-hoc sessions or workers,
  * so they need a separate inbox that can wake/replay their stable session.
  */
+export function runMigration139(db: BunDatabase): void {
+	createEvolutionTables(db);
+	if (tableExists(db, 'space_tasks') && !tableHasColumn(db, 'space_tasks', 'evolution_scope_id')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN evolution_scope_id TEXT DEFAULT NULL`);
+	}
+	if (tableExists(db, 'space_tasks')) {
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_evolution_scope_id ON space_tasks(evolution_scope_id)`
+		);
+	}
+}
+
 export function runMigration138(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_inbox_messages (

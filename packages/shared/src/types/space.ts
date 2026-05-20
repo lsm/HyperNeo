@@ -555,6 +555,8 @@ export interface SpaceTask {
 	createdByTaskScheduleId?: string | null;
 	/** ID of the SpaceGoal this task is executing toward. */
 	goalId?: string | null;
+	/** ID of the EvolutionScope this task explicitly contributes evidence to. */
+	evolutionScopeId?: string | null;
 	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
@@ -764,6 +766,8 @@ export interface CreateSpaceTaskParams {
 export interface InternalCreateSpaceTaskParams extends CreateSpaceTaskParams {
 	/** ID of the SpaceGoal this task should be linked to. */
 	goalId?: string | null;
+	/** ID of the EvolutionScope this task explicitly contributes evidence to. */
+	evolutionScopeId?: string | null;
 }
 
 /**
@@ -846,6 +850,8 @@ export interface UpdateSpaceTaskParams {
 export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
 	/** ID of the SpaceGoal this task is linked to; null to clear. */
 	goalId?: string | null;
+	/** ID of the EvolutionScope this task explicitly contributes evidence to; null to clear. */
+	evolutionScopeId?: string | null;
 }
 
 // ============================================================================
