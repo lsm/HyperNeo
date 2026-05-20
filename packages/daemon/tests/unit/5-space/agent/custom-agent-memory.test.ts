@@ -111,6 +111,37 @@ describe('buildCustomAgentTaskMessage memory injection', () => {
 		expect(coreSection).not.toContain('x'.repeat(2_001));
 	});
 
+	test('continues after oversized core memory prefix entries', () => {
+		const message = buildCustomAgentTaskMessage({
+			customAgent: agent,
+			task,
+			workflowRun: null,
+			workflow: null,
+			space,
+			sessionId: 'session-1',
+			workspacePath: '/tmp/space-1',
+			coreMemories: [
+				{
+					...memories[0].memory,
+					key: 'x'.repeat(2_100),
+					content: 'Oversized prefix should be skipped.',
+					score: 10,
+				},
+				{
+					...memories[0].memory,
+					key: 'core.small',
+					content: 'Small memory should still render.',
+					tags: [],
+					score: 9,
+				},
+			],
+		});
+
+		expect(message).toContain('## Core Memories');
+		expect(message).toContain('- core.small: Small memory should still render.');
+		expect(message).not.toContain('Oversized prefix should be skipped.');
+	});
+
 	test('includes relevant memories before project context', () => {
 		const message = buildCustomAgentTaskMessage({
 			customAgent: agent,

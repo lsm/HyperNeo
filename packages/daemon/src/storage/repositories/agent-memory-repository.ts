@@ -694,7 +694,9 @@ function chooseMergeTarget(left: AgentMemoryRow, right: AgentMemoryRow): AgentMe
 function mergeMemoryContent(left: string, right: string): string {
 	if (left === right || left.includes(right)) return left;
 	if (right.includes(left)) return right;
-	return normalizeContent(`${left}\n\n${right}`);
+	const merged = `${left}\n\n${right}`;
+	if (merged.length <= MEMORY_CONTENT_MAX_LENGTH) return normalizeContent(merged);
+	return normalizeContent(`${merged.slice(0, MEMORY_CONTENT_MAX_LENGTH - 1).trimEnd()}…`);
 }
 
 function memoryTokens(text: string): Set<string> {

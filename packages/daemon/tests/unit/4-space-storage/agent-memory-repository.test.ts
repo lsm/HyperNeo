@@ -820,6 +820,33 @@ describe('AgentMemoryRepository', () => {
 		expect(JSON.parse(memories[0].tags)).toEqual(['validation', 'forms']);
 	});
 
+	test('consolidation bounds oversized merged memory content', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'long.a',
+			content: `shared duplicate marker ${'a'.repeat(5_980)}`,
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'long.b',
+			content: `shared duplicate marker ${'b'.repeat(5_980)}`,
+		});
+
+		const result = repo.consolidate({
+			spaceId: 'space-a',
+			staleTtlMs: 0,
+			duplicateJaccardThreshold: 0.5,
+		});
+		const memories = db
+			.prepare(`SELECT content FROM space_agent_memory WHERE space_id = ?`)
+			.all('space-a') as Array<{ content: string }>;
+
+		expect(result.duplicatesMerged).toBe(1);
+		expect(memories).toHaveLength(1);
+		expect(memories[0].content.length).toBeLessThanOrEqual(10_000);
+		expect(memories[0].content.endsWith('…')).toBe(true);
+	});
+
 	test('consolidation accumulates fields across multiple duplicate merges', () => {
 		repo.write({
 			spaceId: 'space-a',

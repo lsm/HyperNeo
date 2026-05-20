@@ -148,6 +148,24 @@ describe('createMemoryConsolidationHandler', () => {
 		expect(result.nextRunAt).toBe(pending[0].runAt);
 	});
 
+	it('schedules next memory consolidation job before repository consolidation runs', async () => {
+		const memoryRepo = {
+			consolidate() {
+				throw new Error('consolidation failed');
+			},
+		};
+		const handler = createMemoryConsolidationHandler(memoryRepo as any, jobQueue);
+
+		await expect(handler(fakeJob())).rejects.toThrow('consolidation failed');
+
+		const pending = jobQueue.listJobs({
+			queue: MEMORY_CONSOLIDATION,
+			status: 'pending',
+			limit: 10,
+		});
+		expect(pending).toHaveLength(1);
+	});
+
 	it('does not enqueue duplicate pending memory consolidation jobs', async () => {
 		enqueueMemoryConsolidationIfMissing(jobQueue, Date.now() + 1_000);
 		enqueueMemoryConsolidationIfMissing(jobQueue, Date.now() + 2_000);

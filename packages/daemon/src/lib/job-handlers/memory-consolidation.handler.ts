@@ -9,9 +9,9 @@ export function createMemoryConsolidationHandler(
 	jobQueue?: JobQueueRepository
 ) {
 	return async (job: Job): Promise<Record<string, unknown>> => {
-		const result = memoryRepo.consolidate(buildConsolidationOptions(job.payload));
 		const nextRunAt = Date.now() + NEXT_RUN_DELAY_MS;
 		if (jobQueue) enqueueMemoryConsolidationIfMissing(jobQueue, nextRunAt);
+		const result = memoryRepo.consolidate(buildConsolidationOptions(job.payload));
 		return { ...result, nextRunAt };
 	};
 }

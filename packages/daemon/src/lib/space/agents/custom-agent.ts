@@ -408,7 +408,7 @@ function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined):
 		const tags = memory.tags.length > 0 ? ` [${memory.tags.join(', ')}]` : '';
 		const prefix = `- ${memory.key}${tags}: `;
 		const remaining = CORE_MEMORY_PROMPT_CHAR_LIMIT - used - prefix.length;
-		if (remaining <= 1) break;
+		if (remaining <= 1) continue;
 		const content =
 			memory.content.length > remaining
 				? `${memory.content.slice(0, Math.max(0, remaining - 1))}…`
