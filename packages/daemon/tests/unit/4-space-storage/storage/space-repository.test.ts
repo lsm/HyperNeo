@@ -468,36 +468,29 @@ describe('SpaceRepository', () => {
 
 		it('deletes task search rows before task rows cascade', () => {
 			db.exec(`
-				CREATE VIRTUAL TABLE message_search_fts USING fts5(
-					kind UNINDEXED,
-					source_id UNINDEXED,
-					message_id UNINDEXED,
-					session_id UNINDEXED,
-					task_id UNINDEXED,
-					space_id UNINDEXED,
-					task_number UNINDEXED,
-					message_type UNINDEXED,
-					title,
-					body,
-					timestamp UNINDEXED,
-					tokenize = 'unicode61'
-				)
+				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
 			`);
 			const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
 			const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
 			db.prepare(
-				`INSERT INTO message_search_fts (kind, source_id, task_id, space_id, title, body, timestamp)
+				`INSERT INTO message_search_content (kind, source_id, task_id, space_id, title, body, timestamp)
 				 VALUES ('task', ?, ?, ?, ?, ?, ?)`
 			).run('task-1', 'task-1', deleted.id, 'Deleted', 'needle deleted', Date.now());
 			db.prepare(
-				`INSERT INTO message_search_fts (kind, source_id, task_id, space_id, title, body, timestamp)
+				`INSERT INTO message_search_content (kind, source_id, task_id, space_id, title, body, timestamp)
 				 VALUES ('task', ?, ?, ?, ?, ?, ?)`
 			).run('task-2', 'task-2', kept.id, 'Kept', 'needle kept', Date.now());
 
 			repo.deleteSpace(deleted.id);
 
 			const rows = db
-				.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+				.prepare(
+					`SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+				)
 				.all('needle') as Array<{ source_id: string }>;
 			expect(rows.map((row) => row.source_id)).toEqual(['task-2']);
 		});

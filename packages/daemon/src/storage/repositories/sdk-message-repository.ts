@@ -106,7 +106,7 @@ export class SDKMessageRepository {
 	constructor(private db: BunDatabase) {}
 
 	private hasMessageSearchIndex(): boolean {
-		return this.tableExists('message_search_fts');
+		return this.tableExists('message_search_content');
 	}
 
 	private tableExists(tableName: string): boolean {
@@ -198,7 +198,7 @@ export class SDKMessageRepository {
 		}
 		const body = extractVisibleSearchText(parsed);
 		this.db
-			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND source_id = ?`)
+			.prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
 			.run(row.id);
 		if (!SEARCHABLE_MESSAGE_TYPES.has(row.message_type)) return;
 		if (!this.isMessageSearchIndexEligible(row)) return;
@@ -208,7 +208,7 @@ export class SDKMessageRepository {
 		}
 		this.db
 			.prepare(
-				`INSERT INTO message_search_fts (
+				`INSERT INTO message_search_content (
 					kind, source_id, message_id, session_id, task_id, space_id, task_number,
 					message_type, title, body, timestamp
 				) VALUES ('message', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -279,7 +279,7 @@ export class SDKMessageRepository {
 	private deleteMessageSearchRow(rowId: string): void {
 		if (!this.hasMessageSearchIndex()) return;
 		this.db
-			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND source_id = ?`)
+			.prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
 			.run(rowId);
 	}
 
@@ -1259,12 +1259,8 @@ export class SDKMessageRepository {
 		const broadQuery = isBroadMessageSearchQuery(params.query);
 		const hasSessions = this.tableExists('sessions');
 		const hasSpaceTasks = this.tableExists('space_tasks');
-		const sessionJoin = hasSessions
-			? 'LEFT JOIN sessions s ON s.id = message_search_fts.session_id'
-			: '';
-		const taskJoin = hasSpaceTasks
-			? 'LEFT JOIN space_tasks st ON st.id = message_search_fts.task_id'
-			: '';
+		const sessionJoin = hasSessions ? 'LEFT JOIN sessions s ON s.id = msc.session_id' : '';
+		const taskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = msc.task_id' : '';
 		const sessionPolicy = hasSessions
 			? `AND COALESCE(s.status, '') != 'archived'
 				AND NOT (
@@ -1281,16 +1277,17 @@ export class SDKMessageRepository {
 			: '';
 		let candidateSql = `
 			SELECT
-				message_search_fts.rowid,
+				msc.rowid,
 				${broadQuery ? '0' : 'bm25(message_search_fts)'} AS rank,
-				message_search_fts.timestamp,
-				message_search_fts.source_id
+				msc.timestamp,
+				msc.source_id
 			FROM message_search_fts
+			JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
 			${sessionJoin}
 			${taskJoin}
 			WHERE message_search_fts MATCH ?
 			  AND (
-				message_search_fts.kind != 'message'
+				msc.kind != 'message'
 				OR (
 					1 = 1
 					${sessionPolicy}
@@ -1300,25 +1297,25 @@ export class SDKMessageRepository {
 		const values: SQLiteValue[] = [ftsQuery];
 
 		if (params.sessionId) {
-			candidateSql += ` AND session_id = ?`;
+			candidateSql += ` AND msc.session_id = ?`;
 			values.push(params.sessionId);
 		}
 		if (params.messageType) {
-			candidateSql += ` AND message_type = ?`;
+			candidateSql += ` AND msc.message_type = ?`;
 			values.push(params.messageType);
 		}
 		if (params.from !== undefined) {
-			candidateSql += ` AND timestamp >= ?`;
+			candidateSql += ` AND msc.timestamp >= ?`;
 			values.push(params.from);
 		}
 		if (params.to !== undefined) {
-			candidateSql += ` AND timestamp <= ?`;
+			candidateSql += ` AND msc.timestamp <= ?`;
 			values.push(params.to);
 		}
 
 		candidateSql += broadQuery
-			? ` ORDER BY timestamp DESC, source_id ASC LIMIT ? OFFSET ?`
-			: ` ORDER BY rank ASC, timestamp DESC, source_id ASC LIMIT ? OFFSET ?`;
+			? ` ORDER BY msc.timestamp DESC, msc.source_id ASC LIMIT ? OFFSET ?`
+			: ` ORDER BY rank ASC, msc.timestamp DESC, msc.source_id ASC LIMIT ? OFFSET ?`;
 		values.push(limit, offset);
 
 		const candidates = this.db.prepare(candidateSql).all(...values) as Array<{
@@ -1334,12 +1331,13 @@ export class SDKMessageRepository {
 			.prepare(
 				`
 				SELECT
-					rowid, kind, source_id, message_id, session_id, task_id, space_id, task_number,
-					message_type, title,
-					snippet(message_search_fts, 9, '<mark>', '</mark>', '…', 16) AS snippet,
-					timestamp
+					msc.rowid, msc.kind, msc.source_id, msc.message_id, msc.session_id, msc.task_id,
+					msc.space_id, msc.task_number, msc.message_type, msc.title,
+					snippet(message_search_fts, 1, '<mark>', '</mark>', '…', 16) AS snippet,
+					msc.timestamp
 				FROM message_search_fts
-				WHERE rowid IN (${placeholders})
+				JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				WHERE message_search_fts.rowid IN (${placeholders})
 				  AND message_search_fts MATCH ?`
 			)
 			.all(...candidates.map((row) => row.rowid), ftsQuery) as Array<{

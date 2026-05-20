@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration134 } from '../../../../../src/storage/schema/index.ts';
+import { runMigration134, runMigration141 } from '../../../../../src/storage/schema/index.ts';
 
 function tableExists(db: BunDatabase, table: string): boolean {
 	const row = db
@@ -81,7 +81,9 @@ describe('Migration 134: message search FTS', () => {
 
 		expect(tableExists(db, 'message_search_fts')).toBe(true);
 		const rows = db
-			.prepare(`SELECT kind, source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.prepare(
+				`SELECT msc.kind, msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+			)
 			.all('needle') as Array<{ kind: string; source_id: string }>;
 		expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
 			'message:msg-1',
@@ -98,7 +100,7 @@ describe('Migration 134: message search FTS', () => {
 	test('does not backfill again when FTS table already contains rows', () => {
 		runMigration134(db);
 		db.prepare(
-			`INSERT INTO message_search_fts (kind, source_id, title, body, timestamp)
+			`INSERT INTO message_search_content (kind, source_id, title, body, timestamp)
 			 VALUES ('task', 'sentinel', 'sentinel', 'sentinel body', ?)`
 		).run(Date.now());
 		db.prepare(`DELETE FROM sdk_messages`).run();
@@ -106,7 +108,9 @@ describe('Migration 134: message search FTS', () => {
 		runMigration134(db);
 
 		const rows = db
-			.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.prepare(
+				`SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+			)
 			.all('sentinel') as Array<{ source_id: string }>;
 		expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
 	});
@@ -114,12 +118,14 @@ describe('Migration 134: message search FTS', () => {
 	test('backfills when FTS table exists but is empty', () => {
 		seedSearchFixtures(db);
 		runMigration134(db);
-		db.prepare(`DELETE FROM message_search_fts`).run();
+		db.prepare(`DELETE FROM message_search_content`).run();
 
 		runMigration134(db);
 
 		const rows = db
-			.prepare(`SELECT kind, source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.prepare(
+				`SELECT msc.kind, msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+			)
 			.all('needle') as Array<{ kind: string; source_id: string }>;
 		expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
 			'message:msg-1',
@@ -130,7 +136,7 @@ describe('Migration 134: message search FTS', () => {
 	test('does not backfill populated FTS table when source rows lack searchable text', () => {
 		runMigration134(db);
 		db.prepare(
-			`INSERT INTO message_search_fts (kind, source_id, title, body, timestamp)
+			`INSERT INTO message_search_content (kind, source_id, title, body, timestamp)
 			 VALUES ('task', 'sentinel', 'sentinel', 'sentinel body', ?)`
 		).run(Date.now());
 		db.prepare(
@@ -147,8 +153,45 @@ describe('Migration 134: message search FTS', () => {
 		runMigration134(db);
 
 		const rows = db
-			.prepare(`SELECT source_id FROM message_search_fts WHERE message_search_fts MATCH ?`)
+			.prepare(
+				`SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+			)
 			.all('sentinel') as Array<{ source_id: string }>;
 		expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
+	});
+	test('creates external-content FTS with detail column tuning', () => {
+		seedSearchFixtures(db);
+
+		runMigration134(db);
+		runMigration141(db);
+
+		const createSql = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE name = 'message_search_fts'`)
+			.get() as { sql: string };
+		expect(createSql.sql).toContain("content='message_search_content'");
+		expect(createSql.sql).toContain('detail=column');
+		expect(
+			db.prepare(`SELECT v FROM message_search_fts_config WHERE k = 'automerge'`).get()
+		).toEqual({
+			v: 0,
+		});
+		expect(
+			db.prepare(`SELECT v FROM message_search_fts_config WHERE k = 'crisismerge'`).get()
+		).toEqual({
+			v: 64,
+		});
+
+		const rows = db
+			.prepare(
+				`SELECT msc.kind, msc.source_id
+				 FROM message_search_fts
+				 JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				 WHERE message_search_fts MATCH ?`
+			)
+			.all('needle') as Array<{ kind: string; source_id: string }>;
+		expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
+			'message:msg-1',
+			'task:task-1',
+		]);
 	});
 });

@@ -6,7 +6,7 @@ import { runMigration137 } from '../../../../../src/storage/schema/index.ts';
 
 function indexedSourceIds(db: BunDatabase): string[] {
 	return (
-		db.prepare(`SELECT source_id FROM message_search_fts ORDER BY source_id`).all() as Array<{
+		db.prepare(`SELECT source_id FROM message_search_content ORDER BY source_id`).all() as Array<{
 			source_id: string;
 		}>
 	).map((row) => row.source_id);
@@ -37,20 +37,11 @@ describe('Migration 137: message search indexing policy', () => {
 				completed_at INTEGER,
 				updated_at INTEGER NOT NULL
 			);
-			CREATE VIRTUAL TABLE message_search_fts USING fts5(
-				kind UNINDEXED,
-				source_id UNINDEXED,
-				message_id UNINDEXED,
-				session_id UNINDEXED,
-				task_id UNINDEXED,
-				space_id UNINDEXED,
-				task_number UNINDEXED,
-				message_type UNINDEXED,
-				title,
-				body,
-				timestamp UNINDEXED,
-				tokenize = 'unicode61'
-			);
+			CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
 		`);
 	}, 10_000);
 
@@ -73,7 +64,7 @@ describe('Migration 137: message search indexing policy', () => {
 		messageType = 'user'
 	): void {
 		db.prepare(
-			`INSERT INTO message_search_fts (kind, source_id, session_id, task_id, message_type, title, body, timestamp)
+			`INSERT INTO message_search_content (kind, source_id, session_id, task_id, message_type, title, body, timestamp)
 			 VALUES ('message', ?, ?, ?, ?, ?, ?, ?)`
 		).run(id, sessionId, taskId, messageType, id, 'searchable policy marker', Date.now());
 	}

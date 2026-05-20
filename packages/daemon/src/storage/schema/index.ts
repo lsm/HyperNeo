@@ -109,6 +109,8 @@ export { runMigration133 } from './migrations';
 // knip-ignore-next-line
 export { runMigration134 } from './migrations';
 // knip-ignore-next-line
+export { configureMessageSearchFts, runMigration141 } from './migrations';
+// knip-ignore-next-line
 export { runMigration137 } from './migrations';
 // knip-ignore-next-line
 export { runMigration138 } from './migrations';

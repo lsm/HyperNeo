@@ -25,7 +25,7 @@ export class SpaceTaskRepository {
 	private hasMessageSearchIndex(): boolean {
 		try {
 			const row = this.db
-				.prepare(`SELECT name FROM sqlite_master WHERE name = 'message_search_fts'`)
+				.prepare(`SELECT name FROM sqlite_master WHERE name = 'message_search_content'`)
 				.get();
 			return !!row;
 		} catch {
@@ -56,7 +56,7 @@ export class SpaceTaskRepository {
 		if (!body) return;
 		this.db
 			.prepare(
-				`INSERT INTO message_search_fts (
+				`INSERT INTO message_search_content (
 					kind, source_id, task_id, space_id, task_number, title, body, timestamp
 				) VALUES ('task', ?, ?, ?, ?, ?, ?, ?)`
 			)
@@ -66,7 +66,7 @@ export class SpaceTaskRepository {
 	private deleteTaskSearchRow(taskId: string): void {
 		if (!this.hasMessageSearchIndex()) return;
 		this.db
-			.prepare(`DELETE FROM message_search_fts WHERE kind = 'task' AND source_id = ?`)
+			.prepare(`DELETE FROM message_search_content WHERE kind = 'task' AND source_id = ?`)
 			.run(taskId);
 	}
 
@@ -77,13 +77,13 @@ export class SpaceTaskRepository {
 	 */
 	private deleteTaskMessageSearchRows(taskId: string): void {
 		if (!this.hasMessageSearchIndex()) return;
-		this.db.prepare(`DELETE FROM message_search_fts WHERE task_id = ?`).run(taskId);
+		this.db.prepare(`DELETE FROM message_search_content WHERE task_id = ?`).run(taskId);
 	}
 
 	private deleteTaskMessageRows(taskId: string): void {
 		if (!this.hasMessageSearchIndex()) return;
 		this.db
-			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND task_id = ?`)
+			.prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND task_id = ?`)
 			.run(taskId);
 	}
 
@@ -91,13 +91,13 @@ export class SpaceTaskRepository {
 		if (!this.hasMessageSearchIndex()) return;
 		this.db
 			.prepare(
-				`DELETE FROM message_search_fts
+				`DELETE FROM message_search_content
 				 WHERE kind = 'message'
 				   AND task_id = ?
 				   AND EXISTS (
 					 SELECT 1
 					 FROM space_tasks st
-					 WHERE st.id = message_search_fts.task_id
+					 WHERE st.id = message_search_content.task_id
 					   AND st.status IN ('done', 'cancelled', 'completed')
 					   AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
 				   )`

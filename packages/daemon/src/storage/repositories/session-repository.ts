@@ -240,21 +240,23 @@ export class SessionRepository {
 	}
 
 	private updateMessageSearchSessionTitle(sessionId: string, title: string): void {
-		if (!this.tableExists('message_search_fts')) return;
+		if (!this.tableExists('message_search_content')) return;
 		this.db
-			.prepare(`UPDATE message_search_fts SET title = ? WHERE kind = 'message' AND session_id = ?`)
+			.prepare(
+				`UPDATE message_search_content SET title = ? WHERE kind = 'message' AND session_id = ?`
+			)
 			.run(title, sessionId);
 	}
 
 	private deleteMessageSearchRows(sessionId: string): void {
-		if (!this.tableExists('message_search_fts')) return;
+		if (!this.tableExists('message_search_content')) return;
 		this.db
-			.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND session_id = ?`)
+			.prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND session_id = ?`)
 			.run(sessionId);
 	}
 
 	private rebuildMessageSearchRows(sessionId: string): void {
-		if (!this.tableExists('message_search_fts') || !this.tableExists('sdk_messages')) return;
+		if (!this.tableExists('message_search_content') || !this.tableExists('sdk_messages')) return;
 		const hasSpaceTasks = this.tableExists('space_tasks');
 		const spaceTaskColumns = hasSpaceTasks
 			? 'st.space_id, st.task_number'
@@ -270,7 +272,7 @@ export class SessionRepository {
 		this.deleteMessageSearchRows(sessionId);
 		this.db
 			.prepare(
-				`INSERT INTO message_search_fts (
+				`INSERT INTO message_search_content (
 					kind, source_id, message_id, session_id, task_id, space_id, task_number,
 					message_type, title, body, timestamp
 				)
@@ -333,8 +335,10 @@ export class SessionRepository {
 		const deleteOverrides = this.db.prepare(
 			`DELETE FROM mcp_enablement WHERE scope_type = 'session' AND scope_id = ?`
 		);
-		const deleteSearchRows = this.tableExists('message_search_fts')
-			? this.db.prepare(`DELETE FROM message_search_fts WHERE kind = 'message' AND session_id = ?`)
+		const deleteSearchRows = this.tableExists('message_search_content')
+			? this.db.prepare(
+					`DELETE FROM message_search_content WHERE kind = 'message' AND session_id = ?`
+				)
 			: null;
 		const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
 		const tx = this.db.transaction((sessionId: string) => {

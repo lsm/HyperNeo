@@ -300,8 +300,8 @@ export class SpaceRepository {
 	 * Delete a space by ID
 	 */
 	deleteSpace(id: string): boolean {
-		const deleteSearchRows = this.tableExists('message_search_fts')
-			? this.db.prepare(`DELETE FROM message_search_fts WHERE space_id = ?`)
+		const deleteSearchRows = this.tableExists('message_search_content')
+			? this.db.prepare(`DELETE FROM message_search_content WHERE space_id = ?`)
 			: null;
 		const deleteSpace = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
 		const tx = this.db.transaction((spaceId: string) => {
