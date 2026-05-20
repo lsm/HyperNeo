@@ -655,24 +655,36 @@ describe('Message RPC Handlers', () => {
 					parent_tool_use_id TEXT,
 					task_id TEXT
 				);
+				CREATE TABLE message_search_content (
+					kind TEXT,
+					source_id TEXT,
+					message_id TEXT,
+					session_id TEXT,
+					task_id TEXT,
+					space_id TEXT,
+					task_number INTEGER,
+					message_type TEXT,
+					title TEXT,
+					body TEXT,
+					timestamp INTEGER
+				);
 				CREATE VIRTUAL TABLE message_search_fts USING fts5(
-					kind UNINDEXED,
-					source_id UNINDEXED,
-					message_id UNINDEXED,
-					session_id UNINDEXED,
-					task_id UNINDEXED,
-					space_id UNINDEXED,
-					task_number UNINDEXED,
-					message_type UNINDEXED,
 					title,
 					body,
-					timestamp UNINDEXED,
+					content='message_search_content',
+					content_rowid='rowid',
+					detail=column,
 					tokenize = 'unicode61'
 				);
+				CREATE TRIGGER message_search_content_ai
+				AFTER INSERT ON message_search_content BEGIN
+					INSERT INTO message_search_fts(rowid, title, body)
+					VALUES (new.rowid, new.title, new.body);
+				END;
 			`);
 			sqlite
 				.prepare(
-					`INSERT INTO message_search_fts (kind, source_id, session_id, message_type, title, body, timestamp)
+					`INSERT INTO message_search_content (kind, source_id, session_id, message_type, title, body, timestamp)
 					 VALUES ('message', 'msg-1', 'session-1', 'user', 'In Memory', 'inmemory needle marker', ?)`
 				)
 				.run(Date.now());
