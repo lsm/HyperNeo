@@ -218,6 +218,38 @@ describe('InputTextarea', () => {
 			expect(stopButton).toBeNull();
 		});
 
+		it('should show queue button when agent is working and content exists', () => {
+			const { container } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onQueue={() => {}}
+					isAgentWorking={true}
+				/>
+			);
+
+			const queueButton = container.querySelector('[data-testid="queue-button"]');
+			expect(queueButton).toBeTruthy();
+		});
+
+		it('should not show queue button when agent is idle', () => {
+			const { container } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onQueue={() => {}}
+					isAgentWorking={false}
+				/>
+			);
+
+			const queueButton = container.querySelector('[data-testid="queue-button"]');
+			expect(queueButton).toBeNull();
+		});
+
 		it('should keep send button enabled with content when isAgentWorking is true', () => {
 			const { container } = render(
 				<InputTextarea
@@ -336,7 +368,7 @@ describe('InputTextarea', () => {
 			expect(onSubmit).toHaveBeenCalledTimes(1);
 		});
 
-		it('should call onSubmit when agent is working (queue mode)', () => {
+		it('should call onSubmit when agent is working (steer mode)', () => {
 			const onSubmit = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
@@ -352,6 +384,25 @@ describe('InputTextarea', () => {
 			fireEvent.click(sendButton);
 
 			expect(onSubmit).toHaveBeenCalledTimes(1);
+		});
+
+		it('should call onQueue when queue button is clicked', () => {
+			const onQueue = vi.fn(() => {});
+			const { container } = render(
+				<InputTextarea
+					content="hello"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					onQueue={onQueue}
+					isAgentWorking={true}
+				/>
+			);
+
+			const queueButton = container.querySelector('[data-testid="queue-button"]')!;
+			fireEvent.click(queueButton);
+
+			expect(onQueue).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -579,7 +630,7 @@ describe('InputTextarea', () => {
 	});
 
 	describe('Queue mode labeling', () => {
-		it('should use send aria-label when agent is working', () => {
+		it('should use steer aria-label when agent is working', () => {
 			const { container } = render(
 				<InputTextarea
 					content="hello"
@@ -594,7 +645,7 @@ describe('InputTextarea', () => {
 				'[data-testid="send-button"]'
 			) as HTMLButtonElement;
 			expect(sendButton).toBeTruthy();
-			expect(sendButton.getAttribute('aria-label')).toBe('Send message');
+			expect(sendButton.getAttribute('aria-label')).toBe('Steer current turn');
 		});
 
 		it('should use send aria-label when agent is idle', () => {

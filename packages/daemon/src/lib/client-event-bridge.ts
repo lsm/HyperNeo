@@ -123,11 +123,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 		channel: () => Channels.global(),
 	},
 	{
-		event: 'space.githubEvent.routed',
-		clientEvent: 'space.githubEvent.routed',
-		channel: () => Channels.global(),
-	},
-	{
 		event: 'space.artifactCache.updated',
 		clientEvent: 'space.artifactCache.updated',
 		channel: () => Channels.global(),

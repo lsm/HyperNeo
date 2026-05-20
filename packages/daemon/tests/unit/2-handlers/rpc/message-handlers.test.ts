@@ -14,6 +14,8 @@
  */
 
 import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
+import { Database as BunDatabase } from 'bun:sqlite';
+import type { Database } from '../../../../src/storage/database';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { MessageHub } from '@neokai/shared';
 import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-handlers';
@@ -633,6 +635,63 @@ describe('Message RPC Handlers', () => {
 
 	afterEach(() => {
 		mock.restore();
+	});
+
+	describe('message.search', () => {
+		test('uses in-memory repository directly instead of worker connection', async () => {
+			const sqlite = new BunDatabase(':memory:');
+			sqlite.exec(`
+				CREATE TABLE sdk_messages (
+					id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					message_type TEXT NOT NULL,
+					message_subtype TEXT,
+					sdk_message TEXT NOT NULL,
+					timestamp TEXT NOT NULL,
+					send_status TEXT,
+					origin TEXT,
+					is_renderable INTEGER NOT NULL DEFAULT 1,
+					is_terminal INTEGER NOT NULL DEFAULT 0,
+					parent_tool_use_id TEXT,
+					task_id TEXT
+				);
+				CREATE VIRTUAL TABLE message_search_fts USING fts5(
+					kind UNINDEXED,
+					source_id UNINDEXED,
+					message_id UNINDEXED,
+					session_id UNINDEXED,
+					task_id UNINDEXED,
+					space_id UNINDEXED,
+					task_number UNINDEXED,
+					message_type UNINDEXED,
+					title,
+					body,
+					timestamp UNINDEXED,
+					tokenize = 'unicode61'
+				);
+			`);
+			sqlite
+				.prepare(
+					`INSERT INTO message_search_fts (kind, source_id, session_id, message_type, title, body, timestamp)
+					 VALUES ('message', 'msg-1', 'session-1', 'user', 'In Memory', 'inmemory needle marker', ?)`
+				)
+				.run(Date.now());
+			const db = {
+				getDbPath: () => ':memory:',
+				getDatabase: () => sqlite,
+			} as unknown as Database;
+			messageHubData = createMockMessageHub();
+			setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+
+			try {
+				const handler = messageHubData.handlers.get('message.search');
+				const result = await handler!({ query: 'needle' }, { clientId: 'client-1' });
+
+				expect((result as { results: unknown[] }).results).toHaveLength(1);
+			} finally {
+				sqlite.close();
+			}
+		});
 	});
 
 	describe('message.sdkMessages', () => {
