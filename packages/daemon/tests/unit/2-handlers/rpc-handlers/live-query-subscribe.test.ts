@@ -112,6 +112,17 @@ function createDb() {
 			name TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT,
+			status TEXT NOT NULL,
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)
 	`);
 	return db;
@@ -150,6 +161,17 @@ function insertMcpServer(db: BunDatabase, id: string, name: string, enabled = tr
 	db.exec(
 		`INSERT INTO app_mcp_servers (id, name, source_type, enabled, source, created_at, updated_at)
 		 VALUES ('${id}', '${name}', 'stdio', ${enabled ? 1 : 0}, 'user', ${now}, ${now})`
+	);
+}
+
+function insertWorkflowRun(db: BunDatabase, runId: string) {
+	const now = Date.now();
+	db.exec(
+		`INSERT OR IGNORE INTO space_workflow_runs (
+			id, space_id, workflow_id, title, description, status, config, created_at, updated_at
+		) VALUES (
+			'${runId}', 'space-test-1', 'workflow-test-1', 'Test Run', '', 'in_progress', '{}', ${now}, ${now}
+		)`
 	);
 }
 
@@ -250,6 +272,27 @@ describe('setupLiveQueryHandlers', () => {
 				queryName: 'spaceTaskMessages.byTask.compact',
 				params: ['space-task-does-not-exist'],
 				subscriptionId: 'sub-1',
+			})
+		).rejects.toThrow('Unauthorized');
+	});
+
+	test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {
+		insertWorkflowRun(db, 'workflow-run-valid');
+		await expect(
+			setup.callHandler('liveQuery.subscribe', {
+				queryName: 'actorMessages.byWorkflowRun',
+				params: ['workflow-run-valid', 'workflow-run-other', 'workflow-run-valid'],
+				subscriptionId: 'sub-actor-run',
+			})
+		).rejects.toThrow('requires matching workflow run ids');
+	});
+
+	test('subscribe actorMessages.byWorkflowRun: nonexistent run rejected', async () => {
+		await expect(
+			setup.callHandler('liveQuery.subscribe', {
+				queryName: 'actorMessages.byWorkflowRun',
+				params: ['workflow-run-missing', 'workflow-run-missing', 'workflow-run-missing'],
+				subscriptionId: 'sub-actor-run-missing',
 			})
 		).rejects.toThrow('Unauthorized');
 	});

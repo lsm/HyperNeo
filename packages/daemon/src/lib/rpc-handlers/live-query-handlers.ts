@@ -2655,6 +2655,11 @@ export function setupLiveQueryHandlers(
 			}
 		} else if (queryName === 'actorMessages.byWorkflowRun') {
 			const workflowRunId = params[0] as string;
+			if (params.some((param) => param !== workflowRunId)) {
+				throw new Error(
+					'Unauthorized: actorMessages.byWorkflowRun requires matching workflow run ids'
+				);
+			}
 			let workflowRun: { id: string } | null = null;
 			try {
 				workflowRun = db
