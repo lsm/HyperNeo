@@ -1,15 +1,45 @@
-import type { Job } from '../../storage/repositories/job-queue-repository';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { AgentMemoryRepository } from '../../storage/repositories/agent-memory-repository';
+import { MEMORY_CONSOLIDATION } from '../job-queue-constants';
 
-export function createMemoryConsolidationHandler(memoryRepo: AgentMemoryRepository) {
+const NEXT_RUN_DELAY_MS = 24 * 60 * 60 * 1000;
+
+export function createMemoryConsolidationHandler(
+	memoryRepo: AgentMemoryRepository,
+	jobQueue?: JobQueueRepository
+) {
 	return async (job: Job): Promise<Record<string, unknown>> => {
-		const result = memoryRepo.consolidate({
-			spaceId: readOptionalString(job.payload.spaceId),
-			staleTtlMs: readOptionalNumber(job.payload.staleTtlMs),
-			duplicateJaccardThreshold: readOptionalNumber(job.payload.duplicateJaccardThreshold),
-			coreLimit: readOptionalNumber(job.payload.coreLimit),
-		});
-		return { ...result };
+		const result = memoryRepo.consolidate(buildConsolidationOptions(job.payload));
+		const nextRunAt = Date.now() + NEXT_RUN_DELAY_MS;
+		if (jobQueue) enqueueMemoryConsolidationIfMissing(jobQueue, nextRunAt);
+		return { ...result, nextRunAt };
+	};
+}
+
+export function enqueueMemoryConsolidationIfMissing(
+	jobQueue: JobQueueRepository,
+	runAt = Date.now()
+): void {
+	const pending = jobQueue.listJobs({ queue: MEMORY_CONSOLIDATION, status: 'pending', limit: 1 });
+	if (pending.length === 0) {
+		jobQueue.enqueue({ queue: MEMORY_CONSOLIDATION, payload: {}, runAt });
+	}
+}
+
+function buildConsolidationOptions(payload: Record<string, unknown>) {
+	return {
+		...(readOptionalString(payload.spaceId)
+			? { spaceId: readOptionalString(payload.spaceId) }
+			: {}),
+		...(readOptionalNumber(payload.staleTtlMs) !== undefined
+			? { staleTtlMs: readOptionalNumber(payload.staleTtlMs) }
+			: {}),
+		...(readOptionalNumber(payload.duplicateJaccardThreshold) !== undefined
+			? { duplicateJaccardThreshold: readOptionalNumber(payload.duplicateJaccardThreshold) }
+			: {}),
+		...(readOptionalNumber(payload.coreLimit) !== undefined
+			? { coreLimit: readOptionalNumber(payload.coreLimit) }
+			: {}),
 	};
 }
 

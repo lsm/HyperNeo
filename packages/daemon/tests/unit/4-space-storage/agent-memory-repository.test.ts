@@ -820,6 +820,101 @@ describe('AgentMemoryRepository', () => {
 		expect(JSON.parse(memories[0].tags)).toEqual(['validation', 'forms']);
 	});
 
+	test('consolidation accumulates fields across multiple duplicate merges', () => {
+		repo.write({
+			spaceId: 'space-a',
+			key: 'dup.a',
+			content: 'Use zod schemas for form validation.',
+			tags: ['a'],
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'dup.b',
+			content: 'Use zod schemas for form validation and submit checks.',
+			tags: ['b'],
+		});
+		repo.write({
+			spaceId: 'space-a',
+			key: 'dup.c',
+			content: 'Use zod schemas for form validation and error messages.',
+			tags: ['c'],
+		});
+		repo.recordAccess('space-a', 'dup.a');
+		repo.recordAccess('space-a', 'dup.b');
+		repo.recordAccess('space-a', 'dup.c');
+
+		repo.consolidate({ spaceId: 'space-a', staleTtlMs: 0, duplicateJaccardThreshold: 0.4 });
+		const memories = db
+			.prepare(`SELECT content, access_count, tags FROM space_agent_memory WHERE space_id = ?`)
+			.all('space-a') as Array<{ content: string; access_count: number; tags: string }>;
+
+		expect(memories).toHaveLength(1);
+		expect(memories[0].access_count).toBe(3);
+		expect(memories[0].content).toContain('submit checks');
+		expect(memories[0].content).toContain('error messages');
+		expect(JSON.parse(memories[0].tags).sort()).toEqual(['a', 'b', 'c']);
+	});
+
+	test('consolidation does not merge empty token memories', () => {
+		repo.write({ spaceId: 'space-a', key: 'short.a', content: 'aa' });
+		repo.write({ spaceId: 'space-a', key: 'short.b', content: 'bb' });
+
+		const result = repo.consolidate({ spaceId: 'space-a', staleTtlMs: 0 });
+		const memories = db
+			.prepare(`SELECT key FROM space_agent_memory WHERE space_id = ? ORDER BY key ASC`)
+			.all('space-a') as Array<{ key: string }>;
+
+		expect(result.duplicatesMerged).toBe(0);
+		expect(memories.map((memory) => memory.key)).toEqual(['short.a', 'short.b']);
+	});
+
+	test('consolidation leaves non-duplicate memories intact', async () => {
+		repo.write({ spaceId: 'space-a', key: 'forms', content: 'Use zod schemas for forms.' });
+		repo.write({ spaceId: 'space-a', key: 'deploy', content: 'Deploy releases from dev branch.' });
+
+		const result = repo.consolidate({ spaceId: 'space-a', staleTtlMs: 0 });
+		const memories = (await repo.list('space-a')).map((memory) => memory.key).sort();
+
+		expect(result.duplicatesMerged).toBe(0);
+		expect(memories).toEqual(['deploy', 'forms']);
+	});
+
+	test('listCoreMemories returns empty array when none are ranked', () => {
+		repo.write({ spaceId: 'space-a', key: 'unaccessed', content: 'No core rank yet.' });
+
+		expect(repo.listCoreMemories('space-a')).toEqual([]);
+	});
+
+	test('consolidation re-embeds merged memories', () => {
+		const embedder = new TrackingEmbedder();
+		repo = new AgentMemoryRepository(db, undefined, embedder);
+		repo.write({ spaceId: 'space-a', key: 'dup.one', content: 'Use zod schemas for forms.' });
+		repo.write({ spaceId: 'space-a', key: 'dup.two', content: 'Use zod schemas for forms.' });
+		embedder.passageTexts = [];
+
+		repo.consolidate({ spaceId: 'space-a', staleTtlMs: 0 });
+
+		expect(embedder.passageTexts).toHaveLength(1);
+		expect(embedder.passageTexts[0]).toContain('Use zod schemas for forms.');
+	});
+
+	test('consolidation ranks core memories by computed score', () => {
+		repo.write({ spaceId: 'space-a', key: 'old.hot', content: 'Old high access.' });
+		repo.write({ spaceId: 'space-a', key: 'newer.warm', content: 'Newer medium access.' });
+		const now = Date.now();
+		db.prepare(
+			`UPDATE space_agent_memory SET access_count = ?, updated_at = ?, last_accessed_at = ? WHERE key = ?`
+		).run(100, now - 100 * 24 * 60 * 60 * 1000, now - 100 * 24 * 60 * 60 * 1000, 'old.hot');
+		db.prepare(
+			`UPDATE space_agent_memory SET access_count = ?, updated_at = ?, last_accessed_at = ? WHERE key = ?`
+		).run(10, now, now, 'newer.warm');
+
+		repo.consolidate({ spaceId: 'space-a', coreLimit: 1, staleTtlMs: 0 });
+		const core = repo.listCoreMemories('space-a', 5);
+
+		expect(core.map((memory) => memory.key)).toEqual(['newer.warm']);
+	});
+
 	test('consolidation prunes stale memories after TTL expiry', () => {
 		repo.write({ spaceId: 'space-a', key: 'old.memory', content: 'Outdated convention.' });
 		repo.write({ spaceId: 'space-a', key: 'fresh.memory', content: 'Current convention.' });
@@ -851,6 +946,39 @@ describe('AgentMemoryRepository', () => {
 		expect(result.coreMemoriesWritten).toBe(1);
 		expect(core.map((memory) => memory.key)).toEqual(['hot.memory']);
 		expect(core[0].score).toBeGreaterThan(0);
+	});
+
+	test('consolidation processes all spaces when spaceId is omitted', async () => {
+		repo.write({ spaceId: 'space-a', key: 'dup.a1', content: 'Use bun tests for daemon code.' });
+		repo.write({ spaceId: 'space-a', key: 'dup.a2', content: 'Use bun tests for daemon code.' });
+		repo.write({ spaceId: 'space-b', key: 'dup.b1', content: 'Use preact signals for web state.' });
+		repo.write({ spaceId: 'space-b', key: 'dup.b2', content: 'Use preact signals for web state.' });
+
+		const result = repo.consolidate({ staleTtlMs: 0 });
+
+		expect(result.spacesProcessed).toBe(2);
+		expect(result.duplicatesMerged).toBe(2);
+		expect(await repo.list('space-a')).toHaveLength(1);
+		expect(await repo.list('space-b')).toHaveLength(1);
+	});
+
+	test('consolidation deletes stale memories in batches', async () => {
+		const now = Date.now();
+		for (let index = 0; index < 505; index++) {
+			repo.write({
+				spaceId: 'space-a',
+				key: `old.${index.toString().padStart(3, '0')}`,
+				content: `Old batched memory ${index}`,
+			});
+		}
+		db.prepare(`UPDATE space_agent_memory SET updated_at = ?, last_accessed_at = NULL`).run(
+			now - 10_000
+		);
+
+		const result = repo.consolidate({ spaceId: 'space-a', staleTtlMs: 1 });
+
+		expect(result.memoriesPruned).toBe(505);
+		expect(await repo.list('space-a', { limit: 25 })).toHaveLength(0);
 	});
 
 	test('filtered list keeps the default candidate pool for paginated hybrid ranking', async () => {

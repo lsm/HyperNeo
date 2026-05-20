@@ -87,6 +87,8 @@ const EMBEDDING_BACKFILL_BATCH_SIZE = 25;
 const DEFAULT_STALE_MEMORY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_DUPLICATE_JACCARD_THRESHOLD = 0.82;
 const DEFAULT_CORE_MEMORY_LIMIT = 10;
+const DUPLICATE_COMPARISON_LIMIT = 1_000;
+const STALE_DELETE_BATCH_SIZE = 500;
 
 export class AgentMemoryRepository {
 	constructor(
@@ -214,8 +216,8 @@ export class AgentMemoryRepository {
 
 	consolidate(options?: AgentMemoryConsolidationOptions): AgentMemoryConsolidationResult {
 		const staleTtlMs =
-			options && 'staleTtlMs' in options
-				? Math.max(0, options.staleTtlMs ?? 0)
+			options?.staleTtlMs !== undefined
+				? Math.max(0, options.staleTtlMs)
 				: DEFAULT_STALE_MEMORY_TTL_MS;
 		const duplicateJaccardThreshold = Math.min(
 			1,
@@ -272,41 +274,72 @@ export class AgentMemoryRepository {
 	}
 
 	private mergeDuplicateMemories(spaceId: string, threshold: number): number {
-		const rows = this.db
+		const initialRows = this.db
 			.prepare(
-				`SELECT * FROM space_agent_memory WHERE space_id = ? ORDER BY updated_at DESC, key ASC`
+				`SELECT * FROM space_agent_memory
+				 WHERE space_id = ?
+				 ORDER BY updated_at DESC, key ASC
+				 LIMIT ?`
 			)
-			.all(spaceId) as AgentMemoryRow[];
+			.all(spaceId, DUPLICATE_COMPARISON_LIMIT) as AgentMemoryRow[];
 		const deletedIds = new Set<number>();
+		const touchedIds = new Set<number>();
 		let merged = 0;
 
-		for (let leftIndex = 0; leftIndex < rows.length; leftIndex++) {
-			const left = rows[leftIndex];
-			if (deletedIds.has(left.id)) continue;
-			const leftTokens = memoryTokens(left.content);
-			for (let rightIndex = leftIndex + 1; rightIndex < rows.length; rightIndex++) {
-				const right = rows[rightIndex];
-				if (deletedIds.has(right.id)) continue;
-				const similarity = jaccardSimilarity(leftTokens, memoryTokens(right.content));
+		for (const candidate of initialRows) {
+			if (deletedIds.has(candidate.id)) continue;
+			let target = this.readRowById(candidate.id);
+			if (!target) continue;
+			for (const otherCandidate of initialRows) {
+				if (otherCandidate.id === target.id || deletedIds.has(otherCandidate.id)) continue;
+				const other = this.readRowById(otherCandidate.id);
+				if (!other) continue;
+				const similarity = jaccardSimilarity(
+					memoryTokens(target.content),
+					memoryTokens(other.content)
+				);
 				if (similarity < threshold) continue;
 
-				const target = chooseMergeTarget(left, right);
-				const source = target.id === left.id ? right : left;
-				this.mergeMemoryRows(target, source);
+				const mergeTarget = chooseMergeTarget(target, other);
+				const source = mergeTarget.id === target.id ? other : target;
+				this.mergeMemoryRows(mergeTarget, source);
 				deletedIds.add(source.id);
+				touchedIds.add(mergeTarget.id);
 				merged++;
-				if (source.id === left.id) break;
+				if (source.id === target.id) break;
+				target = this.readRowById(mergeTarget.id) ?? mergeTarget;
 			}
+		}
+
+		for (const id of touchedIds) {
+			const row = this.readRowById(id);
+			if (row) this.updateEmbedding(row);
 		}
 
 		return merged;
 	}
 
+	private readRowById(id: number): AgentMemoryRow | null {
+		return (
+			(this.db.prepare(`SELECT * FROM space_agent_memory WHERE id = ?`).get(id) as
+				| AgentMemoryRow
+				| undefined) ?? null
+		);
+	}
+
 	private mergeMemoryRows(target: AgentMemoryRow, source: AgentMemoryRow): void {
-		const tags = normalizeTags([...parseTags(target.tags), ...parseTags(source.tags)]);
-		const content = mergeMemoryContent(target.content, source.content);
-		const updatedAt = Math.max(target.updated_at, source.updated_at);
-		const lastAccessedAt = maxNullable(target.last_accessed_at, source.last_accessed_at);
+		const currentTarget = this.readRowById(target.id) ?? target;
+		const currentSource = this.readRowById(source.id) ?? source;
+		const tags = normalizeTags([
+			...parseTags(currentTarget.tags),
+			...parseTags(currentSource.tags),
+		]);
+		const content = mergeMemoryContent(currentTarget.content, currentSource.content);
+		const updatedAt = Math.max(currentTarget.updated_at, currentSource.updated_at);
+		const lastAccessedAt = maxNullable(
+			currentTarget.last_accessed_at,
+			currentSource.last_accessed_at
+		);
 		this.db
 			.prepare(
 				`UPDATE space_agent_memory
@@ -319,12 +352,12 @@ export class AgentMemoryRepository {
 				content,
 				serializeTags(tags),
 				updatedAt,
-				target.access_count + source.access_count,
+				currentTarget.access_count + currentSource.access_count,
 				lastAccessedAt,
 				crypto.randomUUID(),
-				target.id
+				currentTarget.id
 			);
-		this.db.prepare(`DELETE FROM space_agent_memory WHERE id = ?`).run(source.id);
+		this.db.prepare(`DELETE FROM space_agent_memory WHERE id = ?`).run(currentSource.id);
 	}
 
 	private pruneStaleMemories(spaceId: string, ttlMs: number): number {
@@ -340,33 +373,43 @@ export class AgentMemoryRepository {
 			)
 			.all(spaceId, cutoff, cutoff) as Array<{ id: number }>;
 		if (staleRows.length === 0) return 0;
-		this.db
-			.prepare(
-				`DELETE FROM space_agent_memory WHERE id IN (${staleRows.map(() => '?').join(', ')})`
-			)
-			.run(...staleRows.map((row) => row.id));
+		for (let offset = 0; offset < staleRows.length; offset += STALE_DELETE_BATCH_SIZE) {
+			const batch = staleRows.slice(offset, offset + STALE_DELETE_BATCH_SIZE);
+			this.db
+				.prepare(`DELETE FROM space_agent_memory WHERE id IN (${batch.map(() => '?').join(', ')})`)
+				.run(...batch.map((row) => row.id));
+		}
 		return staleRows.length;
 	}
 
 	private refreshCoreMemories(spaceId: string, limit: number): number {
 		const now = Date.now();
-		const rows = this.db
-			.prepare(
-				`SELECT * FROM space_agent_memory
-				 WHERE space_id = ?
-					AND access_count > 0
-				 ORDER BY access_count DESC, COALESCE(last_accessed_at, updated_at) DESC, updated_at DESC, key ASC
-				 LIMIT ?`
+		const rows = (
+			this.db
+				.prepare(
+					`SELECT * FROM space_agent_memory
+					 WHERE space_id = ?
+						AND access_count > 0`
+				)
+				.all(spaceId) as AgentMemoryRow[]
+		)
+			.map((row) => ({ row, score: coreMemoryScore(row) }))
+			.sort(
+				(left, right) =>
+					right.score - left.score ||
+					(right.row.last_accessed_at ?? right.row.updated_at) -
+						(left.row.last_accessed_at ?? left.row.updated_at) ||
+					left.row.key.localeCompare(right.row.key)
 			)
-			.all(spaceId, limit) as AgentMemoryRow[];
+			.slice(0, limit);
 
 		this.db.prepare(`DELETE FROM space_agent_core_memory WHERE space_id = ?`).run(spaceId);
 		const insert = this.db.prepare(
 			`INSERT INTO space_agent_core_memory (space_id, memory_id, score, rank, updated_at)
 			 VALUES (?, ?, ?, ?, ?)`
 		);
-		for (const [index, row] of rows.entries()) {
-			insert.run(spaceId, row.id, coreMemoryScore(row), index + 1, now);
+		for (const [index, item] of rows.entries()) {
+			insert.run(spaceId, item.row.id, item.score, index + 1, now);
 		}
 		return rows.length;
 	}
@@ -664,7 +707,7 @@ function memoryTokens(text: string): Set<string> {
 }
 
 function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
-	if (left.size === 0 && right.size === 0) return 1;
+	if (left.size === 0 || right.size === 0) return 0;
 	let intersection = 0;
 	for (const token of left) {
 		if (right.has(token)) intersection++;
