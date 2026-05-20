@@ -64,7 +64,7 @@ function parseMetricValue(value: string): string | number | boolean | null {
 	if (trimmed === 'true') return true;
 	if (trimmed === 'false') return false;
 	const parsed = Number(trimmed);
-	return Number.isFinite(parsed) && trimmed !== '' ? parsed : trimmed;
+	return Number.isFinite(parsed) ? parsed : trimmed;
 }
 
 function buildMetricDefinitions(drafts: MetricDefinitionDraft[]): MetricDefinition[] {
