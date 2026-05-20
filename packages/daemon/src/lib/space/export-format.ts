@@ -18,6 +18,7 @@
  */
 
 import { z } from 'zod';
+import { validateGlobPattern } from '../external-events/topic-validator';
 import type {
 	SpaceAgent,
 	SpaceWorkflow,
@@ -78,6 +79,18 @@ const declarativeToolGuardSchema = z.object({
 	reason: z.string().min(1),
 });
 
+export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
+
+const eventInterestSchema = z.object({
+	topic: z
+		.string()
+		.min(1)
+		.refine((topic) => validateGlobPattern(topic).valid, {
+			message: 'topic must be a valid external-event glob pattern',
+		}),
+	label: z.string().optional(),
+});
+
 const thinkingLevelSchema = z.preprocess(
 	(val) => (val === 'auto' ? 'off' : val),
 	z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k'])
@@ -101,6 +114,8 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	timeoutMs: z.number().int().positive().optional(),
 	/** Declarative tool guards (e.g. deny `gh pr merge` for coder agents). */
 	toolGuards: z.array(declarativeToolGuardSchema).optional(),
+	/** Static external-event subscription interests for this slot. */
+	eventInterests: z.array(eventInterestSchema).max(MAX_AGENT_SLOT_EVENT_INTERESTS).optional(),
 });
 
 /**
@@ -288,6 +303,7 @@ export function exportWorkflow(
 			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
 			if (a.timeoutMs !== undefined) entry.timeoutMs = a.timeoutMs;
 			if (a.toolGuards !== undefined) entry.toolGuards = a.toolGuards;
+			if (a.eventInterests !== undefined) entry.eventInterests = a.eventInterests;
 			return entry;
 		});
 

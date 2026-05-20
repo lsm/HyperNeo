@@ -134,6 +134,85 @@ describe('SpaceWorkflowManager', () => {
 		});
 	});
 
+	describe('static external event interest validation', () => {
+		it('rejects invalid static event interest topics on create', () => {
+			expect(() =>
+				manager.createWorkflow({
+					spaceId: 'space-1',
+					name: 'Invalid Event Interest Workflow',
+					nodes: [
+						{
+							id: 'node-1',
+							name: 'Step One',
+							agents: [
+								{
+									agentId: 'agent-1',
+									name: 'coder',
+									eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+								},
+							],
+						},
+					],
+					completionAutonomyLevel: 3,
+				})
+			).toThrow('Multi-segment "**" wildcard is not supported');
+		});
+
+		it('rejects more than 10 static event interests on create', () => {
+			expect(() =>
+				manager.createWorkflow({
+					spaceId: 'space-1',
+					name: 'Too Many Event Interests Workflow',
+					nodes: [
+						{
+							id: 'node-1',
+							name: 'Step One',
+							agents: [
+								{
+									agentId: 'agent-1',
+									name: 'coder',
+									eventInterests: Array.from({ length: 11 }, (_, index) => ({
+										topic: `github/*/*/pull_request_${index}.opened`,
+									})),
+								},
+							],
+						},
+					],
+					completionAutonomyLevel: 3,
+				})
+			).toThrow('cannot contain more than 10 entries');
+		});
+
+		it('rejects invalid static event interest topics on update', () => {
+			const created = manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Test Workflow',
+				nodes: [
+					{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+				],
+				completionAutonomyLevel: 3,
+			});
+
+			expect(() =>
+				manager.updateWorkflow(created.id, {
+					nodes: [
+						{
+							id: 'node-1',
+							name: 'Step One',
+							agents: [
+								{
+									agentId: 'agent-1',
+									name: 'coder',
+									eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+								},
+							],
+						},
+					],
+				})
+			).toThrow('Multi-segment "**" wildcard is not supported');
+		});
+	});
+
 	describe('start/end node validation on update', () => {
 		it('keeps startNodeId/endNodeId unchanged when omitted', () => {
 			const created = manager.createWorkflow({

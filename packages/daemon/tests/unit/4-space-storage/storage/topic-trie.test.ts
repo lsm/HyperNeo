@@ -86,6 +86,21 @@ describe('TopicTrie', () => {
 		]);
 	});
 
+	test('counts matching values across exact and wildcard branches', () => {
+		const trie = new TopicTrie<{ id: string; keep: boolean }>();
+		trie.insert('github/lsm/neokai/pull_request/5.review_submitted', {
+			id: 'exact',
+			keep: true,
+		});
+		trie.insert('github/*/*/pull_request/5.review_submitted', {
+			id: 'wildcard',
+			keep: true,
+		});
+		trie.insert('github/*/*/pull_request/5.closed', { id: 'other', keep: false });
+
+		expect(trie.count((value) => value.keep)).toBe(2);
+	});
+
 	test('removes matching values and prunes reusable branches safely', () => {
 		const trie = new TopicTrie<{ id: string }>();
 		const keep = { id: 'keep' };

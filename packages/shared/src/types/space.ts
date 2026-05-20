@@ -1405,8 +1405,8 @@ export interface EventInterest {
 	 * Glob pattern matching event topics.
 	 * Examples: 'github/owner/repo/pull_request.*', 'github/owner/repo/pull_request.review_*'
 	 *
-	 * The topic pattern IS the filter — the 4-segment format encodes source
-	 * identity and scope (e.g. owner/repo for GitHub).
+	 * The topic pattern IS the filter — the format encodes source identity,
+	 * scope (e.g. owner/repo for GitHub), resource, and entity/action.
 	 */
 	topic: string;
 
@@ -1457,6 +1457,11 @@ export interface WorkflowNodeAgent {
 	 * Merged with app-level MCP servers when building session options.
 	 */
 	extraMcpServers?: Record<string, McpServerConfig>;
+	/**
+	 * Static external event subscriptions for this workflow agent slot.
+	 * Dynamic runtime subscriptions are managed through node-agent MCP tools.
+	 */
+	eventInterests?: Array<{ topic: string; label?: string }>;
 	/**
 	 * Optional per-slot timeout (milliseconds) used by the runtime to decide
 	 * when an agent that is still alive but apparently stuck should be
@@ -1994,6 +1999,11 @@ export interface ExportedWorkflowNodeAgent {
 	 * Mirrors `WorkflowNodeAgent.toolGuards`.
 	 */
 	toolGuards?: DeclarativeToolGuard[];
+	/**
+	 * Static external event subscriptions for this exported agent slot.
+	 * Mirrors `WorkflowNodeAgent.eventInterests`.
+	 */
+	eventInterests?: EventInterest[];
 }
 
 /**

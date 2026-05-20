@@ -241,6 +241,26 @@ export class SpaceRuntimeService {
 		this.runtime.setTaskAgentManager(manager);
 	}
 
+	registerSubscription(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string,
+		topic: string
+	): { success: boolean; error?: string } {
+		return this.runtime.registerSubscription(workflowRunId, taskId, nodeId, agentName, topic);
+	}
+
+	unregisterSubscription(
+		workflowRunId: string,
+		taskId: string,
+		nodeId: string,
+		agentName: string,
+		topic: string
+	): { success: boolean; error?: string } {
+		return this.runtime.unregisterSubscription(workflowRunId, taskId, nodeId, agentName, topic);
+	}
+
 	/**
 	 * Stop all active work for a space: terminates running agent sessions and
 	 * cancels all in-progress/open tasks and active workflow runs.
@@ -512,18 +532,28 @@ export class SpaceRuntimeService {
 
 		// When a space is archived or deleted, tear down its notification service
 		// so stale subscribers don't accumulate and fan-out to non-existent sessions.
-		const unsubSpaceArchived = internalEventBus.subscribe(
-			'space.archived',
-			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'archived'),
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const handleSpaceArchived = (event: DaemonInternalEventMap['space.archived']): void => {
+			for (const run of this.config.workflowRunRepo.listBySpace(event.spaceId)) {
+				this.runtime.clearRunInterests(run.id);
+			}
+			this.tearDownSpaceNotificationService(event.spaceId, 'archived');
+		};
+		const unsubSpaceArchived = internalEventBus.subscribe('space.archived', handleSpaceArchived, {
+			sessionId: 'global',
+			subscriberName: 'SpaceRuntimeService.global',
+		});
 		this.unsubscribers.push(unsubSpaceArchived);
 
-		const unsubSpaceDeleted = internalEventBus.subscribe(
-			'space.deleted',
-			(event) => this.tearDownSpaceNotificationService(event.spaceId, 'deleted'),
-			{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
-		);
+		const handleSpaceDeleted = (event: DaemonInternalEventMap['space.deleted']): void => {
+			for (const run of this.config.workflowRunRepo.listBySpace(event.spaceId)) {
+				this.runtime.clearRunInterests(run.id);
+			}
+			this.tearDownSpaceNotificationService(event.spaceId, 'deleted');
+		};
+		const unsubSpaceDeleted = internalEventBus.subscribe('space.deleted', handleSpaceDeleted, {
+			sessionId: 'global',
+			subscriberName: 'SpaceRuntimeService.global',
+		});
 		this.unsubscribers.push(unsubSpaceDeleted);
 
 		// When a space is updated, refresh the autonomy level in its notification

@@ -252,16 +252,14 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.getById(event.id)?.state).toBe('failed');
 	});
 
-	test('skips invalid event interest topics during registration', async () => {
-		const { run, task } = await startRunWithSubscription('github/lsm/neokai/pull_request');
-		await runtime.executeTick();
+	test('throws for invalid static event interest topics during registration', async () => {
+		const workflow = createWorkflow();
+		workflow.nodes[0]!.agents![0]!.eventInterests = [{ topic: 'github/**/pull_request.opened' }];
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		const event = makeEvent();
-		await eventService.publish(event);
-
-		expect(injected).toHaveLength(0);
-		expect(eventStore.getById(event.id)?.state).toBe('ignored');
-		expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+		expect(() => runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes)).toThrow(
+			'Invalid static external event interest'
+		);
 	});
 
 	test('allows the first 10 event interests for an agent slot', async () => {
@@ -276,7 +274,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 					task.id,
 					'code',
 					'coder',
-					`github/owner/repo/pull_request/${index}.opened`
+					`github/owner/repo/pull_request_${index}.opened`
 				)
 			).not.toThrow();
 		}
@@ -293,7 +291,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				`github/owner/repo/pull_request/${index}.opened`
+				`github/owner/repo/pull_request_${index}.opened`
 			);
 		}
 
@@ -303,7 +301,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				'github/owner/repo/pull_request/10.opened'
+				'github/owner/repo/pull_request_10.opened'
 			)
 		).toThrow('cannot register more than 10 event interests');
 	});
@@ -319,7 +317,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				`github/owner/repo/pull_request/${index}.opened`
+				`github/owner/repo/pull_request_${index}.opened`
 			);
 		}
 
@@ -331,7 +329,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 				task.id,
 				'code',
 				'coder',
-				'github/owner/repo/pull_request/10.opened'
+				'github/owner/repo/pull_request_10.opened'
 			)
 		).not.toThrow();
 	});
@@ -785,8 +783,15 @@ describe('SpaceRuntime external event subscriptions', () => {
 		});
 		tam.alive.add('session-updated-interests');
 
-		// Clear old interests and register new ones (simulates what a runtime
+		// Clear old dynamic interest and register new ones (simulates what a runtime
 		// caller would do after a workflow definition change)
+		runtime.unregisterSubscription(
+			run.id,
+			task.id,
+			'code',
+			'coder',
+			'github/*/*/pull_request.review_*'
+		);
 		runtime.registerRunInterests(run.id, task.id, workflow.nodes);
 		runtime.registerSubscription(
 			run.id,
