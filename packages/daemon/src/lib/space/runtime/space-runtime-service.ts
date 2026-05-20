@@ -522,9 +522,50 @@ export class SpaceRuntimeService {
 					},
 				},
 			});
-			this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
 		}
+		this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
 		return session;
+	}
+
+	private async attachLongTermAgentMcpServersForSession(
+		session: Session,
+		options: { replayPendingMessages?: boolean } = {}
+	): Promise<void> {
+		const { sessionManager } = this.config;
+		if (!sessionManager) return;
+		const policy = this.resolveMcpSessionPolicy(session);
+		if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
+		const agentId = session.metadata.promptProvenance?.agentId;
+		const agentName = session.metadata.promptProvenance?.agentName;
+		if (!agentId || !agentName) return;
+		const [space, agentSession] = await Promise.all([
+			this.config.spaceManager.getSpace(policy.spaceId),
+			sessionManager.getSessionAsync(session.id),
+		]);
+		if (!space) {
+			log.warn(
+				`attachLongTermAgentMcpServersForSession: space "${policy.spaceId}" not found (session ${session.id})`
+			);
+			return;
+		}
+		if (!agentSession) {
+			log.warn(
+				`attachLongTermAgentMcpServersForSession: agent session not found for ${session.id}`
+			);
+			return;
+		}
+		this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id);
+		agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
+			log.warn(
+				`Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+			);
+			await this.attachLongTermAgentMcpServersForSession(session, {
+				replayPendingMessages: false,
+			});
+		};
+		if (options.replayPendingMessages !== false) {
+			await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+		}
 	}
 
 	private attachLongTermAgentMcpServers(
@@ -882,7 +923,11 @@ export class SpaceRuntimeService {
 		const unsubSessionCreated = internalEventBus.subscribe(
 			'session.created',
 			(event) => {
-				void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
+				const policy = this.resolveMcpSessionPolicy(event.session);
+				const attachPromise = policy.attachLongTermAgentTools
+					? this.attachLongTermAgentMcpServersForSession(event.session)
+					: this.attachSpaceToolsToMemberSession(event.session);
+				void attachPromise.catch((err) => {
 					log.error(
 						`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
 						err
@@ -995,6 +1040,10 @@ export class SpaceRuntimeService {
 		}
 
 		const policy = this.resolveMcpSessionPolicy(session);
+		if (policy.attachLongTermAgentTools) {
+			await this.attachLongTermAgentMcpServersForSession(session, options);
+			return;
+		}
 		if (policy.attachGenericSpaceTools) {
 			await this.attachSpaceToolsToMemberSession(session, options);
 		}
@@ -1091,9 +1140,13 @@ export class SpaceRuntimeService {
 			const all = sessionManager.listSessions({ includeArchived: false });
 			for (const session of all) {
 				const policy = this.resolveMcpSessionPolicy(session);
-				if (policy.owner !== 'space-runtime' || !policy.attachGenericSpaceTools) continue;
+				if (policy.owner !== 'space-runtime') continue;
 				try {
-					await this.attachSpaceToolsToMemberSession(session);
+					if (policy.attachLongTermAgentTools) {
+						await this.attachLongTermAgentMcpServersForSession(session);
+					} else if (policy.attachGenericSpaceTools) {
+						await this.attachSpaceToolsToMemberSession(session);
+					}
 				} catch (err) {
 					log.error(
 						`Failed to attach space tools to existing session ${session.id} (space ${policy.spaceId ?? '?'}, role ${policy.role}):`,

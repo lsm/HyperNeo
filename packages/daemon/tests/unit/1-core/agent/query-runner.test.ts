@@ -7,6 +7,7 @@
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -592,6 +593,52 @@ describe('QueryRunner', () => {
 				expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
 				expect(buildSpy).toHaveBeenCalledTimes(1);
 				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('self-heals missing MCP servers for long-term Space agent sessions', async () => {
+			await withAnthropicApiKey(async () => {
+				mockSession.id = longTermAgentSessionId('s1', 'agent-1');
+				mockSession.workspacePath = tmpdir();
+				mockSession.type = 'worker';
+				mockSession.context = { spaceId: 's1' };
+				mockSession.metadata.promptProvenance = {
+					source: 'test',
+					hash: 'hash',
+					agentId: 'agent-1',
+					agentName: 'Long Term',
+				};
+				mockSession.config.mcpServers = {};
+
+				const repairedServers = {
+					'space-agent-tools': {
+						type: 'sdk',
+						name: 'space-agent-tools',
+						instance: {},
+					},
+				};
+				buildSpy
+					.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+					.mockResolvedValueOnce({
+						model: 'claude-sonnet-4-20250514',
+						mcpServers: repairedServers,
+					});
+				stopAfterRebuiltOptions();
+				const onMissingMemberSpaceMcpServers = mock(async () => {
+					mockSession.config.mcpServers =
+						repairedServers as unknown as Session['config']['mcpServers'];
+				});
+
+				const ctx = createContext({ onMissingMemberSpaceMcpServers });
+				runner = new QueryRunner(ctx);
+				runner.start();
+				await ctx.queryPromise?.catch(() => {});
+
+				expect(onMissingMemberSpaceMcpServers).toHaveBeenCalledWith(mockSession.id, [
+					'space-agent-tools',
+				]);
+				expect(buildSpy).toHaveBeenCalledTimes(2);
+				expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
 			});
 		});
 

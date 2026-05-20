@@ -1106,7 +1106,7 @@ export class QueryRunner {
 			nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
 			taskRepo: this.ctx.db.getSpaceTaskRepo(),
 		});
-		if (!policy.attachGenericSpaceTools) return queryOptions;
+		if (!policy.attachGenericSpaceTools && !policy.attachLongTermAgentTools) return queryOptions;
 
 		const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
 		const missingServers = missingMcpServers(

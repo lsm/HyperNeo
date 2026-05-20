@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -641,6 +642,66 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
+		test('session.reset re-provisions reset long-term Space agents before query replay', async () => {
+			const agentSession = makeSession();
+			const sessionManager = makeSessionManager(agentSession);
+			let resetHandler:
+				| ((event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void>)
+				| undefined;
+			const sessionManagerWithSubscriber = {
+				...sessionManager,
+				registerSessionResetSubscriber: mock((handler: typeof resetHandler) => {
+					resetHandler = handler;
+					return () => {};
+				}),
+			} as unknown as SessionManager;
+			const internalEventBus = {
+				subscribe: mock(() => () => {}),
+				publish: mock(async () => ({ delivered: 0, failures: [] })),
+				publishAsync: mock(() => {}),
+			} as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
+			const config: SpaceRuntimeServiceConfig = {
+				...buildConfigWithSession(
+					sessionManagerWithSubscriber,
+					createMockSpaceManager(),
+					internalEventBus
+				),
+			};
+			const svc = new SpaceRuntimeService(config);
+			const longTermSessionId = longTermAgentSessionId(mockSpace.id, 'agent-1');
+
+			svc.start();
+			expect(resetHandler).toBeDefined();
+
+			await resetHandler?.({
+				sessionId: longTermSessionId,
+				session: {
+					id: longTermSessionId,
+					type: 'worker',
+					context: { spaceId: mockSpace.id },
+					metadata: {
+						promptProvenance: {
+							source: 'test',
+							hash: 'hash',
+							agentId: 'agent-1',
+							agentName: 'Long Term',
+						},
+					},
+				} as Session,
+				restartQuery: true,
+			});
+
+			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(longTermSessionId);
+			expect(agentSession.mergeRuntimeMcpServers).toHaveBeenCalled();
+			const [mcpArg] = (
+				agentSession.mergeRuntimeMcpServers as Mock<typeof agentSession.mergeRuntimeMcpServers>
+			).mock.calls.at(-1)!;
+			expect(mcpArg).toHaveProperty('space-agent-tools');
+			expect(typeof agentSession.onMissingMemberSpaceMcpServers).toBe('function');
+
+			await svc.stop();
+		});
+
 		test('stop() unsubscribes from space.created events', async () => {
 			const unsubFn = mock(() => {});
 			const session = makeSession();
@@ -829,12 +890,24 @@ describe('SpaceRuntimeService', () => {
 			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 		});
 
-		test('start() attaches tools to existing member sessions listed by sessionManager', async () => {
+		test('start() attaches tools to existing member and long-term agent sessions listed by sessionManager', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
+			const longTermSession = makeMemberSession({
+				id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+				metadata: {
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: 'agent-1',
+						agentName: 'Long Term',
+					},
+				},
+			});
 			const listed: Session[] = [
 				makeMemberSession({ id: 'member-1' }),
 				makeMemberSession({ id: 'member-2' }),
+				longTermSession,
 				// A session without spaceId — should be skipped.
 				makeMemberSession({ id: 'no-space', context: {} }),
 			];
@@ -847,9 +920,10 @@ describe('SpaceRuntimeService', () => {
 			await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 			const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
-			// Exactly 2 attaches (one per member-N session). The no-space session
-			// is filtered out before getSessionAsync is consulted.
-			expect(mergeMock).toHaveBeenCalledTimes(2);
+			// Two ad-hoc members plus one long-term agent are reprovisioned. The no-space
+			// session is filtered out before getSessionAsync is consulted.
+			expect(mergeMock).toHaveBeenCalledTimes(3);
+			expect(mergeMock.mock.calls[2][0]).toHaveProperty('space-agent-tools');
 
 			await svc.stop();
 		});
