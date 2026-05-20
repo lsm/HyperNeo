@@ -48,6 +48,10 @@ import { Logger } from '../../logger';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import {
+	resolveSpaceMcpSessionPolicy,
+	type SpaceMcpSessionPolicy,
+} from './space-mcp-session-policy';
+import {
 	SpaceAgentNotificationService,
 	type SpaceAgentNotificationServiceConfig,
 } from './space-agent-notification-service';
@@ -120,9 +124,8 @@ export interface SpaceRuntimeServiceConfig {
 	pendingMessageRepo?: PendingAgentMessageRepository;
 	channelCycleRepo?: ChannelCycleRepository;
 	/**
-	 * Optional SessionManager for provisioning space:chat:${spaceId} sessions.
-	 * When provided, setupSpaceAgentSession() attaches MCP tools and system prompts
-	 * to space chat sessions on startup and on space.created events.
+	 * Optional SessionManager for provisioning Space-owned sessions.
+	 * When provided, role-specific MCP tools attach on startup and session events.
 	 */
 	sessionManager?: SessionManager;
 	/**
@@ -195,12 +198,13 @@ export class SpaceRuntimeService {
 	/** Stores db-query server instances per space for cleanup on stop. */
 	private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
 	/**
-	 * Stores db-query server instances attached to member sessions of a space
-	 * (non-space-chat sessions with `context.spaceId`). Keyed by `sessionId`.
-	 * Each entry holds the server instance so it can be closed when the daemon
-	 * stops, mirroring `spaceDbQueryServers` for the space-chat session.
+	 * Stores db-query server instances attached to SpaceRuntime-owned member sessions.
+	 * Keyed by `sessionId`. Each entry holds the server instance so it can be closed
+	 * when the daemon stops, mirroring `spaceDbQueryServers` for space-chat sessions.
 	 */
 	private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
+	/** Stores db-query server instances attached to long-term Space agent sessions. */
+	private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
 	/**
 	 * Per-space SpaceAgentNotificationService unsubscribe handles.
 	 * Created when a space's chat session is provisioned; cleaned up on stop.
@@ -211,9 +215,8 @@ export class SpaceRuntimeService {
 	 * Resolves when startup-time session provisioning has completed:
 	 *   - every existing space's space:chat session has had MCP tools +
 	 *     system prompt re-attached (via `setupSpaceAgentSession`), and
-	 *   - every existing member session (non-space-chat session with
-	 *     `context.spaceId`) has had `space-agent-tools` (and, when configured,
-	 *     `db-query`) re-attached (via `attachSpaceToolsToMemberSession`).
+	 *   - every existing session owned by the Space runtime policy has had its
+	 *     role-specific MCP servers re-attached.
 	 *
 	 * Set by `start()` to the provisioning promise returned by
 	 * `provisionExistingSpaces()`. `null` before `start()` is called.
@@ -273,6 +276,13 @@ export class SpaceRuntimeService {
 					run,
 				});
 			},
+		});
+	}
+
+	private resolveMcpSessionPolicy(session: Session): SpaceMcpSessionPolicy {
+		return resolveSpaceMcpSessionPolicy(session, {
+			nodeExecutionRepo: this.nodeExecutionRepo,
+			taskRepo: this.config.taskRepo,
 		});
 	}
 
@@ -449,6 +459,7 @@ export class SpaceRuntimeService {
 		if (!space) return null;
 		const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
 		let session = await sessionManager.getSessionAsync(sessionId);
+		const created = !session;
 		if (!session) {
 			const resolvedPrompt = resolveCustomAgentPrompt(agent, {
 				resolutionContext: { agentId: agent.id, agentName: agent.name },
@@ -514,9 +525,54 @@ export class SpaceRuntimeService {
 					},
 				},
 			});
+		}
+		if (created || this.missingLongTermAgentMcpServers(session)) {
 			this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
 		}
 		return session;
+	}
+
+	private async attachLongTermAgentMcpServersForSession(
+		session: Session,
+		options: { replayPendingMessages?: boolean } = {}
+	): Promise<void> {
+		const { sessionManager } = this.config;
+		if (!sessionManager) return;
+		const policy = this.resolveMcpSessionPolicy(session);
+		if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
+		const agentId = session.metadata.promptProvenance?.agentId;
+		if (!agentId) return;
+		const [space, agentSession, persistedAgent] = await Promise.all([
+			this.config.spaceManager.getSpace(policy.spaceId),
+			sessionManager.getSessionAsync(session.id),
+			this.config.actorRegistryRepos?.spaceAgentRepo.getById(agentId) ?? null,
+		]);
+		if (!space) {
+			log.warn(
+				`attachLongTermAgentMcpServersForSession: space "${policy.spaceId}" not found (session ${session.id})`
+			);
+			return;
+		}
+		if (!agentSession) {
+			log.warn(
+				`attachLongTermAgentMcpServersForSession: agent session not found for ${session.id}`
+			);
+			return;
+		}
+		const agentName =
+			session.metadata.promptProvenance?.agentName ?? persistedAgent?.name ?? 'Space Agent';
+		this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id);
+		agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
+			log.warn(
+				`Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
+			);
+			await this.attachLongTermAgentMcpServersForSession(session, {
+				replayPendingMessages: false,
+			});
+		};
+		if (options.replayPendingMessages !== false) {
+			await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+		}
 	}
 
 	private attachLongTermAgentMcpServers(
@@ -542,13 +598,32 @@ export class SpaceRuntimeService {
 			}) as unknown as McpServerConfig;
 		}
 		if (this.config.dbPath) {
-			mcpServers['db-query'] = createDbQueryMcpServer({
+			this.releaseLongTermAgentDbQuery(sessionId);
+			const dbQueryServer = createDbQueryMcpServer({
 				dbPath: this.config.dbPath,
 				scopeType: 'space',
 				scopeValue: space.id,
-			}) as unknown as McpServerConfig;
+			});
+			this.longTermAgentDbQueryServers.set(sessionId, dbQueryServer);
+			mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
 		}
 		session.mergeRuntimeMcpServers(mcpServers);
+	}
+
+	private missingLongTermAgentMcpServers(session: { getSessionData(): Session }): boolean {
+		const current = session.getSessionData().config?.mcpServers;
+		return !current?.['space-agent-tools'];
+	}
+
+	private releaseLongTermAgentDbQuery(sessionId: string): void {
+		const server = this.longTermAgentDbQueryServers.get(sessionId);
+		if (!server) return;
+		try {
+			server.close();
+		} catch (err) {
+			log.warn(`Failed to close db-query server for long-term agent session ${sessionId}:`, err);
+		}
+		this.longTermAgentDbQueryServers.delete(sessionId);
 	}
 
 	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
@@ -807,6 +882,18 @@ export class SpaceRuntimeService {
 		}
 		this.memberSessionDbQueryServers.clear();
 
+		for (const [sessionId, server] of this.longTermAgentDbQueryServers) {
+			try {
+				server.close();
+			} catch (error) {
+				log.warn(
+					`Failed to close db-query server for long-term agent session ${sessionId}:`,
+					error
+				);
+			}
+		}
+		this.longTermAgentDbQueryServers.clear();
+
 		// Tear down per-space SpaceAgentNotificationService subscriptions.
 		for (const [spaceId, unsub] of this.spaceAgentNotificationUnsubs) {
 			try {
@@ -825,10 +912,9 @@ export class SpaceRuntimeService {
 
 	/**
 	 * Subscribe to space.created and session.created events so newly created
-	 * spaces get their chat sessions provisioned with MCP tools + system
-	 * prompt, and every new session with a `context.spaceId` gets
-	 * `space-agent-tools` (and `db-query`) attached so it can coordinate with
-	 * the rest of the Space.
+	 * spaces get their chat sessions provisioned with MCP tools + system prompt,
+	 * and every new SpaceRuntime-owned member session gets `space-agent-tools`
+	 * (and `db-query`) attached so it can coordinate with the rest of the Space.
 	 *
 	 * Called once during start(). No-op when sessionManager or internalEventBus are absent.
 	 */
@@ -863,14 +949,10 @@ export class SpaceRuntimeService {
 		);
 		this.unsubscribers.push(unsubWorkflowUpdated);
 
-		// When any new session is created with `context.spaceId`, attach the
-		// shared Space coordination tools. The space-chat session itself is
-		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
-		// space_chat sessions are handled by `setupSpaceAgentSession`
-		// (which merges `space-agent-tools` into its MCP set). This subscription
-		// covers the remaining cases: worker sessions
-		// that live inside a Space and need to send/receive messages via
-		// `send_message_to_agent`, inspect tasks, etc.
+		// New sessions are routed through the explicit Space MCP policy. Coordinator
+		// sessions are handled by `setupSpaceAgentSession`; ad-hoc Space member
+		// sessions get the generic Space tools here; workflow workers are owned by
+		// TaskAgentManager and skipped by policy.
 		//
 		// NOTE: no `{ sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }` filter here — `session.created` is
 		// emitted with `data.sessionId = <new session UUID>`, so a `'global'`
@@ -879,7 +961,11 @@ export class SpaceRuntimeService {
 		const unsubSessionCreated = internalEventBus.subscribe(
 			'session.created',
 			(event) => {
-				void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
+				const policy = this.resolveMcpSessionPolicy(event.session);
+				const attachPromise = policy.attachLongTermAgentTools
+					? this.attachLongTermAgentMcpServersForSession(event.session)
+					: this.attachSpaceToolsToMemberSession(event.session);
+				void attachPromise.catch((err) => {
 					log.error(
 						`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
 						err
@@ -899,6 +985,7 @@ export class SpaceRuntimeService {
 			'session.deleted',
 			(event) => {
 				this.releaseMemberSessionDbQuery(event.sessionId);
+				this.releaseLongTermAgentDbQuery(event.sessionId);
 			},
 			{ subscriberName: 'SpaceRuntimeService.sessionDeleted' }
 		);
@@ -991,7 +1078,14 @@ export class SpaceRuntimeService {
 			return;
 		}
 
-		await this.attachSpaceToolsToMemberSession(session, options);
+		const policy = this.resolveMcpSessionPolicy(session);
+		if (policy.attachLongTermAgentTools) {
+			await this.attachLongTermAgentMcpServersForSession(session, options);
+			return;
+		}
+		if (policy.attachGenericSpaceTools) {
+			await this.attachSpaceToolsToMemberSession(session, options);
+		}
 	}
 
 	/**
@@ -1027,21 +1121,16 @@ export class SpaceRuntimeService {
 	}
 
 	/**
-	 * Provision space:chat:${spaceId} sessions for all existing spaces, and
-	 * attach `space-agent-tools` to every other existing session whose
-	 * `context.spaceId` is set.
+	 * Provision existing Space sessions after daemon restart.
 	 *
-	 * Called during start() to re-attach MCP tools and system prompts to existing
-	 * space chat sessions after a daemon restart. The sessions already exist in DB;
-	 * only the runtime configuration (MCP server, system prompt) needs re-attaching.
+	 * Space chat sessions are provisioned from the spaces table because they are
+	 * guaranteed one-per-space. All other persisted sessions are routed through the
+	 * explicit Space MCP session policy: SpaceRuntime owns ad-hoc members and skips
+	 * workflow workers because TaskAgentManager owns their node wrapper.
 	 *
 	 * Returns a promise that resolves only after **both** sweeps complete so the
 	 * daemon bootstrap can `await spaceRuntimeService.ready()` before accepting
-	 * queries. Previously this was fire-and-forget, which left a race window in
-	 * which a session's RPC query could run before `space-agent-tools` had been
-	 * re-attached and execute with `mcpServers: undefined` (strictMcpConfig is on
-	 * globally), producing "No such tool available" errors — the root cause of
-	 * task #83.
+	 * queries.
 	 *
 	 * No-op when sessionManager is absent.
 	 */
@@ -1068,26 +1157,19 @@ export class SpaceRuntimeService {
 				log.error('Failed to list spaces for session provisioning:', err);
 			});
 
-		// Member sessions: `space-agent-tools` (and, if configured, `db-query`)
-		// attached to every non-space-chat session whose `context.spaceId` is set.
-		// Awaited together with the chat sweep so neither can race past startup.
+		// Space-owned session sweep: ad-hoc member sessions get generic Space tools;
+		// workflow workers are skipped because TaskAgentManager owns node-specific tools.
 		const memberSweep = this.reattachSpaceToolsToExistingSessions();
 
 		await Promise.all([chatSweep, memberSweep]);
 	}
 
 	/**
-	 * Re-attach `space-agent-tools` (and, if configured, `db-query`) to every
-	 * non-space-chat session whose `context.spaceId` is set. Runs sequentially
-	 * rather than in parallel because each attach performs a space lookup and a
-	 * session lookup (both SQLite reads); a daemon restarting with many member
-	 * sessions would otherwise issue a thundering herd of reads. Sequential is
-	 * fast enough — the work is small per session and happens once at startup —
-	 * and avoids the burst.
+	 * Re-attach SpaceRuntime-owned MCP tools to existing sessions.
 	 *
-	 * Must be `await`ed by the startup path so that no incoming query can reach a
-	 * member session before its tools are attached; the previous fire-and-forget
-	 * variant was the root cause of task #83.
+	 * Runs sequentially because each policy decision can read node-execution state
+	 * and each attach performs SQLite-backed session/space lookups. Sequential is
+	 * fast enough for daemon startup and avoids a thundering herd.
 	 */
 	private async reattachSpaceToolsToExistingSessions(): Promise<void> {
 		const { sessionManager } = this.config;
@@ -1096,12 +1178,17 @@ export class SpaceRuntimeService {
 		try {
 			const all = sessionManager.listSessions({ includeArchived: false });
 			for (const session of all) {
-				if (!session.context?.spaceId) continue;
+				const policy = this.resolveMcpSessionPolicy(session);
+				if (policy.owner !== 'space-runtime') continue;
 				try {
-					await this.attachSpaceToolsToMemberSession(session);
+					if (policy.attachLongTermAgentTools) {
+						await this.attachLongTermAgentMcpServersForSession(session);
+					} else if (policy.attachGenericSpaceTools) {
+						await this.attachSpaceToolsToMemberSession(session);
+					}
 				} catch (err) {
 					log.error(
-						`Failed to attach space tools to existing session ${session.id} (space ${session.context?.spaceId}):`,
+						`Failed to attach space tools to existing session ${session.id} (space ${policy.spaceId ?? '?'}, role ${policy.role}):`,
 						err
 					);
 				}
@@ -1112,24 +1199,12 @@ export class SpaceRuntimeService {
 	}
 
 	/**
-	 * Attach the shared `space-agent-tools` MCP server (and, when configured,
-	 * a space-scoped `db-query` server) to a session that lives inside a Space
-	 * but is not the Space-chat session itself.
+	 * Attach generic Space MCP servers to an ad-hoc Space member session.
 	 *
-	 * This widens the tool surface from "space chat session only" to "every
-	 * session in the space", so worker sessions
-	 * spawned inside a Space can coordinate with the rest of the Space
-	 * (e.g., `send_message_to_agent`, `list_task_members`). Permission gating
-	 * inside each tool handler (autonomyLevel checks, writer checks, etc.)
-	 * ensures widening the surface does not bypass access control.
-	 *
-	 * Explicitly skipped for:
-	 *   - `space_chat` sessions — handled by `setupSpaceAgentSession`, which
-	 *     also sets the system prompt.
-	 *
-	 * Uses `mergeRuntimeMcpServers` so any previously-attached MCP servers on
-	 * the session (e.g., room tools) are preserved. The session's system
-	 * prompt is **not** touched.
+	 * Role selection is centralised in `resolveSpaceMcpSessionPolicy`; this method
+	 * only serves sessions whose policy says SpaceRuntime owns generic member tools.
+	 * Workflow workers are skipped because TaskAgentManager attaches node-scoped
+	 * `node-agent` plus specialised `space-agent-tools`.
 	 */
 	async attachSpaceToolsToMemberSession(
 		session: Session,
@@ -1137,25 +1212,9 @@ export class SpaceRuntimeService {
 	): Promise<void> {
 		const { sessionManager } = this.config;
 		if (!sessionManager) return;
-		const spaceId = session.context?.spaceId;
-		if (!spaceId) return;
-
-		// Skip sessions that other owners already manage.
-		if (session.type === 'space_chat') return;
-		// Legacy task-agent sessions (no longer created) must not receive the
-		// generic member-server — they lack myAgentName and would misattribute
-		// outbound messages as "space-agent".
-		if (session.type === 'space_task_agent') return;
-
-		// Skip workflow node-agent sub-sessions (session ID contains `:task:…:exec:`).
-		// These are owned by TaskAgentManager, which builds a SUB-SESSION-SPECIFIC
-		// `space-agent-tools` server via `buildSpaceAgentToolsMcpServerForSubSession`.
-		// That server carries `myAgentName` / `myNodeId` context required for gate
-		// writer authorization — context the generic member-session server lacks.
-		// Merging the generic server here would silently overwrite the specialised
-		// one (mergeRuntimeMcpServers overwrites on key collision), breaking
-		// `write_gate` / `read_gate` / `approve_gate` for the sub-session.
-		if (session.id.includes(':task:') && session.id.includes(':exec:')) return;
+		const policy = this.resolveMcpSessionPolicy(session);
+		if (!policy.attachGenericSpaceTools || !policy.spaceId) return;
+		const spaceId = policy.spaceId;
 
 		const space = await this.config.spaceManager.getSpace(spaceId);
 		if (!space) {
@@ -1248,7 +1307,7 @@ export class SpaceRuntimeService {
 		}
 
 		log.info(
-			`Attached space-agent-tools to member session ${session.id} (space ${space.id}, type ${session.type ?? 'worker'})`
+			`Attached space-agent-tools to member session ${session.id} (space ${space.id}, role ${policy.role}, type ${session.type ?? 'worker'})`
 		);
 	}
 
