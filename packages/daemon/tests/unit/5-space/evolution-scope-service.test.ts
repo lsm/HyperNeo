@@ -121,6 +121,34 @@ describe('EvolutionScopeService', () => {
 		});
 	});
 
+	it('resolves task scope through linked goal and selects top 3 active lessons', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Weekly check-in', type: 'recurring' });
+		const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Scheduled check-in task',
+			description: 'Review goal progress',
+			goalId: goal.id,
+		});
+		for (let index = 1; index <= 5; index++) {
+			const lesson = evolutionRepo.createLesson({
+				scopeId: scope.id,
+				status: index === 5 ? 'candidate' : 'active',
+				rule: `Lesson ${index}`,
+				why: `Why ${index}`,
+			});
+			evolutionRepo.updateLesson(lesson.id, { confidence: index / 10 });
+		}
+
+		expect(service.resolveScopeForTask({ taskId: task.id })?.id).toBe(scope.id);
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toHaveLength(3);
+		expect(
+			service
+				.selectActiveLessonsForTask({ taskId: task.id })
+				.every((lesson) => lesson.status === 'active')
+		).toBe(true);
+	});
+
 	it('attaches workflow-run evidence through explicit evolutionScopeId parent task', () => {
 		const scope = service.createScope({
 			spaceId,
