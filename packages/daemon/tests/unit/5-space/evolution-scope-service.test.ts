@@ -149,6 +149,32 @@ describe('EvolutionScopeService', () => {
 		).toBe(true);
 	});
 
+	it('returns no active lessons for unscoped tasks', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Unscoped task',
+			description: 'No goal or explicit scope',
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+	});
+
+	it('returns no active lessons for tasks with stale evolutionScopeId', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Stale scoped task',
+			description: 'References missing scope',
+			evolutionScopeId: 'missing-scope',
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			'EvolutionScope not found: missing-scope'
+		);
+	});
+
 	it('attaches workflow-run evidence through explicit evolutionScopeId parent task', () => {
 		const scope = service.createScope({
 			spaceId,

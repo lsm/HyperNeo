@@ -292,7 +292,7 @@ export class EvolutionScopeService {
 		evolutionScopeId: string | null,
 		goalId: string | null
 	): EvolutionScope | null {
-		if (evolutionScopeId) return this.requireScope(evolutionScopeId);
+		if (evolutionScopeId) return this.deps.evolutionRepo.getScope(evolutionScopeId) ?? null;
 		if (!goalId) return null;
 		return this.resolveScopeForGoal({ spaceGoalId: goalId });
 	}
@@ -304,6 +304,7 @@ export class EvolutionScopeService {
 	): EvolutionScope {
 		const scope = this.findScopeForTask(evolutionScopeId, goalId);
 		if (scope) return scope;
+		if (evolutionScopeId) throw new Error(`EvolutionScope not found: ${evolutionScopeId}`);
 		if (!goalId) throw new Error(`Task is not linked to an EvolutionScope or SpaceGoal: ${taskId}`);
 		throw new Error(`EvolutionScope not found for SpaceGoal: ${goalId}`);
 	}

@@ -326,7 +326,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(...roleLines);
 	}
 
-	// 4. Previous work summaries.
+	// 6. Previous work summaries.
 	if (previousTaskSummaries && previousTaskSummaries.length > 0) {
 		sections.push('');
 		sections.push('## Previous Work on This Goal');
@@ -336,7 +336,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// 5. Core memories are space-scoped and selected by background consolidation.
+	// 7. Core memories are space-scoped and selected by background consolidation.
 	const coreMemoryLines = buildCoreMemoryLines(coreMemories);
 	if (coreMemoryLines.length > 0) {
 		sections.push('');
@@ -345,7 +345,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(...coreMemoryLines);
 	}
 
-	// 6. Relevant persistent memories.
+	// 8. Relevant persistent memories.
 	if (relevantMemories && relevantMemories.length > 0) {
 		sections.push('');
 		sections.push('## Relevant Memories');
@@ -358,7 +358,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// 6. Project context from the Space.
+	// 9. Project context from the Space.
 	if (space.backgroundContext) {
 		sections.push('');
 		sections.push('## Project Context');

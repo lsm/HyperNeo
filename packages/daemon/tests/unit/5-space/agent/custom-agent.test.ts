@@ -441,6 +441,7 @@ describe('buildCustomAgentTaskMessage', () => {
 			})
 		);
 
+		expect(message).not.toContain('## Relevant Scope Lessons');
 		expect(message).not.toContain('## Previous Work on This Goal');
 		expect(message).not.toContain('## Project Context');
 		expect(message).not.toContain('## Standing Instructions');
