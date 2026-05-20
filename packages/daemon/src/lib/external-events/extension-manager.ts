@@ -86,6 +86,10 @@ export class ExternalEventExtensionManager {
 		return Array.from(this.extensions.values());
 	}
 
+	isStarted(sourceId: string): boolean {
+		return this.started.has(sourceId);
+	}
+
 	registerRoutes(routes: readonly Route[], context: ExternalEventExtensionContext): void {
 		const sourceId = this.findSourceIdForRoutes(routes);
 		if (!sourceId) {
@@ -271,12 +275,14 @@ function routeSignature(route: Route): string {
 	return `${route.method} ${route.path}`;
 }
 
-function isHttpExtension(
+export function isHttpExtension(
 	extension: ExternalEventExtension
 ): extension is HttpExternalEventExtension {
 	return 'routes' in extension && Array.isArray((extension as { routes?: unknown }).routes);
 }
 
-function isRpcExtension(extension: ExternalEventExtension): extension is RpcExternalEventExtension {
+export function isRpcExtension(
+	extension: ExternalEventExtension
+): extension is RpcExternalEventExtension {
 	return typeof (extension as { registerRpcHandlers?: unknown }).registerRpcHandlers === 'function';
 }

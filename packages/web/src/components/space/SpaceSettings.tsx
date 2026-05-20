@@ -17,6 +17,7 @@ import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary.tsx';
 import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
+import { SpaceExternalEventsSettings } from './SpaceExternalEventsSettings.tsx';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect.tsx';
 
 interface SpaceSettingsProps {
@@ -486,21 +487,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 					<div class="space-y-5">
 						<SpaceMcpSettings spaceId={space.id} disabled={saving} />
 						<div class="border-t border-white/10 pt-4">
-							<h4 class="text-xs font-semibold uppercase tracking-wider text-gray-500">
-								GitHub watches
-							</h4>
-							<div class="mt-3 rounded-lg bg-dark-850 px-3 py-3 text-xs leading-5 text-gray-500">
-								<p>
-									Watches are configured through <span class="font-mono">space.github.*</span> RPCs.
-									Webhooks should point to{' '}
-									<span class="font-mono text-gray-400">/webhook/github/space</span> and include PR
-									and review events.
-								</p>
-								<p class="mt-2">
-									Local development needs a public HTTPS tunnel. Signatures use per-repo webhook
-									secrets, and unwatched repositories are rejected before routing.
-								</p>
-							</div>
+							<SpaceExternalEventsSettings spaceId={space.id} disabled={saving} />
 						</div>
 					</div>
 				</SettingsBlock>
