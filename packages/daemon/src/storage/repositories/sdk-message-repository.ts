@@ -780,6 +780,57 @@ export class SDKMessageRepository {
 	}
 
 	/**
+	 * Delete one still-pending user message from a session queue.
+	 *
+	 * Only deferred/enqueued user messages are eligible. Consumed messages are
+	 * transcript history and must go through rewind instead.
+	 */
+	deletePendingUserMessage(
+		sessionId: string,
+		messageId: string
+	): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
+		const row = this.db
+			.prepare(
+				`SELECT id, sdk_message, send_status
+				   FROM sdk_messages
+				  WHERE session_id = ?
+				    AND id = ?
+				    AND message_type = 'user'
+				    AND send_status IN ('deferred', 'enqueued')
+				  LIMIT 1`
+			)
+			.get(sessionId, messageId) as
+			| { id: string; sdk_message: string; send_status: 'deferred' | 'enqueued' }
+			| undefined;
+
+		if (!row) {
+			return null;
+		}
+
+		const message = JSON.parse(row.sdk_message) as { uuid?: string };
+		const result = this.db
+			.prepare(
+				`DELETE FROM sdk_messages
+				  WHERE session_id = ?
+				    AND id = ?
+				    AND message_type = 'user'
+				    AND send_status IN ('deferred', 'enqueued')`
+			)
+			.run(sessionId, messageId);
+
+		if (result.changes === 0) {
+			return null;
+		}
+
+		this.deleteMessageSearchRow(row.id);
+		return {
+			dbId: row.id,
+			uuid: message.uuid ?? '',
+			status: row.send_status,
+		};
+	}
+
+	/**
 	 * Get count of messages by status for a session
 	 * Useful for UI display (e.g., "3 messages pending")
 	 */

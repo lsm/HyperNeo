@@ -65,6 +65,7 @@ export interface InputTextareaProps {
 	isAgentWorking?: boolean;
 
 	onStop?: () => void;
+	onQueue?: () => void;
 	onPaste?: (e: ClipboardEvent) => void;
 	/** Optional control rendered inside the input, on the left side */
 	leadingElement?: ComponentChildren;
@@ -104,6 +105,7 @@ export function InputTextarea({
 	onReferenceClose,
 	isAgentWorking = false,
 	onStop,
+	onQueue,
 	onPaste,
 	leadingElement,
 	leadingPaddingClass,
@@ -169,14 +171,16 @@ export function InputTextarea({
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
 	const showStop = isAgentWorking && !hasContent && !!onStop;
+	const showQueue = isAgentWorking && hasContent && !!onQueue;
 	const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
+	const textareaRightPadding = showQueue ? 'pr-24' : 'pr-14';
 
 	// Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
 	// instance each render, avoiding stale lastIndex from the shared global-flag regex.
 	const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
 
 	return (
-		<div class="relative flex-1">
+		<div class="relative min-w-0 flex-1">
 			{/* Autocomplete menus — only one shown at a time; agent mention takes highest priority */}
 			{showAgentMentionAutocomplete && onAgentMentionSelect && onAgentMentionClose ? (
 				<MentionAutocomplete
@@ -241,7 +245,7 @@ export function InputTextarea({
 					maxLength={maxChars}
 					rows={1}
 					class={cn(
-						`block w-full ${textareaLeftPadding} pr-14 py-2.5 text-gray-100 resize-none bg-transparent`,
+						`block w-full ${textareaLeftPadding} ${textareaRightPadding} py-2.5 text-gray-100 resize-none bg-transparent`,
 						'placeholder:text-gray-500 text-base leading-normal',
 						'focus:outline-none'
 					)}
@@ -294,13 +298,13 @@ export function InputTextarea({
 						type="button"
 						onClick={onStop}
 						disabled={disabled}
-						title="Stop generation (Esc)"
+						title="Stop generation"
 						aria-label="Stop generation"
 						data-testid="stop-button"
 						class={cn(
 							'absolute right-1.5',
 							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
+							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60',
 							!disabled
 								? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
 								: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
@@ -311,32 +315,77 @@ export function InputTextarea({
 						</svg>
 					</button>
 				) : (
-					<button
-						type="button"
-						onClick={onSubmit}
-						disabled={disabled || !hasContent}
-						title={'Send message (Enter or Cmd+Enter)'}
-						aria-label="Send message"
-						data-testid="send-button"
+					<div
 						class={cn(
-							'absolute right-1.5',
-							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
-							hasContent && !disabled
-								? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
-								: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+							'absolute right-1.5 flex items-center gap-3',
+							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2'
 						)}
 					>
-						<svg
-							class="w-4.5 h-4.5"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-							stroke-width={2.5}
+						{showQueue && (
+							<button
+								type="button"
+								onClick={onQueue}
+								disabled={disabled || !hasContent}
+								title="Queue for next turn (Tab)"
+								aria-label="Queue for next turn"
+								data-testid="queue-button"
+								class={cn(
+									'w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60',
+									hasContent && !disabled
+										? 'border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95'
+										: 'border-dark-700/40 bg-dark-700/50 text-gray-500 cursor-not-allowed'
+								)}
+							>
+								<svg
+									class="w-4 h-4"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+									stroke-width={2.3}
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										d="M4 7h11a4 4 0 010 8H7m0 0l3-3m-3 3l3 3"
+									/>
+								</svg>
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={onSubmit}
+							disabled={disabled || !hasContent}
+							title={
+								isAgentWorking
+									? 'Steer current turn (Enter or Cmd+Enter)'
+									: 'Send message (Enter or Cmd+Enter)'
+							}
+							aria-label={isAgentWorking ? 'Steer current turn' : 'Send message'}
+							data-testid="send-button"
+							class={cn(
+								'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
+								hasContent && !disabled
+									? isAgentWorking
+										? 'bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 focus-visible:ring-amber-300/70'
+										: 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95 focus-visible:ring-blue-400/70'
+									: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+							)}
 						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
-						</svg>
-					</button>
+							<svg
+								class="w-4.5 h-4.5"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+								stroke-width={2.5}
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									d="M5 10l7-7m0 0l7 7m-7-7v18"
+								/>
+							</svg>
+						</button>
+					</div>
 				)}
 			</div>
 		</div>
