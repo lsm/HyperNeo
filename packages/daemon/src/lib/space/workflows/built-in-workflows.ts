@@ -1364,7 +1364,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: [],
+					writers: ['reviewer'],
 					check: { op: '==', value: true },
 				},
 			],

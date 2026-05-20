@@ -2961,6 +2961,15 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		expect(prompt).toMatch(/same approval semantic/i);
 	});
 
+	test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate lets reviewer approve', () => {
+		const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+		const approvalField = gate.fields!.find((f) => f.name === 'approved')!;
+
+		expect(approvalField.type).toBe('boolean');
+		expect(approvalField.writers).toEqual(['reviewer']);
+		expect(approvalField.check).toEqual({ op: '==', value: true });
+	});
+
 	test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
 		const reviewNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const prompt = reviewNode.agents[0].customPrompt!.value;
