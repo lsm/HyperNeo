@@ -1039,6 +1039,39 @@ describe('SDKMessageRepository', () => {
 			]);
 		});
 
+		it('filters stale session and task retention rows at search time', () => {
+			createSearchIndex();
+			createSearchPolicyTables();
+			const oldSessionTime = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+			const oldTaskTime = Date.now() - 45 * 24 * 60 * 60 * 1000;
+			insertSession('old-session', { status: 'active', lastActiveAt: new Date().toISOString() });
+			insertSession('space:space-1:task:old-task:exec:exec-1', {
+				context: { spaceId: 'space-1', taskId: 'old-task' },
+			});
+			db.prepare(
+				`INSERT INTO space_tasks (id, space_id, task_number, status, completed_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			).run('old-task', 'space-1', 1, 'done', Date.now(), Date.now());
+			repository.saveSDKMessage('old-session', createUserMessage('stale runtime session marker'));
+			repository.saveSDKMessage(
+				'space:space-1:task:old-task:exec:exec-1',
+				createUserMessage('stale runtime task marker')
+			);
+			db.prepare(`UPDATE sessions SET status = 'ended', last_active_at = ? WHERE id = ?`).run(
+				oldSessionTime,
+				'old-session'
+			);
+			db.prepare(`UPDATE space_tasks SET completed_at = ?, updated_at = ? WHERE id = ?`).run(
+				oldTaskTime,
+				oldTaskTime,
+				'old-task'
+			);
+
+			const result = repository.searchMessages({ query: 'stale runtime' });
+
+			expect(result.results).toEqual([]);
+		});
+
 		it('keeps terminal Space task session messages only within the retention window', () => {
 			createSearchIndex();
 			createSearchPolicyTables();

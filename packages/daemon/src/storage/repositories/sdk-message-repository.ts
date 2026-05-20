@@ -1206,14 +1206,46 @@ export class SDKMessageRepository {
 		if (!ftsQuery) return { results: [], limit, offset };
 
 		const broadQuery = isBroadMessageSearchQuery(params.query);
+		const hasSessions = this.tableExists('sessions');
+		const hasSpaceTasks = this.tableExists('space_tasks');
+		const sessionJoin = hasSessions
+			? 'LEFT JOIN sessions s ON s.id = message_search_fts.session_id'
+			: '';
+		const taskJoin = hasSpaceTasks
+			? 'LEFT JOIN space_tasks st ON st.id = message_search_fts.task_id'
+			: '';
+		const sessionPolicy = hasSessions
+			? `AND COALESCE(s.status, '') != 'archived'
+				AND NOT (
+					COALESCE(s.status, '') = 'ended'
+					AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days')
+				)`
+			: '';
+		const taskPolicy = hasSpaceTasks
+			? `AND COALESCE(st.status, '') != 'archived'
+				AND NOT (
+					COALESCE(st.status, '') IN ('done', 'cancelled', 'completed')
+					AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
+				)`
+			: '';
 		let candidateSql = `
 			SELECT
-				rowid,
+				message_search_fts.rowid,
 				${broadQuery ? '0' : 'bm25(message_search_fts)'} AS rank,
-				timestamp,
-				source_id
+				message_search_fts.timestamp,
+				message_search_fts.source_id
 			FROM message_search_fts
-			WHERE message_search_fts MATCH ?`;
+			${sessionJoin}
+			${taskJoin}
+			WHERE message_search_fts MATCH ?
+			  AND (
+				message_search_fts.kind != 'message'
+				OR (
+					1 = 1
+					${sessionPolicy}
+					${taskPolicy}
+				)
+			  )`;
 		const values: SQLiteValue[] = [ftsQuery];
 
 		if (params.sessionId) {

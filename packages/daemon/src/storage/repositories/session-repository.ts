@@ -297,6 +297,7 @@ export class SessionRepository {
 				JOIN sessions s ON s.id = sm.session_id
 				${spaceTaskJoin}
 				WHERE sm.session_id = ?
+				  AND json_valid(sm.sdk_message)
 				  AND sm.message_type IN ('system', 'user', 'assistant')
 				  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 				  AND COALESCE(s.status, '') != 'archived'
