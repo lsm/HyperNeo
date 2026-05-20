@@ -175,6 +175,38 @@ describe('EvolutionScopeService', () => {
 		);
 	});
 
+	it('returns no active lessons for tasks with cross-space evolutionScopeId', () => {
+		const otherSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/other-forge-service-test',
+			slug: 'other-forge-service-test',
+			name: 'Other Forge Service Test',
+		}).id;
+		const otherScope = service.createScope({
+			spaceId: otherSpaceId,
+			kind: 'custom',
+			name: 'Other scope',
+			objective: 'Own unrelated lessons',
+		});
+		evolutionRepo.createLesson({
+			scopeId: otherScope.id,
+			status: 'active',
+			rule: 'Unrelated lesson',
+			why: 'Different space',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Cross-space scoped task',
+			description: 'References another space scope',
+			evolutionScopeId: otherScope.id,
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			'Task and scope must belong to the same space'
+		);
+	});
+
 	it('attaches workflow-run evidence through explicit evolutionScopeId parent task', () => {
 		const scope = service.createScope({
 			spaceId,

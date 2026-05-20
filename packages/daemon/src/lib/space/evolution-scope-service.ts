@@ -142,7 +142,9 @@ export class EvolutionScopeService {
 	resolveScopeForTask(params: ResolveScopeForTaskParams): EvolutionScope | null {
 		const task = this.deps.taskRepo.getTask(params.taskId);
 		if (!task) throw new Error(`Task not found: ${params.taskId}`);
-		return this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
+		const scope = this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
+		if (!scope || scope.spaceId !== task.spaceId) return null;
+		return scope;
 	}
 
 	selectActiveLessonsForTask(params: SelectTaskLessonsParams): EvolutionLesson[] {
