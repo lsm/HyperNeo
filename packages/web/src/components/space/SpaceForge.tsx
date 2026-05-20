@@ -727,16 +727,23 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 			const scopeResponse = await request<EvolutionScopeListResponse>('evolution.scope.list', {
 				spaceId,
 			});
-			if (requestVersion.current !== version || localMutationVersion.current !== mutationVersion) {
+			if (requestVersion.current !== version) {
 				return;
 			}
 			if (spaceStore.spaceId.value === spaceId) {
 				await spaceStore.listGoals({ includeArchived: false }).catch(() => []);
 			}
-			if (requestVersion.current !== version || localMutationVersion.current !== mutationVersion) {
+			if (requestVersion.current !== version) {
 				return;
 			}
 			const nextScopes = scopeResponse.scopes ?? [];
+			if (localMutationVersion.current !== mutationVersion) {
+				setScopes((current) => {
+					const existingIds = new Set(current.map((scope) => scope.id));
+					return [...current, ...nextScopes.filter((scope) => !existingIds.has(scope.id))];
+				});
+				return;
+			}
 			setScopes(nextScopes);
 			setSelectedScopeId(nextScopes[0]?.id ?? null);
 		} catch (err) {

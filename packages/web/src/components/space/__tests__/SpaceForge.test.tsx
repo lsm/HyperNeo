@@ -322,8 +322,9 @@ describe('SpaceForge', () => {
 		fireEvent.click(screen.getAllByRole('button', { name: 'Create scope' }).at(-1)!);
 
 		expect(await screen.findByRole('heading', { name: 'New scope' })).toBeTruthy();
-		resolveList({ scopes: [] });
+		resolveList({ scopes: [makeScope({ id: 'scope-1', name: 'Existing scope' })] });
 
 		await waitFor(() => expect(screen.getByRole('heading', { name: 'New scope' })).toBeTruthy());
+		await waitFor(() => expect(screen.getByText('Existing scope')).toBeTruthy());
 	});
 });
