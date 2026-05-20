@@ -50,6 +50,9 @@ const SpaceTasks = lazy(() =>
 const SpaceGoals = lazy(() =>
 	import('../components/space/SpaceGoals').then((m) => ({ default: m.SpaceGoals }))
 );
+const SpaceForge = lazy(() =>
+	import('../components/space/SpaceForge').then((m) => ({ default: m.SpaceForge }))
+);
 const SpaceOverview = lazy(() =>
 	import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
 );
@@ -333,6 +336,25 @@ export default function SpaceIsland({
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<Suspense fallback={lazyFallback}>
 							<SpaceGoals spaceId={spaceId} />
+						</Suspense>
+					</div>
+				</div>
+				{overlay}
+			</>
+		);
+	}
+
+	if (viewMode === 'forge' && space) {
+		return (
+			<>
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-app-content"
+					data-testid="space-forge-view"
+				>
+					<SpacePageHeader pageTitle="Forge" />
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<Suspense fallback={lazyFallback}>
+							<SpaceForge spaceId={spaceId} />
 						</Suspense>
 					</div>
 				</div>

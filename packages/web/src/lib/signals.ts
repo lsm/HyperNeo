@@ -27,7 +27,7 @@ export const navSectionSignal = signal<NavSection>('spaces');
 export const currentSpaceIdSignal = signal<string | null>(null);
 export const currentSpaceSessionIdSignal = signal<string | null>(null);
 export const currentSpaceTaskIdSignal = signal<string | null>(null);
-export type SpaceViewMode = 'overview' | 'goals' | 'tasks' | 'sessions' | 'configure';
+export type SpaceViewMode = 'overview' | 'goals' | 'tasks' | 'sessions' | 'forge' | 'configure';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
 // Configure sub-tab (agents | workflows | settings) — driven by URL

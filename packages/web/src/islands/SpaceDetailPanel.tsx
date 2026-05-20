@@ -13,6 +13,7 @@ import {
 	navigateToSpace,
 	navigateToSpaceAgent,
 	navigateToSpaceGoals,
+	navigateToSpaceForge,
 	navigateToSpaceSession,
 	navigateToSpaceSessions,
 	navigateToSpaceTask,
@@ -171,6 +172,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		currentSpaceViewModeSignal.value === 'overview';
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 	const isGoalsSelected = currentSpaceViewModeSignal.value === 'goals';
+	const isForgeSelected = currentSpaceViewModeSignal.value === 'forge';
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 	const isSessionsSelected = currentSpaceViewModeSignal.value === 'sessions';
 
@@ -217,6 +219,11 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const handleGoalsClick = useCallback(() => {
 		navigateToSpaceGoals(spaceId);
+		onNavigate?.();
+	}, [spaceId, onNavigate]);
+
+	const handleForgeClick = useCallback(() => {
+		navigateToSpaceForge(spaceId);
 		onNavigate?.();
 	}, [spaceId, onNavigate]);
 
@@ -341,6 +348,29 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 								{goals.filter((goal) => goal.status !== 'archived').length}
 							</span>
 						) : undefined
+					}
+				/>
+				<SpaceNavItem
+					label="Forge"
+					active={isForgeSelected}
+					onClick={handleForgeClick}
+					testId="space-detail-forge"
+					accentClass="text-cyan-400"
+					icon={
+						<svg
+							class="w-4 h-4"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							aria-hidden="true"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M11 4H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-4M16 3l5 5-9 9H7v-5l9-9z"
+							/>
+						</svg>
 					}
 				/>
 				<SpaceNavItem

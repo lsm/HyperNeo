@@ -18,6 +18,7 @@ import {
 	navigateToSpaceConfigure,
 	navigateToSpaceSessions,
 	navigateToSpaceGoals,
+	navigateToSpaceForge,
 	navigateToSpaceTasks,
 } from '../lib/router.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -213,6 +214,9 @@ export function ContextPanel() {
 					break;
 				case 'goals':
 					navigateToSpaceGoals(spaceId);
+					break;
+				case 'forge':
+					navigateToSpaceForge(spaceId);
 					break;
 				case 'configure':
 					navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
