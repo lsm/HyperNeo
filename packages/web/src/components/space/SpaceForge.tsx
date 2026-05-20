@@ -712,30 +712,45 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
+	const requestVersion = useRef(0);
+	const localMutationVersion = useRef(0);
 	const goals = spaceStore.spaceId.value === spaceId ? spaceStore.goals.value : [];
 
 	const loadScopes = useCallback(async () => {
+		const version = ++requestVersion.current;
+		const mutationVersion = localMutationVersion.current;
+		setScopes([]);
+		setSelectedScopeId(null);
 		setLoading(true);
 		setError(null);
 		try {
 			const scopeResponse = await request<EvolutionScopeListResponse>('evolution.scope.list', {
 				spaceId,
 			});
+			if (requestVersion.current !== version || localMutationVersion.current !== mutationVersion) {
+				return;
+			}
 			if (spaceStore.spaceId.value === spaceId) {
 				await spaceStore.listGoals({ includeArchived: false }).catch(() => []);
 			}
+			if (requestVersion.current !== version || localMutationVersion.current !== mutationVersion) {
+				return;
+			}
 			const nextScopes = scopeResponse.scopes ?? [];
 			setScopes(nextScopes);
-			setSelectedScopeId((current) => current ?? nextScopes[0]?.id ?? null);
+			setSelectedScopeId(nextScopes[0]?.id ?? null);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to load scopes');
+			if (requestVersion.current === version) {
+				setError(err instanceof Error ? err.message : 'Failed to load scopes');
+			}
 		} finally {
-			setLoading(false);
+			if (requestVersion.current === version) {
+				setLoading(false);
+			}
 		}
 	}, [request, spaceId]);
 
 	useEffect(() => {
-		setSelectedScopeId(null);
 		loadScopes().catch(() => undefined);
 	}, [loadScopes]);
 
@@ -745,6 +760,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	);
 
 	const handleCreated = (scope: EvolutionScope) => {
+		localMutationVersion.current += 1;
 		setScopes((current) => [scope, ...current]);
 		setSelectedScopeId(scope.id);
 	};

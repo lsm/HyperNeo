@@ -133,7 +133,9 @@ function setupRequests(scope = makeScope()) {
 			return { snapshot: makeSnapshot({ id: 'snapshot-2', values: { latency: 3 } }) };
 		}
 		if (method === 'evolution.scope.create') {
-			return { scope: makeScope({ id: 'scope-2', name: 'New scope' }) };
+			return {
+				scope: makeScope({ id: 'scope-2', name: 'New scope', objective: 'Track review loop' }),
+			};
 		}
 		throw new Error(`Unexpected RPC ${method}`);
 	});
@@ -243,5 +245,85 @@ describe('SpaceForge', () => {
 				],
 			},
 		});
+	});
+
+	it('clears stale scope detail while loading a different space', async () => {
+		let resolveSpaceOne: (value: { scopes: EvolutionScope[] }) => void = () => undefined;
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method !== 'evolution.scope.list') throw new Error(`Unexpected RPC ${method}`);
+			const { spaceId } = data as { spaceId: string };
+			if (spaceId === 'space-1') {
+				return new Promise((resolve) => {
+					resolveSpaceOne = resolve;
+				});
+			}
+			return { scopes: [makeScope({ id: 'scope-2', spaceId, name: 'Space B scope' })] };
+		});
+
+		const { rerender } = render(<SpaceForge spaceId="space-1" />);
+		resolveSpaceOne({ scopes: [makeScope({ name: 'Space A scope' })] });
+		expect(await screen.findByRole('heading', { name: 'Space A scope' })).toBeTruthy();
+
+		rerender(<SpaceForge spaceId="space-2" />);
+
+		expect(screen.queryByRole('heading', { name: 'Space A scope' })).toBeNull();
+		expect(await screen.findByRole('heading', { name: 'Space B scope' })).toBeTruthy();
+	});
+
+	it('ignores stale scope-list responses after space changes', async () => {
+		let resolveSpaceOne: (value: { scopes: EvolutionScope[] }) => void = () => undefined;
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method !== 'evolution.scope.list') throw new Error(`Unexpected RPC ${method}`);
+			const { spaceId } = data as { spaceId: string };
+			if (spaceId === 'space-1') {
+				return new Promise((resolve) => {
+					resolveSpaceOne = resolve;
+				});
+			}
+			return { scopes: [makeScope({ id: 'scope-2', spaceId, name: 'Current space scope' })] };
+		});
+
+		const { rerender } = render(<SpaceForge spaceId="space-1" />);
+		rerender(<SpaceForge spaceId="space-2" />);
+		expect(await screen.findByRole('heading', { name: 'Current space scope' })).toBeTruthy();
+
+		resolveSpaceOne({ scopes: [makeScope({ name: 'Stale space scope' })] });
+
+		await waitFor(() =>
+			expect(screen.queryByRole('heading', { name: 'Stale space scope' })).toBeNull()
+		);
+		expect(screen.getByRole('heading', { name: 'Current space scope' })).toBeTruthy();
+	});
+
+	it('preserves newly created scopes against in-flight initial loads', async () => {
+		let resolveList: (value: { scopes: EvolutionScope[] }) => void = () => undefined;
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'evolution.scope.list') {
+				return new Promise((resolve) => {
+					resolveList = resolve;
+				});
+			}
+			if (method === 'evolution.scope.create') {
+				return {
+					scope: makeScope({ id: 'scope-2', name: 'New scope', objective: 'Track review loop' }),
+				};
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+
+		render(<SpaceForge spaceId="space-1" />);
+		fireEvent.click(await screen.findByRole('button', { name: 'New' }));
+		fireEvent.input(screen.getByPlaceholderText('Improve code review loop'), {
+			target: { value: 'New scope' },
+		});
+		fireEvent.input(screen.getByPlaceholderText('What should this scope prove or improve?'), {
+			target: { value: 'Track review loop' },
+		});
+		fireEvent.click(screen.getAllByRole('button', { name: 'Create scope' }).at(-1)!);
+
+		expect(await screen.findByRole('heading', { name: 'New scope' })).toBeTruthy();
+		resolveList({ scopes: [] });
+
+		await waitFor(() => expect(screen.getByRole('heading', { name: 'New scope' })).toBeTruthy());
 	});
 });
