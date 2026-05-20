@@ -88,7 +88,6 @@ describe('ClientEventBridge', () => {
 			expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
 			expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
 			expect(eventHandlers.has('space.gateData.updated')).toBe(true);
-			expect(eventHandlers.has('space.githubEvent.routed')).toBe(true);
 			expect(eventHandlers.has('space.artifactCache.updated')).toBe(true);
 			expect(eventHandlers.has('space.pendingMessage.queued')).toBe(true);
 			expect(eventHandlers.has('space.pendingMessage.delivered')).toBe(true);
@@ -143,9 +142,9 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.start();
 
-			// 21 space + 3 session + 2 conn/auth + 1 config + 2 error = 29 unique events
+			// 20 space + 3 session + 2 conn/auth + 1 config + 2 error = 28 unique events
 			// (context.updated has 2 handlers but is 1 unique event key)
-			expect(eventHandlers.size).toBe(29);
+			expect(eventHandlers.size).toBe(28);
 		});
 	});
 
@@ -156,8 +155,8 @@ describe('ClientEventBridge', () => {
 			bridge.start();
 			bridge.stop();
 
-			// 30 internalEventBus.subscribe calls total (context.updated has 2 handlers)
-			expect(unsubscribers.length).toBe(30);
+			// 29 internalEventBus.subscribe calls total (context.updated has 2 handlers)
+			expect(unsubscribers.length).toBe(29);
 		});
 	});
 
@@ -294,21 +293,6 @@ describe('ClientEventBridge', () => {
 				data: { votes: 3 },
 			};
 			eventHandlers.get('space.gateData.updated')![0](data);
-
-			expect(published[0].channel).toEqual({ kind: 'global' });
-		});
-
-		it('forwards space.githubEvent.routed to global channel', () => {
-			const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
-			createClientEventBridge(internalEventBus, gateway).start();
-
-			const data = {
-				sessionId: 'global',
-				spaceId: 's-1',
-				taskId: 'task-1',
-				eventId: 'gh-1',
-			};
-			eventHandlers.get('space.githubEvent.routed')![0](data);
 
 			expect(published[0].channel).toEqual({ kind: 'global' });
 		});
