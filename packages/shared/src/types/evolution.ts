@@ -1,0 +1,218 @@
+import type { SpaceTaskPriority } from './space.ts';
+
+export type EvolutionScopeKind = 'mission' | 'project' | 'campaign' | 'workflow' | 'custom';
+export type EvidenceKind = 'task' | 'workflow_run' | 'session' | 'manual_note' | 'metric_snapshot';
+export type EvolutionEpisodeStatus = 'draft' | 'accepted' | 'dismissed';
+export type EvolutionLessonStatus = 'candidate' | 'active' | 'dismissed';
+export type TaskProposalStatus = 'proposed' | 'accepted' | 'dismissed' | 'created';
+export type MetricDirection = 'increase' | 'decrease' | 'target' | 'maintain';
+export type EvolutionFindingDomain = 'workflow' | 'target_artifact' | 'neokai_product';
+export type EvolutionFindingKind =
+	| 'friction'
+	| 'bug'
+	| 'optimization'
+	| 'missing_capability'
+	| 'new_opportunity';
+export type EvolutionImpact = 'low' | 'medium' | 'high';
+export type EvolutionPolicy = Record<string, unknown>;
+export type MetricSnapshotValues = Record<string, string | number | boolean | null>;
+
+export interface MetricDefinition {
+	key: string;
+	label: string;
+	description?: string;
+	direction: MetricDirection;
+	targetValue?: number | string | boolean | null;
+	unit?: string;
+}
+
+export interface EvolutionScope {
+	id: string;
+	spaceId: string;
+	spaceGoalId: string | null;
+	kind: EvolutionScopeKind;
+	name: string;
+	objective: string;
+	parentScopeId: string | null;
+	metricDefinitions: MetricDefinition[];
+	policy: EvolutionPolicy;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateEvolutionScopeParams {
+	spaceId: string;
+	spaceGoalId?: string | null;
+	kind: EvolutionScopeKind;
+	name: string;
+	objective: string;
+	parentScopeId?: string | null;
+	metricDefinitions?: MetricDefinition[];
+	policy?: EvolutionPolicy;
+}
+
+export interface UpdateEvolutionScopeParams {
+	spaceGoalId?: string | null;
+	kind?: EvolutionScopeKind;
+	name?: string;
+	objective?: string;
+	parentScopeId?: string | null;
+	metricDefinitions?: MetricDefinition[];
+	policy?: EvolutionPolicy;
+}
+
+export interface EvidenceRef {
+	id: string;
+	scopeId: string;
+	kind: EvidenceKind;
+	summary: string;
+	sourceId: string | null;
+	metadata: Record<string, unknown>;
+	createdAt: number;
+}
+
+export interface CreateEvidenceRefParams {
+	scopeId: string;
+	kind: EvidenceKind;
+	summary: string;
+	sourceId?: string | null;
+	metadata?: Record<string, unknown>;
+	createdAt?: number;
+}
+
+export interface EvolutionFinding {
+	domain: EvolutionFindingDomain;
+	kind: EvolutionFindingKind;
+	impact: EvolutionImpact;
+	confidence: number;
+	evidence: string[];
+	proposedAction: string;
+}
+
+export interface EvolutionEpisodeTimeWindow {
+	start: number;
+	end: number;
+}
+
+export interface EvolutionEpisode {
+	id: string;
+	scopeId: string;
+	status: EvolutionEpisodeStatus;
+	title: string;
+	timeWindow: EvolutionEpisodeTimeWindow | null;
+	evidenceIds: string[];
+	outcomeSummary: string;
+	findings: EvolutionFinding[];
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateEvolutionEpisodeParams {
+	scopeId: string;
+	status?: EvolutionEpisodeStatus;
+	title: string;
+	timeWindow?: EvolutionEpisodeTimeWindow | null;
+	evidenceIds?: string[];
+	outcomeSummary?: string;
+	findings?: EvolutionFinding[];
+}
+
+export interface UpdateEvolutionEpisodeParams {
+	status?: EvolutionEpisodeStatus;
+	title?: string;
+	timeWindow?: EvolutionEpisodeTimeWindow | null;
+	evidenceIds?: string[];
+	outcomeSummary?: string;
+	findings?: EvolutionFinding[];
+}
+
+export interface EvolutionLesson {
+	id: string;
+	scopeId: string;
+	status: EvolutionLessonStatus;
+	appliesTo: string[];
+	rule: string;
+	why: string;
+	evidenceEpisodeIds: string[];
+	confidence: number;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateEvolutionLessonParams {
+	scopeId: string;
+	status?: EvolutionLessonStatus;
+	appliesTo?: string[];
+	rule: string;
+	why: string;
+	evidenceEpisodeIds?: string[];
+	confidence?: number;
+}
+
+export interface UpdateEvolutionLessonParams {
+	status?: EvolutionLessonStatus;
+	appliesTo?: string[];
+	rule?: string;
+	why?: string;
+	evidenceEpisodeIds?: string[];
+	confidence?: number;
+}
+
+export interface TaskProposal {
+	id: string;
+	scopeId: string;
+	title: string;
+	description: string;
+	reason: string;
+	priority: SpaceTaskPriority;
+	status: TaskProposalStatus;
+	evidenceEpisodeIds: string[];
+	createdTaskId: string | null;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateTaskProposalParams {
+	scopeId: string;
+	title: string;
+	description: string;
+	reason: string;
+	priority?: SpaceTaskPriority;
+	status?: TaskProposalStatus;
+	evidenceEpisodeIds?: string[];
+	createdTaskId?: string | null;
+}
+
+export interface UpdateTaskProposalParams {
+	title?: string;
+	description?: string;
+	reason?: string;
+	priority?: SpaceTaskPriority;
+	status?: TaskProposalStatus;
+	evidenceEpisodeIds?: string[];
+	createdTaskId?: string | null;
+}
+
+export interface MetricSnapshot {
+	id: string;
+	scopeId: string;
+	capturedAt: number;
+	values: MetricSnapshotValues;
+	source: string;
+	note: string | null;
+	createdAt: number;
+}
+
+export interface CreateMetricSnapshotParams {
+	scopeId: string;
+	capturedAt?: number;
+	values: MetricSnapshotValues;
+	source: string;
+	note?: string | null;
+}
+
+export interface EvolutionScopeListParams {
+	spaceId: string;
+	spaceGoalId?: string | null;
+	kind?: EvolutionScopeKind;
+}

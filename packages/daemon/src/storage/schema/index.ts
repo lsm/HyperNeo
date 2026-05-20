@@ -8,6 +8,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { createEvolutionTables } from './evolution';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 // Re-export migrations
@@ -695,6 +696,7 @@ export function createTables(db: BunDatabase): void {
 
 	createSpaceAgentInboxTables(db);
 	createAgentMemoryTables(db);
+	createEvolutionTables(db);
 
 	// Create indexes
 	createIndexes(db);

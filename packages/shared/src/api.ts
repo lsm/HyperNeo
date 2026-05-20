@@ -32,6 +32,25 @@ import type {
 	UpdateAppMcpServerRequest,
 } from './types/app-mcp-server.ts';
 import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/skills.ts';
+import type {
+	CreateEvidenceRefParams,
+	CreateEvolutionEpisodeParams,
+	CreateEvolutionLessonParams,
+	CreateEvolutionScopeParams,
+	CreateMetricSnapshotParams,
+	CreateTaskProposalParams,
+	EvidenceRef,
+	EvolutionEpisode,
+	EvolutionLesson,
+	EvolutionScope,
+	EvolutionScopeListParams,
+	MetricSnapshot,
+	TaskProposal,
+	UpdateEvolutionEpisodeParams,
+	UpdateEvolutionLessonParams,
+	UpdateEvolutionScopeParams,
+	UpdateTaskProposalParams,
+} from './types/evolution.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -579,6 +598,148 @@ export interface SpaceMcpClearOverrideRequest {
 
 export interface SpaceMcpClearOverrideResponse {
 	ok: boolean;
+}
+
+// --- Forge evolution storage (Forge MVP 1) ---
+
+export interface EvolutionScopeCreateRequest {
+	params: CreateEvolutionScopeParams;
+}
+
+export interface EvolutionScopeCreateResponse {
+	scope: EvolutionScope;
+}
+
+export interface EvolutionScopeGetRequest {
+	id: string;
+}
+
+export interface EvolutionScopeGetResponse {
+	scope: EvolutionScope | null;
+}
+
+export interface EvolutionScopeListRequest extends EvolutionScopeListParams {}
+
+export interface EvolutionScopeListResponse {
+	scopes: EvolutionScope[];
+}
+
+export interface EvolutionScopeUpdateRequest {
+	id: string;
+	params: UpdateEvolutionScopeParams;
+}
+
+export interface EvolutionScopeUpdateResponse {
+	scope: EvolutionScope | null;
+}
+
+export interface EvolutionEvidenceCreateRequest {
+	params: CreateEvidenceRefParams;
+}
+
+export interface EvolutionEvidenceCreateResponse {
+	evidence: EvidenceRef;
+}
+
+export interface EvolutionEvidenceListRequest {
+	scopeId: string;
+}
+
+export interface EvolutionEvidenceListResponse {
+	evidence: EvidenceRef[];
+}
+
+export interface EvolutionEpisodeCreateRequest {
+	params: CreateEvolutionEpisodeParams;
+}
+
+export interface EvolutionEpisodeCreateResponse {
+	episode: EvolutionEpisode;
+}
+
+export interface EvolutionEpisodeUpdateRequest {
+	id: string;
+	params: UpdateEvolutionEpisodeParams;
+}
+
+export interface EvolutionEpisodeUpdateResponse {
+	episode: EvolutionEpisode | null;
+}
+
+export interface EvolutionEpisodeListRequest {
+	scopeId: string;
+}
+
+export interface EvolutionEpisodeListResponse {
+	episodes: EvolutionEpisode[];
+}
+
+export interface EvolutionLessonCreateRequest {
+	params: CreateEvolutionLessonParams;
+}
+
+export interface EvolutionLessonCreateResponse {
+	lesson: EvolutionLesson;
+}
+
+export interface EvolutionLessonUpdateRequest {
+	id: string;
+	params: UpdateEvolutionLessonParams;
+}
+
+export interface EvolutionLessonUpdateResponse {
+	lesson: EvolutionLesson | null;
+}
+
+export interface EvolutionLessonListRequest {
+	scopeId: string;
+	status?: EvolutionLesson['status'];
+}
+
+export interface EvolutionLessonListResponse {
+	lessons: EvolutionLesson[];
+}
+
+export interface EvolutionTaskProposalCreateRequest {
+	params: CreateTaskProposalParams;
+}
+
+export interface EvolutionTaskProposalCreateResponse {
+	proposal: TaskProposal;
+}
+
+export interface EvolutionTaskProposalUpdateRequest {
+	id: string;
+	params: UpdateTaskProposalParams;
+}
+
+export interface EvolutionTaskProposalUpdateResponse {
+	proposal: TaskProposal | null;
+}
+
+export interface EvolutionTaskProposalListRequest {
+	scopeId: string;
+	status?: TaskProposal['status'];
+}
+
+export interface EvolutionTaskProposalListResponse {
+	proposals: TaskProposal[];
+}
+
+export interface EvolutionMetricSnapshotCreateRequest {
+	params: CreateMetricSnapshotParams;
+}
+
+export interface EvolutionMetricSnapshotCreateResponse {
+	snapshot: MetricSnapshot;
+}
+
+export interface EvolutionMetricSnapshotListRequest {
+	scopeId: string;
+}
+
+export interface EvolutionMetricSnapshotListResponse {
+	snapshots: MetricSnapshot[];
 }
 
 // --- MCP Imports (explicit refresh trigger for .mcp.json discovery) ---
