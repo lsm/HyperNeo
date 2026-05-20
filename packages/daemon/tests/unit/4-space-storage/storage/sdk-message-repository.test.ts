@@ -530,6 +530,56 @@ describe('SDKMessageRepository', () => {
 		});
 	});
 
+	describe('deletePendingUserMessage', () => {
+		it('should delete a deferred user message', () => {
+			const id = repository.saveUserMessage(
+				'session-1',
+				createUserMessage('Remove me', 'uuid-remove-me'),
+				'deferred'
+			);
+
+			const removed = repository.deletePendingUserMessage('session-1', id);
+
+			expect(removed).toEqual({
+				dbId: id,
+				uuid: 'uuid-remove-me',
+				status: 'deferred',
+			});
+			expect(repository.getMessagesByStatus('session-1', 'deferred')).toEqual([]);
+		});
+
+		it('should delete an enqueued user message', () => {
+			const id = repository.saveUserMessage(
+				'session-1',
+				createUserMessage('Remove me', 'uuid-remove-me'),
+				'enqueued'
+			);
+
+			const removed = repository.deletePendingUserMessage('session-1', id);
+
+			expect(removed?.status).toBe('enqueued');
+			expect(repository.getMessagesByStatus('session-1', 'enqueued')).toEqual([]);
+		});
+
+		it('should not delete consumed messages', () => {
+			const id = repository.saveUserMessage('session-1', createUserMessage('Keep me'), 'consumed');
+
+			const removed = repository.deletePendingUserMessage('session-1', id);
+
+			expect(removed).toBeNull();
+			expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
+		});
+
+		it('should not delete another session pending message', () => {
+			const id = repository.saveUserMessage('session-2', createUserMessage('Keep me'), 'deferred');
+
+			const removed = repository.deletePendingUserMessage('session-1', id);
+
+			expect(removed).toBeNull();
+			expect(repository.getMessagesByStatus('session-2', 'deferred').length).toBe(1);
+		});
+	});
+
 	describe('getMessageCountByStatus', () => {
 		it('should return count of messages with specified status', () => {
 			repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'deferred');

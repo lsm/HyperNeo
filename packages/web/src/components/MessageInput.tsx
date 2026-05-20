@@ -27,10 +27,12 @@ import {
 } from '../hooks';
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
+import { connectionManager } from '../lib/connection-manager';
 import { isAgentWorking } from '../lib/state.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
+import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 
 /**
@@ -247,6 +249,8 @@ export default function MessageInput({
 	}, []);
 
 	const agentWorking = isProcessing ?? isAgentWorking.value;
+	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
+	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuePreviewMessage[]>([]);
 
 	const syncMessagesContainerPadding = useCallback(() => {
 		const scroller = document.querySelector<HTMLElement>('[data-messages-container]');
@@ -273,13 +277,140 @@ export default function MessageInput({
 		};
 	}, [content, getImagesForSend]);
 
+	const refreshQueuedMessages = useCallback(async () => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			return;
+		}
+
+		try {
+			const [enqueuedResponse, deferredResponse] = (await Promise.all([
+				hub.request('session.messages.byStatus', {
+					sessionId,
+					status: 'enqueued',
+					limit: 100,
+				}),
+				hub.request('session.messages.byStatus', {
+					sessionId,
+					status: 'deferred',
+					limit: 100,
+				}),
+			])) as [{ messages?: QueuePreviewMessage[] }, { messages?: QueuePreviewMessage[] }];
+			setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
+			setQueuedForNextTurn(deferredResponse.messages ?? []);
+		} catch {
+			// Best-effort queue refresh.
+		}
+	}, [sessionId]);
+
+	const handleRemoveQueuedMessage = useCallback(
+		async (queued: QueuePreviewMessage) => {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				return;
+			}
+
+			setQueuedForCurrentTurn((messages) =>
+				messages.filter((message) => message.dbId !== queued.dbId)
+			);
+			setQueuedForNextTurn((messages) =>
+				messages.filter((message) => message.dbId !== queued.dbId)
+			);
+
+			try {
+				await hub.request('session.messages.removePending', {
+					sessionId,
+					messageDbId: queued.dbId,
+				});
+			} finally {
+				await refreshQueuedMessages();
+			}
+		},
+		[refreshQueuedMessages, sessionId]
+	);
+
+	const handlePromoteQueuedMessage = useCallback(
+		async (queued: QueuePreviewMessage) => {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				return;
+			}
+
+			setQueuedForNextTurn((messages) =>
+				messages.filter((message) => message.dbId !== queued.dbId)
+			);
+			setQueuedForCurrentTurn((messages) =>
+				messages.some((message) => message.dbId === queued.dbId)
+					? messages
+					: [...messages, { ...queued, status: 'enqueued' }]
+			);
+
+			try {
+				await hub.request('session.messages.promotePending', {
+					sessionId,
+					messageDbId: queued.dbId,
+				});
+			} finally {
+				await refreshQueuedMessages();
+			}
+		},
+		[refreshQueuedMessages, sessionId]
+	);
+
+	const handleDeferQueuedMessage = useCallback(
+		async (queued: QueuePreviewMessage) => {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				return;
+			}
+
+			setQueuedForCurrentTurn((messages) =>
+				messages.filter((message) => message.dbId !== queued.dbId)
+			);
+			setQueuedForNextTurn((messages) =>
+				messages.some((message) => message.dbId === queued.dbId)
+					? messages
+					: [...messages, { ...queued, status: 'deferred' }]
+			);
+
+			try {
+				await hub.request('session.messages.deferPending', {
+					sessionId,
+					messageDbId: queued.dbId,
+				});
+			} finally {
+				await refreshQueuedMessages();
+			}
+		},
+		[refreshQueuedMessages, sessionId]
+	);
+
 	useLayoutEffect(() => {
 		syncMessagesContainerPadding();
 	}, [syncMessagesContainerPadding]);
 
 	useEffect(() => {
 		syncMessagesContainerPadding();
-	}, [syncMessagesContainerPadding, attachments.length, isDragging]);
+	}, [
+		syncMessagesContainerPadding,
+		attachments.length,
+		isDragging,
+		queuedForCurrentTurn.length,
+		queuedForNextTurn.length,
+	]);
+
+	useEffect(() => {
+		void refreshQueuedMessages();
+	}, [refreshQueuedMessages]);
+
+	useEffect(() => {
+		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
+			return;
+		const timer = setInterval(() => {
+			void refreshQueuedMessages();
+		}, 700);
+		return () => clearInterval(timer);
+	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
 
 	const handleTextareaHeightChange = useCallback(
 		(_heightPx: number) => {
@@ -316,6 +447,16 @@ export default function MessageInput({
 				if (savedAttachments.length > 0) {
 					restoreAttachments(savedAttachments);
 				}
+				return;
+			}
+
+			if (
+				agentWorking ||
+				deliveryMode === 'defer' ||
+				queuedForCurrentTurn.length > 0 ||
+				queuedForNextTurn.length > 0
+			) {
+				await refreshQueuedMessages();
 			}
 		},
 		[
@@ -327,6 +468,10 @@ export default function MessageInput({
 			restoreAttachments,
 			setContent,
 			onSend,
+			agentWorking,
+			queuedForCurrentTurn.length,
+			queuedForNextTurn.length,
+			refreshQueuedMessages,
 		]
 	);
 
@@ -378,6 +523,12 @@ export default function MessageInput({
 				return;
 			}
 
+			if (e.key === 'Tab' && !e.shiftKey && agentWorking) {
+				e.preventDefault();
+				void handleSubmit('defer');
+				return;
+			}
+
 			// Handle Enter key behavior
 			if (e.key === 'Enter') {
 				if (e.metaKey || e.ctrlKey) {
@@ -397,6 +548,7 @@ export default function MessageInput({
 			refHandleKeyDown,
 			cmdHandleKeyDown,
 			handleSubmit,
+			agentWorking,
 			showAgentMentionAutocomplete,
 			filteredAgentMentionCandidates,
 			agentMentionSelectedIndex,
@@ -507,6 +659,23 @@ export default function MessageInput({
 						</div>
 					)}
 
+					{(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0) && !disabled && (
+						<QueuePreviewTray
+							currentTurnMessages={queuedForCurrentTurn}
+							nextTurnMessages={queuedForNextTurn}
+							className="mb-2 sm:ml-[58px]"
+							onDeferMessage={(queued) => {
+								void handleDeferQueuedMessage(queued);
+							}}
+							onPromoteMessage={(queued) => {
+								void handlePromoteQueuedMessage(queued);
+							}}
+							onRemoveMessage={(queued) => {
+								void handleRemoveQueuedMessage(queued);
+							}}
+						/>
+					)}
+
 					{/* iOS 26 Style: Floating single-line input */}
 					<div class="flex items-end gap-3">
 						{/* Plus Button with Actions Menu */}
@@ -572,6 +741,9 @@ export default function MessageInput({
 							onReferenceSelect={referenceAutocomplete.handleSelect}
 							onReferenceClose={referenceAutocomplete.close}
 							isAgentWorking={agentWorking}
+							onQueue={() => {
+								void handleSubmit('defer');
+							}}
 							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
 							textareaRef={textareaInputRef}

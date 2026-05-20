@@ -221,6 +221,13 @@ export class Database {
 		this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
 	}
 
+	deletePendingUserMessage(
+		sessionId: string,
+		messageId: string
+	): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
+		return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId);
+	}
+
 	beginTransaction?(): void;
 	commitTransaction?(): void;
 	abortTransaction?(): void;

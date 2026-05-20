@@ -729,6 +729,10 @@ export class AgentSession
 		await this.lifecycleManager.startQueryAndEnqueue(messageId, messageContent);
 	}
 
+	removeQueuedMessage(messageId: string): boolean {
+		return this.messageQueue.remove(messageId);
+	}
+
 	// ============================================================================
 	// Interrupt and Reset
 	// ============================================================================

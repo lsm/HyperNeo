@@ -103,6 +103,22 @@ describe('MessageQueue', () => {
 		});
 	});
 
+	describe('remove', () => {
+		it('should remove one pending message by ID', async () => {
+			const promise = queue.enqueueWithId('message-to-remove', 'Message 1');
+
+			expect(queue.size()).toBe(1);
+			expect(queue.remove('message-to-remove')).toBe(true);
+			expect(queue.size()).toBe(0);
+
+			await promise;
+		});
+
+		it('should return false for an unknown message ID', () => {
+			expect(queue.remove('missing-message')).toBe(false);
+		});
+	});
+
 	describe('lifecycle', () => {
 		it('should start in stopped state', () => {
 			expect(queue.isRunning()).toBe(false);
