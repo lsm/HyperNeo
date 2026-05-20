@@ -24,6 +24,7 @@ import type {
 	DeclarativeToolGuard,
 	GatePoll,
 	GateScript,
+	Gate,
 	SpaceWorkflow,
 	WorkflowNode,
 } from '@neokai/shared';
@@ -1513,6 +1514,30 @@ function mergeNodeStructuralFieldsFromTemplate(
 	});
 }
 
+function mergeGateStructuralFieldsFromTemplate(
+	existingGates: Gate[] | undefined,
+	templateGates: Gate[] | undefined
+): Gate[] | undefined {
+	if (!existingGates || !templateGates) return existingGates;
+
+	const templateGatesById = new Map(templateGates.map((gate) => [gate.id, gate]));
+	return existingGates.map((gate) => {
+		const templateGate = templateGatesById.get(gate.id);
+		if (!templateGate) return gate;
+
+		const templateFieldsByName = new Map(
+			(templateGate.fields ?? []).map((field) => [field.name, field])
+		);
+		const fields = (gate.fields ?? []).map((field) => {
+			const templateField = templateFieldsByName.get(field.name);
+			if (!templateField) return field;
+			return { ...field, writers: templateField.writers };
+		});
+
+		return { ...gate, fields };
+	});
+}
+
 /**
  * Fields that the built-in seeder re-stamps when it detects template drift
  * on an already-seeded row.
@@ -1525,7 +1550,10 @@ function mergeNodeStructuralFieldsFromTemplate(
  *   agent name) so structural enforcement metadata stays in sync with the
  *   template when node + agent names still match. Other node fields
  *   (customPrompt, model, disabledSkillIds, etc.) are preserved.
- * - Channels, gates, layout, and node rows are NOT re-stamped. Workflow IDs,
+ * - Gate field `writers` are merged onto matching gate fields (by gate id +
+ *   field name) so structural authorization changes land on pre-existing spaces.
+ *   Checks, scripts, and gate topology remain untouched.
+ * - Channels, layout, and node rows are NOT re-stamped. Workflow IDs,
  *   node IDs, and persisted node-agent slots are stable identifiers for
  *   in-flight runs, so template drift must never replace node rows. Agent
  *   `toolGuards` are updated in-place on existing node configs instead.
@@ -1535,6 +1563,7 @@ const RESTAMP_FIELDS = [
 	'completionAutonomyLevel',
 	'templateHash',
 	'nodes(postApproval + toolGuards in-place)',
+	'gates(field writers in-place)',
 ] as const;
 
 /**
@@ -1596,16 +1625,17 @@ export function seedBuiltInWorkflows(
 			if (row.templateHash === expectedHash) continue;
 
 			try {
-				// Targeted merge of toolGuards from template onto existing agent slots.
-				// Unlike prompts (user-configurable), toolGuards are structural enforcement
-				// metadata that must stay in sync with the template.
+				// Targeted merge of structural template fields that must stay in sync while
+				// preserving user-configurable prompts and workflow topology.
 				const mergedNodes = mergeNodeStructuralFieldsFromTemplate(row.nodes, template.nodes);
+				const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
 
 				workflowManager.updateWorkflow(row.id, {
 					completionAutonomyLevel: template.completionAutonomyLevel,
 					// Built-ins now store routes on terminal nodes. Clear any legacy
 					// workflow-level value while the node updater writes node routes.
 					postApproval: null,
+					gates: mergedGates,
 					templateHash: expectedHash,
 				});
 				workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
