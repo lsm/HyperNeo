@@ -23,7 +23,7 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import type { ActiveTurnSummary, ActivityEntry } from '@neokai/shared';
+import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@neokai/shared';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
@@ -42,6 +42,7 @@ import {
 	normalizeAgentKey,
 } from '../space-task-thread-turns';
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
+import { DeliveryStateBadge } from '../../../ui/DeliveryStateBadge';
 import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
@@ -219,6 +220,8 @@ interface MessageFeedTurn {
 	isSynthetic: boolean;
 	/** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
 	sessionId: string | null;
+	/** User-message delivery state, shown as a small send-state badge. */
+	deliveryState?: ActorMessageDeliveryState | null;
 	/** SDK message UUID, used to deep-link the slide-over. */
 	highlightMessageUuid?: string;
 	/**
@@ -636,6 +639,7 @@ function buildMessageTurn(
 		bodyIsFallback: fallback,
 		createdAt: row.createdAt,
 		isSynthetic,
+		deliveryState: row.deliveryState ?? null,
 		sessionId: row.sessionId,
 		highlightMessageUuid: highlightUuid,
 		sessionInit,
@@ -1212,6 +1216,14 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 				    session-init dropdown + copy. Replaces the bare
 				    timestamp so the human bubble has parity with synthetic
 				    messages and agent reply bubbles. */}
+				{turn.deliveryState && turn.deliveryState !== 'delivered' ? (
+					<div class="mt-1 flex justify-end">
+						<DeliveryStateBadge
+							state={turn.deliveryState}
+							test-id="minimal-thread-delivery-state"
+						/>
+					</div>
+				) : null}
 				<SpaceTaskThreadMessageActions
 					timestamp={turn.createdAt}
 					copyText={turn.body}
@@ -1256,6 +1268,7 @@ function SyntheticMessageTurn({
 			data-to-label={turn.toLabel}
 		>
 			<SyntheticMessageBlock
+				deliveryState={turn.deliveryState}
 				content={turn.body ?? ''}
 				timestamp={turn.createdAt}
 				uuid={turn.highlightMessageUuid}
