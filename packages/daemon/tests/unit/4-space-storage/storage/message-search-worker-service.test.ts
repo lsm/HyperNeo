@@ -1,11 +1,13 @@
 import { describe, test, expect, afterEach } from 'bun:test';
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { MessageSearchWorkerService } from '../../../../src/lib/message-search-worker-service';
 
 function createSearchDb(): string {
-	const path = join(process.cwd(), 'tmp', `message-search-worker-${Date.now()}.db`);
+	const tmpDir = join(process.cwd(), 'tmp');
+	mkdirSync(tmpDir, { recursive: true });
+	const path = join(tmpDir, `message-search-worker-${Date.now()}.db`);
 	const db = new BunDatabase(path);
 	db.exec(`
 		CREATE VIRTUAL TABLE message_search_fts USING fts5(

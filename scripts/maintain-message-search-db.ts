@@ -20,6 +20,7 @@ import {
 	statSync,
 	unlinkSync,
 } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -146,8 +147,13 @@ async function confirm(options: Options): Promise<void> {
   Optimize: yes
   VACUUM:   ${options.skipVacuum ? 'no' : 'yes'}
 `);
-	process.stdout.write('Type "maintain" to continue: ');
-	const input = await new Response(Bun.stdin.stream()).text();
+	const readline = createInterface({ input: process.stdin, output: process.stdout });
+	let input: string;
+	try {
+		input = await readline.question('Type "maintain" to continue: ');
+	} finally {
+		readline.close();
+	}
 	if (input.trim() !== 'maintain') {
 		throw new Error('Aborted by user');
 	}

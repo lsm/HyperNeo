@@ -293,6 +293,66 @@ describe('SessionRepository', () => {
 			expect(row.title).toBe('New Title');
 		});
 
+		it('rebuilds message search rows when status leaves archived', () => {
+			db.exec(`
+				CREATE TABLE sdk_messages (
+					id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					message_type TEXT NOT NULL,
+					message_subtype TEXT,
+					sdk_message TEXT NOT NULL,
+					timestamp TEXT NOT NULL,
+					send_status TEXT,
+					task_id TEXT
+				);
+				CREATE TABLE space_tasks (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					task_number INTEGER NOT NULL,
+					status TEXT NOT NULL,
+					completed_at INTEGER,
+					updated_at INTEGER NOT NULL
+				);
+				CREATE VIRTUAL TABLE message_search_fts USING fts5(
+					kind UNINDEXED,
+					source_id UNINDEXED,
+					message_id UNINDEXED,
+					session_id UNINDEXED,
+					task_id UNINDEXED,
+					space_id UNINDEXED,
+					task_number UNINDEXED,
+					message_type UNINDEXED,
+					title,
+					body,
+					timestamp UNINDEXED,
+					tokenize = 'unicode61'
+				)
+			`);
+			repository.createSession(createDefaultSession({ status: 'archived' }));
+			db.prepare(
+				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+			).run(
+				'msg-1',
+				'session-1',
+				'user',
+				JSON.stringify({
+					type: 'user',
+					uuid: 'uuid-1',
+					message: { role: 'user', content: [{ type: 'text', text: 'restored search marker' }] },
+				}),
+				new Date().toISOString(),
+				'consumed'
+			);
+
+			repository.updateSession('session-1', { status: 'active' });
+
+			const rows = db
+				.prepare(`SELECT source_id, title FROM message_search_fts WHERE message_search_fts MATCH ?`)
+				.all('restored') as Array<{ source_id: string; title: string }>;
+			expect(rows).toEqual([{ source_id: 'msg-1', title: 'Test Session' }]);
+		});
+
 		it('should update workspace path', () => {
 			repository.createSession(createDefaultSession());
 

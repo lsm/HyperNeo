@@ -29,7 +29,9 @@ export function setupMessageHandlers(
 	sessionManager: SessionManager,
 	db?: Database
 ): void {
-	const messageSearchWorker = db ? new MessageSearchWorkerService(db.getDbPath()) : null;
+	const dbPath = db?.getDbPath();
+	const messageSearchWorker =
+		dbPath && dbPath !== ':memory:' ? new MessageSearchWorkerService(dbPath) : null;
 
 	messageHub.onRequest('message.search', async (data, context) => {
 		if (!db) throw new Error('Database not available');
