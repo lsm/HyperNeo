@@ -192,6 +192,31 @@ describe('resolveSpaceMcpSessionPolicy', () => {
 		expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
 	});
 
+	test('routes suffixed workflow workers by embedded execution id even when another session owns the row', () => {
+		const session = makeSession({
+			id: 'space:space-1:task:task-1:exec:exec-1:1',
+			type: 'worker',
+			context: { spaceId: 'space-1', taskId: 'task-1' },
+		});
+		const policy = resolveSpaceMcpSessionPolicy(session, {
+			nodeExecutionRepo: {
+				getByAgentSessionId: () => null,
+				getById: (id) =>
+					id === 'exec-1' ? makeNodeExecution({ id, agentSessionId: 'older-session' }) : null,
+			},
+			taskRepo: { getTask: () => makeTask({ id: 'task-1', spaceId: 'space-1' }) },
+		});
+
+		expect(policy).toMatchObject({
+			role: 'workflow_worker',
+			spaceId: 'space-1',
+			owner: 'task-agent-manager',
+			attachGenericSpaceTools: false,
+			isWorkflowWorker: true,
+		});
+		expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
+	});
+
 	test('routes long-term agents using canonical session identity and prompt provenance', () => {
 		const session = makeSession({
 			id: longTermAgentSessionId('space-1', 'agent-1'),

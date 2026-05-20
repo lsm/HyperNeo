@@ -739,11 +739,18 @@ describe('SpaceRuntimeService', () => {
 	// sessions are owned by other paths and skipped here.
 
 	describe('attachSpaceToolsToMemberSession()', () => {
-		function makeMemberAgentSession() {
+		function makeMemberAgentSession(overrides: Partial<Session> = {}) {
+			const sessionData = makeMemberSession(overrides);
 			return {
-				mergeRuntimeMcpServers: mock((_: Record<string, McpServerConfig>) => {}),
+				mergeRuntimeMcpServers: mock((additional: Record<string, McpServerConfig>) => {
+					sessionData.config.mcpServers = {
+						...(sessionData.config.mcpServers ?? {}),
+						...additional,
+					};
+				}),
 				setRuntimeMcpServers: mock(() => {}),
 				setRuntimeSystemPrompt: mock(() => {}),
+				getSessionData: mock(() => sessionData),
 			} as unknown as AgentSession;
 		}
 
@@ -927,6 +934,43 @@ describe('SpaceRuntimeService', () => {
 			// session is filtered out before getSessionAsync is consulted.
 			expect(mergeMock).toHaveBeenCalledTimes(3);
 			expect(mergeMock.mock.calls[2][0]).toHaveProperty('space-agent-tools');
+
+			await svc.stop();
+		});
+
+		test('start() does not reattach already-provisioned long-term agent sessions', async () => {
+			const agent = makeMemberAgentSession({
+				config: {
+					tools: {},
+					mcpServers: {
+						'space-agent-tools': {} as McpServerConfig,
+					},
+				},
+			});
+			const sessionManager = makeSessionManager(agent);
+			const longTermSession = makeMemberSession({
+				id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+				metadata: {
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: 'agent-1',
+						agentName: 'Long Term',
+					},
+				},
+			});
+			const svc = new SpaceRuntimeService(
+				buildMemberConfig({
+					sessionManager,
+					listSessionsResult: [longTermSession],
+					dbPath: '/tmp/test.db',
+				})
+			);
+
+			svc.start();
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
 
 			await svc.stop();
 		});

@@ -130,8 +130,7 @@ function resolveWorkflowExecution(
 	const executionId = parseExecutionIdFromSubSessionId(session.id);
 	if (!executionId) return null;
 
-	const byEmbeddedId = nodeExecutionRepo?.getById(executionId) ?? null;
-	return byEmbeddedId?.agentSessionId ? null : byEmbeddedId;
+	return nodeExecutionRepo?.getById(executionId) ?? null;
 }
 
 function parseExecutionIdFromSubSessionId(sessionId: string): string | null {

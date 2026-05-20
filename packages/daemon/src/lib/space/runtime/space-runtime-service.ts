@@ -203,6 +203,8 @@ export class SpaceRuntimeService {
 	 * when the daemon stops, mirroring `spaceDbQueryServers` for space-chat sessions.
 	 */
 	private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
+	/** Stores db-query server instances attached to long-term Space agent sessions. */
+	private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
 	/**
 	 * Per-space SpaceAgentNotificationService unsubscribe handles.
 	 * Created when a space's chat session is provisioned; cleaned up on stop.
@@ -457,6 +459,7 @@ export class SpaceRuntimeService {
 		if (!space) return null;
 		const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
 		let session = await sessionManager.getSessionAsync(sessionId);
+		const created = !session;
 		if (!session) {
 			const resolvedPrompt = resolveCustomAgentPrompt(agent, {
 				resolutionContext: { agentId: agent.id, agentName: agent.name },
@@ -523,7 +526,9 @@ export class SpaceRuntimeService {
 				},
 			});
 		}
-		this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
+		if (created || this.missingLongTermAgentMcpServers(session)) {
+			this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
+		}
 		return session;
 	}
 
@@ -593,13 +598,32 @@ export class SpaceRuntimeService {
 			}) as unknown as McpServerConfig;
 		}
 		if (this.config.dbPath) {
-			mcpServers['db-query'] = createDbQueryMcpServer({
+			this.releaseLongTermAgentDbQuery(sessionId);
+			const dbQueryServer = createDbQueryMcpServer({
 				dbPath: this.config.dbPath,
 				scopeType: 'space',
 				scopeValue: space.id,
-			}) as unknown as McpServerConfig;
+			});
+			this.longTermAgentDbQueryServers.set(sessionId, dbQueryServer);
+			mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
 		}
 		session.mergeRuntimeMcpServers(mcpServers);
+	}
+
+	private missingLongTermAgentMcpServers(session: { getSessionData(): Session }): boolean {
+		const current = session.getSessionData().config?.mcpServers;
+		return !current?.['space-agent-tools'];
+	}
+
+	private releaseLongTermAgentDbQuery(sessionId: string): void {
+		const server = this.longTermAgentDbQueryServers.get(sessionId);
+		if (!server) return;
+		try {
+			server.close();
+		} catch (err) {
+			log.warn(`Failed to close db-query server for long-term agent session ${sessionId}:`, err);
+		}
+		this.longTermAgentDbQueryServers.delete(sessionId);
 	}
 
 	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
@@ -858,6 +882,18 @@ export class SpaceRuntimeService {
 		}
 		this.memberSessionDbQueryServers.clear();
 
+		for (const [sessionId, server] of this.longTermAgentDbQueryServers) {
+			try {
+				server.close();
+			} catch (error) {
+				log.warn(
+					`Failed to close db-query server for long-term agent session ${sessionId}:`,
+					error
+				);
+			}
+		}
+		this.longTermAgentDbQueryServers.clear();
+
 		// Tear down per-space SpaceAgentNotificationService subscriptions.
 		for (const [spaceId, unsub] of this.spaceAgentNotificationUnsubs) {
 			try {
@@ -949,6 +985,7 @@ export class SpaceRuntimeService {
 			'session.deleted',
 			(event) => {
 				this.releaseMemberSessionDbQuery(event.sessionId);
+				this.releaseLongTermAgentDbQuery(event.sessionId);
 			},
 			{ subscriberName: 'SpaceRuntimeService.sessionDeleted' }
 		);
