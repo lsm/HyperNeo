@@ -116,6 +116,17 @@ const repoResult = {
 	],
 };
 
+const pollingOnlyRepoResult = {
+	repositories: [
+		{
+			...repoResult.repositories[0],
+			webhookEnabled: false,
+			pollingEnabled: true,
+			webhookSecret: null,
+		},
+	],
+};
+
 function setupRequests() {
 	mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
 	mockRequest.mockImplementation((method) => {
@@ -286,6 +297,53 @@ describe('SpaceExternalEventsSettings', () => {
 		});
 	});
 
+	it('does not refresh from stale action closures after the space changes', async () => {
+		let resolveDisable!: (value: unknown) => void;
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method, params) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: params.spaceId,
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') {
+				return Promise.resolve({
+					repositories: [
+						{
+							...repoResult.repositories[0],
+							owner: params.spaceId === 'space-1' ? 'acme' : 'beta',
+						},
+					],
+				});
+			}
+			if (method === 'space.github.disable') {
+				return new Promise((resolve) => {
+					resolveDisable = resolve;
+				});
+			}
+			return Promise.resolve({});
+		});
+
+		const view = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		expect(await view.findByText('acme/widgets')).toBeTruthy();
+		fireEvent.click(view.getByText('Enabled for this space'));
+		await waitFor(() => expect(resolveDisable).toBeTypeOf('function'));
+		view.rerender(<SpaceExternalEventsSettings spaceId="space-2" />);
+		expect(await view.findByText('beta/widgets')).toBeTruthy();
+
+		const callCountBeforeStaleResolve = mockRequest.mock.calls.length;
+		resolveDisable({});
+
+		await waitFor(() => {
+			expect(mockRequest.mock.calls.length).toBe(callCountBeforeStaleResolve);
+		});
+		expect(view.queryByText('acme/widgets')).toBeNull();
+	});
+
 	it('shows connection errors when disconnected', async () => {
 		mockGetHubIfConnected.mockReturnValue(null);
 
@@ -414,6 +472,55 @@ describe('SpaceExternalEventsSettings', () => {
 			await findByText('Webhook secret is required because polling is disabled for GitHub')
 		).toBeTruthy();
 		expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
+	});
+
+	it('blocks repo toggles that remove every working delivery mode', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: 'space-1',
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve(pollingOnlyRepoResult);
+			return Promise.resolve({});
+		});
+		const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await findByText('acme/widgets');
+
+		fireEvent.click(getByText('Polling'));
+
+		expect(mockToastError).toHaveBeenCalledWith(
+			'Repository watch needs webhooks with a secret or polling enabled'
+		);
+		expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
+	});
+
+	it('disables repo polling toggles when polling capability is disabled', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockImplementation((method) => {
+			if (method === 'externalEvents.extensions.list') {
+				return Promise.resolve(pollingDisabledExtensionResult);
+			}
+			if (method === 'space.github.listConfig') {
+				return Promise.resolve({
+					spaceId: 'space-1',
+					source: 'github',
+					enabled: true,
+					settings: {},
+				});
+			}
+			if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+			return Promise.resolve({});
+		});
+		const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+		await findByText('acme/widgets');
+
+		expect(screen.getAllByRole('checkbox').at(-1)).toHaveProperty('disabled', true);
 	});
 
 	it('removes watched repositories', async () => {

@@ -91,6 +91,8 @@ export function SpaceExternalEventsSettings({
 	const [webhookSecret, setWebhookSecret] = useState('');
 	const [formError, setFormError] = useState<string | null>(null);
 	const refreshTokenRef = useRef(0);
+	const spaceIdRef = useRef(spaceId);
+	spaceIdRef.current = spaceId;
 
 	const githubExtension = extensions.find((extension) => extension.source === 'github');
 	const githubGloballyEnabled = githubExtension?.config.globallyEnabled ?? false;
@@ -103,9 +105,9 @@ export function SpaceExternalEventsSettings({
 	async function refresh(): Promise<void> {
 		const refreshToken = refreshTokenRef.current + 1;
 		refreshTokenRef.current = refreshToken;
-		const refreshSpaceId = spaceId;
+		const refreshSpaceId = spaceIdRef.current;
 		const isCurrentRefresh = () =>
-			refreshTokenRef.current === refreshToken && refreshSpaceId === spaceId;
+			refreshTokenRef.current === refreshToken && refreshSpaceId === spaceIdRef.current;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
 			if (isCurrentRefresh()) {
@@ -157,7 +159,12 @@ export function SpaceExternalEventsSettings({
 		void refresh();
 	}, [spaceId]);
 
+	function isActionCurrent(actionSpaceId: string): boolean {
+		return spaceIdRef.current === actionSpaceId;
+	}
+
 	async function setGlobalEnabled(source: string, enabled: boolean): Promise<void> {
+		const actionSpaceId = spaceIdRef.current;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
 			toast.error('Not connected to server');
@@ -166,18 +173,21 @@ export function SpaceExternalEventsSettings({
 		try {
 			setBusy(`global:${source}`);
 			await hub.request('externalEvents.extensions.setGlobalEnabled', { source, enabled });
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.success(`${source} ${enabled ? 'enabled' : 'disabled'} globally`);
 			await refresh();
 		} catch (err) {
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.error(
 				`Failed to update ${source}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			setBusy(null);
+			if (isActionCurrent(actionSpaceId)) setBusy(null);
 		}
 	}
 
 	async function setSpaceEnabled(enabled: boolean): Promise<void> {
+		const actionSpaceId = spaceIdRef.current;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
 			toast.error('Not connected to server');
@@ -185,20 +195,25 @@ export function SpaceExternalEventsSettings({
 		}
 		try {
 			setBusy('space:github');
-			await hub.request(enabled ? 'space.github.enable' : 'space.github.disable', { spaceId });
+			await hub.request(enabled ? 'space.github.enable' : 'space.github.disable', {
+				spaceId: actionSpaceId,
+			});
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.success(`GitHub events ${enabled ? 'enabled' : 'disabled'} for this space`);
 			await refresh();
 		} catch (err) {
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.error(
 				`Failed to update GitHub events: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			setBusy(null);
+			if (isActionCurrent(actionSpaceId)) setBusy(null);
 		}
 	}
 
 	async function addRepo(event: Event): Promise<void> {
 		event.preventDefault();
+		const actionSpaceId = spaceIdRef.current;
 		const parsed = splitRepoInput(repoInput);
 		if (!parsed) {
 			setFormError('Enter a repository as owner/name or https://github.com/owner/name');
@@ -218,21 +233,23 @@ export function SpaceExternalEventsSettings({
 				return;
 			}
 			await hub.request('space.github.watchRepo', {
-				spaceId,
+				spaceId: actionSpaceId,
 				owner: parsed.owner,
 				repo: parsed.repo,
 				webhookSecret: secret || undefined,
 				webhookEnabled: Boolean(secret),
 				pollingEnabled: !secret,
 			});
+			if (!isActionCurrent(actionSpaceId)) return;
 			setRepoInput('');
 			setWebhookSecret('');
 			toast.success(`Watching ${parsed.owner}/${parsed.repo}`);
 			await refresh();
 		} catch (err) {
+			if (!isActionCurrent(actionSpaceId)) return;
 			setFormError(err instanceof Error ? err.message : String(err));
 		} finally {
-			setBusy(null);
+			if (isActionCurrent(actionSpaceId)) setBusy(null);
 		}
 	}
 
@@ -240,32 +257,46 @@ export function SpaceExternalEventsSettings({
 		repo: GitHubWatchedRepo,
 		patch: Partial<GitHubWatchedRepo>
 	): Promise<void> {
+		const actionSpaceId = spaceIdRef.current;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
 			toast.error('Not connected to server');
 			return;
 		}
+		const nextWebhookEnabled = patch.webhookEnabled ?? repo.webhookEnabled;
+		const nextPollingEnabled = patch.pollingEnabled ?? repo.pollingEnabled;
+		if (nextPollingEnabled && !githubPollingEnabled) {
+			toast.error('GitHub polling capability is disabled');
+			return;
+		}
+		if (!nextPollingEnabled && (!nextWebhookEnabled || !repo.webhookSecret)) {
+			toast.error('Repository watch needs webhooks with a secret or polling enabled');
+			return;
+		}
 		try {
 			setBusy(`repo:${repo.id}`);
 			await hub.request('space.github.watchRepo', {
-				spaceId,
+				spaceId: actionSpaceId,
 				owner: repo.owner,
 				repo: repo.repo,
 				enabled: patch.enabled ?? repo.enabled,
-				webhookEnabled: patch.webhookEnabled ?? repo.webhookEnabled,
-				pollingEnabled: patch.pollingEnabled ?? repo.pollingEnabled,
+				webhookEnabled: nextWebhookEnabled,
+				pollingEnabled: nextPollingEnabled,
 			});
+			if (!isActionCurrent(actionSpaceId)) return;
 			await refresh();
 		} catch (err) {
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.error(
 				`Failed to update ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			setBusy(null);
+			if (isActionCurrent(actionSpaceId)) setBusy(null);
 		}
 	}
 
 	async function removeRepo(repo: GitHubWatchedRepo): Promise<void> {
+		const actionSpaceId = spaceIdRef.current;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
 			toast.error('Not connected to server');
@@ -274,18 +305,20 @@ export function SpaceExternalEventsSettings({
 		try {
 			setBusy(`repo:${repo.id}`);
 			await hub.request('space.github.unwatchRepo', {
-				spaceId,
+				spaceId: actionSpaceId,
 				owner: repo.owner,
 				repo: repo.repo,
 			});
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.success(`Stopped watching ${repo.owner}/${repo.repo}`);
 			await refresh();
 		} catch (err) {
+			if (!isActionCurrent(actionSpaceId)) return;
 			toast.error(
 				`Failed to remove ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
 			);
 		} finally {
-			setBusy(null);
+			if (isActionCurrent(actionSpaceId)) setBusy(null);
 		}
 	}
 
@@ -405,6 +438,7 @@ export function SpaceExternalEventsSettings({
 										key={repo.id}
 										repo={repo}
 										disabled={disabled || busy === `repo:${repo.id}` || !githubControlsEnabled}
+										pollingEnabled={githubPollingEnabled}
 										onUpdate={(patch) => updateRepo(repo, patch)}
 										onRemove={() => removeRepo(repo)}
 									/>
@@ -475,11 +509,12 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
 interface GitHubRepoRowProps {
 	repo: GitHubWatchedRepo;
 	disabled: boolean;
+	pollingEnabled: boolean;
 	onUpdate: (patch: Partial<GitHubWatchedRepo>) => Promise<void>;
 	onRemove: () => Promise<void>;
 }
 
-function GitHubRepoRow({ repo, disabled, onUpdate, onRemove }: GitHubRepoRowProps) {
+function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: GitHubRepoRowProps) {
 	return (
 		<div
 			class={cn(
@@ -532,7 +567,7 @@ function GitHubRepoRow({ repo, disabled, onUpdate, onRemove }: GitHubRepoRowProp
 					<input
 						type="checkbox"
 						checked={repo.pollingEnabled}
-						disabled={disabled}
+						disabled={disabled || !pollingEnabled}
 						onChange={() => onUpdate({ pollingEnabled: !repo.pollingEnabled })}
 						class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
 					/>
