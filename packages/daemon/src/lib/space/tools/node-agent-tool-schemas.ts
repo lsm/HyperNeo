@@ -89,6 +89,26 @@ export const SendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
 // ---------------------------------------------------------------------------
+// external event subscriptions
+// ---------------------------------------------------------------------------
+
+export const SubscribeExternalEventSchema = z.object({
+	topicPattern: z
+		.string()
+		.min(1)
+		.describe('Glob pattern matching event topics (e.g. github/lsm/neokai/pull_request.review_*)'),
+	label: z.string().describe('Optional label for diagnostics').optional(),
+});
+
+export type SubscribeExternalEventInput = z.infer<typeof SubscribeExternalEventSchema>;
+
+export const UnsubscribeExternalEventSchema = z.object({
+	topicPattern: z.string().min(1).describe('The topic pattern to unsubscribe'),
+});
+
+export type UnsubscribeExternalEventInput = z.infer<typeof UnsubscribeExternalEventSchema>;
+
+// ---------------------------------------------------------------------------
 // save_artifact
 // ---------------------------------------------------------------------------
 
@@ -454,6 +474,8 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_channels: ListChannelsSchema,
 	list_gates: ListGatesSchema,
 	read_gate: ReadGateSchema,
+	subscribe_external_event: SubscribeExternalEventSchema,
+	unsubscribe_external_event: UnsubscribeExternalEventSchema,
 	restore_node_agent: RestoreNodeAgentSchema,
 	list_tasks: ListTasksSchema,
 	get_task: GetTaskSchema,

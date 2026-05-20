@@ -1,10 +1,9 @@
 /**
  * Topic validation for external-event topics and subscription glob patterns.
  *
- * Topic shape is source-specific. GitHub uses
- * `github/owner/repo/resource/entityId.action` (5 segments); other sources may
- * use different depths. Each source extension defines and enforces its own
- * schema.
+ * Topic shape is source-specific. GitHub currently uses
+ * `github/owner/repo/resource.action` (4 segments); other sources may use
+ * different depths. Each source extension defines and enforces its own schema.
  *
  * `validateGlobPattern()` enforces only the universal structural constraints
  * shared by all sources: non-empty, no empty segments, no `..`, no `**`,
@@ -53,7 +52,7 @@ export function validateGlobPattern(pattern: string): ValidationResult {
 			valid: false,
 			reason:
 				`Topic pattern must have at least 2 segments (source/scope); got ${segments.length}. ` +
-				`Example: 'github/lsm/neokai/pull_request/5.review_submitted'`,
+				`Example: 'github/lsm/neokai/pull_request.review_submitted'`,
 		};
 	}
 

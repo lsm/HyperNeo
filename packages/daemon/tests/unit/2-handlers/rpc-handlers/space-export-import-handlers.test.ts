@@ -411,6 +411,44 @@ describe('Space Export/Import RPC Handlers', () => {
 			expect(wf.nodes[0].name).toBe('Code');
 		});
 
+		it('exports static external event interests for agent slots', async () => {
+			const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+			workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: 'Pipeline',
+				nodes: [
+					{
+						name: 'Code',
+						agents: [
+							{
+								agentId: agent.id,
+								name: 'Coder',
+								eventInterests: [
+									{
+										topic: 'github/*/*/pull_request.review_*',
+										label: 'PR reviews',
+									},
+								],
+							},
+						],
+					},
+				],
+				transitions: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
+				spaceId: SPACE_ID,
+			});
+
+			expect(bundle.workflows[0].nodes[0].agents[0].eventInterests).toEqual([
+				{
+					topic: 'github/*/*/pull_request.review_*',
+					label: 'PR reviews',
+				},
+			]);
+		});
+
 		it('includes only referenced agents in the bundle', async () => {
 			const coder = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
 			agentRepo.create({ spaceId: SPACE_ID, name: 'Reviewer' });
@@ -631,6 +669,88 @@ describe('Space Export/Import RPC Handlers', () => {
 		it('throws for invalid bundle', async () => {
 			await expect(
 				call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle: { bad: true } })
+			).rejects.toThrow('Invalid bundle');
+		});
+
+		it('imports static external event interests for agent slots', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[
+					{
+						name: 'Pipeline',
+						nodes: [
+							{
+								agentRef: 'Coder',
+								name: 'Code',
+								eventInterests: [
+									{
+										topic: 'github/*/*/pull_request.review_*',
+										label: 'PR reviews',
+									},
+								],
+							},
+						],
+					},
+				]
+			);
+
+			const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+				spaceId: SPACE_ID,
+				bundle,
+			});
+
+			const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+			expect(workflow.nodes[0].agents[0].eventInterests).toEqual([
+				{
+					topic: 'github/*/*/pull_request.review_*',
+					label: 'PR reviews',
+				},
+			]);
+		});
+
+		it('rejects invalid static external event interest topics during import', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[
+					{
+						name: 'Pipeline',
+						nodes: [
+							{
+								agentRef: 'Coder',
+								name: 'Code',
+								eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+							},
+						],
+					},
+				]
+			);
+
+			await expect(
+				call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+			).rejects.toThrow('Invalid bundle');
+		});
+
+		it('rejects too many static external event interests during import', async () => {
+			const bundle = makeBundle(
+				[{ name: 'Coder', role: 'coder' }],
+				[
+					{
+						name: 'Pipeline',
+						nodes: [
+							{
+								agentRef: 'Coder',
+								name: 'Code',
+								eventInterests: Array.from({ length: 11 }, (_, index) => ({
+									topic: `github/*/*/pull_request_${index}.opened`,
+								})),
+							},
+						],
+					},
+				]
+			);
+
+			await expect(
+				call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
 			).rejects.toThrow('Invalid bundle');
 		});
 
@@ -1586,7 +1706,11 @@ type BundleAgent = {
 };
 type BundleWorkflow = {
 	name: string;
-	nodes: Array<{ agentRef: string; name: string }>;
+	nodes: Array<{
+		agentRef: string;
+		name: string;
+		eventInterests?: Array<{ topic: string; label?: string }>;
+	}>;
 };
 
 function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object {
@@ -1608,7 +1732,13 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 			name: w.name,
 			// Each single-agent node wraps the agentRef in an agents array
 			nodes: w.nodes.map((s) => ({
-				agents: [{ agentRef: s.agentRef, name: s.agentRef }],
+				agents: [
+					{
+						agentRef: s.agentRef,
+						name: s.agentRef,
+						...(s.eventInterests ? { eventInterests: s.eventInterests } : {}),
+					},
+				],
 				name: s.name,
 			})),
 			startNode: w.nodes[0]?.name ?? '',
@@ -1619,6 +1749,8 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 }
 
 function makeBundleWithCondition(type: string, expression: string | undefined): object {
+	void type;
+	void expression;
 	return {
 		version: 1,
 		type: 'bundle',

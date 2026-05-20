@@ -47,7 +47,7 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 		id: `evt-${Math.random().toString(36).slice(2, 8)}`,
 		spaceId: SPACE_ID,
 		source: 'github',
-		topic: 'github/lsm/neokai/pull_request.review_submitted',
+		topic: 'github/lsm/neokai/pull_request/42.review_submitted',
 		occurredAt: 1_700_000_000_000,
 		ingestedAt: 1_700_000_001_000,
 		dedupeKey: `dk-${Math.random().toString(36).slice(2, 8)}`,
