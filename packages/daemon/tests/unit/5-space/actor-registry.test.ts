@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { parseAddress } from '../../../../messaging/src/address';
 import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry';
+import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
@@ -149,10 +150,48 @@ describe('SpaceActorRegistryAdapter', () => {
 			spaceId: space.id,
 			name: 'Long Term Agent',
 		});
+		sessionRepo.createSession(
+			makeSession(longTermAgentSessionId(space.id, agent.id), {
+				context: { spaceId: space.id },
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: agent.id,
+						agentName: agent.name,
+					},
+				},
+			})
+		);
 		const reservedNameAgent = spaceAgentRepo.create({
 			spaceId: space.id,
 			name: 'Coordinator',
 		});
+		sessionRepo.createSession(
+			makeSession(longTermAgentSessionId(space.id, reservedNameAgent.id), {
+				context: { spaceId: space.id },
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: reservedNameAgent.id,
+						agentName: reservedNameAgent.name,
+					},
+				},
+			})
+		);
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: space.id,
 			name: 'Coding Workflow',
