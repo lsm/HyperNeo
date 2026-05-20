@@ -141,6 +141,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 					.map((f) => ({
 						name: f.name,
 						type: f.type,
+						writers: [...f.writers].sort(),
 						check: serializeCheck(f.check),
 					})),
 				script: g.script ? g.script.source : null,

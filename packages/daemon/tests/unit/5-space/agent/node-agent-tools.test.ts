@@ -1460,6 +1460,65 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 		expect(data.gateWrite).toBeUndefined();
 	});
 
+	test('gate-write authorizes fields whose writers reference current agent name', async () => {
+		const gate: Gate = {
+			id: 'gate-agent-writer',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		workflow.nodes.push({
+			id: 'node-qa',
+			name: 'QA',
+			agents: [{ agentId: 'agent-qa', name: 'qa' }],
+		});
+		workflow.channels = [{ id: 'ch-review-qa', from: 'Review', to: 'QA', gateId: gate.id }];
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, {
+			mySessionId: ctx.reviewerSessionId,
+			myAgentName: 'reviewer',
+			workflow,
+			workflowNodeId: 'node-review',
+			gateDataRepo,
+			agentMessageRouter: new AgentMessageRouter({
+				nodeExecutionRepo: ctx.nodeExecutionRepo,
+				workflowRunId: ctx.workflowRunId,
+				workflowChannels: workflow.channels,
+				nodeGroups: { Review: ['reviewer'], QA: ['qa'] },
+				messageInjector: async () => {},
+			}),
+		});
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			'node-qa',
+			'qa',
+			'in_progress',
+			null,
+			'session-qa'
+		);
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'QA',
+			message: 'approved',
+			data: { approved: true },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateWrite.gateOpen).toBe(true);
+		expect(gateDataRepo.get(ctx.workflowRunId, 'gate-agent-writer')?.data.approved).toBe(true);
+	});
+
 	test('only authorized fields are merged into gate', async () => {
 		const gate: Gate = {
 			id: 'gate-auth',
