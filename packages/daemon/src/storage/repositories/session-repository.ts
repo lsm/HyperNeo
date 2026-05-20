@@ -441,6 +441,18 @@ export class SessionRepository {
 		return rows.map((r) => this.rowToSession(r));
 	}
 
+	listSessionsBySpaceAgent(spaceId: string, agentId: string): Session[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM sessions
+			 WHERE json_extract(session_context, '$.spaceId') = ?
+			   AND json_extract(metadata, '$.promptProvenance.agentId') = ?
+			 ORDER BY last_active_at DESC`
+		);
+		const rows = stmt.all(spaceId, agentId) as Record<string, unknown>[];
+
+		return rows.map((r) => this.rowToSession(r));
+	}
+
 	/**
 	 * Batch-fetch sessions by their IDs.
 	 * Returns a Map<id, Session> for the found sessions.

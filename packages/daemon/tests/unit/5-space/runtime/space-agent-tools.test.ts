@@ -2909,7 +2909,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('not routable from this tool');
+		expect(parsed.error).toContain('Long-term agent messaging is not available in this context.');
 		expect(tam.subSessionInjects).toHaveLength(0);
 	});
 
@@ -2944,7 +2944,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('not routable from this tool');
+		expect(parsed.error).toContain('Long-term agent messaging is not available in this context.');
 		expect(tam.subSessionInjects).toHaveLength(0);
 	});
 

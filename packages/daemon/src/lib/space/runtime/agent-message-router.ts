@@ -17,6 +17,9 @@
  */
 
 import { parseAddress } from '../../../../../messaging/src/address';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
+import type { ActorResolver } from '../../../../../messaging/src/contracts';
+import { SpaceDeliveryFacade } from '../messaging-adapter';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { WorkflowChannel } from '@neokai/shared';
@@ -96,6 +99,19 @@ export interface AgentMessageRouterConfig {
 	 * the default `space:chat:${spaceId}`). Returns `null` for default routing.
 	 */
 	replyRoutingLookup?: (agentName?: string | null) => string | null;
+	/** Generic Space actor resolver for @handle/@role long-term agent DMs. */
+	messageResolver?: ActorResolver;
+	/** Deliver to or activate long-term Space agents. */
+	longTermAgentDelivery?: {
+		deliverToSession?: (
+			actor: ActorRef,
+			message: MessageRecord
+		) => Promise<string | null | undefined>;
+		queueForActivation?: (
+			actor: ActorRef,
+			message: MessageRecord
+		) => Promise<string | null | undefined>;
+	};
 }
 
 export interface AgentMessageParams {
@@ -179,6 +195,8 @@ export class AgentMessageRouter {
 			onMessageQueued,
 			replyRoutingLookup,
 			workflowNodeNameById,
+			messageResolver,
+			longTermAgentDelivery,
 		} = this.config;
 		const resolver = new ChannelResolver(workflowChannels);
 		const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
@@ -292,16 +310,70 @@ export class AgentMessageRouter {
 				}
 				continue;
 			}
+			if (address.kind === 'handle' || address.kind === 'role') {
+				if (!messageResolver || !longTermAgentDelivery || !spaceId) {
+					return {
+						success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+						delivered,
+						failed,
+						reason: `Generic target ${target} is not supported by node-agent send_message in this context.`,
+						queued: queued.length > 0 ? queued : undefined,
+						notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+					};
+				}
+				const rawMessage = formatAgentMessage({
+					fromLevel: 'node-agent',
+					fromAgentName,
+					toLevel: 'space-agent',
+					body: `${message}${dataAppendix}`,
+					taskId,
+					taskNumber,
+					nodeId: fromAgentName,
+					replyToSessionId: fromSessionId,
+				});
+				const messageRecord: MessageRecord = {
+					messageId: `msg_node_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+					spaceId,
+					senderActorId: `worker:${encodeURIComponent(workflowRunId)}:unresolved:${encodeURIComponent(fromAgentName)}`,
+					targets: [target],
+					body: rawMessage,
+					kind: 'message',
+					workflowRunId,
+					...(taskId ? { taskId } : {}),
+					createdAt: Date.now(),
+				};
+				const routed = await new SpaceDeliveryFacade({
+					resolver: messageResolver,
+					deliverToSession: longTermAgentDelivery.deliverToSession,
+					queueForActivation: longTermAgentDelivery.queueForActivation,
+				}).routeMessage(messageRecord);
+				for (const delivery of routed.deliveries) {
+					const targetName = delivery.targetActorId ?? target;
+					if (delivery.state === 'delivered' && delivery.deliveredSessionId) {
+						delivered.push({ agentName: targetName, sessionId: delivery.deliveredSessionId });
+					} else if (delivery.state === 'queued') {
+						queued.push({ agentName: targetName, messageId: delivery.deliveryId });
+					} else if (delivery.state === 'failed') {
+						failed.push({
+							agentName: targetName,
+							sessionId: delivery.deliveredSessionId ?? '',
+							error: delivery.lastError ?? 'Delivery failed',
+						});
+					}
+				}
+				continue;
+			}
 			if (address.kind !== 'worker') {
 				return {
 					success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
 					delivered,
 					failed,
-					reason: `Generic target ${target} is not supported by node-agent send_message. Use @coordinator, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
+					reason: `Generic target ${target} is not supported by node-agent send_message. Use @coordinator, @handle, @role:<role>, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
 					queued: queued.length > 0 ? queued : undefined,
 					notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 				};
 			}
+
 			const runId = address.workflowRunId ?? workflowRunId;
 			if (runId !== workflowRunId) {
 				notFound.push(target);

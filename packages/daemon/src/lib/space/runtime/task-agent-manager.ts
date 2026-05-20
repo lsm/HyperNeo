@@ -70,6 +70,8 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
+import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 /** Agent identity metadata for sub-session creation. */
@@ -262,6 +264,22 @@ export interface TaskAgentManagerConfig {
 	replyRoutingRegistry?: ReplyRoutingRegistry;
 	/** Persistent per-space agent memory repository. */
 	memoryRepo?: AgentMemoryRepository;
+	/** Generic Space actor resolver factory for @handle/@role long-term agent DMs. */
+	messageResolverFactory?: (
+		spaceId: string,
+		context?: { workflowRunId?: string; nodeId?: string; agentName?: string }
+	) => ActorResolver | undefined;
+	/** Deliver to or activate long-term Space agents. */
+	longTermAgentDelivery?: {
+		deliverToSession?: (
+			actor: ActorRef,
+			message: MessageRecord
+		) => Promise<string | null | undefined>;
+		queueForActivation?: (
+			actor: ActorRef,
+			message: MessageRecord
+		) => Promise<string | null | undefined>;
+	};
 	/** Goal service for terminal goal-task side effects. */
 	goalService?: import('../goals/goal-service').SpaceGoalService;
 }
@@ -3524,6 +3542,12 @@ export class TaskAgentManager {
 				});
 			},
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
+			messageResolver: this.config.messageResolverFactory?.(ctx.spaceId, {
+				workflowRunId: ctx.workflowRunId,
+				nodeId: ctx.workflowNodeId,
+				agentName: ctx.agentName,
+			}),
+			longTermAgentDelivery: this.config.longTermAgentDelivery,
 		});
 	}
 
@@ -3634,6 +3658,12 @@ export class TaskAgentManager {
 				(workflow?.nodes ?? []).map((node) => [node.id, node.name])
 			),
 			pendingMessageRepo: this.config.pendingMessageRepo,
+			messageResolver: this.config.messageResolverFactory?.(spaceId, {
+				workflowRunId,
+				nodeId: workflowNodeId,
+				agentName,
+			}),
+			longTermAgentDelivery: this.config.longTermAgentDelivery,
 			spaceId,
 			taskId,
 			taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
