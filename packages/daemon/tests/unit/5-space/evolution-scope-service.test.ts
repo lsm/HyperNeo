@@ -1,0 +1,158 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
+import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
+import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
+import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
+import { createSpaceTables } from '../helpers/space-test-db';
+
+describe('EvolutionScopeService', () => {
+	let db: Database;
+	let service: EvolutionScopeService;
+	let evolutionRepo: EvolutionRepository;
+	let goalRepo: SpaceGoalRepository;
+	let taskRepo: SpaceTaskRepository;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let workflowRepo: SpaceWorkflowRepository;
+	let spaceId: string;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSpaceTables(db);
+
+		const spaceRepo = new SpaceRepository(db as never);
+		evolutionRepo = new EvolutionRepository(db as never);
+		goalRepo = new SpaceGoalRepository(db as never);
+		taskRepo = new SpaceTaskRepository(db as never);
+		workflowRunRepo = new SpaceWorkflowRunRepository(
+			db as never,
+			new GateOpenStateRepository(db as never)
+		);
+		workflowRepo = new SpaceWorkflowRepository(db as never);
+		service = new EvolutionScopeService({
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+		});
+
+		spaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/forge-service-test',
+			slug: 'forge-service-test',
+			name: 'Forge Service Test',
+		}).id;
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	it('creates a mission scope from an existing recurring SpaceGoal', () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Recurring Forge check-in',
+			description: 'Reduce review churn over time',
+			type: 'recurring',
+		});
+
+		const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+
+		expect(scope).toMatchObject({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Recurring Forge check-in',
+			objective: 'Reduce review churn over time',
+		});
+		expect(service.resolveScopeForGoal({ spaceGoalId: goal.id })?.id).toBe(scope.id);
+	});
+
+	it('attaches scheduled goal task evidence by resolving scope through spaceGoalId', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Weekly check-in', type: 'recurring' });
+		const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Scheduled check-in task',
+			description: 'Review goal progress',
+			goalId: goal.id,
+			createdByTaskScheduleId: 'schedule-1',
+		});
+
+		const evidence = service.attachTaskEvidence({ taskId: task.id });
+
+		expect(evidence).toMatchObject({
+			scopeId: scope.id,
+			kind: 'task',
+			sourceId: task.id,
+			summary: 'Task #1: Scheduled check-in task',
+		});
+		expect(evidence.metadata).toMatchObject({
+			workflowRunId: null,
+			createdByTaskScheduleId: 'schedule-1',
+		});
+	});
+
+	it('attaches workflow-run evidence through its goal-linked parent task', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Runtime check-in', type: 'recurring' });
+		const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+		const workflow = workflowRepo.createWorkflow({
+			spaceId,
+			name: 'Check-in workflow',
+			description: 'Run check-in',
+		});
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Check-in run',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Check-in task',
+			description: 'Review goal progress',
+			goalId: goal.id,
+		});
+		taskRepo.updateTask(task.id, { workflowRunId: run.id });
+
+		const evidence = service.attachWorkflowRunEvidence({ workflowRunId: run.id });
+
+		expect(evidence).toMatchObject({
+			scopeId: scope.id,
+			kind: 'workflow_run',
+			sourceId: run.id,
+			summary: 'Workflow run: Check-in run',
+		});
+		expect(evidence.metadata.workflowId).toBe(workflow.id);
+	});
+
+	it('adds manual notes and metric snapshots to scope timeline', () => {
+		const scope = service.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Manual timeline',
+			objective: 'Collect evidence',
+		});
+		const note = service.addManualNoteEvidence({
+			scopeId: scope.id,
+			summary: 'Reviewer noted repeated issue',
+		});
+		const { snapshot, evidence } = service.addMetricSnapshotEvidence({
+			scopeId: scope.id,
+			values: { reviewComments: 2 },
+			source: 'manual',
+			note: 'After first check-in',
+			capturedAt: 123,
+		});
+
+		const timeline = service.listTimeline(scope.id);
+
+		expect(timeline.scope.id).toBe(scope.id);
+		expect(timeline.evidence.map((item) => item.id)).toContain(note.id);
+		expect(timeline.evidence.map((item) => item.id)).toContain(evidence.id);
+		expect(timeline.metricSnapshots[0]?.id).toBe(snapshot.id);
+	});
+});
