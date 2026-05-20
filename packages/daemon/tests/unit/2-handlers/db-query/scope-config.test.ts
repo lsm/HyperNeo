@@ -73,13 +73,19 @@ describe('scope-config', () => {
 				'mcp_audit_log',
 				'task_schedules',
 				'space_agent_memory',
+				'evolution_scopes',
+				'evolution_evidence',
+				'evolution_episodes',
+				'evolution_lessons',
+				'evolution_task_proposals',
+				'evolution_metric_snapshots',
 				// Main-DB tables exposed with space-scoped filtering via session ID prefix:
 				'sessions',
 				'sdk_messages',
 				'session_groups',
 				'session_group_members',
 			]);
-			expect(names).toHaveLength(19);
+			expect(names).toHaveLength(25);
 		});
 
 		it('all table configs have a description', () => {

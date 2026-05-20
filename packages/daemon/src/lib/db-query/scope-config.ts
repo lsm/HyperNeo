@@ -341,6 +341,72 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'Persistent agent-written Space memories with keys, content, tags, and access metadata.',
 	},
+	{
+		tableName: 'evolution_scopes',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Forge evolution scopes that define bounded learning loops for a Space or Space goal.',
+	},
+	{
+		tableName: 'evolution_evidence',
+		scopeJoin: {
+			localColumn: 'scope_id',
+			joinTable: 'evolution_scopes',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description:
+			'Evidence references collected for Forge evolution scopes, such as tasks, runs, sessions, notes, and metric snapshots.',
+	},
+	{
+		tableName: 'evolution_episodes',
+		scopeJoin: {
+			localColumn: 'scope_id',
+			joinTable: 'evolution_scopes',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description:
+			'Forge learning episodes that summarize evidence, findings, and outcomes for a scope.',
+	},
+	{
+		tableName: 'evolution_lessons',
+		scopeJoin: {
+			localColumn: 'scope_id',
+			joinTable: 'evolution_scopes',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description:
+			'Candidate and active Forge lessons derived from evolution episodes for future scoped work.',
+	},
+	{
+		tableName: 'evolution_task_proposals',
+		scopeJoin: {
+			localColumn: 'scope_id',
+			joinTable: 'evolution_scopes',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description:
+			'Follow-up Space task proposals produced from Forge evolution findings and lessons.',
+	},
+	{
+		tableName: 'evolution_metric_snapshots',
+		scopeJoin: {
+			localColumn: 'scope_id',
+			joinTable: 'evolution_scopes',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description: 'Metric snapshots captured for Forge evolution scopes over time.',
+	},
 	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
 	{
 		tableName: 'sessions',
