@@ -148,7 +148,7 @@ describe('SpaceWorkflowManager', () => {
 								{
 									agentId: 'agent-1',
 									name: 'coder',
-									eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+									eventInterests: [{ topic: 'github/**/pull_request/*.opened' }],
 								},
 							],
 						},
@@ -203,7 +203,7 @@ describe('SpaceWorkflowManager', () => {
 								{
 									agentId: 'agent-1',
 									name: 'coder',
-									eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+									eventInterests: [{ topic: 'github/**/pull_request/*.opened' }],
 								},
 							],
 						},

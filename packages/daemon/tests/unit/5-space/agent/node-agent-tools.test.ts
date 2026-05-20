@@ -2165,13 +2165,13 @@ describe('node-agent-tools: external event subscriptions', () => {
 		);
 
 		const result = await handlers.subscribe_external_event({
-			topicPattern: 'github/*/*/pull_request.*',
+			topicPattern: 'github/*/*/pull_request/*.*',
 			label: 'PR updates',
 		});
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		expect(calls).toEqual([{ topicPattern: 'github/*/*/pull_request.*', label: 'PR updates' }]);
+		expect(calls).toEqual([{ topicPattern: 'github/*/*/pull_request/*.*', label: 'PR updates' }]);
 
 		const auditRepo = new McpAuditLogRepository(ctx.db);
 		const entries = auditRepo
@@ -2179,7 +2179,7 @@ describe('node-agent-tools: external event subscriptions', () => {
 			.filter((entry) => entry.toolName === 'subscribe_external_event');
 		expect(entries).toHaveLength(1);
 		expect(entries[0].paramsSummary).toBe(
-			JSON.stringify({ topicPattern: 'github/*/*/pull_request.*', label: 'PR updates' })
+			JSON.stringify({ topicPattern: 'github/*/*/pull_request/*.*', label: 'PR updates' })
 		);
 	});
 
@@ -2195,19 +2195,19 @@ describe('node-agent-tools: external event subscriptions', () => {
 		);
 
 		const result = await handlers.unsubscribe_external_event({
-			topicPattern: 'github/*/*/pull_request.*',
+			topicPattern: 'github/*/*/pull_request/*.*',
 		});
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		expect(calls).toEqual(['github/*/*/pull_request.*']);
+		expect(calls).toEqual(['github/*/*/pull_request/*.*']);
 	});
 
 	test('returns unavailable when subscription callbacks are not wired', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
 
 		const result = await handlers.subscribe_external_event({
-			topicPattern: 'github/*/*/pull_request.*',
+			topicPattern: 'github/*/*/pull_request/*.*',
 		});
 		const data = JSON.parse(result.content[0].text);
 
