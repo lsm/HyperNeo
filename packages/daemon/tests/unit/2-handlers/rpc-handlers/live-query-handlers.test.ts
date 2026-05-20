@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
+import { createTables, runMigration74 } from '../../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import {
 	computeIsRenderable,
@@ -353,6 +353,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			agentId?: string | null;
 			agentSessionId?: string | null;
 			status?: string;
+			createdAt?: number;
+			startedAt?: number;
+			updatedAt?: number;
+			completedAt?: number | null;
 		}): void {
 			const {
 				id,
@@ -362,6 +366,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				agentId = null,
 				agentSessionId = null,
 				status = 'in_progress',
+				createdAt = now,
+				startedAt = now,
+				updatedAt = now,
+				completedAt = null,
 			} = params;
 			db.exec(`
 				INSERT INTO node_executions (
@@ -372,7 +380,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					'${id}', '${workflowRunId}', '${workflowNodeId}', '${agentName}',
 					${agentId ? `'${agentId}'` : 'NULL'},
 					${agentSessionId ? `'${agentSessionId}'` : 'NULL'},
-					'${status}', NULL, ${now}, ${now}, NULL, ${now}
+					'${status}', NULL, ${createdAt}, ${startedAt}, ${completedAt ?? 'NULL'}, ${updatedAt}
 				)
 			`);
 			if (agentSessionId) {
@@ -608,7 +616,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			id: string,
 			sessionIdValue: string,
 			timestampMs: number,
-			messageType = 'assistant'
+			messageType = 'assistant',
+			sendStatus = 'consumed',
+			origin = 'system'
 		): void {
 			const iso = new Date(timestampMs).toISOString();
 			const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
@@ -619,7 +629,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				) VALUES (
 					'${id}', '${sessionIdValue}', '${messageType}', NULL,
 					'{"type":"${messageType}","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
-					'${iso}', 'consumed', 'system', ${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
+					'${iso}', '${sendStatus}', '${origin}', ${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 				)
 			`);
 		}
@@ -644,6 +654,68 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(mapped).toHaveLength(1);
 			expect(mapped[0].id).toBe('delivery:pm-delivered');
 			expect(mapped[0].createdAt).toBe(now + 9000);
+		});
+
+		test('actorMessages.byTask describes failed user sends as failures', () => {
+			const workflowRunId = 'wr-failed-user-send';
+			const sessionIdValue = 'session-failed-user-send';
+			const taskId = insertSpaceTask({
+				id: 'task-failed-user-send',
+				workflowRunId,
+				status: 'in_progress',
+			});
+			sessionTaskIds.set(sessionIdValue, taskId);
+			insertSdkMessageAt(
+				'sdk-failed-user-send',
+				sessionIdValue,
+				now + 1000,
+				'user',
+				'failed',
+				'human'
+			);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('msg:sdk-failed-user-send');
+			expect(mapped[0].deliveryState).toBe('failed');
+			expect(mapped[0].severity).toBe('error');
+			expect(mapped[0].summary).toBe('Human message failed');
+		});
+
+		test('actorMessages.byTask marks failed GitHub events as failed deliveries', () => {
+			const workflowRunId = 'wr-failed-github-event';
+			const taskId = insertSpaceTask({
+				id: 'task-failed-github-event',
+				workflowRunId,
+				status: 'in_progress',
+			});
+			db.exec(`
+				INSERT INTO space_github_events (
+					id, space_id, task_id, source, delivery_id, event_type, action,
+					repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+					body, summary, external_url, external_id, occurred_at, dedupe_key,
+					raw_payload, state, created_at, updated_at
+				) VALUES (
+					'github-failed-event', '${spaceId}', '${taskId}', 'webhook', 'delivery-1',
+					'pull_request_review_comment', 'created', 'lsm', 'neokai', 1965,
+					'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+					'GitHub route failed', 'https://github.com/lsm/neokai/pull/1965#discussion',
+					'comment-1', ${now + 1000}, 'github-failed-event', '{}', 'failed',
+					${now + 1000}, ${now + 1000}
+				)
+			`);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('github:github-failed-event');
+			expect(mapped[0].deliveryState).toBe('failed');
+			expect(mapped[0].severity).toBe('error');
 		});
 
 		test('actorMessages.byTask does not fan out SDK rows across node execution history', () => {
@@ -743,6 +815,46 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(new Set(mapped.map((row) => row.title))).toEqual(
 				new Set(['Node handoff', 'Node completed'])
 			);
+		});
+
+		test('actorMessages.byWorkflowRun timestamps retry node states by update time', () => {
+			const workflowRunId = 'wr-node-retry-timing';
+			insertWorkflowRun(workflowRunId);
+			insertSpaceTask({ id: 'actor-retry-task', workflowRunId, status: 'in_progress' });
+			insertNodeExecution({
+				id: 'actor-node-pending',
+				workflowRunId,
+				workflowNodeId: 'node-coder-pending',
+				agentName: 'reviewer',
+				status: 'pending',
+				createdAt: now + 3000,
+				startedAt: now + 4000,
+				updatedAt: now + 11000,
+			});
+			db.exec(`
+				PRAGMA ignore_check_constraints = ON;
+				INSERT INTO node_executions (
+					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+					agent_session_id, status, result, created_at, started_at,
+					completed_at, updated_at
+				) VALUES (
+					'actor-node-waiting', '${workflowRunId}', 'node-coder-waiting', 'coder',
+					NULL, NULL, 'waiting_rebind', NULL, ${now + 1000}, ${now + 2000},
+					NULL, ${now + 9000}
+				);
+				PRAGMA ignore_check_constraints = OFF;
+			`);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+			const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+				string,
+				unknown
+			>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+			const byId = new Map(mapped.map((row) => [row.id, row]));
+
+			expect(byId.get('node:actor-node-waiting:waiting_rebind')?.createdAt).toBe(now + 9000);
+			expect(byId.get('node:actor-node-pending:pending')?.createdAt).toBe(now + 11000);
 		});
 
 		test('classifies by session type, not current task_agent_session_id pointer', () => {

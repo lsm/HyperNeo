@@ -559,6 +559,8 @@ sdk_rows AS (
     CASE
       WHEN sm.message_type = 'result' THEN 'Agent turn finished'
       WHEN sm.message_type = 'assistant' THEN 'Agent response recorded'
+      WHEN sm.message_type = 'user' AND sm.send_status = 'failed' AND sm.origin = 'human' THEN 'Human message failed'
+      WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'Actor message failed'
       WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Human message delivered'
       WHEN sm.message_type = 'user' THEN 'Actor message delivered'
       ELSE sm.message_type
@@ -610,7 +612,7 @@ github_rows AS (
     json_object('kind', 'github', 'label', ge.actor, 'role', ge.actor_type) AS fromActor,
     json_object('kind', 'system', 'label', 'Task timeline', 'role', 'task') AS targetActor,
     'external' AS targetResolution,
-    'delivered' AS deliveryState,
+    CASE WHEN ge.state = 'failed' THEN 'failed' ELSE 'delivered' END AS deliveryState,
     'GitHub activity' AS title,
     ge.summary AS summary,
     ge.external_url AS details,
@@ -654,7 +656,11 @@ node_rows AS (
     ne.agent_name || ' is ' || nse.status AS summary,
     CASE WHEN nse.status = ne.status THEN ne.result ELSE NULL END AS details,
     CASE WHEN nse.status IN ('blocked', 'cancelled') THEN 'warning' WHEN nse.status IN ('idle', 'done') THEN 'success' ELSE 'info' END AS severity,
-    CASE WHEN nse.status IN ('idle', 'done', 'blocked', 'cancelled') THEN COALESCE(ne.completed_at, ne.updated_at, ne.created_at) ELSE COALESCE(ne.started_at, ne.created_at) END AS createdAt
+    CASE
+      WHEN nse.status IN ('idle', 'done', 'blocked', 'cancelled') THEN COALESCE(ne.completed_at, ne.updated_at, ne.created_at)
+      WHEN nse.status IN ('waiting_rebind', 'pending') THEN COALESCE(ne.updated_at, ne.started_at, ne.created_at)
+      ELSE COALESCE(ne.started_at, ne.created_at)
+    END AS createdAt
   FROM node_executions ne
   JOIN node_status_events nse
     ON nse.status = ne.status
