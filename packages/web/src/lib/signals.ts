@@ -38,8 +38,8 @@ export const currentSpaceConfigureTabSignal = signal<SpaceConfigureTab>('agents'
 export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'draft' | 'scheduled';
 export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');
 
-// Task detail sub-view (thread | canvas | artifacts) — driven by URL
-export type SpaceTaskViewTab = 'thread' | 'canvas' | 'artifacts';
+// Task detail sub-view (thread | timeline | log | canvas | artifacts) — driven by URL
+export type SpaceTaskViewTab = 'thread' | 'timeline' | 'log' | 'canvas' | 'artifacts';
 export const currentSpaceTaskViewTabSignal = signal<SpaceTaskViewTab>('thread');
 
 // Overlay signals — session shown in slide-over panel on top of the current view

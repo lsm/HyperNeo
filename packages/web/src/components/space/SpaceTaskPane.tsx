@@ -29,6 +29,8 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
+import { TaskTimelineFeed } from './TaskTimelineFeed';
+import { WorkflowExecutionLogFeed } from './WorkflowExecutionLogFeed';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { getTransitionActions } from './TaskStatusActions';
@@ -200,6 +202,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		null
 	);
 	const activeView = currentSpaceTaskViewTabSignal.value;
+
+	useEffect(() => {
+		if (activeView === 'log' && task && !task.workflowRunId) {
+			navigateToSpaceTask(
+				spaceId ?? currentSpaceIdSignal.value ?? task.spaceId,
+				task.id,
+				'thread',
+				true
+			);
+		}
+	}, [activeView, task, spaceId]);
 
 	useEffect(() => {
 		setThreadSendError(null);
@@ -949,6 +962,36 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						>
 							Thread
 						</button>
+						<button
+							type="button"
+							onClick={() => navigateToSpaceTask(navigationSpaceId, taskId, 'timeline')}
+							class={cn(
+								'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
+								activeView === 'timeline'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+							)}
+							data-testid="timeline-toggle"
+							aria-pressed={activeView === 'timeline'}
+						>
+							Timeline
+						</button>
+						{task.workflowRunId && (
+							<button
+								type="button"
+								onClick={() => navigateToSpaceTask(navigationSpaceId, taskId, 'log')}
+								class={cn(
+									'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
+									activeView === 'log'
+										? 'text-gray-100 bg-dark-700/70 shadow-sm'
+										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+								)}
+								data-testid="execution-log-toggle"
+								aria-pressed={activeView === 'log'}
+							>
+								Log
+							</button>
+						)}
 						{canShowCanvasTab && (
 							<button
 								type="button"
@@ -994,7 +1037,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						)}
 					</div>
 				</div>
-				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
+				{activeView === 'timeline' ? (
+					<TaskTimelineFeed taskId={task.id} bottomInsetPx={taskComposerPaddingPx} />
+				) : activeView === 'log' && task.workflowRunId ? (
+					<WorkflowExecutionLogFeed
+						workflowRunId={task.workflowRunId}
+						bottomInsetPx={taskComposerPaddingPx}
+					/>
+				) : activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
 						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
