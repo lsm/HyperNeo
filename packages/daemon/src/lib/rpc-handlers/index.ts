@@ -68,6 +68,8 @@ import {
 } from '../job-queue-constants';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
+import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository';
+import { SessionRepository } from '../../storage/repositories/session-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -259,8 +261,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
+	const spaceAgentInboxRepo = new SpaceAgentInboxRepository(deps.db.getDatabase());
 	const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
 	const spaceRepo = new SpaceRepository(deps.db.getDatabase());
+	const sessionRepo = new SessionRepository(deps.db.getDatabase());
 
 	// Centralised TaskSchedule lifecycle service — used by both the RPC
 	// handlers (`taskSchedule.*`) and the agent-facing MCP tools so validation,
@@ -395,6 +399,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		internalEventBus: deps.internalEventBus,
 		artifactRepo,
 		pendingMessageRepo,
+		spaceAgentInboxRepo,
+		actorRegistryRepos: {
+			spaceRepo,
+			sessionRepo,
+			spaceAgentRepo,
+			workflowRepo: spaceWorkflowRepo,
+			workflowRunRepo: spaceWorkflowRunRepo,
+			nodeExecutionRepo,
+			pendingMessageRepo,
+		},
 		scheduleService,
 		commandBus: deps.commandBus,
 		externalEventStore: deps.externalEventStore,
@@ -525,6 +539,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		artifactRepo,
 		pendingMessageRepo,
 		spaceAgentInjector,
+		messageResolverFactory: (spaceId, context) =>
+			spaceRuntimeService.createMessageResolver(spaceId, context),
+		longTermAgentDelivery: spaceRuntimeService.longTermAgentDeliveryCallbacks(),
 		scheduleService,
 		internalEventBus: deps.internalEventBus,
 		replyRoutingRegistry,

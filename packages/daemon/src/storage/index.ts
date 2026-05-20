@@ -64,6 +64,11 @@ export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor
 export { GoalRepository } from './repositories/goal-repository';
 export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
+export { SpaceAgentInboxRepository } from './repositories/space-agent-inbox-repository';
+export type {
+	SpaceAgentInboxMessageRecord,
+	SpaceAgentInboxMessageStatus,
+} from './repositories/space-agent-inbox-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 export { SkillRepository } from './repositories/skill-repository';
@@ -147,6 +152,10 @@ export class Database {
 
 	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
 		return this.sessionRepo.listSessions(options);
+	}
+
+	listSessionsBySpaceAgent(spaceId: string, agentId: string): Session[] {
+		return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
 	}
 
 	updateSession(id: string, updates: Partial<Session>): void {

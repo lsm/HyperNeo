@@ -369,6 +369,10 @@ export interface SpaceDeliveryFacadeConfig {
 		actor: ActorRef,
 		message: MessageRecord
 	) => Promise<string | null | undefined>;
+	queueForActivation?: (
+		actor: ActorRef,
+		message: MessageRecord
+	) => Promise<string | null | undefined>;
 }
 
 export interface LegacyNodeTargetTranslatorConfig {
@@ -414,9 +418,14 @@ export function translateTaskMessageTarget(
 			);
 		}
 		const address = parseAddress(explicitTarget);
-		if (address.kind !== 'worker' && address.kind !== 'session') {
+		if (
+			address.kind !== 'worker' &&
+			address.kind !== 'session' &&
+			address.kind !== 'handle' &&
+			address.kind !== 'role'
+		) {
 			throw new Error(
-				`Generic target ${explicitTarget} is not routable from this tool. Use @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`
+				`Generic target ${explicitTarget} is not routable from this tool. Use @handle, @role:<role>, @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`
 			);
 		}
 		return explicitTarget;
@@ -460,6 +469,15 @@ export class SpaceDeliveryFacade {
 						delivery.deliveredAt = Date.now();
 						delivery.deliveredSessionId = deliveredSessionId;
 					}
+				} catch (error) {
+					delivery.state = 'failed';
+					delivery.attemptCount += 1;
+					delivery.lastError = error instanceof Error ? error.message : String(error);
+				}
+			} else if (target.actor.status === 'inactive' && this.config.queueForActivation) {
+				try {
+					const messageId = await this.config.queueForActivation(target.actor, message);
+					if (messageId) delivery.deliveryId = `delivery_${messageId}`;
 				} catch (error) {
 					delivery.state = 'failed';
 					delivery.attemptCount += 1;

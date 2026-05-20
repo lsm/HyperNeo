@@ -7,6 +7,7 @@ import type { SpaceAgentRepository } from '../../storage/repositories/space-agen
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session';
 
 export const SPACE_SYSTEM_ACTORS = [
 	{ actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },
@@ -103,7 +104,21 @@ export class SpaceActorRegistryAdapter {
 			handleCounts.set(slug, (handleCounts.get(slug) ?? 0) + 1);
 		}
 
-		return agents.map((agent) => agentActor(agent, handleCounts));
+		return agents.map((agent) =>
+			agentActor(agent, handleCounts, this.findLongTermAgentSession(spaceId, agent.id))
+		);
+	}
+
+	private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
+		const canonicalId = longTermAgentSessionId(spaceId, agentId);
+		const canonical = this.repos.sessionRepo.getSession(canonicalId);
+		if (canonical && isSessionInSpace(canonical, spaceId)) return canonical;
+
+		return (
+			this.repos.sessionRepo
+				.listSessionsBySpaceAgent(spaceId, agentId)
+				.find((session) => isSessionInSpace(session, spaceId)) ?? null
+		);
 	}
 
 	private findCoordinatorSession(spaceId: string): Session | null {
@@ -164,7 +179,11 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 	};
 }
 
-function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): ActorRef {
+function agentActor(
+	agent: SpaceAgent,
+	handleCounts: Map<string, number>,
+	session: Session | null
+): ActorRef {
 	const slug = baseHandleSlug(agent.name, agent.id);
 	const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
 	return {
@@ -173,7 +192,7 @@ function agentActor(agent: SpaceAgent, handleCounts: Map<string, number>): Actor
 		spaceId: agent.spaceId,
 		handle: `@${handleSlug}`,
 		roles: unique(['space-agent', routingRole(handleSlug)]),
-		status: 'active',
+		status: session ? statusFromSession(session) : 'inactive',
 	};
 }
 
@@ -228,10 +247,6 @@ const ROUTING_ROLE_PREFIX = 'actor-role:';
 
 function routingRole(role: string): string {
 	return `${ROUTING_ROLE_PREFIX}${encodeURIComponent(role)}`;
-}
-
-function encodeActorIdComponent(value: string): string {
-	return encodeURIComponent(value);
 }
 
 function encodeWorkerHandleSegment(value: string): string {

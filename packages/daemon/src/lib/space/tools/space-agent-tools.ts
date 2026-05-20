@@ -43,12 +43,14 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { formatAgentMessage } from '../agent-message-envelope';
-import { translateTaskMessageTarget } from '../messaging-adapter';
+import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
+import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { canTransition } from '../runtime/workflow-run-status-machine';
@@ -254,6 +256,19 @@ export interface SpaceAgentToolsConfig {
 	replyRoutingRegistry?: ReplyRoutingRegistry;
 	/** Goal service for terminal goal-task side effects. */
 	goalService?: import('../goals/goal-service').SpaceGoalService;
+	/** Generic Space actor resolver for @handle/@role DMs. */
+	messageResolver?: ActorResolver;
+	/** Deliver to or activate long-term Space agents. */
+	longTermAgentDelivery?: {
+		deliverToSession?: (
+			actor: ActorRef,
+			message: MessageRecord
+		) => Promise<string | null | undefined>;
+		queueForActivation?: (
+			actor: ActorRef,
+			message: MessageRecord
+		) => Promise<string | null | undefined>;
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +300,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		myAgentNameAliases,
 		mySessionId,
 		replyRoutingRegistry,
+		messageResolver,
+		longTermAgentDelivery,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -1074,6 +1091,46 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 				routedTarget = genericTarget;
 				const address = parseAddress(genericTarget);
+				if (address.kind === 'handle' || address.kind === 'role') {
+					if (!messageResolver || !longTermAgentDelivery) {
+						return jsonResult({
+							success: false,
+							error: 'Long-term agent messaging is not available in this context.',
+						});
+					}
+					const messageRecord: MessageRecord = {
+						messageId: `msg_space_tool_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+						spaceId,
+						senderActorId: mySessionId ? `session:${mySessionId}` : `agent:coordinator:${spaceId}`,
+						targets: [genericTarget],
+						body: formatAgentMessage({
+							fromLevel: outboundSenderLevel,
+							fromAgentName: outboundSenderDisplayName,
+							toLevel: 'space-agent',
+							body: args.message,
+							taskId: task.id,
+							taskNumber: task.taskNumber,
+							replyToSessionId: mySessionId,
+						}),
+						kind: 'message',
+						workflowRunId: task.workflowRunId,
+						taskId: task.id,
+						createdAt: Date.now(),
+					};
+					const routed = await new SpaceDeliveryFacade({
+						resolver: messageResolver,
+						deliverToSession: longTermAgentDelivery.deliverToSession,
+						queueForActivation: longTermAgentDelivery.queueForActivation,
+					}).routeMessage(messageRecord);
+					return jsonResult({
+						success: routed.deliveries.some((delivery) =>
+							['delivered', 'queued'].includes(delivery.state)
+						),
+						task_id: task.id,
+						target: 'space-agent',
+						deliveries: routed.deliveries,
+					});
+				}
 				if (address.kind === 'worker') {
 					resolved = resolveWorkerTargetExecution(
 						allExecutions,
@@ -1087,7 +1144,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				} else {
 					return jsonResult({
 						success: false,
-						error: `Generic target ${genericTarget} is not routable from this tool. Use @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`,
+						error: `Generic target ${genericTarget} is not routable from this tool. Use @handle, @role:<role>, @worker:<node>/<agent>, @worker:<run>/<node>/<agent>, @session:<task-agent-session>, or node_id.`,
 					});
 				}
 			} else if (args.node_id) {
@@ -2103,7 +2160,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		// Task agent communication tools
 		tool(
 			'send_message_to_task',
-			'Send a message to a specific workflow node agent on a task. Requires node_id (execution UUID or agent name like "coder"/"reviewer"). If the node has not started yet, it will be spawned/activated automatically (unless the task is archived). Provide either task_id or task_number — if both are given, task_id takes precedence.',
+			'Send a message to a specific workflow node agent or long-term Space agent on a task. Use node_id for workflow nodes, or target for @handle/@role/@session/@worker addresses. Inactive workflow nodes or long-term agents are activated/queued when supported. Provide either task_id or task_number — if both are given, task_id takes precedence.',
 			{
 				task_id: z
 					.string()
@@ -2128,7 +2185,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe(
-						'Explicit generic target such as @coordinator, @role:task-manager, @session:<id>, or @worker:<node>/<agent>. Takes precedence over node_id when supported.'
+						'Explicit generic target such as @handle, @role:task-manager, @session:<id>, or @worker:<node>/<agent>. Takes precedence over node_id when supported.'
 					),
 			},
 			(args) => handlers.send_message_to_task(args)
