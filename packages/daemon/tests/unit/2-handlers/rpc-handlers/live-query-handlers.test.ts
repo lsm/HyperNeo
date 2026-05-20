@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
+import { createTables, runMigration74 } from '../../../../src/storage/schema';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import {
 	computeIsRenderable,
@@ -57,6 +57,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskMessages.byTask.compact')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('spaceTaskActiveTurn.byTask')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('actorMessages.byTask')).toBe(true);
+		expect(NAMED_QUERY_REGISTRY.has('actorMessages.byWorkflowRun')).toBe(true);
 		expect(NAMED_QUERY_REGISTRY.has('skills.byRoom')).toBe(false);
 	});
 
@@ -66,6 +68,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(1);
 		expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!.paramCount).toBe(1);
+		expect(NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!.paramCount).toBe(3);
 	});
 
 	test('retired Room-scoped query names are not active contracts', () => {
@@ -206,6 +210,50 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					space_id TEXT NOT NULL,
 					name TEXT NOT NULL
 				);
+				CREATE TABLE IF NOT EXISTS space_workflow_runs (
+					id TEXT PRIMARY KEY,
+					space_id TEXT NOT NULL,
+					workflow_id TEXT NOT NULL,
+					title TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					current_step_index INTEGER NOT NULL DEFAULT 0,
+					current_step_id TEXT,
+					status TEXT NOT NULL DEFAULT 'pending',
+					config TEXT,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					completed_at INTEGER
+				);
+				CREATE TABLE IF NOT EXISTS pending_agent_messages (
+					id TEXT PRIMARY KEY,
+					workflow_run_id TEXT NOT NULL,
+					space_id TEXT NOT NULL,
+					task_id TEXT,
+					source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
+					target_kind TEXT NOT NULL,
+					target_agent_name TEXT NOT NULL,
+					message TEXT NOT NULL,
+					idempotency_key TEXT,
+					attempts INTEGER NOT NULL DEFAULT 0,
+					max_attempts INTEGER NOT NULL DEFAULT 5,
+					last_attempt_at INTEGER,
+					last_error TEXT,
+					status TEXT NOT NULL DEFAULT 'pending',
+					delivered_at INTEGER,
+					delivered_session_id TEXT,
+					expires_at INTEGER NOT NULL,
+					created_at INTEGER NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
+					id TEXT PRIMARY KEY NOT NULL,
+					run_id TEXT NOT NULL,
+					node_id TEXT NOT NULL,
+					artifact_type TEXT NOT NULL,
+					artifact_key TEXT NOT NULL DEFAULT '',
+					data TEXT NOT NULL DEFAULT '{}',
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
 				CREATE TABLE IF NOT EXISTS space_tasks (
 					id TEXT PRIMARY KEY,
 					space_id TEXT NOT NULL,
@@ -305,6 +353,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			agentId?: string | null;
 			agentSessionId?: string | null;
 			status?: string;
+			createdAt?: number;
+			startedAt?: number;
+			updatedAt?: number;
+			completedAt?: number | null;
 		}): void {
 			const {
 				id,
@@ -314,6 +366,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				agentId = null,
 				agentSessionId = null,
 				status = 'in_progress',
+				createdAt = now,
+				startedAt = now,
+				updatedAt = now,
+				completedAt = null,
 			} = params;
 			db.exec(`
 				INSERT INTO node_executions (
@@ -324,7 +380,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					'${id}', '${workflowRunId}', '${workflowNodeId}', '${agentName}',
 					${agentId ? `'${agentId}'` : 'NULL'},
 					${agentSessionId ? `'${agentSessionId}'` : 'NULL'},
-					'${status}', NULL, ${now}, ${now}, NULL, ${now}
+					'${status}', NULL, ${createdAt}, ${startedAt}, ${completedAt ?? 'NULL'}, ${updatedAt}
 				)
 			`);
 			if (agentSessionId) {
@@ -517,6 +573,288 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			expect(node!.messageCount).toBe(0);
 			expect(node!.label).toBe('Coder');
 			expect(node!.role).toBe('coder');
+		});
+
+		function insertPendingAgentMessage(overrides: Record<string, unknown>): void {
+			db.exec(`
+				INSERT INTO pending_agent_messages (
+					id, workflow_run_id, space_id, task_id, source_agent_name, target_kind,
+					target_agent_name, message, attempts, last_attempt_at, last_error, status,
+					delivered_at, delivered_session_id, expires_at, created_at
+				) VALUES (
+					'${String(overrides.id)}', '${String(overrides.workflowRunId)}', '${spaceId}',
+					${overrides.taskId ? `'${String(overrides.taskId)}'` : 'NULL'},
+					'${String(overrides.sourceAgentName ?? 'coder')}',
+					'${String(overrides.targetKind ?? 'node_agent')}',
+					'${String(overrides.targetAgentName ?? 'reviewer')}',
+					'${String(overrides.message ?? 'please review').replace(/'/g, "''")}',
+					${Number(overrides.attempts ?? 1)},
+					${overrides.lastAttemptAt === null ? 'NULL' : Number(overrides.lastAttemptAt ?? now + 5000)},
+					${overrides.lastError ? `'${String(overrides.lastError).replace(/'/g, "''")}'` : 'NULL'},
+					'${String(overrides.status ?? 'delivered')}',
+					${overrides.deliveredAt === null ? 'NULL' : Number(overrides.deliveredAt ?? now + 7000)},
+					${overrides.deliveredSessionId ? `'${String(overrides.deliveredSessionId)}'` : 'NULL'},
+					${Number(overrides.expiresAt ?? now + 60000)},
+					${Number(overrides.createdAt ?? now)}
+				)
+			`);
+		}
+
+		function insertWorkflowRun(id: string): void {
+			db.exec(`
+				INSERT INTO space_workflow_runs (
+					id, space_id, workflow_id, title, description, current_step_index,
+					current_step_id, status, config, created_at, updated_at, completed_at
+				) VALUES (
+					'${id}', '${spaceId}', 'workflow-test', 'Workflow test', '', 0,
+					NULL, 'in_progress', '{}', ${now}, ${now}, NULL
+				)
+			`);
+		}
+
+		function insertSdkMessageAt(
+			id: string,
+			sessionIdValue: string,
+			timestampMs: number,
+			messageType = 'assistant',
+			sendStatus = 'consumed',
+			origin = 'system'
+		): void {
+			const iso = new Date(timestampMs).toISOString();
+			const taskIdForSession = sessionTaskIds.get(sessionIdValue) ?? null;
+			db.exec(`
+				INSERT INTO sdk_messages (
+					id, session_id, message_type, message_subtype, sdk_message, timestamp,
+					send_status, origin, task_id
+				) VALUES (
+					'${id}', '${sessionIdValue}', '${messageType}', NULL,
+					'{"type":"${messageType}","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
+					'${iso}', '${sendStatus}', '${origin}', ${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
+				)
+			`);
+		}
+
+		test('actorMessages.byTask timestamps delivery outcomes by attempt time', () => {
+			const workflowRunId = 'wr-actor-task';
+			const taskId = insertSpaceTask({ id: 'actor-task', workflowRunId, status: 'in_progress' });
+			insertPendingAgentMessage({
+				id: 'pm-delivered',
+				workflowRunId,
+				taskId,
+				status: 'delivered',
+				createdAt: now + 1000,
+				lastAttemptAt: now + 9000,
+				deliveredAt: now + 7000,
+			});
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('delivery:pm-delivered');
+			expect(mapped[0].createdAt).toBe(now + 9000);
+		});
+
+		test('actorMessages.byTask describes failed user sends as failures', () => {
+			const workflowRunId = 'wr-failed-user-send';
+			const sessionIdValue = 'session-failed-user-send';
+			const taskId = insertSpaceTask({
+				id: 'task-failed-user-send',
+				workflowRunId,
+				status: 'in_progress',
+			});
+			sessionTaskIds.set(sessionIdValue, taskId);
+			insertSdkMessageAt(
+				'sdk-failed-user-send',
+				sessionIdValue,
+				now + 1000,
+				'user',
+				'failed',
+				'human'
+			);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('msg:sdk-failed-user-send');
+			expect(mapped[0].deliveryState).toBe('failed');
+			expect(mapped[0].severity).toBe('error');
+			expect(mapped[0].summary).toBe('Human message failed');
+		});
+
+		test('actorMessages.byTask marks failed GitHub events as failed deliveries', () => {
+			const workflowRunId = 'wr-failed-github-event';
+			const taskId = insertSpaceTask({
+				id: 'task-failed-github-event',
+				workflowRunId,
+				status: 'in_progress',
+			});
+			db.exec(`
+				INSERT INTO space_github_events (
+					id, space_id, task_id, source, delivery_id, event_type, action,
+					repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+					body, summary, external_url, external_id, occurred_at, dedupe_key,
+					raw_payload, state, created_at, updated_at
+				) VALUES (
+					'github-failed-event', '${spaceId}', '${taskId}', 'webhook', 'delivery-1',
+					'pull_request_review_comment', 'created', 'lsm', 'neokai', 1965,
+					'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+					'GitHub route failed', 'https://github.com/lsm/neokai/pull/1965#discussion',
+					'comment-1', ${now + 1000}, 'github-failed-event', '{}', 'failed',
+					${now + 1000}, ${now + 1000}
+				)
+			`);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('github:github-failed-event');
+			expect(mapped[0].deliveryState).toBe('failed');
+			expect(mapped[0].severity).toBe('error');
+		});
+
+		test('actorMessages.byTask does not fan out SDK rows across node execution history', () => {
+			const workflowRunId = 'wr-actor-sdk';
+			const nodeSessionId = 'node-agent-actor-sdk';
+			const taskId = insertSpaceTask({
+				id: 'actor-sdk-task',
+				workflowRunId,
+				status: 'in_progress',
+			});
+			insertSession(nodeSessionId, 'worker', '{"status":"processing"}');
+			sessionTaskIds.set(nodeSessionId, taskId);
+			insertNodeExecution({
+				id: 'actor-sdk-old',
+				workflowRunId,
+				workflowNodeId: 'node-coder-old',
+				agentName: 'coder-old',
+				agentSessionId: nodeSessionId,
+				status: 'done',
+			});
+			insertNodeExecution({
+				id: 'actor-sdk-current',
+				workflowRunId,
+				workflowNodeId: 'node-coder-current',
+				agentName: 'coder-current',
+				agentSessionId: nodeSessionId,
+				status: 'in_progress',
+			});
+			insertSdkMessageAt('sdk-actor-one', nodeSessionId, now + 1000);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+			const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped).toHaveLength(1);
+			expect(mapped[0].id).toBe('msg:sdk-actor-one');
+			expect((mapped[0].from as Record<string, unknown>).nodeExecutionId).toBe('actor-sdk-current');
+		});
+
+		test('actorMessages.byWorkflowRun does not fan out node or artifact rows across tasks', () => {
+			const workflowRunId = 'wr-actor-run';
+			insertWorkflowRun(workflowRunId);
+			insertSpaceTask({ id: 'actor-run-task-a', workflowRunId, status: 'in_progress' });
+			insertSpaceTask({ id: 'actor-run-task-b', workflowRunId, status: 'in_progress' });
+			insertNodeExecution({
+				id: 'actor-node',
+				workflowRunId,
+				workflowNodeId: 'node-coder',
+				agentName: 'coder',
+				status: 'in_progress',
+			});
+			db.exec(`
+				INSERT INTO workflow_run_artifacts (
+					id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at
+				) VALUES (
+					'artifact-actor', '${workflowRunId}', 'node-coder', 'result', '', '{}', ${now + 2000}, ${now + 2000}
+				)
+			`);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+			const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+				string,
+				unknown
+			>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped.map((row) => row.id)).toEqual([
+				'node:actor-node:in_progress',
+				'artifact:artifact-actor',
+			]);
+			expect(new Set(mapped.map((row) => row.id)).size).toBe(2);
+		});
+
+		test('actorMessages.byWorkflowRun preserves node handoff event for completed nodes', () => {
+			const workflowRunId = 'wr-node-history';
+			insertWorkflowRun(workflowRunId);
+			insertSpaceTask({ id: 'actor-history-task', workflowRunId, status: 'in_progress' });
+			insertNodeExecution({
+				id: 'actor-node-history',
+				workflowRunId,
+				workflowNodeId: 'node-coder',
+				agentName: 'coder',
+				status: 'done',
+			});
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+			const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+				string,
+				unknown
+			>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+			expect(mapped.map((row) => row.id).sort()).toEqual([
+				'node:actor-node-history:done',
+				'node:actor-node-history:in_progress',
+			]);
+			expect(new Set(mapped.map((row) => row.title))).toEqual(
+				new Set(['Node handoff', 'Node completed'])
+			);
+		});
+
+		test('actorMessages.byWorkflowRun timestamps retry node states by update time', () => {
+			const workflowRunId = 'wr-node-retry-timing';
+			insertWorkflowRun(workflowRunId);
+			insertSpaceTask({ id: 'actor-retry-task', workflowRunId, status: 'in_progress' });
+			insertNodeExecution({
+				id: 'actor-node-pending',
+				workflowRunId,
+				workflowNodeId: 'node-coder-pending',
+				agentName: 'reviewer',
+				status: 'pending',
+				createdAt: now + 3000,
+				startedAt: now + 4000,
+				updatedAt: now + 11000,
+			});
+			db.exec(`
+				PRAGMA ignore_check_constraints = ON;
+				INSERT INTO node_executions (
+					id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+					agent_session_id, status, result, created_at, started_at,
+					completed_at, updated_at
+				) VALUES (
+					'actor-node-waiting', '${workflowRunId}', 'node-coder-waiting', 'coder',
+					NULL, NULL, 'waiting_rebind', NULL, ${now + 1000}, ${now + 2000},
+					NULL, ${now + 9000}
+				);
+				PRAGMA ignore_check_constraints = OFF;
+			`);
+
+			const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+			const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+				string,
+				unknown
+			>[];
+			const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+			const byId = new Map(mapped.map((row) => [row.id, row]));
+
+			expect(byId.get('node:actor-node-waiting:waiting_rebind')?.createdAt).toBe(now + 9000);
+			expect(byId.get('node:actor-node-pending:pending')?.createdAt).toBe(now + 11000);
 		});
 
 		test('classifies by session type, not current task_agent_session_id pointer', () => {
@@ -1892,6 +2230,66 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				// Any scope filter here would be unsound — keep it absent.
 				const entry = NAMED_QUERY_REGISTRY.get('sessions.list')!;
 				expect(entry.buildScopeFilter).toBeUndefined();
+			});
+		});
+
+		describe('actor message queries', () => {
+			let scopedDb: BunDatabase;
+
+			beforeEach(() => {
+				scopedDb = new BunDatabase(':memory:');
+				scopedDb.exec(`
+					CREATE TABLE space_tasks (
+						id TEXT PRIMARY KEY,
+						workflow_run_id TEXT,
+						task_agent_session_id TEXT
+					);
+					CREATE TABLE node_executions (
+						id TEXT PRIMARY KEY,
+						workflow_run_id TEXT NOT NULL,
+						agent_session_id TEXT
+					);
+					CREATE TABLE sdk_messages (
+						id TEXT PRIMARY KEY,
+						session_id TEXT NOT NULL,
+						task_id TEXT
+					);
+				`);
+				scopedDb.exec(`
+					INSERT INTO space_tasks (id, workflow_run_id, task_agent_session_id)
+					VALUES ('task-a', 'run-a', 'task-session-a');
+					INSERT INTO node_executions (id, workflow_run_id, agent_session_id)
+					VALUES ('node-a', 'run-a', 'node-session-a');
+					INSERT INTO sdk_messages (id, session_id, task_id)
+					VALUES ('msg-a', 'message-session-a', 'task-a');
+				`);
+			});
+
+			afterEach(() => {
+				scopedDb.close();
+			});
+
+			test('task timeline uses the shared task scope filter', () => {
+				const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+				expect(entry.buildScopeFilter).toBeDefined();
+				const filter = entry.buildScopeFilter!(['task-a'], scopedDb)!;
+
+				expect(filter({ taskId: 'task-a' })).toBe(true);
+				expect(filter({ taskId: 'task-b' })).toBe(false);
+			});
+
+			test('workflow log filters out unrelated task and session writes', () => {
+				const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+				expect(entry.buildScopeFilter).toBeDefined();
+				const filter = entry.buildScopeFilter!(['run-a', 'run-a', 'run-a'], scopedDb)!;
+
+				expect(filter({ taskId: 'task-a' })).toBe(true);
+				expect(filter({ taskId: 'task-b' })).toBe(false);
+				expect(filter({ sessionId: 'task-session-a' })).toBe(true);
+				expect(filter({ sessionId: 'node-session-a' })).toBe(true);
+				expect(filter({ sessionId: 'message-session-a' })).toBe(true);
+				expect(filter({ sessionId: 'other-session' })).toBe(false);
+				expect(filter({})).toBe(true);
 			});
 		});
 

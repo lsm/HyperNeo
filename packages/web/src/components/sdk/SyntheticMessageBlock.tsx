@@ -23,10 +23,12 @@
  *   placement as the human bubble for visual consistency).
  */
 
+import type { ActorMessageDeliveryState } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
+import { DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -50,6 +52,8 @@ interface Props {
 	fromShort?: string;
 	/** Optional shorter label for the TO badge (defaults to `toAgent`). */
 	toShort?: string;
+	/** Optional delivery state for synthetic actor messages. */
+	deliveryState?: ActorMessageDeliveryState | null;
 	/** When provided, an "open in session" icon appears in the actions row. */
 	onOpenSession?: () => void;
 	/** When provided, a session-info dropdown appears in the actions row,
@@ -96,6 +100,7 @@ export function SyntheticMessageBlock({
 	toColor,
 	fromShort,
 	toShort,
+	deliveryState,
 	onOpenSession,
 	sessionInit,
 	renderAsPlainText = false,
@@ -190,6 +195,7 @@ export function SyntheticMessageBlock({
 								</span>
 							</>
 						)}
+						<DeliveryStateBadge state={deliveryState} test-id="synthetic-delivery-state" />
 					</div>
 
 					{/* Body — capped preview + gradient fade + show more / less. */}

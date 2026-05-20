@@ -21,6 +21,8 @@ export interface SpaceTaskThreadMessageRow {
 	createdAt: number;
 	/** Message origin from the DB (human, system). Used to classify sender in the thread UI. */
 	origin?: string | null;
+	/** User-message delivery state from sdk_messages.send_status, normalized for UI badges. */
+	deliveryState?: 'delivered' | 'failed' | null;
 	parentToolUseId?: string | null;
 	/**
 	 * Server-computed turn index (per session) for compact thread grouping.

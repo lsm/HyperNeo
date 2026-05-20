@@ -143,6 +143,39 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
  * Map a raw SQLite row from `spaceTaskMessages.byTask` into a web-friendly
  * message envelope that preserves agent/task attribution.
  */
+function parseProjectionRef(value: unknown): Record<string, unknown> | null {
+	if (typeof value !== 'string' || value.length === 0) return null;
+	try {
+		const parsed = JSON.parse(value) as Record<string, unknown>;
+		return parsed;
+	} catch {
+		return null;
+	}
+}
+
+function mapActorMessageProjectionRow(row: Record<string, unknown>): Record<string, unknown> {
+	const createdAt = Number(row.createdAt ?? Date.now());
+	return {
+		id: String(row.id ?? `projection-${createdAt}`),
+		scope: row.scope === 'workflow_log' ? 'workflow_log' : 'task_timeline',
+		eventKind: String(row.eventKind ?? 'system'),
+		taskId: typeof row.taskId === 'string' ? row.taskId : null,
+		taskTitle: typeof row.taskTitle === 'string' ? row.taskTitle : null,
+		workflowRunId: typeof row.workflowRunId === 'string' ? row.workflowRunId : null,
+		messageId: typeof row.messageId === 'string' ? row.messageId : null,
+		eventRef: typeof row.eventRef === 'string' ? row.eventRef : null,
+		from: parseProjectionRef(row.fromActor) ?? { kind: 'system', label: 'System' },
+		target: parseProjectionRef(row.targetActor),
+		targetResolution: typeof row.targetResolution === 'string' ? row.targetResolution : null,
+		deliveryState: typeof row.deliveryState === 'string' ? row.deliveryState : null,
+		title: String(row.title ?? 'Event'),
+		summary: String(row.summary ?? ''),
+		details: typeof row.details === 'string' ? row.details : null,
+		severity: typeof row.severity === 'string' ? row.severity : null,
+		createdAt,
+	};
+}
+
 function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, unknown> {
 	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
 	const role = String(row.role ?? 'system');
@@ -159,6 +192,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const turnUserMessageId =
 		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 	const origin = typeof row.origin === 'string' ? row.origin : null;
+	const deliveryState = messageType === 'user' && row.deliveryState === 'failed' ? 'failed' : null;
 	// Optional backward-compat field from older compact-query variants.
 	// Current compact SQL no longer emits this, but keep tolerant parsing so
 	// historical rows/tests and alternate query variants remain safe.
@@ -214,6 +248,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 		content,
 		createdAt,
 		origin,
+		deliveryState,
 		parentToolUseId,
 	};
 	if (sessionMessageCount !== undefined) {
@@ -444,6 +479,244 @@ SELECT
 FROM workflow_run_artifacts
 WHERE run_id = ?
 ORDER BY created_at ASC, id ASC
+`.trim();
+
+const ACTOR_MESSAGES_BY_TASK_SQL = `
+WITH target_task AS (
+  SELECT * FROM space_tasks WHERE id = ?
+),
+session_node_exec AS (
+  SELECT
+    ne.id,
+    ne.workflow_run_id,
+    ne.agent_session_id,
+    ne.agent_id,
+    ne.agent_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY ne.workflow_run_id, ne.agent_session_id
+      ORDER BY
+        CASE ne.status
+          WHEN 'in_progress' THEN 0
+          WHEN 'waiting_rebind' THEN 1
+          WHEN 'blocked' THEN 2
+          WHEN 'pending' THEN 3
+          ELSE 4
+        END,
+        ne.updated_at DESC,
+        ne.created_at DESC,
+        ne.id DESC
+    ) AS rn
+  FROM node_executions ne
+  JOIN target_task tt ON tt.workflow_run_id = ne.workflow_run_id
+  WHERE ne.agent_session_id IS NOT NULL
+),
+sdk_rows AS (
+  SELECT
+    'msg:' || sm.id AS id,
+    'task_timeline' AS scope,
+    CASE
+      WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'question'
+      WHEN sm.message_type = 'user' THEN 'handoff'
+      WHEN sm.message_type = 'result' THEN 'status'
+      WHEN sm.message_type = 'assistant' THEN 'answer'
+      ELSE 'system'
+    END AS eventKind,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    tt.workflow_run_id AS workflowRunId,
+    sm.id AS messageId,
+    NULL AS eventRef,
+    json_object(
+      'kind', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE 'worker' END,
+      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, 'Agent') END,
+      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, 'agent') END,
+      'sessionId', sm.session_id,
+      'nodeExecutionId', ne.id
+    ) AS fromActor,
+    CASE
+      WHEN sm.message_type = 'user' THEN json_object(
+        'kind', 'worker',
+        'label', COALESCE(sa.name, ne.agent_name, 'Agent'),
+        'role', COALESCE(ne.agent_name, 'agent'),
+        'sessionId', sm.session_id,
+        'nodeExecutionId', ne.id
+      )
+      ELSE NULL
+    END AS targetActor,
+    CASE WHEN sm.message_type = 'user' THEN 'inferred' ELSE NULL END AS targetResolution,
+    CASE
+      WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'failed'
+      WHEN sm.message_type = 'user' THEN 'delivered'
+      ELSE NULL
+    END AS deliveryState,
+    CASE
+      WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Question'
+      WHEN sm.message_type = 'user' THEN 'Handoff'
+      WHEN sm.message_type = 'result' THEN 'Status'
+      WHEN sm.message_type = 'assistant' THEN 'Answer'
+      ELSE 'System event'
+    END AS title,
+    CASE
+      WHEN sm.message_type = 'result' THEN 'Agent turn finished'
+      WHEN sm.message_type = 'assistant' THEN 'Agent response recorded'
+      WHEN sm.message_type = 'user' AND sm.send_status = 'failed' AND sm.origin = 'human' THEN 'Human message failed'
+      WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'Actor message failed'
+      WHEN sm.message_type = 'user' AND sm.origin = 'human' THEN 'Human message delivered'
+      WHEN sm.message_type = 'user' THEN 'Actor message delivered'
+      ELSE sm.message_type
+    END AS summary,
+    NULL AS details,
+    CASE WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'error' ELSE 'info' END AS severity,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  LEFT JOIN session_node_exec ne
+    ON ne.workflow_run_id = tt.workflow_run_id
+   AND ne.agent_session_id = sm.session_id
+   AND ne.rn = 1
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+),
+pending_rows AS (
+  SELECT
+    'delivery:' || pm.id AS id,
+    'task_timeline' AS scope,
+    'handoff' AS eventKind,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    pm.workflow_run_id AS workflowRunId,
+    NULL AS messageId,
+    pm.id AS eventRef,
+    json_object('kind', 'worker', 'label', pm.source_agent_name, 'role', pm.source_agent_name) AS fromActor,
+    json_object('kind', CASE WHEN pm.target_kind = 'space_agent' THEN 'agent' ELSE 'worker' END, 'label', pm.target_agent_name, 'role', pm.target_agent_name, 'sessionId', pm.delivered_session_id) AS targetActor,
+    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE 'direct' END AS targetResolution,
+    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE pm.status END AS deliveryState,
+    CASE WHEN pm.status = 'pending' THEN 'Queued delivery' WHEN pm.status = 'delivered' THEN 'Delivered message' WHEN pm.status = 'expired' THEN 'Expired delivery' ELSE 'Failed delivery' END AS title,
+    pm.message AS summary,
+    pm.last_error AS details,
+    CASE WHEN pm.status IN ('failed', 'expired') THEN 'error' WHEN pm.status = 'delivered' THEN 'success' ELSE 'info' END AS severity,
+    COALESCE(pm.last_attempt_at, pm.delivered_at, pm.created_at) AS createdAt
+  FROM target_task tt
+  JOIN pending_agent_messages pm ON pm.task_id = tt.id
+),
+github_rows AS (
+  SELECT
+    'github:' || ge.id AS id,
+    'task_timeline' AS scope,
+    'github' AS eventKind,
+    tt.id AS taskId,
+    tt.title AS taskTitle,
+    tt.workflow_run_id AS workflowRunId,
+    NULL AS messageId,
+    ge.id AS eventRef,
+    json_object('kind', 'github', 'label', ge.actor, 'role', ge.actor_type) AS fromActor,
+    json_object('kind', 'system', 'label', 'Task timeline', 'role', 'task') AS targetActor,
+    'external' AS targetResolution,
+    CASE WHEN ge.state = 'failed' THEN 'failed' ELSE 'delivered' END AS deliveryState,
+    'GitHub activity' AS title,
+    ge.summary AS summary,
+    ge.external_url AS details,
+    CASE WHEN ge.state = 'failed' THEN 'error' ELSE 'info' END AS severity,
+    ge.occurred_at AS createdAt
+  FROM target_task tt
+  JOIN space_github_events ge ON ge.task_id = tt.id
+  WHERE ge.state IN ('routed', 'delivered', 'failed')
+)
+SELECT * FROM sdk_rows
+UNION ALL SELECT * FROM pending_rows
+UNION ALL SELECT * FROM github_rows
+ORDER BY createdAt ASC, id ASC
+`.trim();
+
+const ACTOR_MESSAGES_BY_WORKFLOW_RUN_SQL = `
+WITH node_status_events AS (
+  SELECT 'in_progress' AS status, 'handoff' AS eventKind, 'Node handoff' AS title, 0 AS rank
+  UNION ALL SELECT 'idle', 'status', 'Node completed', 1
+  UNION ALL SELECT 'done', 'status', 'Node completed', 1
+  UNION ALL SELECT 'blocked', 'status', 'Node status', 1
+  UNION ALL SELECT 'cancelled', 'status', 'Node status', 1
+  UNION ALL SELECT 'waiting_rebind', 'retry', 'Node status', 1
+  UNION ALL SELECT 'pending', 'status', 'Node status', 0
+),
+node_rows AS (
+  SELECT
+    'node:' || ne.id || ':' || nse.status AS id,
+    'workflow_log' AS scope,
+    nse.eventKind AS eventKind,
+    (SELECT st.id FROM space_tasks st WHERE st.workflow_run_id = ne.workflow_run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskId,
+    (SELECT st.title FROM space_tasks st WHERE st.workflow_run_id = ne.workflow_run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskTitle,
+    ne.workflow_run_id AS workflowRunId,
+    NULL AS messageId,
+    ne.id AS eventRef,
+    json_object('kind', 'system', 'label', 'Workflow runtime', 'role', 'runtime') AS fromActor,
+    json_object('kind', 'worker', 'label', COALESCE(sa.name, ne.agent_name), 'role', ne.agent_name, 'sessionId', ne.agent_session_id, 'nodeExecutionId', ne.id) AS targetActor,
+    'system' AS targetResolution,
+    NULL AS deliveryState,
+    nse.title AS title,
+    ne.agent_name || ' is ' || nse.status AS summary,
+    CASE WHEN nse.status = ne.status THEN ne.result ELSE NULL END AS details,
+    CASE WHEN nse.status IN ('blocked', 'cancelled') THEN 'warning' WHEN nse.status IN ('idle', 'done') THEN 'success' ELSE 'info' END AS severity,
+    CASE
+      WHEN nse.status IN ('idle', 'done', 'blocked', 'cancelled') THEN COALESCE(ne.completed_at, ne.updated_at, ne.created_at)
+      WHEN nse.status IN ('waiting_rebind', 'pending') THEN COALESCE(ne.updated_at, ne.started_at, ne.created_at)
+      ELSE COALESCE(ne.started_at, ne.created_at)
+    END AS createdAt
+  FROM node_executions ne
+  JOIN node_status_events nse
+    ON nse.status = ne.status
+    OR (nse.status = 'in_progress' AND ne.status IN ('idle', 'done', 'blocked', 'cancelled', 'waiting_rebind'))
+  LEFT JOIN space_agents sa ON sa.id = ne.agent_id
+  WHERE ne.workflow_run_id = ?
+),
+delivery_rows AS (
+  SELECT
+    'delivery:' || pm.id AS id,
+    'workflow_log' AS scope,
+    CASE WHEN pm.attempts > 0 AND pm.status = 'pending' THEN 'retry' ELSE 'handoff' END AS eventKind,
+    pm.task_id AS taskId,
+    st.title AS taskTitle,
+    pm.workflow_run_id AS workflowRunId,
+    NULL AS messageId,
+    pm.id AS eventRef,
+    json_object('kind', 'worker', 'label', pm.source_agent_name, 'role', pm.source_agent_name) AS fromActor,
+    json_object('kind', CASE WHEN pm.target_kind = 'space_agent' THEN 'agent' ELSE 'worker' END, 'label', pm.target_agent_name, 'role', pm.target_agent_name, 'sessionId', pm.delivered_session_id) AS targetActor,
+    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE 'direct' END AS targetResolution,
+    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE pm.status END AS deliveryState,
+    CASE WHEN pm.status = 'pending' THEN 'Queued delivery' WHEN pm.status = 'delivered' THEN 'Delivered message' WHEN pm.status = 'expired' THEN 'Expired delivery' ELSE 'Failed delivery' END AS title,
+    pm.message AS summary,
+    pm.last_error AS details,
+    CASE WHEN pm.status IN ('failed', 'expired') THEN 'error' WHEN pm.status = 'delivered' THEN 'success' ELSE 'info' END AS severity,
+    COALESCE(pm.last_attempt_at, pm.delivered_at, pm.created_at) AS createdAt
+  FROM pending_agent_messages pm
+  LEFT JOIN space_tasks st ON st.id = pm.task_id
+  WHERE pm.workflow_run_id = ?
+),
+artifact_rows AS (
+  SELECT
+    'artifact:' || wra.id AS id,
+    'workflow_log' AS scope,
+    'artifact' AS eventKind,
+    (SELECT st.id FROM space_tasks st WHERE st.workflow_run_id = wra.run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskId,
+    (SELECT st.title FROM space_tasks st WHERE st.workflow_run_id = wra.run_id ORDER BY st.created_at ASC, st.id ASC LIMIT 1) AS taskTitle,
+    wra.run_id AS workflowRunId,
+    NULL AS messageId,
+    wra.id AS eventRef,
+    json_object('kind', 'worker', 'label', wra.node_id, 'role', wra.node_id) AS fromActor,
+    json_object('kind', 'system', 'label', 'Artifact store', 'role', 'artifact') AS targetActor,
+    'system' AS targetResolution,
+    'delivered' AS deliveryState,
+    'Artifact saved' AS title,
+    wra.artifact_type || CASE WHEN wra.artifact_key = '' THEN '' ELSE ':' || wra.artifact_key END AS summary,
+    wra.data AS details,
+    'success' AS severity,
+    wra.created_at AS createdAt
+  FROM workflow_run_artifacts wra
+  WHERE wra.run_id = ?
+)
+SELECT * FROM node_rows
+UNION ALL SELECT * FROM delivery_rows
+UNION ALL SELECT * FROM artifact_rows
+ORDER BY createdAt ASC, id ASC
 `.trim();
 
 function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -789,6 +1062,7 @@ github_events AS (
       )
     ) AS content,
     'system' AS origin,
+    'delivered' AS deliveryState,
     ge.occurred_at AS createdAt,
     NULL AS parentToolUseId,
     1 AS isRenderable,
@@ -853,6 +1127,7 @@ sdk_rows_raw AS (
     sm.message_type AS messageType,
     sm.sdk_message AS content,
     sm.origin AS origin,
+    CASE WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'failed' WHEN sm.message_type = 'user' THEN 'delivered' ELSE NULL END AS deliveryState,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
@@ -923,6 +1198,7 @@ sdk_rows AS (
     t.messageType,
     t.content,
     t.origin,
+    t.deliveryState,
     t.createdAt,
     t.parentToolUseId,
     t.isRenderable,
@@ -948,6 +1224,7 @@ joined AS (
     messageType,
     content,
     origin,
+    deliveryState,
     createdAt,
     parentToolUseId,
     isRenderable,
@@ -975,6 +1252,7 @@ SELECT
   messageType,
   content,
   origin,
+  deliveryState,
   createdAt,
   turnUserMessageId,
   parentToolUseId
@@ -1107,6 +1385,7 @@ SELECT
   messageType,
   content,
   origin,
+  deliveryState,
   createdAt,
   turnIndex,
   CASE
@@ -1976,6 +2255,60 @@ function buildTaskScopeFilter(
 // writes are infrequent compared to `sdk_messages`, so re-evaluating
 // `sessions.list` on every session write is cheap and correct.
 
+function buildWorkflowRunScopeFilter(
+	params: ReadonlyArray<unknown>,
+	db: BunDatabase
+): (scope: TableChangeScope) => boolean {
+	const workflowRunId = params[0] as string;
+	const taskIds = new Set<string>();
+	const sessionIds = new Set<string>();
+	const loadScope = () => {
+		taskIds.clear();
+		sessionIds.clear();
+		try {
+			const tasks = db
+				.prepare('SELECT id, task_agent_session_id FROM space_tasks WHERE workflow_run_id = ?')
+				.all(workflowRunId) as Array<{ id: string; task_agent_session_id: string | null }>;
+			for (const row of tasks) {
+				taskIds.add(row.id);
+				if (row.task_agent_session_id) sessionIds.add(row.task_agent_session_id);
+			}
+		} catch {
+			// space_tasks may not exist in minimal test schemas
+		}
+		try {
+			const executions = db
+				.prepare('SELECT agent_session_id FROM node_executions WHERE workflow_run_id = ?')
+				.all(workflowRunId) as Array<{ agent_session_id: string | null }>;
+			for (const row of executions) {
+				if (row.agent_session_id) sessionIds.add(row.agent_session_id);
+			}
+		} catch {
+			// node_executions may not exist in minimal test schemas
+		}
+		try {
+			const messages = db
+				.prepare(
+					'SELECT DISTINCT session_id FROM sdk_messages WHERE task_id IN (SELECT id FROM space_tasks WHERE workflow_run_id = ?)'
+				)
+				.all(workflowRunId) as Array<{ session_id: string | null }>;
+			for (const row of messages) {
+				if (row.session_id) sessionIds.add(row.session_id);
+			}
+		} catch {
+			// sdk_messages may not exist in minimal test schemas
+		}
+	};
+	loadScope();
+	return (scope) => {
+		if (scope.taskId) return taskIds.has(scope.taskId);
+		if (!scope.sessionId) return true;
+		if (sessionIds.has(scope.sessionId)) return true;
+		loadScope();
+		return sessionIds.has(scope.sessionId);
+	};
+}
+
 function buildSpaceSessionsScopeFilter(
 	params: ReadonlyArray<unknown>,
 	db: BunDatabase
@@ -2110,6 +2443,26 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: MCP_ENABLEMENT_BY_SPACE_SQL,
 			paramCount: 1,
 			mapRow: mapMcpEnablementBySpaceRow,
+		},
+	],
+	[
+		'actorMessages.byTask',
+		{
+			sql: ACTOR_MESSAGES_BY_TASK_SQL,
+			paramCount: 1,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+			mapRow: mapActorMessageProjectionRow,
+			buildScopeFilter: buildTaskScopeFilter,
+		},
+	],
+	[
+		'actorMessages.byWorkflowRun',
+		{
+			sql: ACTOR_MESSAGES_BY_WORKFLOW_RUN_SQL,
+			paramCount: 3,
+			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+			mapRow: mapActorMessageProjectionRow,
+			buildScopeFilter: buildWorkflowRunScopeFilter,
 		},
 	],
 	[
@@ -2291,7 +2644,8 @@ export function setupLiveQueryHandlers(
 			queryName === 'spaceTaskActivity.byTask' ||
 			queryName === 'spaceTaskMessages.byTask' ||
 			queryName === 'spaceTaskMessages.byTask.compact' ||
-			queryName === 'spaceTaskActiveTurn.byTask'
+			queryName === 'spaceTaskActiveTurn.byTask' ||
+			queryName === 'actorMessages.byTask'
 		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;
@@ -2304,6 +2658,26 @@ export function setupLiveQueryHandlers(
 			}
 			if (!spaceTask) {
 				throw new Error(`Unauthorized: space task "${taskId}" not found`);
+			}
+		} else if (queryName === 'actorMessages.byWorkflowRun') {
+			const workflowRunId = params[0] as string;
+			if (params.some((param) => param !== workflowRunId)) {
+				throw new Error(
+					'Unauthorized: actorMessages.byWorkflowRun requires matching workflow run ids'
+				);
+			}
+			let workflowRun: { id: string } | null = null;
+			try {
+				workflowRun = db
+					.prepare('SELECT id FROM space_workflow_runs WHERE id = ?')
+					.get(workflowRunId) as {
+					id: string;
+				} | null;
+			} catch {
+				workflowRun = null;
+			}
+			if (!workflowRun) {
+				throw new Error(`Unauthorized: workflow run "${workflowRunId}" not found`);
 			}
 		} else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
 			const spaceId = params[0] as string;
