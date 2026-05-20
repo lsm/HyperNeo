@@ -1403,7 +1403,7 @@ export interface DeclarativeToolGuard {
 export interface EventInterest {
 	/**
 	 * Glob pattern matching event topics.
-	 * Examples: 'github/owner/repo/pull_request.*', 'github/owner/repo/pull_request.review_*'
+	 * Examples: 'github/owner/repo/pull_request/*.review_*', 'github/owner/repo/pull_request/42.*'
 	 *
 	 * The topic pattern IS the filter — the format encodes source identity,
 	 * scope (e.g. owner/repo for GitHub), resource, and entity/action.

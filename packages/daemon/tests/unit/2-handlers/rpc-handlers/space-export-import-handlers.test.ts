@@ -425,7 +425,7 @@ describe('Space Export/Import RPC Handlers', () => {
 								name: 'Coder',
 								eventInterests: [
 									{
-										topic: 'github/*/*/pull_request.review_*',
+										topic: 'github/*/*/pull_request/*.review_*',
 										label: 'PR reviews',
 									},
 								],
@@ -443,7 +443,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 			expect(bundle.workflows[0].nodes[0].agents[0].eventInterests).toEqual([
 				{
-					topic: 'github/*/*/pull_request.review_*',
+					topic: 'github/*/*/pull_request/*.review_*',
 					label: 'PR reviews',
 				},
 			]);
@@ -684,7 +684,7 @@ describe('Space Export/Import RPC Handlers', () => {
 								name: 'Code',
 								eventInterests: [
 									{
-										topic: 'github/*/*/pull_request.review_*',
+										topic: 'github/*/*/pull_request/*.review_*',
 										label: 'PR reviews',
 									},
 								],
@@ -702,7 +702,7 @@ describe('Space Export/Import RPC Handlers', () => {
 			const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
 			expect(workflow.nodes[0].agents[0].eventInterests).toEqual([
 				{
-					topic: 'github/*/*/pull_request.review_*',
+					topic: 'github/*/*/pull_request/*.review_*',
 					label: 'PR reviews',
 				},
 			]);
@@ -718,7 +718,7 @@ describe('Space Export/Import RPC Handlers', () => {
 							{
 								agentRef: 'Coder',
 								name: 'Code',
-								eventInterests: [{ topic: 'github/**/pull_request.opened' }],
+								eventInterests: [{ topic: 'github/**/pull_request/*.opened' }],
 							},
 						],
 					},

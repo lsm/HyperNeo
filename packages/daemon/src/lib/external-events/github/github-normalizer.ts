@@ -14,6 +14,7 @@ export interface NormalizedGitHubEvent {
 	action: string;
 	repoOwner: string;
 	repoName: string;
+	entityId: string;
 	prNumber: number;
 	prUrl: string;
 	actor: string;
@@ -157,6 +158,7 @@ export function normalizeGitHubWebhook(
 		action,
 		repoOwner: repo.owner,
 		repoName: repo.repo,
+		entityId: String(prNumber),
 		prNumber,
 		prUrl: prUrl(repo.owner, repo.repo, prNumber),
 		actor: actor.login,
@@ -210,6 +212,7 @@ export function normalizeGitHubPollingRow(
 		action: 'polled',
 		repoOwner: watched.owner,
 		repoName: watched.repo,
+		entityId: String(prNumber),
 		prNumber,
 		prUrl: prUrl(watched.owner, watched.repo, prNumber),
 		actor: user.login,
@@ -223,28 +226,42 @@ export function normalizeGitHubPollingRow(
 	};
 }
 
-export function mapEventType(kind: GitHubEventKind, action: string): string {
+export interface GitHubTopicParts {
+	resource: string;
+	entityId: string;
+	action: string;
+}
+
+export function mapEventType(
+	kind: GitHubEventKind,
+	action: string,
+	entityId: string
+): GitHubTopicParts {
 	switch (kind) {
 		case 'issue_comment':
-			return `pull_request.comment_${action}`;
+			return { resource: 'pull_request', entityId, action: `comment_${action}` };
 		case 'pull_request_review':
-			return `pull_request.review_${action}`;
+			return { resource: 'pull_request', entityId, action: `review_${action}` };
 		case 'pull_request_review_comment':
-			return `pull_request.review_comment_${action}`;
+			return { resource: 'pull_request', entityId, action: `review_comment_${action}` };
 		case 'pull_request':
-			return `pull_request.${action}`;
+			return { resource: 'pull_request', entityId, action };
 	}
 }
 
 export function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): ExternalEvent {
 	const repoOwner = event.repoOwner.toLowerCase();
 	const repoName = event.repoName.toLowerCase();
-	const resourceAction = mapEventType(event.eventType, event.action);
+	const { resource, entityId, action } = mapEventType(
+		event.eventType,
+		event.action,
+		event.entityId
+	);
 
 	return {
 		id: crypto.randomUUID(),
 		spaceId,
-		topic: `github/${repoOwner}/${repoName}/${resourceAction}`,
+		topic: `github/${repoOwner}/${repoName}/${resource}/${entityId}.${action}`,
 		occurredAt: event.occurredAt,
 		ingestedAt: Date.now(),
 		source: 'github',
@@ -257,6 +274,7 @@ export function toExternalEvent(spaceId: string, event: NormalizedGitHubEvent): 
 			source: event.source,
 			prUrl: event.prUrl,
 			prNumber: event.prNumber,
+			entityId: event.entityId,
 			repoOwner,
 			repoName,
 			deliveryId: event.deliveryId,
