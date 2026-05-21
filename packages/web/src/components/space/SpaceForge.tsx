@@ -1,4 +1,5 @@
 import type {
+	EvidenceQualityPreflight,
 	EvolutionEpisode,
 	EvolutionEpisodeCreateResponse,
 	EvolutionEpisodeReviewBundleResponse,
@@ -128,6 +129,84 @@ function nextStepsFromText(value: string): string[] {
 		.split('\n')
 		.map((step) => step.trim())
 		.filter(Boolean);
+}
+
+function buildEvidenceQualityPreflight(
+	evidence: EvidenceRef[],
+	selectedEvidenceIds: string[]
+): EvidenceQualityPreflight | null {
+	if (selectedEvidenceIds.length === 0) return null;
+	const selected = evidence.filter((item) => selectedEvidenceIds.includes(item.id));
+	if (selected.length === 0) return null;
+	const counts = {
+		total: selected.length,
+		manualNotes: selected.filter((item) => item.kind === 'manual_note').length,
+		taskResults: selected.filter((item) => item.kind === 'task_result').length,
+		workflowArtifacts: selected.filter(
+			(item) => item.kind === 'workflow_run' || item.kind === 'artifact' || item.kind === 'error'
+		).length,
+		metricSnapshots: selected.filter((item) => item.kind === 'metric_snapshot').length,
+		outcomes: countEvidenceOutcomes(selected),
+	};
+	let score = 0;
+	const reasons: string[] = [];
+	const warnings: string[] = [];
+	if (counts.taskResults > 0) {
+		score += 30;
+		reasons.push('Task result evidence selected.');
+	}
+	if (counts.workflowArtifacts > 0) {
+		score += 30;
+		reasons.push('Workflow run or artifact evidence selected.');
+	}
+	if (counts.metricSnapshots > 0) {
+		score += 15;
+		reasons.push('Metric snapshot evidence selected.');
+	}
+	if (counts.outcomes > 0) {
+		score += Math.min(25, counts.outcomes * 8);
+		reasons.push('Concrete outcome language found.');
+	}
+	if (counts.total > counts.manualNotes) score += 10;
+	const manualOnly = counts.total > 0 && counts.manualNotes === counts.total;
+	if (manualOnly) warnings.push('Only manual notes selected; judge output will be low confidence.');
+	if (counts.taskResults === 0) warnings.push('No task result evidence selected.');
+	if (counts.workflowArtifacts === 0)
+		warnings.push('No workflow run or artifact evidence selected.');
+	if (counts.metricSnapshots === 0) warnings.push('No metric snapshot evidence selected.');
+	if (counts.outcomes === 0)
+		warnings.push('No PR, QA, CI, merge, error, or completion outcome found.');
+	const boundedScore = Math.min(100, score);
+	const level = boundedScore >= 70 ? 'high' : boundedScore >= 45 ? 'medium' : 'low';
+	return {
+		level,
+		score: boundedScore,
+		maxScore: 100,
+		canGenerate: selected.length > 0,
+		requiresConfirmation: manualOnly || level === 'low',
+		reasons,
+		warnings,
+		counts,
+	};
+}
+
+function countEvidenceOutcomes(evidence: EvidenceRef[]): number {
+	const seen = new Set<string>();
+	for (const item of evidence) {
+		const text = `${item.summary} ${JSON.stringify(item.metadata)}`.toLowerCase();
+		if (/\b(pr|pull request|github\.com\/[^\s]+\/pull\/)\b/.test(text)) seen.add('pr');
+		if (/\b(qa|quality assurance|validated|validation)\b/.test(text)) seen.add('qa');
+		if (/\b(ci|check|checks|build|test|tests|passed|failing|failed)\b/.test(text)) seen.add('ci');
+		if (/\b(merge|merged|landed)\b/.test(text)) seen.add('merge');
+		if (
+			item.kind === 'error' ||
+			/\b(error|failure|failed|exception|rework|regression)\b/.test(text)
+		) {
+			seen.add('error');
+		}
+		if (/\b(done|completed|complete|approved|shipped)\b/.test(text)) seen.add('task completion');
+	}
+	return seen.size;
 }
 
 function getGoal(scope: EvolutionScope | null, goals: SpaceGoal[]): SpaceGoal | null {
@@ -554,6 +633,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 	const [proposals, setProposals] = useState<TaskProposal[]>([]);
 	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
 	const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
+	const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -623,8 +703,14 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		!!latestEpisode &&
 		latestEpisode.status !== 'dismissed' &&
 		latestEpisode.rollupAppliedAt === null;
+	const preflight = useMemo(
+		() => buildEvidenceQualityPreflight(evidence, selectedEvidenceIds),
+		[evidence, selectedEvidenceIds]
+	);
+	const preflightReady = preflight?.requiresConfirmation ? confirmLowConfidence : true;
 
 	const toggleEvidence = (id: string) => {
+		setConfirmLowConfidence(false);
 		setSelectedEvidenceIds((current) =>
 			current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
 		);
@@ -643,6 +729,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 				{
 					scopeId: scope.id,
 					evidenceIds: selectedEvidenceIds,
+					confirmLowConfidence: confirmLowConfidence || undefined,
 				},
 				{ timeout: EPISODE_JUDGE_TIMEOUT_MS }
 			);
@@ -650,6 +737,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 			setLessons((current) => [...(response.lessons ?? []), ...current]);
 			setProposals((current) => [...(response.proposals ?? []), ...current]);
 			setSelectedEvidenceIds([]);
+			setConfirmLowConfidence(false);
 			toast.success(`Episode "${response.episode.title}" drafted`);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create episode');
@@ -789,7 +877,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						type="button"
 						size="sm"
 						onClick={handleCreateEpisode}
-						disabled={submitting || selectedEvidenceIds.length === 0}
+						disabled={submitting || selectedEvidenceIds.length === 0 || !preflightReady}
 					>
 						{submitting ? 'Judging…' : 'Create episode'}
 					</Button>
@@ -802,24 +890,70 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						</p>
 					</div>
 				) : (
-					<div class="grid gap-2 md:grid-cols-2">
-						{evidence.map((item) => (
-							<label
-								key={item.id}
-								class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+					<div class="space-y-3">
+						<div class="grid gap-2 md:grid-cols-2">
+							{evidence.map((item) => (
+								<label
+									key={item.id}
+									class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+								>
+									<input
+										type="checkbox"
+										checked={selectedEvidenceIds.includes(item.id)}
+										onChange={() => toggleEvidence(item.id)}
+										class="mt-1"
+									/>
+									<span>
+										<span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
+										{item.summary}
+									</span>
+								</label>
+							))}
+						</div>
+						{preflight && (
+							<div
+								class={`rounded-lg border px-3 py-2 text-sm ${
+									preflight.level === 'high'
+										? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
+										: preflight.level === 'medium'
+											? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+											: 'border-red-500/30 bg-red-500/10 text-red-100'
+								}`}
 							>
-								<input
-									type="checkbox"
-									checked={selectedEvidenceIds.includes(item.id)}
-									onChange={() => toggleEvidence(item.id)}
-									class="mt-1"
-								/>
-								<span>
-									<span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
-									{item.summary}
-								</span>
-							</label>
-						))}
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<span class="font-medium">Evidence preflight: {preflight.level} confidence</span>
+									<span class="text-xs opacity-80">
+										{preflight.score}/{preflight.maxScore} · {preflight.counts.total} selected
+									</span>
+								</div>
+								{preflight.reasons.length > 0 && (
+									<ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
+										{preflight.reasons.map((reason) => (
+											<li key={reason}>{reason}</li>
+										))}
+									</ul>
+								)}
+								{preflight.warnings.length > 0 && (
+									<ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
+										{preflight.warnings.map((warning) => (
+											<li key={warning}>{warning}</li>
+										))}
+									</ul>
+								)}
+								{preflight.requiresConfirmation && (
+									<label class="mt-3 flex items-center gap-2 text-xs">
+										<input
+											type="checkbox"
+											checked={confirmLowConfidence}
+											onChange={(event) =>
+												setConfirmLowConfidence((event.currentTarget as HTMLInputElement).checked)
+											}
+										/>
+										Generate low-confidence episode anyway
+									</label>
+								)}
+							</div>
+						)}
 					</div>
 				)}
 			</section>

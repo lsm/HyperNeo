@@ -39,6 +39,7 @@ import type {
 	CreateEvolutionScopeParams,
 	CreateMetricSnapshotParams,
 	CreateTaskProposalParams,
+	EvidenceQualityPreflight,
 	EvidenceRef,
 	EvolutionEpisode,
 	EvolutionLesson,
@@ -658,12 +659,14 @@ export interface EvolutionEpisodeCreateFromEvidenceRequest {
 	scopeId: string;
 	evidenceIds: string[];
 	timeWindow?: EvolutionEpisode['timeWindow'];
+	confirmLowConfidence?: boolean;
 }
 
 export interface EvolutionEpisodeCreateResponse {
 	episode: EvolutionEpisode;
 	lessons?: EvolutionLesson[];
 	proposals?: TaskProposal[];
+	preflight?: EvidenceQualityPreflight;
 }
 
 export interface EvolutionEpisodeReviewBundleResponse {

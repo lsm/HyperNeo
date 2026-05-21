@@ -237,6 +237,142 @@ describe('EvolutionEpisodeService', () => {
 		).resolves.toEqual({ provider: 'openrouter', modelId: 'shared-model' });
 	});
 
+	it('warns and blocks manual-note-only evidence without explicit confirmation', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Thin evidence',
+			objective: 'Avoid generic findings',
+		});
+		const note = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Operator thinks the work went well',
+		});
+		let judgeCalled = false;
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			judgeEpisode: async () => {
+				judgeCalled = true;
+				return { title: 'Should not run', outcomeSummary: 'Nope', findings: [] };
+			},
+		});
+		const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [note.id] });
+		const prompt = buildEpisodeJudgePrompt(input);
+
+		expect(input.preflight.level).toBe('low');
+		expect(input.preflight.requiresConfirmation).toBe(true);
+		expect(input.preflight.warnings).toContain(
+			'Only manual notes selected; findings will be low confidence without task results or artifacts.'
+		);
+		expect(prompt).toContain('Evidence quality preflight');
+		expect(prompt).toContain('low');
+		await expect(
+			service.createFromEvidence({ scopeId: scope.id, evidenceIds: [note.id] })
+		).rejects.toThrow('Low-confidence evidence requires explicit confirmation');
+		expect(judgeCalled).toBe(false);
+	});
+
+	it('passes task plus workflow artifact evidence through preflight', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Artifact-backed evidence',
+			objective: 'Trust concrete outcomes',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Ship Forge preflight',
+			description: 'Add preflight',
+			evolutionScopeId: scope.id,
+		});
+		taskRepo.updateTask(task.id, {
+			status: 'done',
+			result: 'PR merged after CI and QA passed',
+			reportedSummary: 'Completed with artifact-backed validation',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Code workflow' });
+		const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Forge run' });
+		artifactRepo.upsert({
+			id: 'artifact-quality',
+			runId: run.id,
+			nodeId: 'qa',
+			artifactType: 'result',
+			artifactKey: 'qa',
+			data: { summary: 'QA passed, CI green, PR https://github.com/lsm/neokai/pull/1 merged' },
+		});
+		const taskEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'task_result',
+			sourceId: task.id,
+			summary: 'Task completed with PR and CI outcome',
+		});
+		const artifactEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'artifact',
+			sourceId: run.id,
+			summary: 'Workflow artifact captured QA and merge outcome',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const input = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [taskEvidence.id, artifactEvidence.id],
+		});
+
+		expect(input.preflight.level).toBe('high');
+		expect(input.preflight.requiresConfirmation).toBe(false);
+		expect(input.preflight.counts.taskResults).toBe(1);
+		expect(input.preflight.counts.workflowArtifacts).toBe(1);
+		expect(input.preflight.counts.outcomes).toBeGreaterThanOrEqual(3);
+	});
+
+	it('metric snapshot improves evidence readiness', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Metrics evidence',
+			objective: 'Use measurements',
+		});
+		const note = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Manual note says review completed',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+		const before = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [note.id],
+		}).preflight;
+		evolutionRepo.createMetricSnapshot({
+			scopeId: scope.id,
+			values: { comments: 2 },
+			source: 'manual',
+			note: 'Review comments decreased',
+		});
+		const after = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [note.id],
+		}).preflight;
+
+		expect(after.score).toBeGreaterThan(before.score);
+		expect(after.counts.metricSnapshots).toBe(1);
+		expect(after.warnings).not.toContain('No metric snapshot context selected.');
+	});
+
 	it('builds episode input with task results, workflow artifacts, metrics, and notes', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,
@@ -987,6 +1123,7 @@ describe('EvolutionEpisodeService', () => {
 		const result = await service.createFromEvidence({
 			scopeId: scope.id,
 			evidenceIds: [evidence.id],
+			confirmLowConfidence: true,
 		});
 
 		expect(result.episode).toMatchObject({

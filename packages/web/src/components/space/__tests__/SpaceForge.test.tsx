@@ -246,7 +246,11 @@ function setupRequests(scope = makeScope()) {
 			return { lessons: [makeLesson({ status: 'active' })] };
 		}
 		if (method === 'evolution.episode.createFromEvidence') {
-			expect(data).toEqual({ scopeId: scope.id, evidenceIds: ['evidence-1'] });
+			expect(data).toEqual({
+				scopeId: scope.id,
+				evidenceIds: ['evidence-1'],
+				confirmLowConfidence: true,
+			});
 			return {
 				episode: makeEpisode({ id: 'episode-2', title: 'Generated episode' }),
 				lessons: [makeLesson({ id: 'lesson-2', rule: 'Generated lesson' })],
@@ -564,6 +568,14 @@ describe('SpaceForge', () => {
 		expect(screen.getByText('Improve review UI')).toBeTruthy();
 
 		fireEvent.click(screen.getByLabelText(/Reviewer found regression before merge/));
+		expect(await screen.findByText('Evidence preflight: low confidence')).toBeTruthy();
+		expect(
+			screen.getByText('Only manual notes selected; judge output will be low confidence.')
+		).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Create episode' }).hasAttribute('disabled')).toBe(
+			true
+		);
+		fireEvent.click(screen.getByLabelText('Generate low-confidence episode anyway'));
 		fireEvent.click(screen.getByRole('button', { name: 'Create episode' }));
 
 		await waitFor(() =>
@@ -574,8 +586,71 @@ describe('SpaceForge', () => {
 			{
 				scopeId: 'scope-1',
 				evidenceIds: ['evidence-1'],
+				confirmLowConfidence: true,
 			},
 			{ timeout: 120000 }
+		);
+	});
+
+	it('shows ready preflight state for artifact-backed evidence', async () => {
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
+			if (method === 'evolution.evidence.list') {
+				return {
+					evidence: [
+						makeEvidence({
+							id: 'task-evidence',
+							kind: 'task_result',
+							summary: 'Task completed with PR merged after CI and QA passed',
+						}),
+						makeEvidence({
+							id: 'artifact-evidence',
+							kind: 'artifact',
+							summary: 'Workflow artifact captured tests passed and merge completed',
+						}),
+						makeEvidence({
+							id: 'metric-evidence',
+							kind: 'metric_snapshot',
+							summary: 'Metric snapshot: review latency improved',
+						}),
+					],
+				};
+			}
+			if (method === 'evolution.review.get') {
+				return { episodes: [], lessons: [], proposals: [] };
+			}
+			if (method === 'evolution.episode.createFromEvidence') {
+				expect(data).toEqual({
+					scopeId: 'scope-1',
+					evidenceIds: ['task-evidence', 'artifact-evidence', 'metric-evidence'],
+					confirmLowConfidence: undefined,
+				});
+				return {
+					episode: makeEpisode({ id: 'episode-ready', title: 'Ready episode' }),
+					lessons: [],
+					proposals: [],
+				};
+			}
+			if (method === 'evolution.lesson.list') return { lessons: [] };
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.click(await screen.findByLabelText(/Task completed with PR merged/));
+		fireEvent.click(screen.getByLabelText(/Workflow artifact captured tests passed/));
+		fireEvent.click(screen.getByLabelText(/Metric snapshot: review latency improved/));
+
+		expect(await screen.findByText('Evidence preflight: high confidence')).toBeTruthy();
+		expect(screen.getByText('Metric snapshot evidence selected.')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Create episode' }).hasAttribute('disabled')).toBe(
+			false
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Create episode' }));
+
+		await waitFor(() =>
+			expect(mockToastSuccess).toHaveBeenCalledWith('Episode "Ready episode" drafted')
 		);
 	});
 

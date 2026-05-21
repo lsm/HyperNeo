@@ -91,6 +91,26 @@ export interface CreateEvidenceRefParams {
 	createdAt?: number;
 }
 
+export type EvidenceQualityLevel = 'low' | 'medium' | 'high';
+
+export interface EvidenceQualityPreflight {
+	level: EvidenceQualityLevel;
+	score: number;
+	maxScore: number;
+	canGenerate: boolean;
+	requiresConfirmation: boolean;
+	reasons: string[];
+	warnings: string[];
+	counts: {
+		total: number;
+		manualNotes: number;
+		taskResults: number;
+		workflowArtifacts: number;
+		metricSnapshots: number;
+		outcomes: number;
+	};
+}
+
 export interface EvolutionFinding {
 	domain: EvolutionFindingDomain;
 	kind: EvolutionFindingKind;

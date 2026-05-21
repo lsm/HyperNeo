@@ -2074,6 +2074,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			scope_id: string;
 			evidence_ids: string[];
 			time_window?: CreateEvolutionEpisodeParams['timeWindow'];
+			confirm_low_confidence?: boolean;
 		}): Promise<ToolResult> {
 			try {
 				requireEvolutionScopeInSpace(args.scope_id);
@@ -2081,6 +2082,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					scopeId: args.scope_id,
 					evidenceIds: args.evidence_ids,
 					timeWindow: args.time_window,
+					confirmLowConfidence: args.confirm_low_confidence,
 				});
 				logAudit('create_forge_episode', {
 					scope_id: args.scope_id,
@@ -3122,6 +3124,10 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 						.object({ start: z.number().int(), end: z.number().int() })
 						.nullable()
 						.optional(),
+					confirm_low_confidence: z
+						.boolean()
+						.optional()
+						.describe('Allow low-confidence generation when preflight warns evidence is thin'),
 				},
 				(args) => handlers.create_forge_episode(args)
 			),
