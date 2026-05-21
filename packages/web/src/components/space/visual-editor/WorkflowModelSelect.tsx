@@ -40,8 +40,10 @@ function encodeModelValue(model: ModelInfo): string {
 	return `${model.provider}:${model.id}`;
 }
 
-function decodeModelValue(value: string): WorkflowModelSelection {
-	const separator = value.indexOf(':');
+function decodeModelValue(value: string, models: ModelInfo[]): WorkflowModelSelection {
+	const match = models.find((model) => encodeModelValue(model) === value);
+	if (match) return { provider: match.provider, modelId: match.id };
+	const separator = value.lastIndexOf(':');
 	if (separator === -1) return { provider: '', modelId: value };
 	return { provider: value.slice(0, separator), modelId: value.slice(separator + 1) };
 }
@@ -123,7 +125,7 @@ export function WorkflowModelSelect({
 					onChange(undefined);
 					return;
 				}
-				const selection = decodeModelValue(nextValue);
+				const selection = decodeModelValue(nextValue, models);
 				onChange(selection.modelId, selection);
 			}}
 			class={className}

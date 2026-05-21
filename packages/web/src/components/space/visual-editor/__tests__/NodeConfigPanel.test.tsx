@@ -39,6 +39,12 @@ const mockModelsResponse = {
 			description: '',
 			provider: 'openai',
 		},
+		{
+			id: 'model:with:colon',
+			display_name: 'Colon Model',
+			description: '',
+			provider: 'custom:endpoint-1',
+		},
 	],
 };
 
@@ -174,6 +180,17 @@ describe('NodeConfigPanel', () => {
 			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
 			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
 			expect(input.value).toBe('openai:gpt-5.4');
+		});
+
+		it('preserves provider-qualified selections containing colons', async () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			fireEvent.change(input, {
+				target: { value: 'custom:endpoint-1:model:with:colon' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'model:with:colon' }));
 		});
 
 		it('renders close button', () => {
