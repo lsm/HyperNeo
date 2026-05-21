@@ -5,6 +5,8 @@ import type {
 	EvolutionFinding,
 	EvolutionFindingDomain,
 	EvolutionLesson,
+	EvolutionRollupApplyResponse,
+	EvolutionTaskProposalCreateTaskResponse,
 	EvolutionScope,
 	EvolutionScopeCreateResponse,
 	EvolutionScopeKind,
@@ -65,6 +67,19 @@ interface SnapshotValueDraft {
 	value: string;
 }
 
+interface ProposalEditDraft {
+	title: string;
+	description: string;
+	reason: string;
+	priority: TaskProposal['priority'];
+}
+
+interface RollupDraft {
+	summary: string;
+	progress: string;
+	nextSteps: string;
+}
+
 function formatDate(value: number): string {
 	return new Date(value).toLocaleString();
 }
@@ -92,6 +107,22 @@ function buildMetricDefinitions(drafts: MetricDefinitionDraft[]): MetricDefiniti
 			targetValue: draft.targetValue.trim() ? parseMetricValue(draft.targetValue) : undefined,
 		}))
 		.filter((metric) => metric.key && metric.label);
+}
+
+function createProposalDraft(proposal: TaskProposal): ProposalEditDraft {
+	return {
+		title: proposal.title,
+		description: proposal.description,
+		reason: proposal.reason,
+		priority: proposal.priority,
+	};
+}
+
+function nextStepsFromText(value: string): string[] {
+	return value
+		.split('\n')
+		.map((step) => step.trim())
+		.filter(Boolean);
 }
 
 function getGoal(scope: EvolutionScope | null, goals: SpaceGoal[]): SpaceGoal | null {
@@ -479,7 +510,7 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 	);
 }
 
-function EpisodesTab({ scope }: { scope: EvolutionScope }) {
+function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal | null }) {
 	const { request } = useMessageHub();
 	const [episodes, setEpisodes] = useState<EvolutionEpisode[]>([]);
 	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
@@ -489,6 +520,13 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 	const [loading, setLoading] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [editingProposalId, setEditingProposalId] = useState<string | null>(null);
+	const [proposalDraft, setProposalDraft] = useState<ProposalEditDraft | null>(null);
+	const [rollupDraft, setRollupDraft] = useState<RollupDraft>({
+		summary: goal?.summary ?? '',
+		progress: String(goal?.progress ?? 0),
+		nextSteps: goal?.nextSteps.join('\n') ?? '',
+	});
 	const requestVersion = useRef(0);
 
 	const loadReview = useCallback(async () => {
@@ -523,6 +561,14 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 		setSelectedEvidenceIds([]);
 		loadReview().catch(() => undefined);
 	}, [loadReview]);
+
+	useEffect(() => {
+		setRollupDraft({
+			summary: goal?.summary ?? '',
+			progress: String(goal?.progress ?? 0),
+			nextSteps: goal?.nextSteps.join('\n') ?? '',
+		});
+	}, [goal]);
 
 	// MVP review focuses on the newest draft; deeper episode history/selection can layer on later.
 	const latestEpisode = episodes[0] ?? null;
@@ -618,6 +664,71 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 		}
 	};
 
+	const createTaskFromProposal = async (proposal: TaskProposal, draft?: ProposalEditDraft) => {
+		try {
+			setSubmitting(true);
+			setError(null);
+			const response = await request<EvolutionTaskProposalCreateTaskResponse>(
+				'evolution.taskProposal.createTask',
+				{
+					id: proposal.id,
+					params: draft
+						? {
+								title: draft.title,
+								description: draft.description,
+								reason: draft.reason,
+								priority: draft.priority,
+							}
+						: undefined,
+				}
+			);
+			setProposals((current) =>
+				current.map((item) => (item.id === response.proposal.id ? response.proposal : item))
+			);
+			setEditingProposalId(null);
+			setProposalDraft(null);
+			toast.success(`Task #${response.task.taskNumber} created`);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to create task from proposal');
+		} finally {
+			setSubmitting(false);
+		}
+	};
+
+	const beginEditProposal = (proposal: TaskProposal) => {
+		setEditingProposalId(proposal.id);
+		setProposalDraft(createProposalDraft(proposal));
+	};
+
+	const applyRollup = async () => {
+		if (!latestEpisode || !goal) return;
+		const progress = Number(rollupDraft.progress);
+		if (!Number.isFinite(progress)) {
+			setError('Progress must be a number');
+			return;
+		}
+		try {
+			setSubmitting(true);
+			setError(null);
+			const response = await request<EvolutionRollupApplyResponse>('evolution.rollup.apply', {
+				episodeId: latestEpisode.id,
+				goalUpdate: {
+					summary: rollupDraft.summary.trim(),
+					progress,
+					nextSteps: nextStepsFromText(rollupDraft.nextSteps),
+				},
+			});
+			setEpisodes((current) =>
+				current.map((item) => (item.id === response.episode.id ? response.episode : item))
+			);
+			toast.success(`Rollup applied to "${response.goal.title}"`);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to apply rollup');
+		} finally {
+			setSubmitting(false);
+		}
+	};
+
 	return (
 		<div class="space-y-4">
 			<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
@@ -709,6 +820,60 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 						</div>
 					</section>
 
+					{goal && latestEpisode.status === 'draft' && (
+						<section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+							<p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
+							<p class="mt-1 text-xs text-blue-200/70">
+								Apply accepted episode state to linked recurring goal.
+							</p>
+							<div class="mt-3 grid gap-3 md:grid-cols-[1fr_110px]">
+								<textarea
+									aria-label="Rollup summary"
+									value={rollupDraft.summary}
+									onInput={(event) =>
+										setRollupDraft((current) => ({
+											...current,
+											summary: (event.target as HTMLTextAreaElement).value,
+										}))
+									}
+									placeholder="Goal summary after this rollup"
+									rows={3}
+									class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+								<input
+									aria-label="Rollup progress"
+									value={rollupDraft.progress}
+									onInput={(event) =>
+										setRollupDraft((current) => ({
+											...current,
+											progress: (event.target as HTMLInputElement).value,
+										}))
+									}
+									placeholder="0-100"
+									class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+								/>
+							</div>
+							<textarea
+								aria-label="Rollup next steps"
+								value={rollupDraft.nextSteps}
+								onInput={(event) =>
+									setRollupDraft((current) => ({
+										...current,
+										nextSteps: (event.target as HTMLTextAreaElement).value,
+									}))
+								}
+								placeholder="One next step per line"
+								rows={2}
+								class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+							/>
+							<div class="mt-3 flex justify-end">
+								<Button size="sm" onClick={applyRollup} disabled={submitting}>
+									Apply rollup
+								</Button>
+							</div>
+						</section>
+					)}
+
 					<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
 						<h3 class="mb-3 text-sm font-medium text-gray-100">Findings by domain</h3>
 						<div class="space-y-3">
@@ -773,37 +938,136 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 							title="Next action proposals"
 							empty="No proposed actions."
 							items={proposedTasks}
-							render={(proposal) => (
-								<div key={proposal.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-									<div class="flex items-start justify-between gap-2">
-										<p class="text-sm font-medium text-gray-100">{proposal.title}</p>
-										<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400">
-											{proposal.priority}
-										</span>
+							render={(proposal) => {
+								const editing = editingProposalId === proposal.id && proposalDraft;
+								return (
+									<div
+										key={proposal.id}
+										class="rounded-lg border border-white/10 bg-dark-900/60 p-3"
+									>
+										{editing ? (
+											<div class="space-y-2">
+												<input
+													aria-label="Proposal title"
+													value={proposalDraft.title}
+													onInput={(event) =>
+														setProposalDraft((current) =>
+															current
+																? { ...current, title: (event.target as HTMLInputElement).value }
+																: current
+														)
+													}
+													class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+												/>
+												<textarea
+													aria-label="Proposal description"
+													value={proposalDraft.description}
+													onInput={(event) =>
+														setProposalDraft((current) =>
+															current
+																? {
+																		...current,
+																		description: (event.target as HTMLTextAreaElement).value,
+																	}
+																: current
+														)
+													}
+													rows={2}
+													class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+												/>
+												<textarea
+													aria-label="Proposal reason"
+													value={proposalDraft.reason}
+													onInput={(event) =>
+														setProposalDraft((current) =>
+															current
+																? {
+																		...current,
+																		reason: (event.target as HTMLTextAreaElement).value,
+																	}
+																: current
+														)
+													}
+													rows={2}
+													class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+												/>
+												<select
+													aria-label="Proposal priority"
+													value={proposalDraft.priority}
+													onChange={(event) =>
+														setProposalDraft((current) =>
+															current
+																? {
+																		...current,
+																		priority: (event.target as HTMLSelectElement)
+																			.value as TaskProposal['priority'],
+																	}
+																: current
+														)
+													}
+													class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+												>
+													{(['low', 'normal', 'high', 'urgent'] as const).map((priority) => (
+														<option key={priority} value={priority}>
+															{priority}
+														</option>
+													))}
+												</select>
+											</div>
+										) : (
+											<>
+												<div class="flex items-start justify-between gap-2">
+													<p class="text-sm font-medium text-gray-100">{proposal.title}</p>
+													<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400">
+														{proposal.priority}
+													</span>
+												</div>
+												<p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
+												<p class="mt-2 text-xs text-gray-500">Reason: {proposal.reason}</p>
+											</>
+										)}
+										<div class="mt-3 flex flex-wrap gap-2">
+											<Button
+												size="sm"
+												onClick={() => createTaskFromProposal(proposal)}
+												disabled={submitting}
+											>
+												Create Task
+											</Button>
+											{editing ? (
+												<Button
+													size="sm"
+													onClick={() => createTaskFromProposal(proposal, proposalDraft)}
+													disabled={submitting || !proposalDraft.title.trim()}
+												>
+													Save & Create
+												</Button>
+											) : (
+												<Button
+													size="sm"
+													variant="secondary"
+													onClick={() => beginEditProposal(proposal)}
+												>
+													Edit & Create
+												</Button>
+											)}
+											<Button
+												size="sm"
+												variant="secondary"
+												onClick={() =>
+													updateReviewItem({
+														kind: 'proposal',
+														id: proposal.id,
+														status: 'dismissed',
+													})
+												}
+											>
+												Dismiss
+											</Button>
+										</div>
 									</div>
-									<p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
-									<p class="mt-2 text-xs text-gray-500">Reason: {proposal.reason}</p>
-									<div class="mt-3 flex gap-2">
-										<Button
-											size="sm"
-											onClick={() =>
-												updateReviewItem({ kind: 'proposal', id: proposal.id, status: 'accepted' })
-											}
-										>
-											Accept
-										</Button>
-										<Button
-											size="sm"
-											variant="secondary"
-											onClick={() =>
-												updateReviewItem({ kind: 'proposal', id: proposal.id, status: 'dismissed' })
-											}
-										>
-											Dismiss
-										</Button>
-									</div>
-								</div>
-							)}
+								);
+							}}
 						/>
 					</div>
 				</div>
@@ -1193,7 +1457,7 @@ function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal
 				{tab === 'evidence' && <EvidenceTab scope={scope} />}
 				{tab === 'metrics' && <MetricsTab scope={scope} />}
 				{tab === 'lessons' && <ActiveLessonsTab scope={scope} />}
-				{tab === 'episodes' && <EpisodesTab scope={scope} />}
+				{tab === 'episodes' && <EpisodesTab scope={scope} goal={goal} />}
 			</div>
 		</div>
 	);
