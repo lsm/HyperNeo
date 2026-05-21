@@ -280,6 +280,8 @@ export class EvolutionEpisodeService {
 		if (!this.deps.goalService) throw new Error('SpaceGoalService is required');
 		const episode = this.deps.evolutionRepo.getEpisode(params.episodeId);
 		if (!episode) throw new Error(`EvolutionEpisode not found: ${params.episodeId}`);
+		if (episode.status === 'accepted') throw new Error('Episode already accepted');
+		if (episode.status === 'dismissed') throw new Error('Dismissed episode cannot accept rollup');
 		const scope = this.requireScope(episode.scopeId);
 		if (!scope.spaceGoalId) throw new Error('Episode scope is not linked to a recurring goal');
 		const accepted = this.deps.evolutionRepo.updateEpisode(episode.id, { status: 'accepted' });

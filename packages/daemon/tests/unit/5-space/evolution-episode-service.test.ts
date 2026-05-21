@@ -234,6 +234,16 @@ describe('EvolutionEpisodeService', () => {
 		expect(result.task.description).toContain(episode.id);
 	});
 
+	function createGoalService(): SpaceGoalService {
+		return new SpaceGoalService({
+			goalRepo,
+			goalEventRepo: new SpaceGoalEventRepository(db as never),
+			taskRepo,
+			spaceRepo,
+			scheduleService: {} as never,
+		});
+	}
+
 	it('applies accepted rollup fields to the linked recurring goal', () => {
 		const goal = goalRepo.create({
 			spaceId,
@@ -255,19 +265,12 @@ describe('EvolutionEpisodeService', () => {
 			title: 'Weekly rollup',
 			outcomeSummary: 'Progress improved',
 		});
-		const goalService = new SpaceGoalService({
-			goalRepo,
-			goalEventRepo: new SpaceGoalEventRepository(db as never),
-			taskRepo,
-			spaceRepo,
-			scheduleService: {} as never,
-		});
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
 			workflowRunRepo,
 			artifactRepo,
-			goalService,
+			goalService: createGoalService(),
 		});
 
 		const result = service.applyRollupGoalUpdate({
@@ -287,6 +290,106 @@ describe('EvolutionEpisodeService', () => {
 			nextSteps: ['Create follow-up task'],
 			metrics: { latency: 3 },
 		});
+	});
+
+	it('rejects invalid proposal-to-task requests', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Review scope',
+			objective: 'Track review health',
+		});
+		const dismissed = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Dismissed task',
+			description: 'Do not create',
+			reason: 'Rejected',
+			status: 'dismissed',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		expect(() => service.createTaskFromProposal(dismissed.id)).toThrow(
+			'Dismissed proposal cannot create a task'
+		);
+		expect(() => service.createTaskFromProposal('missing-proposal')).toThrow(
+			'TaskProposal not found: missing-proposal'
+		);
+	});
+
+	it('rejects invalid rollup writeback requests', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Recurring review goal', type: 'recurring' });
+		const linkedScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Linked scope',
+			objective: 'Track review health',
+		});
+		const unlinkedScope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Unlinked scope',
+			objective: 'Track review health',
+		});
+		const draftEpisode = evolutionRepo.createEpisode({
+			scopeId: linkedScope.id,
+			title: 'Draft rollup',
+		});
+		const unlinkedEpisode = evolutionRepo.createEpisode({
+			scopeId: unlinkedScope.id,
+			title: 'Unlinked rollup',
+		});
+		const acceptedEpisode = evolutionRepo.createEpisode({
+			scopeId: linkedScope.id,
+			title: 'Accepted rollup',
+			status: 'accepted',
+		});
+		const dismissedEpisode = evolutionRepo.createEpisode({
+			scopeId: linkedScope.id,
+			title: 'Dismissed rollup',
+			status: 'dismissed',
+		});
+		const serviceWithoutGoalService = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			goalService: createGoalService(),
+		});
+		const request = { episodeId: draftEpisode.id, goalUpdate: { summary: 'Rollup' } };
+
+		expect(() => serviceWithoutGoalService.applyRollupGoalUpdate(request)).toThrow(
+			'SpaceGoalService is required'
+		);
+		expect(() =>
+			service.applyRollupGoalUpdate({
+				episodeId: unlinkedEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Episode scope is not linked to a recurring goal');
+		expect(() =>
+			service.applyRollupGoalUpdate({
+				episodeId: acceptedEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Episode already accepted');
+		expect(() =>
+			service.applyRollupGoalUpdate({
+				episodeId: dismissedEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Dismissed episode cannot accept rollup');
 	});
 
 	it('persists draft episode, candidate lessons, and proposals from judge output', async () => {

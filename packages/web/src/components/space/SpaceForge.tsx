@@ -820,7 +820,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						</div>
 					</section>
 
-					{goal && latestEpisode.status !== 'dismissed' && (
+					{goal && latestEpisode.status === 'draft' && (
 						<section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
 							<p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
 							<p class="mt-1 text-xs text-blue-200/70">
