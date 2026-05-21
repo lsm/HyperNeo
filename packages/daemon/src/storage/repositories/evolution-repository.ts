@@ -152,14 +152,15 @@ export class EvolutionRepository {
 		this.db
 			.prepare(
 				`INSERT INTO evolution_episodes (
-					id, scope_id, status, title, time_window_json, evidence_ids_json,
+					id, scope_id, status, rollup_applied_at, title, time_window_json, evidence_ids_json,
 					outcome_summary, findings_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
 				params.scopeId,
 				params.status ?? 'draft',
+				null,
 				params.title,
 				jsonOrNull(params.timeWindow ?? null),
 				JSON.stringify(params.evidenceIds ?? []),
@@ -195,6 +196,7 @@ export class EvolutionRepository {
 			values.push(value);
 		};
 		if (params.status !== undefined) add('status', params.status);
+		if (params.rollupAppliedAt !== undefined) add('rollup_applied_at', params.rollupAppliedAt);
 		if (params.title !== undefined) add('title', params.title);
 		if (params.timeWindow !== undefined) add('time_window_json', jsonOrNull(params.timeWindow));
 		if (params.evidenceIds !== undefined)
@@ -420,6 +422,7 @@ function rowToEpisode(row: Record<string, unknown>): EvolutionEpisode {
 		id: row.id as string,
 		scopeId: row.scope_id as string,
 		status: row.status as EvolutionEpisodeStatus,
+		rollupAppliedAt: (row.rollup_applied_at as number | null) ?? null,
 		title: row.title as string,
 		timeWindow: parseJson(row.time_window_json, null),
 		evidenceIds: parseJson<string[]>(row.evidence_ids_json, []),

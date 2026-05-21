@@ -98,6 +98,7 @@ export interface EvolutionEpisode {
 	id: string;
 	scopeId: string;
 	status: EvolutionEpisodeStatus;
+	rollupAppliedAt: number | null;
 	title: string;
 	timeWindow: EvolutionEpisodeTimeWindow | null;
 	evidenceIds: string[];
@@ -119,6 +120,7 @@ export interface CreateEvolutionEpisodeParams {
 
 export interface UpdateEvolutionEpisodeParams {
 	status?: EvolutionEpisodeStatus;
+	rollupAppliedAt?: number | null;
 	title?: string;
 	timeWindow?: EvolutionEpisodeTimeWindow | null;
 	evidenceIds?: string[];

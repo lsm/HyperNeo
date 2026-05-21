@@ -586,6 +586,11 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 	);
 	const candidateLessons = lessons.filter((lesson) => lesson.status === 'candidate');
 	const proposedTasks = proposals.filter((proposal) => proposal.status === 'proposed');
+	const canApplyRollup =
+		!!goal &&
+		!!latestEpisode &&
+		latestEpisode.status !== 'dismissed' &&
+		latestEpisode.rollupAppliedAt === null;
 
 	const toggleEvidence = (id: string) => {
 		setSelectedEvidenceIds((current) =>
@@ -726,6 +731,12 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 			setEpisodes((current) =>
 				current.map((item) => (item.id === response.episode.id ? response.episode : item))
 			);
+			if (spaceStore.spaceId.value === response.goal.spaceId) {
+				spaceStore.goals.value = [
+					...spaceStore.goals.value.filter((current) => current.id !== response.goal.id),
+					response.goal,
+				].sort((a, b) => b.updatedAt - a.updatedAt);
+			}
 			toast.success(`Rollup applied to "${response.goal.title}"`);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to apply rollup');
@@ -833,7 +844,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						</div>
 					</section>
 
-					{goal && latestEpisode.status === 'draft' && (
+					{canApplyRollup && (
 						<section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
 							<p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
 							<p class="mt-1 text-xs text-blue-200/70">

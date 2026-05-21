@@ -285,6 +285,7 @@ describe('EvolutionEpisodeService', () => {
 		});
 
 		expect(result.episode.status).toBe('accepted');
+		expect(result.episode.rollupAppliedAt).toBeNumber();
 		expect(result.goal).toMatchObject({
 			summary: 'New rollup summary',
 			progress: 75,
@@ -345,11 +346,6 @@ describe('EvolutionEpisodeService', () => {
 			scopeId: unlinkedScope.id,
 			title: 'Unlinked rollup',
 		});
-		const acceptedEpisode = evolutionRepo.createEpisode({
-			scopeId: linkedScope.id,
-			title: 'Accepted rollup',
-			status: 'accepted',
-		});
 		const dismissedEpisode = evolutionRepo.createEpisode({
 			scopeId: linkedScope.id,
 			title: 'Dismissed rollup',
@@ -368,8 +364,24 @@ describe('EvolutionEpisodeService', () => {
 			artifactRepo,
 			goalService: createGoalService(),
 		});
-		const request = { episodeId: draftEpisode.id, goalUpdate: { summary: 'Rollup' } };
+		const serviceOnlyEpisode = evolutionRepo.createEpisode({
+			scopeId: linkedScope.id,
+			title: 'Service-only rollup',
+		});
+		const request = { episodeId: serviceOnlyEpisode.id, goalUpdate: { summary: 'Rollup' } };
+		const applied = service.applyRollupGoalUpdate({
+			episodeId: draftEpisode.id,
+			goalUpdate: { summary: 'Applied once' },
+		});
 
+		expect(applied.episode.status).toBe('accepted');
+		expect(applied.episode.rollupAppliedAt).toBeNumber();
+		expect(() =>
+			service.applyRollupGoalUpdate({
+				episodeId: draftEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Episode rollup already applied');
 		expect(() => serviceWithoutGoalService.applyRollupGoalUpdate(request)).toThrow(
 			'SpaceGoalService is required'
 		);
@@ -379,12 +391,6 @@ describe('EvolutionEpisodeService', () => {
 				goalUpdate: { summary: 'Rollup' },
 			})
 		).toThrow('Episode scope is not linked to a recurring goal');
-		expect(() =>
-			service.applyRollupGoalUpdate({
-				episodeId: acceptedEpisode.id,
-				goalUpdate: { summary: 'Rollup' },
-			})
-		).toThrow('Episode already accepted');
 		expect(() =>
 			service.applyRollupGoalUpdate({
 				episodeId: dismissedEpisode.id,
@@ -545,6 +551,7 @@ describe('EvolutionEpisodeService', () => {
 			},
 		]);
 		expect(rollup.episode.status).toBe('accepted');
+		expect(rollup.episode.rollupAppliedAt).toBeNumber();
 		expect(rollup.goal).toMatchObject({
 			summary: 'Forge MVP dogfood loop completed once.',
 			progress: 80,

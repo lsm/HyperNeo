@@ -56,6 +56,7 @@ export function createEvolutionTables(db: BunDatabase): void {
 			scope_id TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'draft'
 				CHECK(status IN ('draft', 'accepted', 'dismissed')),
+			rollup_applied_at INTEGER,
 			title TEXT NOT NULL,
 			time_window_json TEXT,
 			evidence_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -66,6 +67,9 @@ export function createEvolutionTables(db: BunDatabase): void {
 			FOREIGN KEY (scope_id) REFERENCES evolution_scopes(id) ON DELETE CASCADE
 		)
 	`);
+	if (!hasColumn(db, 'evolution_episodes', 'rollup_applied_at')) {
+		db.exec(`ALTER TABLE evolution_episodes ADD COLUMN rollup_applied_at INTEGER`);
+	}
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_evolution_episodes_scope_created ON evolution_episodes(scope_id, created_at DESC)`
 	);
@@ -137,4 +141,10 @@ export function createEvolutionTables(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_evolution_metric_snapshots_scope_captured ON evolution_metric_snapshots(scope_id, captured_at DESC)`
 	);
+}
+
+function hasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
+	return !!db
+		.prepare(`SELECT name FROM pragma_table_info(?) WHERE name = ?`)
+		.get(tableName, columnName);
 }
