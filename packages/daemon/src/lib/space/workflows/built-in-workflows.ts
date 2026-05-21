@@ -213,7 +213,7 @@ const PR_READY_BASH_SCRIPT = [
 	'fi',
 	'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
 	'# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
-	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ]; then',
+	'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ] && [ "$PR_STATUS" != "BLOCKED" ]; then',
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
@@ -1328,7 +1328,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'carry the same approval semantic. Leave the workflow open for the next ' +
 							'Coding cycle.\n' +
 							'6. If all green:\n' +
-							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>" } })` ' +
+							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
@@ -1381,7 +1381,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['Review'],
+					writers: ['Review', 'reviewer'],
 					check: { op: '==', value: true },
 				},
 			],

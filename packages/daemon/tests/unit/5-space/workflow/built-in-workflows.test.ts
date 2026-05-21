@@ -459,7 +459,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('.mergeStateStatus');
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
-		expect(gate.script!.source).not.toContain('"BLOCKED"');
+		expect(gate.script!.source).toContain('"BLOCKED"');
 		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
@@ -1885,7 +1885,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const after = manager.getWorkflow(workflow.id)!;
 		const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
 		const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual(['Review']);
+		expect(approvedField.writers).toEqual(['Review', 'reviewer']);
 		expect(approvedField.check).toEqual({ op: '==', value: true });
 	});
 
@@ -3012,7 +3012,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		const approvalField = gate.fields!.find((f) => f.name === 'approved')!;
 
 		expect(approvalField.type).toBe('boolean');
-		expect(approvalField.writers).toEqual(['Review']);
+		expect(approvalField.writers).toEqual(['Review', 'reviewer']);
 		expect(approvalField.check).toEqual({ op: '==', value: true });
 	});
 
@@ -3036,7 +3036,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		}
 	});
 
-	test('FULLSTACK_QA_LOOP_WORKFLOW PR gate blocks BLOCKED mergeStateStatus', async () => {
+	test('FULLSTACK_QA_LOOP_WORKFLOW PR gate permits BLOCKED mergeStateStatus before review', async () => {
 		const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
 		const workspace = mkdtempSync(join(tmpdir(), 'neokai-fullstack-pr-ready-blocked-'));
 		const binDir = join(workspace, 'bin');
@@ -3051,6 +3051,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 					'#!/usr/bin/env bash',
 					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
 					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
+					'  exit 0',
+					'fi',
+					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+					`  printf '%s\\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}'`,
 					'  exit 0',
 					'fi',
 					'printf "unexpected gh args: %s\\n" "$*" >&2',
@@ -3070,8 +3074,8 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
 			);
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('mergeStateStatus: BLOCKED');
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({ pr_url: prUrl });
 		} finally {
 			rmSync(workspace, { recursive: true, force: true });
 		}
@@ -3114,6 +3118,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		expect(prompt).toContain('ui_changed');
 		expect(prompt).toContain('dev_server_started');
 		expect(prompt).toContain('browser_validation');
+		expect(prompt).toContain('test_output');
 		expect(prompt).toContain('make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db');
 		expect(prompt).toContain('golden path, relevant edge cases, and nearby-regression checks');
 	});
