@@ -2,11 +2,14 @@ import type {
 	CreateEvidenceRefParams,
 	CreateEvolutionScopeParams,
 	CreateMetricSnapshotParams,
+	EvidenceKind,
 	EvidenceRef,
 	EvolutionLesson,
 	EvolutionScope,
 	EvolutionScopeListParams,
 	MetricSnapshot,
+	SpaceTask,
+	SpaceWorkflowRun,
 	UpdateEvolutionScopeParams,
 } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -14,6 +17,10 @@ import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type {
+	WorkflowRunArtifactRecord,
+	WorkflowRunArtifactRepository,
+} from '../../storage/repositories/workflow-run-artifact-repository';
 
 export interface EvolutionScopeServiceDeps {
 	evolutionRepo: EvolutionRepository;
@@ -21,6 +28,7 @@ export interface EvolutionScopeServiceDeps {
 	goalRepo: SpaceGoalRepository;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	artifactRepo?: WorkflowRunArtifactRepository;
 }
 
 export interface CreateScopeFromGoalParams {
@@ -73,6 +81,15 @@ export interface ResolveScopeForTaskParams {
 export interface SelectTaskLessonsParams {
 	taskId: string;
 	limit?: number;
+}
+
+export interface CaptureCompletedTaskEvidenceParams {
+	taskId: string;
+}
+
+export interface CaptureCompletedTaskEvidenceResult {
+	scope: EvolutionScope | null;
+	evidence: EvidenceRef[];
 }
 
 export interface ScopeTimeline {
@@ -168,7 +185,7 @@ export class EvolutionScopeService {
 			: this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 		if (scope.spaceId !== task.spaceId)
 			throw new Error('Task and scope must belong to the same space');
-		return this.deps.evolutionRepo.createEvidence({
+		return this.createEvidenceOnce({
 			scopeId: scope.id,
 			kind: 'task',
 			sourceId: task.id,
@@ -192,7 +209,7 @@ export class EvolutionScopeService {
 		if (scope.spaceId !== run.spaceId) {
 			throw new Error('Workflow run and scope must belong to the same space');
 		}
-		return this.deps.evolutionRepo.createEvidence({
+		return this.createEvidenceOnce({
 			scopeId: scope.id,
 			kind: 'workflow_run',
 			sourceId: run.id,
@@ -203,6 +220,60 @@ export class EvolutionScopeService {
 				...params.metadata,
 			},
 		});
+	}
+
+	captureCompletedTaskEvidence(
+		params: CaptureCompletedTaskEvidenceParams
+	): CaptureCompletedTaskEvidenceResult {
+		const task = this.deps.taskRepo.getTask(params.taskId);
+		if (!task) throw new Error(`Task not found: ${params.taskId}`);
+		if (task.status !== 'done') return { scope: null, evidence: [] };
+
+		const scope = this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
+		if (!scope || scope.spaceId !== task.spaceId) return { scope: null, evidence: [] };
+
+		const evidence: EvidenceRef[] = [
+			this.createEvidenceOnce({
+				scopeId: scope.id,
+				kind: 'task_result',
+				sourceId: task.id,
+				summary: buildTaskResultEvidenceSummary(task),
+				metadata: {
+					status: task.status,
+					priority: task.priority,
+					workflowRunId: task.workflowRunId ?? null,
+					result: task.result ?? null,
+					reportedSummary: task.reportedSummary ?? null,
+					completedAt: task.completedAt ?? null,
+				},
+			}),
+		];
+
+		if (task.workflowRunId) {
+			const run = this.deps.workflowRunRepo.getRun(task.workflowRunId);
+			if (run && run.spaceId === task.spaceId) {
+				const artifacts = this.deps.artifactRepo?.listByRun(run.id) ?? [];
+				evidence.push(
+					this.createEvidenceOnce({
+						scopeId: scope.id,
+						kind: selectWorkflowEvidenceKind(run, artifacts),
+						sourceId: run.id,
+						summary: buildWorkflowRunEvidenceSummary(run, artifacts),
+						metadata: {
+							status: run.status,
+							workflowId: run.workflowId,
+							failureReason: run.failureReason ?? null,
+							completedAt: run.completedAt ?? null,
+							artifactCount: artifacts.length,
+							artifactTypes: summarizeArtifactTypes(artifacts),
+							artifacts: artifacts.map(summarizeArtifact),
+						},
+					})
+				);
+			}
+		}
+
+		return { scope, evidence };
 	}
 
 	addManualNoteEvidence(params: AddManualNoteEvidenceParams): EvidenceRef {
@@ -277,6 +348,16 @@ export class EvolutionScopeService {
 		return goal;
 	}
 
+	private createEvidenceOnce(params: CreateEvidenceRefParams): EvidenceRef {
+		const sourceId = params.sourceId ?? null;
+		const duplicateKinds = dedupeKindGroup(params.kind);
+		const existing = this.deps.evolutionRepo
+			.listEvidence(params.scopeId)
+			.find((item) => duplicateKinds.has(item.kind) && item.sourceId === sourceId);
+		if (existing) return existing;
+		return this.deps.evolutionRepo.createEvidence(params);
+	}
+
 	private requireScope(scopeId: string): EvolutionScope {
 		if (!scopeId) throw new Error('scopeId is required');
 		const scope = this.deps.evolutionRepo.getScope(scopeId);
@@ -320,4 +401,82 @@ export class EvolutionScopeService {
 		if (!task) throw new Error(`Task not found for workflow run: ${workflowRunId}`);
 		return this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 	}
+}
+
+function dedupeKindGroup(kind: EvidenceKind): Set<EvidenceKind> {
+	if (kind === 'workflow_run' || kind === 'artifact' || kind === 'error') {
+		return new Set(['workflow_run', 'artifact', 'error']);
+	}
+	return new Set([kind]);
+}
+
+function buildTaskResultEvidenceSummary(task: SpaceTask): string {
+	const outcome = task.result ?? task.reportedSummary ?? 'completed without task.result';
+	return `Task #${task.taskNumber} done: ${task.title} — ${truncateText(outcome, 180)}`;
+}
+
+function selectWorkflowEvidenceKind(
+	run: SpaceWorkflowRun,
+	artifacts: WorkflowRunArtifactRecord[]
+): EvidenceKind {
+	if (run.status === 'blocked' || run.status === 'cancelled' || run.failureReason) return 'error';
+	return artifacts.length > 0 ? 'artifact' : 'workflow_run';
+}
+
+function buildWorkflowRunEvidenceSummary(
+	run: SpaceWorkflowRun,
+	artifacts: WorkflowRunArtifactRecord[]
+): string {
+	const labels = summarizeArtifactTypes(artifacts);
+	const detail = findArtifactDetail(artifacts) ?? run.failureReason ?? 'no artifacts captured';
+	return `Workflow run ${run.status}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
+}
+
+function summarizeArtifactTypes(artifacts: WorkflowRunArtifactRecord[]): string[] {
+	return Array.from(new Set(artifacts.map((artifact) => artifact.artifactType))).sort();
+}
+
+function summarizeArtifact(artifact: WorkflowRunArtifactRecord): Record<string, unknown> {
+	return {
+		nodeId: artifact.nodeId,
+		type: artifact.artifactType,
+		key: artifact.artifactKey,
+		data: truncateStructuredData(artifact.data),
+		createdAt: artifact.createdAt,
+		updatedAt: artifact.updatedAt,
+	};
+}
+
+function findArtifactDetail(artifacts: WorkflowRunArtifactRecord[]): string | null {
+	for (const artifact of artifacts) {
+		const detail = extractArtifactDetail(artifact.data);
+		if (detail) return `${artifact.artifactType}/${artifact.artifactKey}: ${detail}`;
+	}
+	return null;
+}
+
+function extractArtifactDetail(data: Record<string, unknown>): string | null {
+	for (const key of [
+		'summary',
+		'result',
+		'status',
+		'pr_url',
+		'review_url',
+		'merge_commit',
+		'error',
+	]) {
+		const value = data[key];
+		if (typeof value === 'string' && value.trim()) return value.trim();
+	}
+	return null;
+}
+
+function truncateStructuredData(value: Record<string, unknown>): Record<string, unknown> {
+	const serialized = JSON.stringify(value);
+	if (serialized.length <= 2000) return value;
+	return { truncated: truncateText(serialized, 2000) };
+}
+
+function truncateText(value: string, max: number): string {
+	return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }

@@ -3546,7 +3546,8 @@ export class TaskAgentManager {
 		const boundTaskManager = new SpaceTaskManager(
 			this.config.db.getDatabase(),
 			spaceId,
-			this.config.reactiveDb
+			this.config.reactiveDb,
+			this.config.evolutionScopeService
 		);
 		const endNodeHandlers = isEndNode
 			? createEndNodeHandlers({

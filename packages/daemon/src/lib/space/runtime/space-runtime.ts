@@ -234,6 +234,8 @@ export interface SpaceRuntimeConfig {
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
 	/** Optional goal service for processing terminal goal-task side effects. */
 	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+	/** Optional Forge scope service for automatic terminal task evidence capture. */
+	evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
 }
 
 interface StartWorkflowRunOptions {
@@ -1815,6 +1817,7 @@ export class SpaceRuntime {
 				isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
 			},
 			goalService: this.config.goalService,
+			evolutionScopeService: this.config.evolutionScopeService,
 		});
 		return this.postApprovalRouter;
 	}
@@ -5670,7 +5673,12 @@ export class SpaceRuntime {
 	private getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
 		let manager = this.taskManagers.get(spaceId);
 		if (!manager) {
-			manager = new SpaceTaskManager(this.config.db, spaceId, this.config.reactiveDb);
+			manager = new SpaceTaskManager(
+				this.config.db,
+				spaceId,
+				this.config.reactiveDb,
+				this.config.evolutionScopeService
+			);
 			this.taskManagers.set(spaceId, manager);
 		}
 		return manager;
