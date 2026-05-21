@@ -265,15 +265,32 @@ describe('EvolutionEpisodeService', () => {
 			priority: 'high',
 			evidenceEpisodeIds: [episode.id],
 		});
+		const publishedEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
 			workflowRunRepo,
 			artifactRepo,
+			db,
+			taskCreatedEventHub: {
+				publish: async (event, data) => {
+					publishedEvents.push({ event, data });
+				},
+			},
 		});
 
 		const result = service.createTaskFromProposal(proposal.id);
+		const duplicate = service.createTaskFromProposal(proposal.id);
 
+		expect(duplicate.task.id).toBe(result.task.id);
+		expect(
+			taskRepo.listBySpace(spaceId).filter((item) => item.title === 'Improve review UI')
+		).toHaveLength(1);
+		expect(publishedEvents).toHaveLength(1);
+		expect(publishedEvents[0]).toMatchObject({
+			event: 'space.task.created',
+			data: { spaceId, taskId: result.task.id, task: result.task },
+		});
 		expect(result.proposal).toMatchObject({
 			status: 'created',
 			createdTaskId: result.task.id,
@@ -379,6 +396,7 @@ describe('EvolutionEpisodeService', () => {
 
 	it('rejects invalid rollup writeback requests', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Recurring review goal', type: 'recurring' });
+		const oneShotGoal = goalRepo.create({ spaceId, title: 'One-shot goal', type: 'one_shot' });
 		const linkedScope = evolutionRepo.createScope({
 			spaceId,
 			spaceGoalId: goal.id,
@@ -392,6 +410,13 @@ describe('EvolutionEpisodeService', () => {
 			name: 'Unlinked scope',
 			objective: 'Track review health',
 		});
+		const oneShotScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: oneShotGoal.id,
+			kind: 'mission',
+			name: 'One-shot scope',
+			objective: 'Track review health',
+		});
 		const draftEpisode = evolutionRepo.createEpisode({
 			scopeId: linkedScope.id,
 			title: 'Draft rollup',
@@ -399,6 +424,10 @@ describe('EvolutionEpisodeService', () => {
 		const unlinkedEpisode = evolutionRepo.createEpisode({
 			scopeId: unlinkedScope.id,
 			title: 'Unlinked rollup',
+		});
+		const oneShotEpisode = evolutionRepo.createEpisode({
+			scopeId: oneShotScope.id,
+			title: 'One-shot rollup',
 		});
 		const acceptedEpisode = evolutionRepo.createEpisode({
 			scopeId: linkedScope.id,
@@ -424,13 +453,34 @@ describe('EvolutionEpisodeService', () => {
 			goalService: createGoalService(),
 		});
 		const request = { episodeId: draftEpisode.id, goalUpdate: { summary: 'Rollup' } };
+		const failingGoalService = {
+			getGoal: (goalId: string) => goalRepo.getById(goalId),
+			updateGoal: () => {
+				throw new Error('goal update failed');
+			},
+		};
+		const failingService = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			goalService: failingGoalService,
+		});
 
+		expect(() => failingService.applyRollupGoalUpdate(request)).toThrow('goal update failed');
+		expect(evolutionRepo.getEpisode(draftEpisode.id)?.status).toBe('draft');
 		expect(() => serviceWithoutGoalService.applyRollupGoalUpdate(request)).toThrow(
 			'SpaceGoalService is required'
 		);
 		expect(() =>
 			service.applyRollupGoalUpdate({
 				episodeId: unlinkedEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Episode scope is not linked to a recurring goal');
+		expect(() =>
+			service.applyRollupGoalUpdate({
+				episodeId: oneShotEpisode.id,
 				goalUpdate: { summary: 'Rollup' },
 			})
 		).toThrow('Episode scope is not linked to a recurring goal');

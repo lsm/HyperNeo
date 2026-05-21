@@ -546,6 +546,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		workflowRunRepo: spaceWorkflowRunRepo,
 		artifactRepo,
 		goalService: spaceGoalService,
+		db: deps.db.getDatabase(),
+		taskCreatedEventHub: {
+			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+		},
 	});
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
 
