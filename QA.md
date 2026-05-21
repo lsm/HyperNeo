@@ -16,7 +16,8 @@ Project-specific QA guidance for the QA agent.
 
 ## UI/Frontend Testing with Playwright
 
-- Use Playwright (`make run-e2e TEST=...`) to test UI changes or new features
+- Use the Playwright skill (`/playwright`) to launch a real browser and test UI changes or new features interactively
+- Navigate to the running dev server and exercise the changed UI flow as a real user would
 - Look for visual bugs, broken layouts, unfriendly UX, missing loading states, error handling gaps
 - Test golden path, edge cases (empty states, long text, network errors), and nearby-regression checks
 - Take screenshots to document what was tested
