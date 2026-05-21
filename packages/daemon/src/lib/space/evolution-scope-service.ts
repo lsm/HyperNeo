@@ -21,11 +21,21 @@ const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
 
 function summarizeArtifactData(data: Record<string, unknown>): string {
-	const summary = data.summary ?? data.result ?? data.status ?? data.error ?? data.message ?? data;
-	const text = typeof summary === 'string' ? summary : (JSON.stringify(summary) ?? '');
+	const entries = ['summary', 'result', 'status', 'error', 'message']
+		.flatMap((key) =>
+			data[key] === undefined || data[key] === null
+				? []
+				: [`${key}: ${stringifyArtifactField(data[key])}`]
+		)
+		.join('\n');
+	const text = entries || stringifyArtifactField(data);
 	return text.length > MAX_PREFLIGHT_ARTIFACT_TEXT
 		? `${text.slice(0, MAX_PREFLIGHT_ARTIFACT_TEXT)}…`
 		: text;
+}
+
+function stringifyArtifactField(value: unknown): string {
+	return typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
 }
 
 export interface EvolutionScopeServiceDeps {

@@ -350,7 +350,11 @@ describe('EvolutionEpisodeService', () => {
 			nodeId: 'logs',
 			artifactType: 'log',
 			artifactKey: 'large',
-			data: { summary: largePayload },
+			data: {
+				summary: 'Generic artifact',
+				result: 'CI passed and PR merged',
+				message: largePayload,
+			},
 		});
 		for (let index = 0; index < 8; index++) {
 			artifactRepo.upsert({
@@ -385,6 +389,11 @@ describe('EvolutionEpisodeService', () => {
 		expect(runContext?.evidenceIds).toContain(errorEvidence.id);
 		expect(cappedRunContext?.artifacts).toHaveLength(8);
 		expect(cappedRunContext?.artifacts[0]?.data.summary).toContain('QA passed');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain('summary: Generic artifact');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain(
+			'result: CI passed and PR merged'
+		);
+		expect(cappedRunContext?.artifacts[1]?.data.summary.length).toBeLessThanOrEqual(501);
 		expect(cappedRunContext?.artifacts.some((artifact) => 'large' in artifact.data)).toBe(false);
 	});
 

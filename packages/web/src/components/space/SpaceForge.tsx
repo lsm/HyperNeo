@@ -607,14 +607,16 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		setLoading(true);
 		setError(null);
 		try {
+			const metricSnapshotsPromise = request<EvolutionMetricSnapshotListResponse>(
+				'evolution.metricSnapshot.list',
+				{ scopeId: scope.id }
+			).catch(() => ({ snapshots: [] }));
 			const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
 				request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
 					scopeId: scope.id,
 				}),
 				request<EvolutionEvidenceListResponse>('evolution.evidence.list', { scopeId: scope.id }),
-				request<EvolutionMetricSnapshotListResponse>('evolution.metricSnapshot.list', {
-					scopeId: scope.id,
-				}),
+				metricSnapshotsPromise,
 			]);
 			if (requestVersion.current !== version) return;
 			setEpisodes(reviewResponse.episodes ?? []);

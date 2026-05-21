@@ -554,6 +554,28 @@ describe('SpaceForge', () => {
 	});
 
 	it('renders episode review and generates episode from selected evidence', async () => {
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') throw new Error('metric RPC unavailable');
+			if (method === 'evolution.review.get') {
+				return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
+			}
+			if (method === 'evolution.episode.createFromEvidence') {
+				expect(data).toEqual({
+					scopeId: 'scope-1',
+					evidenceIds: ['evidence-1'],
+					confirmLowConfidence: true,
+				});
+				return {
+					episode: makeEpisode({ id: 'episode-2', title: 'Generated episode' }),
+					lessons: [makeLesson({ id: 'lesson-2', rule: 'Generated lesson' })],
+					proposals: [makeProposal({ id: 'proposal-2', title: 'Generated proposal' })],
+				};
+			}
+			if (method === 'evolution.lesson.list') return { lessons: [] };
+			throw new Error(`Unexpected RPC ${method}`);
+		});
 		render(<SpaceForge spaceId="space-1" />);
 
 		await screen.findByRole('heading', { name: 'Review quality scope' });
