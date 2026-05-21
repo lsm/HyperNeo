@@ -423,7 +423,7 @@ ${JSON.stringify(
 		kind: item.kind,
 		summary: item.summary,
 		sourceId: item.sourceId,
-		metadata: item.metadata,
+		metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT),
 		createdAt: item.createdAt,
 	})),
 	null,
@@ -475,7 +475,7 @@ ${JSON.stringify(
 )}
 
 Metric snapshots and manual notes:
-${JSON.stringify({ metricSnapshots: input.metricSnapshots, manualNotes: input.evidence.filter((item) => item.kind === 'manual_note').map((item) => ({ id: item.id, summary: item.summary, metadata: item.metadata, createdAt: item.createdAt })) }, null, 2)}`;
+${JSON.stringify({ metricSnapshots: input.metricSnapshots, manualNotes: input.evidence.filter((item) => item.kind === 'manual_note').map((item) => ({ id: item.id, summary: item.summary, metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT), createdAt: item.createdAt })) }, null, 2)}`;
 }
 
 export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {
