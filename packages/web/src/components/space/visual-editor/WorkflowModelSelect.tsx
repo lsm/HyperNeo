@@ -84,7 +84,12 @@ export function WorkflowModelSelect({
 		};
 	}, []);
 
-	const selectedValue = provider && value ? `${provider}:${value}` : value || '';
+	const selectedValue = (() => {
+		if (!value) return '';
+		if (provider) return `${provider}:${value}`;
+		const match = models.find((model) => model.id === value);
+		return match ? encodeModelValue(match) : value;
+	})();
 	const groupedModels = useMemo(() => groupModelsByProvider(models), [models]);
 	const hasCurrentOutsideList =
 		!!value &&

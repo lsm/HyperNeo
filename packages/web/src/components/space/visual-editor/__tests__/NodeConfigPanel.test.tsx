@@ -167,6 +167,15 @@ describe('NodeConfigPanel', () => {
 			expect(input.value).toBe('');
 		});
 
+		it('shows selected single-agent model when provider is omitted', async () => {
+			const { getByTestId } = render(
+				<NodeConfigPanel {...makeProps({ step: makeStep({ model: 'gpt-5.4' }) })} />
+			);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('openai:gpt-5.4');
+		});
+
 		it('renders close button', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			expect(getByTestId('close-button')).toBeTruthy();
@@ -307,7 +316,7 @@ describe('NodeConfigPanel', () => {
 				).toBeGreaterThan(1)
 			);
 			fireEvent.change(getByTestId('single-agent-model-input'), {
-				target: { value: 'gpt-5.4' },
+				target: { value: 'openai:gpt-5.4' },
 			});
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4' }));
 		});
