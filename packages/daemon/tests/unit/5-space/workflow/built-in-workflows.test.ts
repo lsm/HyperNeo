@@ -430,11 +430,11 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-ready-gate has pr_url field writable by Coding node', () => {
+	test('code-ready-gate has pr_url field writable by Coding node and coder alias', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
 		expect(prField.type).toBe('string');
-		expect(prField.writers).toEqual(['Coding']);
+		expect(prField.writers).toEqual(['Coding', 'coder']);
 		expect(prField.check.op).toBe('exists');
 	});
 
@@ -3021,7 +3021,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		const prField = gate.fields!.find((f) => f.name === 'pr_url')!;
 
 		expect(prField.type).toBe('string');
-		expect(prField.writers).toEqual(['Coding']);
+		expect(prField.writers).toEqual(['Coding', 'coder']);
 		expect(prField.check).toEqual({ op: 'exists' });
 	});
 

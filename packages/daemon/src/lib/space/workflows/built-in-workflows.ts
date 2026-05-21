@@ -716,7 +716,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'pr_url',
 					type: 'string',
-					writers: ['Coding'],
+					writers: ['Coding', 'coder'],
 					check: { op: 'exists' },
 				},
 			],
@@ -1364,7 +1364,9 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 			id: 'code-pr-gate',
 			label: 'PR Ready',
 			description: 'Coding PR is open and mergeable for review.',
-			fields: [{ name: 'pr_url', type: 'string', writers: ['Coding'], check: { op: 'exists' } }],
+			fields: [
+				{ name: 'pr_url', type: 'string', writers: ['Coding', 'coder'], check: { op: 'exists' } },
+			],
 			script: {
 				interpreter: 'bash',
 				source: PR_READY_BASH_SCRIPT,
