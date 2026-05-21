@@ -3124,6 +3124,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		expect(prompt).toContain('test_output');
 		expect(prompt).toContain('make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db');
 		expect(prompt).toContain('golden path, relevant edge cases, and nearby-regression checks');
+		expect(prompt).toContain('QA.md');
 	});
 
 	test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-conditions block', () => {
