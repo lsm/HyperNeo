@@ -137,6 +137,16 @@ export class EvolutionRepository {
 		return row ? rowToEvidence(row) : null;
 	}
 
+	updateEvidence(
+		id: string,
+		params: Pick<CreateEvidenceRefParams, 'summary' | 'metadata'>
+	): EvidenceRef {
+		this.db
+			.prepare(`UPDATE evolution_evidence SET summary = ?, metadata_json = ? WHERE id = ?`)
+			.run(params.summary, JSON.stringify(params.metadata ?? {}), id);
+		return this.getEvidence(id) as EvidenceRef;
+	}
+
 	listEvidence(scopeId: string): EvidenceRef[] {
 		const rows = this.db
 			.prepare(
