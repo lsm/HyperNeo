@@ -350,11 +350,15 @@ export class EvolutionScopeService {
 
 	private createEvidenceOnce(params: CreateEvidenceRefParams): EvidenceRef {
 		const sourceId = params.sourceId ?? null;
-		const duplicateKinds = dedupeKindGroup(params.kind);
 		const existing = this.deps.evolutionRepo
 			.listEvidence(params.scopeId)
-			.find((item) => duplicateKinds.has(item.kind) && item.sourceId === sourceId);
-		if (existing) return existing;
+			.find((item) => item.kind === params.kind && item.sourceId === sourceId);
+		if (existing) {
+			return this.deps.evolutionRepo.updateEvidence(existing.id, {
+				summary: params.summary,
+				metadata: params.metadata,
+			});
+		}
 		return this.deps.evolutionRepo.createEvidence(params);
 	}
 
@@ -401,13 +405,6 @@ export class EvolutionScopeService {
 		if (!task) throw new Error(`Task not found for workflow run: ${workflowRunId}`);
 		return this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 	}
-}
-
-function dedupeKindGroup(kind: EvidenceKind): Set<EvidenceKind> {
-	if (kind === 'workflow_run' || kind === 'artifact' || kind === 'error') {
-		return new Set(['workflow_run', 'artifact', 'error']);
-	}
-	return new Set([kind]);
 }
 
 function buildTaskResultEvidenceSummary(task: SpaceTask): string {

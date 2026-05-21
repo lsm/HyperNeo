@@ -164,6 +164,131 @@ describe('Forge evidence capture on task completion', () => {
 		expect(evidence[0]?.kind).toBe('task_result');
 	});
 
+	it('keeps manual workflow_run evidence and adds artifact evidence for the same run', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Run evidence kinds',
+			objective: 'Keep distinct workflow evidence kinds',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Coding workflow' });
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Run with artifacts',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Capture artifacts after manual run evidence',
+			description: 'Manual workflow_run evidence already exists',
+			evolutionScopeId: scope.id,
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Done with artifact' });
+		evolutionScopeService.attachWorkflowRunEvidence({ workflowRunId: run.id });
+		artifactRepo.upsert({
+			id: 'artifact-ci',
+			runId: run.id,
+			nodeId: 'CI',
+			artifactType: 'ci',
+			artifactKey: 'summary',
+			data: { summary: 'CI passed after retry' },
+		});
+
+		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.map((item) => item.kind).sort()).toEqual([
+			'artifact',
+			'task_result',
+			'workflow_run',
+		]);
+		expect(evidence.find((item) => item.kind === 'artifact')?.summary).toContain(
+			'CI passed after retry'
+		);
+	});
+
+	it('updates existing task_result evidence when a task is completed again', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Recompleted task',
+			objective: 'Keep evidence current after reactivation',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Complete twice',
+			description: 'Second completion supersedes first evidence data',
+			evolutionScopeId: scope.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done', result: 'First result' });
+		const first = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+		taskRepo.updateTask(task.id, { result: 'Second result' });
+
+		const second = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence).toHaveLength(1);
+		expect(second.evidence[0]?.id).toBe(first.evidence[0]?.id);
+		expect(evidence[0]?.summary).toContain('Second result');
+		expect(evidence[0]?.metadata.result).toBe('Second result');
+	});
+
+	it('creates error evidence for failed workflow runs', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Failed run scope',
+			objective: 'Capture blockers as evidence',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Blocked workflow' });
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Blocked run',
+		});
+		workflowRunRepo.updateRun(run.id, {
+			status: 'cancelled',
+			failureReason: 'agentCrash',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Capture failed run',
+			description: 'Workflow failed before merge',
+			evolutionScopeId: scope.id,
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Closed with blocker' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		const errorEvidence = result.evidence.find((item) => item.kind === 'error');
+		expect(errorEvidence?.summary).toContain('agentCrash');
+		expect(errorEvidence?.metadata.failureReason).toBe('agentCrash');
+	});
+
+	it('does not create Forge evidence for non-done tasks', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Active task scope',
+			objective: 'Only done tasks become evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Still running',
+			description: 'Should not produce evidence yet',
+			evolutionScopeId: scope.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'in_progress' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.scope).toBeNull();
+		expect(result.evidence).toEqual([]);
+		expect(evolutionRepo.listEvidence(scope.id)).toEqual([]);
+	});
+
 	it('does not create Forge evidence for unscoped tasks', () => {
 		const task = taskRepo.createTask({
 			spaceId,

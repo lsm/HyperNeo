@@ -18,7 +18,10 @@ import type {
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import { Logger } from '../../logger';
 import type { EvolutionScopeService } from '../evolution-scope-service';
+
+const log = new Logger('space-task-manager');
 
 /**
  * Valid task status transitions for space tasks
@@ -289,9 +292,10 @@ export class SpaceTaskManager {
 		if (newStatus === 'done') {
 			try {
 				this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
-			} catch {
-				// Best-effort: Forge evidence capture must not roll back the
-				// already-committed done transition.
+			} catch (err) {
+				log.warn(
+					`Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+				);
 			}
 			try {
 				const unblocked = await this.unblockDependentTasks(taskId);
