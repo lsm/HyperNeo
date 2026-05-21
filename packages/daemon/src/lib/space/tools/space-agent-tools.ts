@@ -1900,7 +1900,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
 				const policy =
 					args.episode_judge_model !== undefined
-						? { ...(args.policy ?? existing.policy), episodeJudgeModel: args.episode_judge_model }
+						? {
+								...(args.policy ?? existing.policy),
+								episodeJudgeModel: args.episode_judge_model ?? undefined,
+							}
 						: args.policy;
 				const scope = requireEvolutionScopeService().updateScope(args.scope_id, {
 					spaceGoalId: args.goal_id,

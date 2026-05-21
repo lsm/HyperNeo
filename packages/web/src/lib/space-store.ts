@@ -2110,7 +2110,7 @@ class SpaceStore {
 	// Goal Methods
 	// ========================================
 
-	private upsertGoal(goal: SpaceGoal): void {
+	upsertGoal(goal: SpaceGoal): void {
 		this.goalListRequestVersion += 1;
 		const existing = this.goals.value.filter((current) => current.id !== goal.id);
 		this.goals.value = [...existing, goal].sort((a, b) => b.updatedAt - a.updatedAt);
