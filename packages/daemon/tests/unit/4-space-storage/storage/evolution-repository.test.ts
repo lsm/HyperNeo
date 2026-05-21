@@ -88,7 +88,7 @@ describe('EvolutionRepository', () => {
 
 		const evidence = repo.createEvidence({
 			scopeId: scope.id,
-			kind: 'task',
+			kind: 'task_result',
 			sourceId: task.id,
 			summary: 'Task completed with reviewer feedback',
 			metadata: { taskNumber: task.taskNumber },

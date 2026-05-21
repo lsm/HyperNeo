@@ -35,7 +35,7 @@ export function createEvolutionTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			scope_id TEXT NOT NULL,
 			kind TEXT NOT NULL
-				CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot')),
+				CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error')),
 			summary TEXT NOT NULL,
 			source_id TEXT,
 			metadata_json TEXT NOT NULL DEFAULT '{}',

@@ -335,7 +335,8 @@ export class EvolutionEpisodeService {
 
 	private collectTasks(scope: EvolutionScope, evidence: EvidenceRef[]): EpisodeTaskContext[] {
 		return evidence.flatMap((item) => {
-			if (item.kind !== 'task' || !item.sourceId) return [];
+			if (item.kind !== 'task' && item.kind !== 'task_result') return [];
+			if (!item.sourceId) return [];
 			const task = this.deps.taskRepo.getTask(item.sourceId);
 			if (!task) return [];
 			if (task.spaceId !== scope.spaceId) {
@@ -349,13 +350,18 @@ export class EvolutionEpisodeService {
 		scope: EvolutionScope,
 		evidence: EvidenceRef[]
 	): EpisodeWorkflowRunContext[] {
+		const seenRunIds = new Set<string>();
 		return evidence.flatMap((item) => {
-			if (item.kind !== 'workflow_run' || !item.sourceId) return [];
+			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error')
+				return [];
+			if (!item.sourceId) return [];
 			const run = this.deps.workflowRunRepo.getRun(item.sourceId);
 			if (!run) return [];
 			if (run.spaceId !== scope.spaceId) {
 				throw new Error(`Workflow run and scope must belong to the same space: ${run.id}`);
 			}
+			if (seenRunIds.has(run.id)) return [];
+			seenRunIds.add(run.id);
 			return [
 				{
 					evidenceId: item.id,
@@ -427,7 +433,7 @@ ${JSON.stringify(
 		kind: item.kind,
 		summary: item.summary,
 		sourceId: item.sourceId,
-		metadata: item.metadata,
+		metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT),
 		createdAt: item.createdAt,
 	})),
 	null,
@@ -479,7 +485,7 @@ ${JSON.stringify(
 )}
 
 Metric snapshots and manual notes:
-${JSON.stringify({ metricSnapshots: input.metricSnapshots, manualNotes: input.evidence.filter((item) => item.kind === 'manual_note').map((item) => ({ id: item.id, summary: item.summary, metadata: item.metadata, createdAt: item.createdAt })) }, null, 2)}`;
+${JSON.stringify({ metricSnapshots: input.metricSnapshots, manualNotes: input.evidence.filter((item) => item.kind === 'manual_note').map((item) => ({ id: item.id, summary: item.summary, metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT), createdAt: item.createdAt })) }, null, 2)}`;
 }
 
 export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {

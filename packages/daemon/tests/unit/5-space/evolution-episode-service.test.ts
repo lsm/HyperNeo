@@ -85,17 +85,24 @@ describe('EvolutionEpisodeService', () => {
 		});
 		const taskEvidence = evolutionRepo.createEvidence({
 			scopeId: scope.id,
-			kind: 'task',
+			kind: 'task_result',
 			sourceId: task.id,
 			summary: 'Task completed',
 			createdAt: 100,
 		});
 		const runEvidence = evolutionRepo.createEvidence({
 			scopeId: scope.id,
-			kind: 'workflow_run',
+			kind: 'artifact',
 			sourceId: run.id,
 			summary: 'Workflow completed',
 			createdAt: 200,
+		});
+		const errorEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'error',
+			sourceId: run.id,
+			summary: 'Same workflow run had rework',
+			createdAt: 225,
 		});
 		const note = evolutionRepo.createEvidence({
 			scopeId: scope.id,
@@ -119,11 +126,13 @@ describe('EvolutionEpisodeService', () => {
 
 		const input = service.buildEpisodeInput({
 			scopeId: scope.id,
-			evidenceIds: [taskEvidence.id, runEvidence.id, note.id],
+			evidenceIds: [taskEvidence.id, runEvidence.id, errorEvidence.id, note.id],
 		});
 		const prompt = buildEpisodeJudgePrompt(input);
 
-		expect(input.timeWindow).toEqual({ start: 100, end: 200 });
+		expect(input.timeWindow).toEqual({ start: 100, end: 225 });
+		expect(input.workflowRuns).toHaveLength(1);
+		expect(input.workflowRuns[0]?.run.id).toBe(run.id);
 		expect(prompt).toContain('Reduce review churn');
 		expect(prompt).toContain('Resolved reviewer comments');
 		expect(prompt).toContain('PR updated and tests pass');
@@ -180,6 +189,77 @@ describe('EvolutionEpisodeService', () => {
 			provider: 'anthropic',
 			modelId: 'claude-sonnet-4-6',
 		});
+	});
+
+	it('includes evidence metadata so backfilled task artifacts reach the judge', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Forge dogfood',
+			objective: 'Generate useful episodes from completed task evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Implement Forge storage',
+			description: 'Add storage and shared contracts',
+			evolutionScopeId: scope.id,
+		});
+		const evidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'task',
+			sourceId: task.id,
+			summary: 'Task completed; workflow artifacts contain review and QA results.',
+			metadata: {
+				artifacts: [
+					{
+						type: 'result',
+						summary: 'Requested changes: missing review-path tests',
+						prUrl: 'https://github.com/lsm/neokai/pull/1963',
+					},
+				],
+			},
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const prompt = buildEpisodeJudgePrompt(
+			service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] })
+		);
+
+		expect(prompt).toContain('Requested changes: missing review-path tests');
+		expect(prompt).toContain('https://github.com/lsm/neokai/pull/1963');
+	});
+
+	it('truncates manual note metadata in every prompt section', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Manual note metadata',
+			objective: 'Keep prompt metadata bounded',
+		});
+		const note = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Manual note with oversized metadata',
+			metadata: { marker: 'metadata-marker', payload: 'x'.repeat(1500) },
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const prompt = buildEpisodeJudgePrompt(
+			service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [note.id] })
+		);
+
+		expect(prompt).toContain('metadata-marker');
+		expect(prompt).not.toContain('x'.repeat(1300));
 	});
 
 	it('parses fenced judge JSON and clamps confidence', () => {
