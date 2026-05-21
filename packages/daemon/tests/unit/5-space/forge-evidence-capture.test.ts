@@ -208,6 +208,120 @@ describe('Forge evidence capture on task completion', () => {
 		);
 	});
 
+	it('preserves manual workflow_run evidence when auto-capturing a run without artifacts', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Manual run evidence',
+			objective: 'Keep user-authored workflow evidence',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Manual workflow' });
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Run without artifacts',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Complete with manual run evidence',
+			description: 'Auto workflow_run evidence should not overwrite manual note',
+			evolutionScopeId: scope.id,
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Done without artifacts' });
+		const manual = evolutionScopeService.attachWorkflowRunEvidence({
+			workflowRunId: run.id,
+			summary: 'Manual reviewer context',
+			metadata: { source: 'manual' },
+		});
+
+		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		const runEvidence = evidence.filter((item) => item.kind === 'workflow_run');
+		expect(runEvidence).toHaveLength(2);
+		expect(evolutionRepo.getEvidence(manual.id)?.summary).toBe('Manual reviewer context');
+		expect(runEvidence.map((item) => item.summary)).toContain(
+			'Workflow run pending: Run without artifacts — no artifact types — no artifacts captured'
+		);
+	});
+
+	it('keeps manual task evidence append-only for repeated task attachments', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Manual task evidence',
+			objective: 'Keep task evidence timeline append-only',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Attach task evidence twice',
+			description: 'Manual task evidence should append',
+			evolutionScopeId: scope.id,
+		});
+
+		const before = evolutionScopeService.attachTaskEvidence({
+			taskId: task.id,
+			summary: 'Before implementation',
+		});
+		const after = evolutionScopeService.attachTaskEvidence({
+			taskId: task.id,
+			summary: 'After implementation',
+		});
+
+		const taskEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.filter((item) => item.kind === 'task');
+		expect(taskEvidence).toHaveLength(2);
+		expect(after.id).not.toBe(before.id);
+		expect(taskEvidence.map((item) => item.summary).sort()).toEqual([
+			'After implementation',
+			'Before implementation',
+		]);
+	});
+
+	it('ignores stale failureReason when completed workflow run has artifacts', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Recovered run scope',
+			objective: 'Recovered runs should not look like failures',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Recovered workflow' });
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Recovered run',
+		});
+		workflowRunRepo.updateRun(run.id, {
+			status: 'done',
+			failureReason: 'agentCrash',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Capture recovered run',
+			description: 'Stale failureReason should not force error kind',
+			evolutionScopeId: scope.id,
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Recovered and shipped' });
+		artifactRepo.upsert({
+			id: 'artifact-recovered',
+			runId: run.id,
+			nodeId: 'CI',
+			artifactType: 'ci',
+			artifactKey: 'summary',
+			data: { summary: 'Recovered CI passed' },
+		});
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.evidence.find((item) => item.kind === 'error')).toBeUndefined();
+		const artifactEvidence = result.evidence.find((item) => item.kind === 'artifact');
+		expect(artifactEvidence?.summary).toContain('Recovered CI passed');
+		expect(artifactEvidence?.metadata.failureReason).toBe('agentCrash');
+	});
+
 	it('updates existing task_result evidence when a task is completed again', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,

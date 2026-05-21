@@ -185,7 +185,7 @@ export class EvolutionScopeService {
 			: this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 		if (scope.spaceId !== task.spaceId)
 			throw new Error('Task and scope must belong to the same space');
-		return this.createEvidenceOnce({
+		return this.createEvidence({
 			scopeId: scope.id,
 			kind: 'task',
 			sourceId: task.id,
@@ -209,7 +209,7 @@ export class EvolutionScopeService {
 		if (scope.spaceId !== run.spaceId) {
 			throw new Error('Workflow run and scope must belong to the same space');
 		}
-		return this.createEvidenceOnce({
+		return this.createEvidence({
 			scopeId: scope.id,
 			kind: 'workflow_run',
 			sourceId: run.id,
@@ -233,7 +233,7 @@ export class EvolutionScopeService {
 		if (!scope || scope.spaceId !== task.spaceId) return { scope: null, evidence: [] };
 
 		const evidence: EvidenceRef[] = [
-			this.createEvidenceOnce({
+			this.createAutoEvidenceOnce({
 				scopeId: scope.id,
 				kind: 'task_result',
 				sourceId: task.id,
@@ -254,7 +254,7 @@ export class EvolutionScopeService {
 			if (run && run.spaceId === task.spaceId) {
 				const artifacts = this.deps.artifactRepo?.listByRun(run.id) ?? [];
 				evidence.push(
-					this.createEvidenceOnce({
+					this.createAutoEvidenceOnce({
 						scopeId: scope.id,
 						kind: selectWorkflowEvidenceKind(run, artifacts),
 						sourceId: run.id,
@@ -348,18 +348,24 @@ export class EvolutionScopeService {
 		return goal;
 	}
 
-	private createEvidenceOnce(params: CreateEvidenceRefParams): EvidenceRef {
+	private createAutoEvidenceOnce(params: CreateEvidenceRefParams): EvidenceRef {
 		const sourceId = params.sourceId ?? null;
 		const existing = this.deps.evolutionRepo
 			.listEvidence(params.scopeId)
-			.find((item) => item.kind === params.kind && item.sourceId === sourceId);
+			.find(
+				(item) =>
+					item.kind === params.kind &&
+					item.sourceId === sourceId &&
+					item.metadata.autoCaptured === true
+			);
+		const metadata = { ...params.metadata, autoCaptured: true };
 		if (existing) {
 			return this.deps.evolutionRepo.updateEvidence(existing.id, {
 				summary: params.summary,
-				metadata: params.metadata,
+				metadata,
 			});
 		}
-		return this.deps.evolutionRepo.createEvidence(params);
+		return this.deps.evolutionRepo.createEvidence({ ...params, metadata });
 	}
 
 	private requireScope(scopeId: string): EvolutionScope {
@@ -416,7 +422,7 @@ function selectWorkflowEvidenceKind(
 	run: SpaceWorkflowRun,
 	artifacts: WorkflowRunArtifactRecord[]
 ): EvidenceKind {
-	if (run.status === 'blocked' || run.status === 'cancelled' || run.failureReason) return 'error';
+	if (run.status === 'blocked' || run.status === 'cancelled') return 'error';
 	return artifacts.length > 0 ? 'artifact' : 'workflow_run';
 }
 
