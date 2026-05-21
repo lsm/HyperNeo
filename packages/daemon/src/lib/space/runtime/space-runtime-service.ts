@@ -179,8 +179,12 @@ export interface SpaceRuntimeServiceConfig {
 	};
 	/** Durable inbox for inactive long-term Space agents. */
 	spaceAgentInboxRepo?: SpaceAgentInboxRepository;
-	/** Optional goal service for processing terminal goal-task side effects. */
-	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+	/** Optional goal service for processing terminal goal-task side effects and MCP goal tools. */
+	goalService?: import('../goals/goal-service').SpaceGoalService;
+	/** Optional Forge scope service for MCP Forge tools. */
+	evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+	/** Optional Forge episode service for MCP Forge tools. */
+	evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
 }
 
 export class SpaceRuntimeService {
@@ -652,6 +656,9 @@ export class SpaceRuntimeService {
 			mySessionId: sessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			goalService: this.config.goalService,
+			evolutionScopeService: this.config.evolutionScopeService,
+			evolutionEpisodeService: this.config.evolutionEpisodeService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
 			messageResolver: this.createMessageResolver(space.id),
 			longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
@@ -1260,6 +1267,9 @@ export class SpaceRuntimeService {
 			mySessionId: session.id,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			goalService: this.config.goalService,
+			evolutionScopeService: this.config.evolutionScopeService,
+			evolutionEpisodeService: this.config.evolutionEpisodeService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
 			messageResolver: this.createMessageResolver(space.id),
 			longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
@@ -1374,6 +1384,9 @@ export class SpaceRuntimeService {
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
+			goalService: this.config.goalService,
+			evolutionScopeService: this.config.evolutionScopeService,
+			evolutionEpisodeService: this.config.evolutionEpisodeService,
 			replyRoutingRegistry: this.config.replyRoutingRegistry,
 			messageResolver: this.createMessageResolver(space.id),
 			longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),

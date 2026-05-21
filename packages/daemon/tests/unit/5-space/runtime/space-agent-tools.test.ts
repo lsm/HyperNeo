@@ -19,8 +19,11 @@ import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/s
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -29,6 +32,8 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import {
 	createSpaceAgentMcpServer,
 	createSpaceAgentToolHandlers,
@@ -128,6 +133,9 @@ interface TestCtx {
 	nodeExecutionRepo: NodeExecutionRepository;
 	spaceManager: SpaceManager;
 	goalService: SpaceGoalService;
+	evolutionRepo: EvolutionRepository;
+	evolutionScopeService: EvolutionScopeService;
+	evolutionEpisodeService: EvolutionEpisodeService;
 }
 
 function makeCtx(): TestCtx {
@@ -170,13 +178,59 @@ function makeCtx(): TestCtx {
 		jobQueue: new JobQueueRepository(db),
 		spaceRepo,
 	});
+	const goalRepo = new SpaceGoalRepository(db);
 	const goalService = new SpaceGoalService({
-		goalRepo: new SpaceGoalRepository(db),
+		goalRepo,
 		goalEventRepo: new SpaceGoalEventRepository(db),
 		taskRepo,
 		spaceRepo,
 		scheduleService,
 		db,
+	});
+	const evolutionRepo = new EvolutionRepository(db);
+	const evolutionScopeService = new EvolutionScopeService({
+		evolutionRepo,
+		spaceRepo,
+		goalRepo,
+		taskRepo,
+		workflowRunRepo,
+	});
+	const evolutionEpisodeService = new EvolutionEpisodeService({
+		evolutionRepo,
+		taskRepo,
+		workflowRunRepo,
+		artifactRepo: new WorkflowRunArtifactRepository(db),
+		goalService,
+		judgeEpisode: async () => ({
+			title: 'Dogfood episode',
+			outcomeSummary: 'Scoped evidence reviewed',
+			findings: [
+				{
+					domain: 'workflow',
+					kind: 'optimization',
+					impact: 'medium',
+					confidence: 0.8,
+					evidence: ['manual note'],
+					proposedAction: 'Add follow-up task',
+				},
+			],
+			candidateLessons: [
+				{
+					appliesTo: ['workflow'],
+					rule: 'Keep evidence scoped',
+					why: 'Reduces drift',
+					confidence: 0.9,
+				},
+			],
+			proposals: [
+				{
+					title: 'Improve Forge MCP dogfood',
+					description: 'Use MCP tools for Forge path',
+					reason: 'Judge found next step',
+					priority: 'high',
+				},
+			],
+		}),
 	});
 
 	return {
@@ -192,6 +246,9 @@ function makeCtx(): TestCtx {
 		nodeExecutionRepo,
 		spaceManager,
 		goalService,
+		evolutionRepo,
+		evolutionScopeService,
+		evolutionEpisodeService,
 	};
 }
 
@@ -207,6 +264,8 @@ function makeHandlers(ctx: TestCtx) {
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		spaceManager: ctx.spaceManager,
 		goalService: ctx.goalService,
+		evolutionScopeService: ctx.evolutionScopeService,
+		evolutionEpisodeService: ctx.evolutionEpisodeService,
 	});
 }
 
@@ -281,6 +340,32 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		expect(names).toContain('trigger_goal_task');
 		expect(names).toContain('list_goal_tasks');
 		expect(names).toContain('list_goal_events');
+	});
+
+	test('registers Forge tools when evolution services are configured', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			goalService: ctx.goalService,
+			evolutionScopeService: ctx.evolutionScopeService,
+			evolutionEpisodeService: ctx.evolutionEpisodeService,
+		});
+
+		const names = getRegisteredToolNames(server);
+		expect(names).toContain('create_forge_scope');
+		expect(names).toContain('add_forge_manual_note');
+		expect(names).toContain('create_forge_episode');
+		expect(names).toContain('list_forge_lessons');
+		expect(names).toContain('list_forge_proposals');
+		expect(names).toContain('resolve_forge_scope');
+		expect(names).toContain('update_forge_lesson');
+		expect(names).toContain('create_task_from_forge_proposal');
 	});
 });
 
@@ -408,6 +493,672 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Forge tools
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — Forge tools', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('runs dogfood path with scope, evidence, episode, lesson, proposal task, and rollup', async () => {
+		const handlers = makeHandlers(ctx);
+		const goal = JSON.parse(
+			(
+				await handlers.create_goal({
+					title: 'Forge dogfood',
+					type: 'recurring',
+					progress: 5,
+					next_steps: ['Collect evidence'],
+				})
+			).content[0].text
+		).goal;
+
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope_from_goal({
+					goal_id: goal.id,
+					policy: { cadence: 'weekly', episodeJudgeModel: 'claude-sonnet-4-5' },
+				})
+			).content[0].text
+		).scope;
+		expect(scope.spaceGoalId).toBe(goal.id);
+
+		const updatedScope = JSON.parse(
+			(
+				await handlers.update_forge_scope({
+					scope_id: scope.id,
+					episode_judge_model: 'claude-opus-4-5',
+				})
+			).content[0].text
+		).scope;
+		expect(updatedScope.policy.episodeJudgeModel).toBe('claude-opus-4-5');
+
+		const note = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Manual dogfood note',
+					metadata: { source: 'test' },
+				})
+			).content[0].text
+		).evidence;
+		const snapshot = JSON.parse(
+			(
+				await handlers.add_forge_metric_snapshot({
+					scope_id: scope.id,
+					values: { friction: 2 },
+					source: 'manual',
+					note: 'Less friction',
+				})
+			).content[0].text
+		);
+		expect(snapshot.evidence.kind).toBe('metric_snapshot');
+
+		const episodeResult = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [note.id, snapshot.evidence.id],
+				})
+			).content[0].text
+		);
+		expect(episodeResult.success).toBe(true);
+		expect(episodeResult.lessons).toHaveLength(1);
+		expect(episodeResult.proposals).toHaveLength(1);
+
+		const lesson = JSON.parse(
+			(
+				await handlers.update_forge_lesson({
+					lesson_id: episodeResult.lessons[0].id,
+					status: 'active',
+				})
+			).content[0].text
+		).lesson;
+		expect(lesson.status).toBe('active');
+
+		const taskResult = JSON.parse(
+			(
+				await handlers.create_task_from_forge_proposal({
+					proposal_id: episodeResult.proposals[0].id,
+				})
+			).content[0].text
+		);
+		expect(taskResult.task.goalId).toBe(goal.id);
+		expect(taskResult.task.evolutionScopeId).toBe(scope.id);
+
+		const rollup = JSON.parse(
+			(
+				await handlers.apply_forge_rollup({
+					episode_id: episodeResult.episode.id,
+					goal_update: {
+						summary: 'Dogfood path complete',
+						progress: 42,
+						next_steps: ['Use proposal task'],
+						metrics: { friction: 2 },
+					},
+				})
+			).content[0].text
+		);
+		expect(rollup.episode.status).toBe('accepted');
+		expect(rollup.goal.summary).toBe('Dogfood path complete');
+		expect(rollup.goal.progress).toBe(42);
+	});
+
+	test('covers untested Forge read tools', async () => {
+		const handlers = makeHandlers(ctx);
+		const created = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Read tools scope',
+					objective: 'Exercise read tools',
+				})
+			).content[0].text
+		).scope;
+		const note = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: created.id,
+					summary: 'Read note',
+				})
+			).content[0].text
+		).evidence;
+		const snapshot = JSON.parse(
+			(
+				await handlers.add_forge_metric_snapshot({
+					scope_id: created.id,
+					values: { quality: 7 },
+					source: 'manual',
+					note: 'Quality snapshot',
+				})
+			).content[0].text
+		);
+
+		const listed = JSON.parse((await handlers.list_forge_scopes({})).content[0].text);
+		expect(listed.success).toBe(true);
+		expect(listed.scopes.some((scope: { id: string }) => scope.id === created.id)).toBe(true);
+
+		const fetched = JSON.parse(
+			(await handlers.get_forge_scope({ scope_id: created.id })).content[0].text
+		);
+		expect(fetched.success).toBe(true);
+		expect(fetched.scope.id).toBe(created.id);
+
+		const timeline = JSON.parse(
+			(await handlers.get_forge_timeline({ scope_id: created.id })).content[0].text
+		);
+		expect(timeline.success).toBe(true);
+		expect(timeline.scope.id).toBe(created.id);
+		expect(timeline.evidence).toHaveLength(2);
+		expect(timeline.metricSnapshots).toHaveLength(1);
+
+		const evidence = JSON.parse(
+			(await handlers.list_forge_evidence({ scope_id: created.id })).content[0].text
+		);
+		expect(evidence.success).toBe(true);
+		expect(evidence.evidence.map((item: { id: string }) => item.id)).toContain(note.id);
+		expect(evidence.evidence.map((item: { id: string }) => item.id)).toContain(
+			snapshot.evidence.id
+		);
+
+		const snapshots = JSON.parse(
+			(await handlers.list_forge_metric_snapshots({ scope_id: created.id })).content[0].text
+		);
+		expect(snapshots.success).toBe(true);
+		expect(snapshots.snapshots).toHaveLength(1);
+		expect(snapshots.snapshots[0].values.quality).toBe(7);
+	});
+
+	test('attaches workflow run evidence', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Workflow evidence scope',
+					objective: 'Attach workflow evidence',
+				})
+			).content[0].text
+		).scope;
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Forge workflow evidence'
+		);
+		const run = ctx.workflowRunRepo.createRun({
+			spaceId: ctx.spaceId,
+			workflowId: wf.id,
+			title: 'Evidence run',
+		});
+
+		const attached = JSON.parse(
+			(
+				await handlers.attach_forge_workflow_run_evidence({
+					scope_id: scope.id,
+					workflow_run_id: run.id,
+					summary: 'Workflow run evidence',
+				})
+			).content[0].text
+		);
+		expect(attached.success).toBe(true);
+		expect(attached.evidence.sourceId).toBe(run.id);
+
+		const evidence = JSON.parse(
+			(await handlers.list_forge_evidence({ scope_id: scope.id })).content[0].text
+		);
+		expect(evidence.success).toBe(true);
+		expect(evidence.evidence[0].id).toBe(attached.evidence.id);
+	});
+
+	test('rejects reopening terminal Forge episodes', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Terminal episode scope',
+					objective: 'Guard episode status',
+				})
+			).content[0].text
+		).scope;
+		const evidence = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Terminal episode evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episode = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [evidence.id],
+				})
+			).content[0].text
+		).episode;
+
+		const accepted = JSON.parse(
+			(
+				await handlers.update_forge_episode({
+					episode_id: episode.id,
+					status: 'accepted',
+				})
+			).content[0].text
+		);
+		expect(accepted.success).toBe(true);
+		expect(accepted.episode.status).toBe('accepted');
+
+		const reopen = JSON.parse(
+			(
+				await handlers.update_forge_episode({
+					episode_id: episode.id,
+					status: 'draft',
+				})
+			).content[0].text
+		);
+		expect(reopen.success).toBe(false);
+		expect(reopen.error).toContain('Terminal Forge episodes cannot be reopened');
+
+		const afterReopenAttempt = JSON.parse(
+			(await handlers.list_forge_review_bundle({ scope_id: scope.id })).content[0].text
+		).episodes[0];
+		expect(afterReopenAttempt.status).toBe('accepted');
+	});
+
+	test('lists Forge lessons with optional status filter', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Lesson scope',
+					objective: 'List lessons',
+				})
+			).content[0].text
+		).scope;
+		const evidence = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Lesson evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episodeResult = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [evidence.id],
+				})
+			).content[0].text
+		);
+
+		const candidateLessons = JSON.parse(
+			(await handlers.list_forge_lessons({ scope_id: scope.id })).content[0].text
+		);
+		expect(candidateLessons.success).toBe(true);
+		expect(candidateLessons.lessons).toHaveLength(1);
+		expect(candidateLessons.lessons[0].status).toBe('candidate');
+
+		await handlers.update_forge_lesson({
+			lesson_id: episodeResult.lessons[0].id,
+			status: 'active',
+		});
+		const activeLessons = JSON.parse(
+			(await handlers.list_forge_lessons({ scope_id: scope.id, status: 'active' })).content[0].text
+		);
+		expect(activeLessons.success).toBe(true);
+		expect(activeLessons.lessons).toHaveLength(1);
+		expect(activeLessons.lessons[0].id).toBe(episodeResult.lessons[0].id);
+
+		const remainingCandidates = JSON.parse(
+			(await handlers.list_forge_lessons({ scope_id: scope.id, status: 'candidate' })).content[0]
+				.text
+		);
+		expect(remainingCandidates.lessons).toHaveLength(0);
+	});
+
+	test('lists Forge proposals with optional status filter', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Proposal list scope',
+					objective: 'List proposals',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Manual proposal',
+					description: 'Do thing',
+					reason: 'Need thing',
+				})
+			).content[0].text
+		).proposal;
+
+		const proposals = JSON.parse(
+			(await handlers.list_forge_proposals({ scope_id: scope.id })).content[0].text
+		);
+		expect(proposals.success).toBe(true);
+		expect(proposals.proposals).toHaveLength(1);
+		expect(proposals.proposals[0].id).toBe(proposal.id);
+
+		const proposed = JSON.parse(
+			(await handlers.list_forge_proposals({ scope_id: scope.id, status: 'proposed' })).content[0]
+				.text
+		);
+		expect(proposed.success).toBe(true);
+		expect(proposed.proposals).toHaveLength(1);
+		expect(proposed.proposals[0].status).toBe('proposed');
+
+		const accepted = JSON.parse(
+			(await handlers.list_forge_proposals({ scope_id: scope.id, status: 'accepted' })).content[0]
+				.text
+		);
+		expect(accepted.proposals).toHaveLength(0);
+	});
+
+	test('resolves Forge scope by goal or task', async () => {
+		const handlers = makeHandlers(ctx);
+		const goal = JSON.parse(
+			(
+				await handlers.create_goal({
+					title: 'Resolve goal',
+					type: 'recurring',
+				})
+			).content[0].text
+		).goal;
+		const scope = JSON.parse(
+			(await handlers.create_forge_scope_from_goal({ goal_id: goal.id })).content[0].text
+		).scope;
+
+		const byGoal = JSON.parse(
+			(await handlers.resolve_forge_scope({ goal_id: goal.id })).content[0].text
+		);
+		expect(byGoal.success).toBe(true);
+		expect(byGoal.scope.id).toBe(scope.id);
+
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Scoped task',
+			description: 'Has scope',
+			goalId: goal.id,
+			evolutionScopeId: scope.id,
+		});
+		const byTask = JSON.parse(
+			(await handlers.resolve_forge_scope({ task_id: task.id })).content[0].text
+		);
+		expect(byTask.success).toBe(true);
+		expect(byTask.scope.id).toBe(scope.id);
+
+		const unlinkedGoal = JSON.parse(
+			(
+				await handlers.create_goal({
+					title: 'Unlinked goal',
+					type: 'recurring',
+				})
+			).content[0].text
+		).goal;
+		const missing = JSON.parse(
+			(await handlers.resolve_forge_scope({ goal_id: unlinkedGoal.id })).content[0].text
+		);
+		expect(missing.success).toBe(false);
+		expect(missing.error).toBe('No scope found');
+
+		const noArgs = JSON.parse((await handlers.resolve_forge_scope({})).content[0].text);
+		expect(noArgs.success).toBe(false);
+		expect(noArgs.error).toContain('Provide goal_id or task_id');
+	});
+
+	test('rejects mismatched proposal evidence episodes', async () => {
+		const handlers = makeHandlers(ctx);
+		const scopeA = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Scope A',
+					objective: 'First scope',
+				})
+			).content[0].text
+		).scope;
+		const scopeB = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Scope B',
+					objective: 'Second scope',
+				})
+			).content[0].text
+		).scope;
+		const evidenceB = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scopeB.id,
+					summary: 'Scope B evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episodeB = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scopeB.id,
+					evidence_ids: [evidenceB.id],
+				})
+			).content[0].text
+		).episode;
+
+		const result = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scopeA.id,
+					title: 'Wrong scope proposal',
+					description: 'Should fail',
+					reason: 'Episode belongs elsewhere',
+					evidence_episode_ids: [episodeB.id],
+				})
+			).content[0].text
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('EvolutionEpisode not found in scope');
+	});
+
+	test('rejects reactivating dismissed lessons', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Dismissed lesson scope',
+					objective: 'Guard lesson status',
+				})
+			).content[0].text
+		).scope;
+		const evidence = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Lesson status evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episodeResult = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [evidence.id],
+				})
+			).content[0].text
+		);
+
+		const dismissed = JSON.parse(
+			(
+				await handlers.update_forge_lesson({
+					lesson_id: episodeResult.lessons[0].id,
+					status: 'dismissed',
+				})
+			).content[0].text
+		);
+		expect(dismissed.success).toBe(true);
+
+		const reactivated = JSON.parse(
+			(
+				await handlers.update_forge_lesson({
+					lesson_id: episodeResult.lessons[0].id,
+					status: 'active',
+				})
+			).content[0].text
+		);
+		expect(reactivated.success).toBe(false);
+		expect(reactivated.error).toContain('Dismissed lessons cannot be reactivated');
+	});
+
+	test('rejects unsafe proposal status updates', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Proposal scope',
+					objective: 'Guard proposal status',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Proposal',
+					description: 'Create task later',
+					reason: 'Need task',
+				})
+			).content[0].text
+		).proposal;
+
+		const manualCreated = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'created',
+				})
+			).content[0].text
+		);
+		expect(manualCreated.success).toBe(false);
+		expect(manualCreated.error).toContain('create_task_from_forge_proposal');
+
+		const taskResult = JSON.parse(
+			(await handlers.create_task_from_forge_proposal({ proposal_id: proposal.id })).content[0].text
+		);
+		expect(taskResult.success).toBe(true);
+
+		const reopen = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'accepted',
+				})
+			).content[0].text
+		);
+		expect(reopen.success).toBe(false);
+		expect(reopen.error).toContain('cannot be reopened');
+
+		const idempotent = JSON.parse(
+			(await handlers.create_task_from_forge_proposal({ proposal_id: proposal.id })).content[0].text
+		);
+		expect(idempotent.success).toBe(true);
+		expect(idempotent.task.id).toBe(taskResult.task.id);
+	});
+
+	test('rejects reopening dismissed proposals', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Dismissed proposal scope',
+					objective: 'Guard proposal status',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Dismissible proposal',
+					description: 'Can dismiss',
+					reason: 'Test guard',
+				})
+			).content[0].text
+		).proposal;
+
+		const dismissed = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'dismissed',
+				})
+			).content[0].text
+		);
+		expect(dismissed.success).toBe(true);
+
+		const accepted = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'accepted',
+				})
+			).content[0].text
+		);
+		expect(accepted.success).toBe(false);
+		expect(accepted.error).toContain('Dismissed proposals cannot be reopened');
+	});
+
+	test('rejects cross-space scope and task evidence access', async () => {
+		const otherSpaceId = 'other-forge-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-forge');
+		const otherScope = ctx.evolutionScopeService.createScope({
+			spaceId: otherSpaceId,
+			kind: 'custom',
+			name: 'Other scope',
+			objective: 'Other objective',
+		});
+		const otherTask = ctx.taskRepo.createTask({
+			spaceId: otherSpaceId,
+			title: 'Other task',
+			description: 'Outside this space',
+		});
+		const handlers = makeHandlers(ctx);
+
+		const scopeOut = JSON.parse(
+			(await handlers.get_forge_scope({ scope_id: otherScope.id })).content[0].text
+		);
+		expect(scopeOut.success).toBe(false);
+		expect(scopeOut.error).toContain('EvolutionScope not found');
+
+		const evidenceOut = JSON.parse(
+			(
+				await handlers.attach_forge_task_evidence({
+					scope_id: otherScope.id,
+					task_id: otherTask.id,
+				})
+			).content[0].text
+		);
+		expect(evidenceOut.success).toBe(false);
+		expect(evidenceOut.error).toContain('Task not found');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // list_workflows
 // ---------------------------------------------------------------------------
 
@@ -476,6 +1227,27 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('run-missing');
+	});
+
+	test('rejects cross-space workflow run access', async () => {
+		const otherSpaceId = 'other-run-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-run-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Run WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space run',
+		});
+
+		const result = await makeHandlers(ctx).get_workflow_run({ run_id: rawRun.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
 	});
 
 	test('returns run with empty tasks when no tasks have been created', async () => {
@@ -553,6 +1325,30 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const result = await makeHandlers(ctx).change_plan({ run_id: 'run-missing' });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
+	});
+
+	test('rejects cross-space workflow run plan changes', async () => {
+		const otherSpaceId = 'other-plan-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-plan-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Plan WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space plan',
+		});
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: rawRun.id,
+			description: 'should not update',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
 	});
 
 	test('returns error when trying to change plan on completed run', async () => {
@@ -835,6 +1631,52 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 	});
 });
 
+describe('createSpaceAgentToolHandlers — approve_gate', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('rejects cross-space workflow runs', async () => {
+		const otherSpaceId = 'other-gate-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-gate-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Gate WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space gate',
+		});
+
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			gateDataRepo: new GateDataRepository(ctx.db),
+		});
+		const result = await handlers.approve_gate({
+			run_id: rawRun.id,
+			gate_id: 'gate-1',
+			approved: true,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
+	});
+});
+
 // ---------------------------------------------------------------------------
 // list_tasks
 // ---------------------------------------------------------------------------
@@ -872,6 +1714,27 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.tasks).toHaveLength(1);
 		expect(parsed.tasks[0].workflowRunId).toBe(runId);
+	});
+
+	test('rejects cross-space workflow_run_id task filter', async () => {
+		const otherSpaceId = 'other-task-filter-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-task-filter-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Task WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space task filter',
+		});
+
+		const result = await makeHandlers(ctx).list_tasks({ workflow_run_id: rawRun.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
 	});
 
 	test('filters tasks by status', async () => {
