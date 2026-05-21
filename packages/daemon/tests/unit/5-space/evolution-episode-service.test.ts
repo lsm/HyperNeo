@@ -355,9 +355,11 @@ describe('EvolutionEpisodeService', () => {
 				metrics: { latency: 3 },
 			},
 		});
+		const updated = service.updateEpisode(episode.id, { rollupAppliedAt: null });
 
 		expect(result.episode.status).toBe('accepted');
 		expect(result.episode.rollupAppliedAt).toBeNumber();
+		expect(updated?.rollupAppliedAt).toBe(result.episode.rollupAppliedAt);
 		expect(result.goal).toMatchObject({
 			summary: 'New rollup summary',
 			progress: 75,

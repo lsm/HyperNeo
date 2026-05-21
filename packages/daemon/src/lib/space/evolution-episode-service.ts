@@ -216,7 +216,8 @@ export class EvolutionEpisodeService {
 	}
 
 	updateEpisode(id: string, params: UpdateEvolutionEpisodeParams): EvolutionEpisode | null {
-		return this.deps.evolutionRepo.updateEpisode(id, params);
+		const { rollupAppliedAt: _rollupAppliedAt, ...safeParams } = params;
+		return this.deps.evolutionRepo.updateEpisode(id, safeParams);
 	}
 
 	listReviewBundle(scopeId: string): EpisodeReviewBundle {
