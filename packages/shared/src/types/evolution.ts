@@ -1,7 +1,15 @@
 import type { SpaceTaskPriority } from './space.ts';
 
 export type EvolutionScopeKind = 'mission' | 'project' | 'campaign' | 'workflow' | 'custom';
-export type EvidenceKind = 'task' | 'workflow_run' | 'session' | 'manual_note' | 'metric_snapshot';
+export type EvidenceKind =
+	| 'task'
+	| 'workflow_run'
+	| 'session'
+	| 'manual_note'
+	| 'metric_snapshot'
+	| 'task_result'
+	| 'artifact'
+	| 'error';
 export type EvolutionEpisodeStatus = 'draft' | 'accepted' | 'dismissed';
 export type EvolutionLessonStatus = 'candidate' | 'active' | 'dismissed';
 export type TaskProposalStatus = 'proposed' | 'accepted' | 'dismissed' | 'created';

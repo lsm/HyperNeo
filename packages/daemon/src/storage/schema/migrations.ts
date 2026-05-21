@@ -657,6 +657,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 141: Rebuild message search FTS with detail=column and external content.
 	runMigration141(db);
+
+	// Migration 142: Expand Forge evidence kinds and backfill MVP task evidence.
+	runMigration142(db);
 }
 
 /**
@@ -9478,6 +9481,294 @@ function migrateNeoSessions(db: BunDatabase): void {
  * Stores lifecycle and state-change events for Space goals so agents and
  * humans can inspect why the current rolling goal state changed.
  */
+
+export function runMigration142(db: BunDatabase): void {
+	widenEvolutionEvidenceKinds(db);
+	backfillForgeMvpEvidence(db);
+}
+
+function widenEvolutionEvidenceKinds(db: BunDatabase): void {
+	if (!tableExists(db, 'evolution_evidence')) return;
+	const sql = tableCreateSql(db, 'evolution_evidence');
+	if (sql?.includes("'task_result'") && sql.includes("'artifact'") && sql.includes("'error'")) {
+		return;
+	}
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		db.exec(`DROP TABLE IF EXISTS evolution_evidence_new`);
+		db.exec(`
+			CREATE TABLE evolution_evidence_new (
+				id TEXT PRIMARY KEY,
+				scope_id TEXT NOT NULL,
+				kind TEXT NOT NULL
+					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error')),
+				summary TEXT NOT NULL,
+				source_id TEXT,
+				metadata_json TEXT NOT NULL DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				FOREIGN KEY (scope_id) REFERENCES evolution_scopes(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`
+			INSERT INTO evolution_evidence_new (
+				id, scope_id, kind, summary, source_id, metadata_json, created_at
+			)
+			SELECT id, scope_id, kind, summary, source_id, metadata_json, created_at
+			FROM evolution_evidence
+		`);
+		db.exec(`DROP TABLE evolution_evidence`);
+		db.exec(`ALTER TABLE evolution_evidence_new RENAME TO evolution_evidence`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_evolution_evidence_scope_created ON evolution_evidence(scope_id, created_at DESC)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_evolution_evidence_source ON evolution_evidence(kind, source_id)`
+		);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+function backfillForgeMvpEvidence(db: BunDatabase): void {
+	if (!tableExists(db, 'evolution_scopes') || !tableExists(db, 'evolution_evidence')) return;
+	if (!tableExists(db, 'space_tasks') || !tableExists(db, 'space_workflow_runs')) return;
+	if (!tableExists(db, 'workflow_run_artifacts')) return;
+
+	const scope = db
+		.prepare(
+			`SELECT id FROM evolution_scopes
+			 WHERE id = ?
+			    OR (space_goal_id = ? AND name = ?)
+			 ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
+			 LIMIT 1`
+		)
+		.get(
+			'b2ff245a-98ef-4429-954a-3e7b96366cfa',
+			'10612c8d-e412-4169-8429-b48fa4d3e234',
+			'Build and harden NeoKai Forge',
+			'b2ff245a-98ef-4429-954a-3e7b96366cfa'
+		) as { id: string } | undefined;
+	if (!scope) return;
+
+	const tasks = [425, 426, 427, 428, 429, 430, 431];
+	for (const taskNumber of tasks) {
+		const task = db
+			.prepare(
+				`SELECT id, task_number, title, description, status, priority, workflow_run_id,
+				        reported_status, reported_summary, result, completed_at, updated_at
+				 FROM space_tasks WHERE task_number = ?`
+			)
+			.get(taskNumber) as ForgeMvpTaskRow | undefined;
+		if (!task?.workflow_run_id) continue;
+		const run = db
+			.prepare(
+				`SELECT id, title, status, failure_reason, completed_at, updated_at
+				 FROM space_workflow_runs WHERE id = ?`
+			)
+			.get(task.workflow_run_id) as ForgeMvpRunRow | undefined;
+		const artifacts = db
+			.prepare(
+				`SELECT id, node_id, artifact_type, artifact_key, data, created_at, updated_at
+				 FROM workflow_run_artifacts WHERE run_id = ? ORDER BY created_at, id`
+			)
+			.all(task.workflow_run_id) as ForgeMvpArtifactRow[];
+		const parsedArtifacts = artifacts.map((artifact) => ({
+			id: artifact.id,
+			nodeId: artifact.node_id,
+			type: artifact.artifact_type,
+			key: artifact.artifact_key,
+			data: parseMigrationJson(artifact.data),
+			createdAt: artifact.created_at,
+			updatedAt: artifact.updated_at,
+		}));
+		const artifactSummaries = parsedArtifacts
+			.map((artifact) => extractArtifactSummary(artifact.data))
+			.filter((summary): summary is string => Boolean(summary));
+		const prUrls = uniqueStrings(
+			parsedArtifacts.flatMap((artifact) => extractArtifactUrls(artifact.data))
+		);
+		const errors = collectForgeMvpErrors(run, parsedArtifacts);
+		const createdAt = task.completed_at ?? task.updated_at;
+
+		upsertForgeEvidence(db, {
+			id: `forge-mvp-${taskNumber}-task-result`,
+			scopeId: scope.id,
+			kind: 'task_result',
+			summary: `Task #${taskNumber} completed: ${task.title}. Workflow run ${run?.status ?? task.status}; PRs: ${prUrls.join(', ') || 'none recorded'}.`,
+			sourceId: task.id,
+			metadata: {
+				task: {
+					id: task.id,
+					number: task.task_number,
+					title: task.title,
+					status: task.status,
+					priority: task.priority,
+					reportedStatus: task.reported_status,
+					reportedSummary: task.reported_summary,
+					result: task.result,
+					completedAt: task.completed_at,
+				},
+				workflowRun: run,
+				prUrls,
+				artifactCount: artifacts.length,
+			},
+			createdAt,
+		});
+
+		upsertForgeEvidence(db, {
+			id: `forge-mvp-${taskNumber}-artifact`,
+			scopeId: scope.id,
+			kind: 'artifact',
+			summary: `Task #${taskNumber} artifacts: ${artifactSummaries.join(' | ') || `${artifacts.length} workflow artifacts captured`}.`,
+			sourceId: task.workflow_run_id,
+			metadata: { taskNumber, workflowRunId: task.workflow_run_id, artifacts: parsedArtifacts },
+			createdAt,
+		});
+
+		if (errors.length > 0) {
+			upsertForgeEvidence(db, {
+				id: `forge-mvp-${taskNumber}-error`,
+				scopeId: scope.id,
+				kind: 'error',
+				summary: `Task #${taskNumber} error/rework signals: ${errors.map((error) => error.summary).join(' | ')}.`,
+				sourceId: task.workflow_run_id,
+				metadata: { taskNumber, workflowRunId: task.workflow_run_id, errors },
+				createdAt,
+			});
+		}
+	}
+}
+
+interface ForgeMvpTaskRow {
+	id: string;
+	task_number: number;
+	title: string;
+	description: string;
+	status: string;
+	priority: string;
+	workflow_run_id: string | null;
+	reported_status: string | null;
+	reported_summary: string | null;
+	result: string | null;
+	completed_at: number | null;
+	updated_at: number;
+}
+
+interface ForgeMvpRunRow {
+	id: string;
+	title: string;
+	status: string;
+	failure_reason: string | null;
+	completed_at: number | null;
+	updated_at: number;
+}
+
+interface ForgeMvpArtifactRow {
+	id: string;
+	node_id: string;
+	artifact_type: string;
+	artifact_key: string;
+	data: string;
+	created_at: number;
+	updated_at: number;
+}
+
+interface ForgeEvidenceUpsert {
+	id: string;
+	scopeId: string;
+	kind: 'task_result' | 'artifact' | 'error';
+	summary: string;
+	sourceId: string | null;
+	metadata: Record<string, unknown>;
+	createdAt: number;
+}
+
+function upsertForgeEvidence(db: BunDatabase, evidence: ForgeEvidenceUpsert): void {
+	db.prepare(
+		`INSERT INTO evolution_evidence (
+			id, scope_id, kind, summary, source_id, metadata_json, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			scope_id = excluded.scope_id,
+			kind = excluded.kind,
+			summary = excluded.summary,
+			source_id = excluded.source_id,
+			metadata_json = excluded.metadata_json,
+			created_at = excluded.created_at`
+	).run(
+		evidence.id,
+		evidence.scopeId,
+		evidence.kind,
+		evidence.summary,
+		evidence.sourceId,
+		JSON.stringify(evidence.metadata),
+		evidence.createdAt
+	);
+}
+
+function collectForgeMvpErrors(
+	run: ForgeMvpRunRow | undefined,
+	artifacts: Array<{ data: Record<string, unknown> }>
+): Array<{ summary: string; data: Record<string, unknown> }> {
+	const errors: Array<{ summary: string; data: Record<string, unknown> }> = [];
+	if (run?.failure_reason) {
+		errors.push({ summary: run.failure_reason, data: { source: 'workflow_run', runId: run.id } });
+	}
+	for (const artifact of artifacts) {
+		const summary = extractArtifactSummary(artifact.data);
+		const verdict = stringValue(artifact.data.verdict);
+		const gateBlocker = stringValue(artifact.data.gateBlocker ?? artifact.data.gate_reason);
+		const gateIssue = stringValue(artifact.data.gateIssue);
+		const blockingIssues = Array.isArray(artifact.data.blocking_issues)
+			? artifact.data.blocking_issues
+			: [];
+		const testOutput = stringValue(artifact.data.test_output);
+		const hasRequestChanges = verdict === 'REQUEST_CHANGES';
+		const hasGateBlocker = Boolean(gateBlocker || gateIssue);
+		const hasBlockingIssues = blockingIssues.length > 0;
+		const hasPreexistingFailure = /pre-existing/i.test(`${summary ?? ''} ${testOutput ?? ''}`);
+		if (!hasRequestChanges && !hasGateBlocker && !hasBlockingIssues && !hasPreexistingFailure)
+			continue;
+		errors.push({
+			summary: summary ?? gateBlocker ?? gateIssue ?? 'Error signal captured in workflow artifact',
+			data: artifact.data,
+		});
+	}
+	return errors;
+}
+
+function parseMigrationJson(value: string): Record<string, unknown> {
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: {};
+	} catch {
+		return {};
+	}
+}
+
+function extractArtifactSummary(data: Record<string, unknown>): string | null {
+	return stringValue(data.summary) ?? stringValue(data.test_output) ?? null;
+}
+
+function extractArtifactUrls(data: Record<string, unknown>): string[] {
+	const urls: string[] = [];
+	for (const key of ['pr_url', 'merged_pr_url', 'review_url', 'reviewUrl', 'url']) {
+		const value = stringValue(data[key]);
+		if (value) urls.push(value);
+	}
+	return urls;
+}
+
+function stringValue(value: unknown): string | null {
+	return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function uniqueStrings(values: string[]): string[] {
+	return Array.from(new Set(values));
+}
 
 export function runMigration141(db: BunDatabase): void {
 	const ftsSql = tableCreateSql(db, 'message_search_fts');
