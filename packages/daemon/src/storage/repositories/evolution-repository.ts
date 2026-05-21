@@ -326,6 +326,23 @@ export class EvolutionRepository {
 	}
 
 	updateTaskProposal(id: string, params: UpdateTaskProposalParams): TaskProposal | null {
+		return this.updateTaskProposalWhere(id, params);
+	}
+
+	updateTaskProposalIfStatus(
+		id: string,
+		statuses: TaskProposalStatus[],
+		params: UpdateTaskProposalParams
+	): TaskProposal | null {
+		if (statuses.length === 0) return null;
+		return this.updateTaskProposalWhere(id, params, statuses);
+	}
+
+	private updateTaskProposalWhere(
+		id: string,
+		params: UpdateTaskProposalParams,
+		statuses?: TaskProposalStatus[]
+	): TaskProposal | null {
 		const sets: string[] = [];
 		const values: SQLiteValue[] = [];
 		const add = (column: string, value: SQLiteValue) => {
@@ -343,11 +360,16 @@ export class EvolutionRepository {
 		if (params.createdTaskId !== undefined) add('created_task_id', params.createdTaskId ?? null);
 		if (sets.length === 0) return this.getTaskProposal(id);
 		add('updated_at', Date.now());
+		let where = `id = ?`;
 		values.push(id);
-		this.db
-			.prepare(`UPDATE evolution_task_proposals SET ${sets.join(', ')} WHERE id = ?`)
+		if (statuses) {
+			where += ` AND status IN (${statuses.map(() => '?').join(', ')})`;
+			values.push(...statuses);
+		}
+		const result = this.db
+			.prepare(`UPDATE evolution_task_proposals SET ${sets.join(', ')} WHERE ${where}`)
 			.run(...values);
-		return this.getTaskProposal(id);
+		return result.changes > 0 ? this.getTaskProposal(id) : null;
 	}
 
 	createMetricSnapshot(params: CreateMetricSnapshotParams): MetricSnapshot {

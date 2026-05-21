@@ -4,6 +4,7 @@ import {
 	buildEpisodeJudgePrompt,
 	EvolutionEpisodeService,
 	parseEpisodeJudgeJson,
+	resolveEpisodeJudgeModel,
 } from '../../../src/lib/space/evolution-episode-service';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
@@ -60,6 +61,7 @@ describe('EvolutionEpisodeService', () => {
 			name: 'Review loop',
 			objective: 'Reduce review churn',
 			metricDefinitions: [{ key: 'comments', label: 'Comments', direction: 'decrease' }],
+			policy: { episodeJudgeModel: 'claude-sonnet-4-6' },
 		});
 		const task = taskRepo.createTask({
 			spaceId,
@@ -128,6 +130,56 @@ describe('EvolutionEpisodeService', () => {
 		expect(prompt).toContain('Implementation ready');
 		expect(prompt).toContain('Reviewer saw repeated confusion');
 		expect(prompt).toContain('comments');
+		expect(prompt).toContain('claude-sonnet-4-6');
+	});
+
+	it('resolves judge model from scope policy before Space default', async () => {
+		const scopedInput = {
+			scope: evolutionRepo.createScope({
+				spaceId,
+				kind: 'custom',
+				name: 'Scoped model',
+				objective: 'Use scope override',
+				policy: { episodeJudgeModel: 'claude-opus-4-7' },
+			}),
+			evidence: [],
+			metricSnapshots: [],
+			tasks: [],
+			workflowRuns: [],
+			timeWindow: undefined,
+		};
+
+		expect(await resolveEpisodeJudgeModel(scopedInput, spaceRepo)).toEqual({
+			provider: 'anthropic',
+			modelId: 'claude-opus-4-7',
+		});
+	});
+
+	it('falls back to Space default model when scope has no judge model', async () => {
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/episode-service-default-model',
+			slug: 'episode-service-default-model',
+			name: 'Episode Service Default Model',
+			defaultModel: 'claude-sonnet-4-6',
+		});
+		const input = {
+			scope: evolutionRepo.createScope({
+				spaceId: space.id,
+				kind: 'custom',
+				name: 'Space model',
+				objective: 'Use space default',
+			}),
+			evidence: [],
+			metricSnapshots: [],
+			tasks: [],
+			workflowRuns: [],
+			timeWindow: undefined,
+		};
+
+		expect(await resolveEpisodeJudgeModel(input, spaceRepo)).toEqual({
+			provider: 'anthropic',
+			modelId: 'claude-sonnet-4-6',
+		});
 	});
 
 	it('parses fenced judge JSON and clamps confidence', () => {
@@ -163,6 +215,9 @@ describe('EvolutionEpisodeService', () => {
 	});
 
 	it('rejects malformed judge JSON and invalid enum values', () => {
+		expect(() => parseEpisodeJudgeJson('Failed to authenticate')).toThrow(
+			'Episode judge returned non-JSON text: Failed to authenticate'
+		);
 		expect(() => parseEpisodeJudgeJson('{ nope')).toThrow('Episode judge returned invalid JSON');
 		expect(() =>
 			parseEpisodeJudgeJson(
@@ -210,15 +265,32 @@ describe('EvolutionEpisodeService', () => {
 			priority: 'high',
 			evidenceEpisodeIds: [episode.id],
 		});
+		const publishedEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
 			workflowRunRepo,
 			artifactRepo,
+			db,
+			taskCreatedEventHub: {
+				publish: async (event, data) => {
+					publishedEvents.push({ event, data });
+				},
+			},
 		});
 
 		const result = service.createTaskFromProposal(proposal.id);
+		const duplicate = service.createTaskFromProposal(proposal.id);
 
+		expect(duplicate.task.id).toBe(result.task.id);
+		expect(
+			taskRepo.listBySpace(spaceId).filter((item) => item.title === 'Improve review UI')
+		).toHaveLength(1);
+		expect(publishedEvents).toHaveLength(1);
+		expect(publishedEvents[0]).toMatchObject({
+			event: 'space.task.created',
+			data: { spaceId, taskId: result.task.id, task: result.task },
+		});
 		expect(result.proposal).toMatchObject({
 			status: 'created',
 			createdTaskId: result.task.id,
@@ -325,6 +397,7 @@ describe('EvolutionEpisodeService', () => {
 
 	it('rejects invalid rollup writeback requests', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Recurring review goal', type: 'recurring' });
+		const oneShotGoal = goalRepo.create({ spaceId, title: 'One-shot goal', type: 'one_shot' });
 		const linkedScope = evolutionRepo.createScope({
 			spaceId,
 			spaceGoalId: goal.id,
@@ -338,6 +411,13 @@ describe('EvolutionEpisodeService', () => {
 			name: 'Unlinked scope',
 			objective: 'Track review health',
 		});
+		const oneShotScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: oneShotGoal.id,
+			kind: 'mission',
+			name: 'One-shot scope',
+			objective: 'Track review health',
+		});
 		const draftEpisode = evolutionRepo.createEpisode({
 			scopeId: linkedScope.id,
 			title: 'Draft rollup',
@@ -345,6 +425,10 @@ describe('EvolutionEpisodeService', () => {
 		const unlinkedEpisode = evolutionRepo.createEpisode({
 			scopeId: unlinkedScope.id,
 			title: 'Unlinked rollup',
+		});
+		const oneShotEpisode = evolutionRepo.createEpisode({
+			scopeId: oneShotScope.id,
+			title: 'One-shot rollup',
 		});
 		const dismissedEpisode = evolutionRepo.createEpisode({
 			scopeId: linkedScope.id,
@@ -369,6 +453,19 @@ describe('EvolutionEpisodeService', () => {
 			title: 'Service-only rollup',
 		});
 		const request = { episodeId: serviceOnlyEpisode.id, goalUpdate: { summary: 'Rollup' } };
+		const failingGoalService = {
+			getGoal: (goalId: string) => goalRepo.getById(goalId),
+			updateGoal: () => {
+				throw new Error('goal update failed');
+			},
+		};
+		const failingService = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			goalService: failingGoalService,
+		});
 		const applied = service.applyRollupGoalUpdate({
 			episodeId: draftEpisode.id,
 			goalUpdate: { summary: 'Applied once' },
@@ -382,6 +479,8 @@ describe('EvolutionEpisodeService', () => {
 				goalUpdate: { summary: 'Rollup' },
 			})
 		).toThrow('Episode rollup already applied');
+		expect(() => failingService.applyRollupGoalUpdate(request)).toThrow('goal update failed');
+		expect(evolutionRepo.getEpisode(serviceOnlyEpisode.id)?.status).toBe('draft');
 		expect(() => serviceWithoutGoalService.applyRollupGoalUpdate(request)).toThrow(
 			'SpaceGoalService is required'
 		);
@@ -393,12 +492,17 @@ describe('EvolutionEpisodeService', () => {
 		).toThrow('Episode scope is not linked to a recurring goal');
 		expect(() =>
 			service.applyRollupGoalUpdate({
+				episodeId: oneShotEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Episode scope is not linked to a recurring goal');
+		expect(() =>
+			service.applyRollupGoalUpdate({
 				episodeId: dismissedEpisode.id,
 				goalUpdate: { summary: 'Rollup' },
 			})
 		).toThrow('Dismissed episode cannot accept rollup');
 	});
-
 	it('dogfoods the Forge MVP loop from recurring goal to next scoped task', async () => {
 		const goal = goalRepo.create({
 			spaceId,

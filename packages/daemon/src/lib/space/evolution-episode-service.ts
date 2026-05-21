@@ -1,3 +1,4 @@
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	CreateEvolutionEpisodeParams,
 	CreateEvolutionLessonParams,
@@ -22,6 +23,7 @@ import type {
 	UpdateTaskProposalParams,
 } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
+import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type {
@@ -32,6 +34,7 @@ import type { SpaceGoalService } from './goals/goal-service';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { inferProviderForModel } from '../providers/registry';
 
 const log = new Logger('evolution-episode-service');
 
@@ -97,10 +100,15 @@ export interface ApplyRollupGoalUpdateResult {
 
 export interface EvolutionEpisodeServiceDeps {
 	evolutionRepo: EvolutionRepository;
+	spaceRepo?: Pick<SpaceRepository, 'getSpace'>;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo: WorkflowRunArtifactRepository;
-	goalService?: Pick<SpaceGoalService, 'updateGoal'>;
+	goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
+	db?: BunDatabase;
+	taskCreatedEventHub?: {
+		publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
+	};
 	judgeEpisode?: (input: EpisodeJudgePromptInput) => Promise<EpisodeJudgeOutput>;
 }
 
@@ -142,7 +150,7 @@ export class EvolutionEpisodeService {
 		const input = this.buildEpisodeInput(params);
 		const judged = this.deps.judgeEpisode
 			? await this.deps.judgeEpisode(input)
-			: await judgeEpisodeWithModel(input);
+			: await judgeEpisodeWithModel(input, this.deps.spaceRepo);
 		const episode = this.deps.evolutionRepo.createEpisode({
 			scopeId: input.scope.id,
 			status: 'draft',
@@ -242,38 +250,58 @@ export class EvolutionEpisodeService {
 		id: string,
 		params: CreateTaskFromProposalParams = {}
 	): CreateTaskFromProposalResult {
-		const existing = this.deps.evolutionRepo.getTaskProposal(id);
-		if (!existing) throw new Error(`TaskProposal not found: ${id}`);
-		if (existing.status === 'created' && existing.createdTaskId) {
-			const existingTask = this.deps.taskRepo.getTask(existing.createdTaskId);
-			if (existingTask) return { proposal: existing, task: existingTask };
-		}
-		if (existing.status === 'dismissed') throw new Error('Dismissed proposal cannot create a task');
+		const result = this.runAtomic(() => {
+			const existing = this.deps.evolutionRepo.getTaskProposal(id);
+			if (!existing) throw new Error(`TaskProposal not found: ${id}`);
+			if (existing.status === 'created' && existing.createdTaskId) {
+				const existingTask = this.deps.taskRepo.getTask(existing.createdTaskId);
+				if (existingTask) return { proposal: existing, task: existingTask, created: false };
+				throw new Error('Created proposal references a missing task');
+			}
+			if (existing.status === 'dismissed')
+				throw new Error('Dismissed proposal cannot create a task');
 
-		const scope = this.requireScope(existing.scopeId);
-		const title = params.title?.trim() || existing.title;
-		const description = params.description?.trim() || existing.description;
-		const reason = params.reason?.trim() || existing.reason;
-		const priority = params.priority ?? existing.priority;
-		if (!title.trim()) throw new Error('title is required');
-		const task = this.deps.taskRepo.createTask({
-			spaceId: scope.spaceId,
-			title,
-			description: buildProposalTaskDescription(description, reason, existing.evidenceEpisodeIds),
-			priority,
-			goalId: scope.spaceGoalId,
-			evolutionScopeId: scope.id,
+			const claimed = this.deps.evolutionRepo.updateTaskProposalIfStatus(
+				existing.id,
+				['proposed', 'accepted'],
+				{ status: 'accepted' }
+			);
+			if (!claimed) {
+				const current = this.deps.evolutionRepo.getTaskProposal(id);
+				if (current?.status === 'created' && current.createdTaskId) {
+					const currentTask = this.deps.taskRepo.getTask(current.createdTaskId);
+					if (currentTask) return { proposal: current, task: currentTask, created: false };
+				}
+				throw new Error('Task proposal is already being created');
+			}
+
+			const scope = this.requireScope(existing.scopeId);
+			const title = params.title?.trim() || existing.title;
+			const description = params.description?.trim() || existing.description;
+			const reason = params.reason?.trim() || existing.reason;
+			const priority = params.priority ?? existing.priority;
+			if (!title.trim()) throw new Error('title is required');
+			const task = this.deps.taskRepo.createTask({
+				spaceId: scope.spaceId,
+				title,
+				description: buildProposalTaskDescription(description, reason, existing.evidenceEpisodeIds),
+				priority,
+				goalId: scope.spaceGoalId,
+				evolutionScopeId: scope.id,
+			});
+			const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {
+				title,
+				description,
+				reason,
+				priority,
+				status: 'created',
+				createdTaskId: task.id,
+			});
+			if (!proposal) throw new Error(`TaskProposal not found: ${id}`);
+			return { proposal, task, created: true };
 		});
-		const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {
-			title,
-			description,
-			reason,
-			priority,
-			status: 'created',
-			createdTaskId: task.id,
-		});
-		if (!proposal) throw new Error(`TaskProposal not found: ${id}`);
-		return { proposal, task };
+		if (result.created) this.emitTaskCreated(result.task);
+		return { proposal: result.proposal, task: result.task };
 	}
 
 	applyRollupGoalUpdate(params: ApplyRollupGoalUpdateParams): ApplyRollupGoalUpdateResult {
@@ -284,6 +312,14 @@ export class EvolutionEpisodeService {
 		if (episode.status === 'dismissed') throw new Error('Dismissed episode cannot accept rollup');
 		const scope = this.requireScope(episode.scopeId);
 		if (!scope.spaceGoalId) throw new Error('Episode scope is not linked to a recurring goal');
+		const existingGoal = this.deps.goalService.getGoal(scope.spaceGoalId);
+		if (
+			!existingGoal ||
+			existingGoal.spaceId !== scope.spaceId ||
+			existingGoal.type !== 'recurring'
+		) {
+			throw new Error('Episode scope is not linked to a recurring goal');
+		}
 		const goal = this.deps.goalService.updateGoal(scope.spaceGoalId, params.goalUpdate, {
 			source: 'rpc',
 			note: `Forge rollup accepted: ${episode.title}`,
@@ -335,6 +371,25 @@ export class EvolutionEpisodeService {
 		const scope = this.deps.evolutionRepo.getScope(scopeId);
 		if (!scope) throw new Error(`EvolutionScope not found: ${scopeId}`);
 		return scope;
+	}
+
+	private runAtomic<T>(fn: () => T): T {
+		if (!this.deps.db) return fn();
+		return this.deps.db.transaction(fn)();
+	}
+
+	private emitTaskCreated(task: SpaceTask): void {
+		if (!this.deps.taskCreatedEventHub) return;
+		this.deps.taskCreatedEventHub
+			.publish('space.task.created', {
+				sessionId: 'global',
+				spaceId: task.spaceId,
+				taskId: task.id,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.created:', err);
+			});
 	}
 }
 
@@ -434,7 +489,10 @@ export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {
 	} else {
 		const start = text.indexOf('{');
 		const end = text.lastIndexOf('}');
-		if (start >= 0 && end > start) text = text.slice(start, end + 1);
+		if (start < 0) {
+			throw new Error(`Episode judge returned non-JSON text: ${truncate(text, 300)}`);
+		}
+		if (end > start) text = text.slice(start, end + 1);
 	}
 	let parsed: unknown;
 	try {
@@ -447,11 +505,35 @@ export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {
 	return normalizeJudgeOutput(parsed);
 }
 
-async function judgeEpisodeWithModel(input: EpisodeJudgePromptInput): Promise<EpisodeJudgeOutput> {
+export async function resolveEpisodeJudgeModel(
+	input: EpisodeJudgePromptInput,
+	spaceRepo?: Pick<SpaceRepository, 'getSpace'>
+): Promise<{ provider: string; modelId: string }> {
+	const scopeModel = readEpisodeJudgeModel(input.scope);
+	const spaceModel = scopeModel
+		? undefined
+		: spaceRepo?.getSpace(input.scope.spaceId)?.defaultModel;
+	const selectedModel = scopeModel ?? spaceModel?.trim();
+	if (selectedModel) {
+		return { provider: inferProviderForModel(selectedModel), modelId: selectedModel };
+	}
 	const providerService = getProviderService();
 	const provider = await providerService.getDefaultProvider();
 	const cfg = await providerService.getTitleGenerationConfig(provider);
-	const modelId = cfg.modelId;
+	return { provider, modelId: cfg.modelId };
+}
+
+function readEpisodeJudgeModel(scope: EvolutionScope): string | undefined {
+	const value = scope.policy.episodeJudgeModel;
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+async function judgeEpisodeWithModel(
+	input: EpisodeJudgePromptInput,
+	spaceRepo?: Pick<SpaceRepository, 'getSpace'>
+): Promise<EpisodeJudgeOutput> {
+	const providerService = getProviderService();
+	const { provider, modelId } = await resolveEpisodeJudgeModel(input, spaceRepo);
 	const prompt = buildEpisodeJudgePrompt(input);
 	const originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
 	try {

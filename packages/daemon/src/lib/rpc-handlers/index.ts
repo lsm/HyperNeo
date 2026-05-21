@@ -541,10 +541,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	});
 	const evolutionEpisodeService = new EvolutionEpisodeService({
 		evolutionRepo: deps.db.evolution,
+		spaceRepo,
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		artifactRepo,
 		goalService: spaceGoalService,
+		db: deps.db.getDatabase(),
+		taskCreatedEventHub: {
+			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+		},
 	});
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
 

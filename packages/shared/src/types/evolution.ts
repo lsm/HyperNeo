@@ -14,7 +14,9 @@ export type EvolutionFindingKind =
 	| 'missing_capability'
 	| 'new_opportunity';
 export type EvolutionImpact = 'low' | 'medium' | 'high';
-export type EvolutionPolicy = Record<string, unknown>;
+export interface EvolutionPolicy extends Record<string, unknown> {
+	episodeJudgeModel?: string;
+}
 export type MetricSnapshotValues = Record<string, string | number | boolean | null>;
 
 export interface MetricDefinition {

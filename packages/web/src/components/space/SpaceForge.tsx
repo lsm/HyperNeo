@@ -30,6 +30,7 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
 type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'lessons' | 'episodes';
 
@@ -136,6 +137,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 	const [objective, setObjective] = useState('');
 	const [kind, setKind] = useState<EvolutionScopeKind>('project');
 	const [spaceGoalId, setSpaceGoalId] = useState('');
+	const [episodeJudgeModel, setEpisodeJudgeModel] = useState<string | undefined>(undefined);
 	const [metrics, setMetrics] = useState<MetricDefinitionDraft[]>([]);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -149,6 +151,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 		setObjective('');
 		setKind('project');
 		setSpaceGoalId('');
+		setEpisodeJudgeModel(undefined);
 		setMetrics([]);
 		setError(null);
 	};
@@ -205,6 +208,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 					objective: objective.trim(),
 					spaceGoalId: spaceGoalId || null,
 					metricDefinitions,
+					...(episodeJudgeModel ? { policy: { episodeJudgeModel } } : {}),
 				},
 			});
 			toast.success(`Scope "${response.scope.name}" created`);
@@ -283,6 +287,19 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 						rows={3}
 						class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
 					/>
+				</div>
+
+				<div>
+					<label class="mb-1.5 block text-sm font-medium text-gray-300">Episode judge model</label>
+					<WorkflowModelSelect
+						value={episodeJudgeModel}
+						onChange={setEpisodeJudgeModel}
+						testId="forge-scope-model-select"
+						className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+					/>
+					<p class="mt-1 text-xs text-gray-500">
+						Optional. Falls back to this Space&apos;s default model when unset.
+					</p>
 				</div>
 
 				<div class="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
@@ -732,10 +749,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 				current.map((item) => (item.id === response.episode.id ? response.episode : item))
 			);
 			if (spaceStore.spaceId.value === response.goal.spaceId) {
-				spaceStore.goals.value = [
-					...spaceStore.goals.value.filter((current) => current.id !== response.goal.id),
-					response.goal,
-				].sort((a, b) => b.updatedAt - a.updatedAt);
+				spaceStore.upsertGoal(response.goal);
 			}
 			toast.success(`Rollup applied to "${response.goal.title}"`);
 		} catch (err) {
