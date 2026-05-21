@@ -11,6 +11,7 @@ import type {
 	AgentDefinition,
 	DeclarativeToolGuard,
 	McpServerConfig,
+	EvolutionLesson,
 	Space,
 	SpaceAgent,
 	SpaceGoal,
@@ -142,6 +143,8 @@ export interface CustomAgentConfig {
 	workspacePath: string;
 	/** Linked long-horizon goal for this task, when present. */
 	goal?: SpaceGoal | null;
+	/** Active scope lessons selected for this task, newest first. */
+	relevantScopeLessons?: EvolutionLesson[];
 	/** Summaries of previously completed tasks for context */
 	previousTaskSummaries?: string[];
 	/** Optional per-slot workflow overrides */
@@ -232,11 +235,12 @@ function hashPrompt(prompt: string): string {
  * Section order (top → bottom), action-first:
  *   1. `## Your Task` — title, description, priority
  *   2. `## Runtime Location` — worktree path, derived PR URL
- *   3. `## Your Role in This Workflow` — current node, peers, outbound channels,
+ *   3. `## Relevant Scope Lessons` — accepted lessons from task scope
+ *   4. `## Your Role in This Workflow` — current node, peers, outbound channels,
  *      writable gates (omitted outside a workflow)
- *   4. `## Previous Work on This Goal` — bulleted summaries
- *   5. `## Project Context` — space.backgroundContext
- *   6. `## Standing Instructions` — space.instructions + workflow.instructions
+ *   5. `## Previous Work on This Goal` — bulleted summaries
+ *   6. `## Project Context` — space.backgroundContext
+ *   7. `## Standing Instructions` — space.instructions + workflow.instructions
  *
  * Node UUIDs are intentionally dropped — they are not useful to the LLM and add
  * noise. The previous "Workflow Context" + "Workflow Structure" sections are
@@ -250,6 +254,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		space,
 		workspacePath,
 		goal,
+		relevantScopeLessons,
 		previousTaskSummaries,
 		nodeId,
 		agentSlotName,
@@ -300,7 +305,19 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		);
 	}
 
-	// 4. Your Role in This Workflow — scoped to the current node when known.
+	// 4. Relevant scope lessons — accepted lessons from this task's evolution scope.
+	if (relevantScopeLessons && relevantScopeLessons.length > 0) {
+		sections.push('');
+		sections.push('## Relevant Scope Lessons');
+		sections.push('');
+		for (const lesson of relevantScopeLessons) {
+			const appliesTo = lesson.appliesTo.length > 0 ? ` [${lesson.appliesTo.join(', ')}]` : '';
+			sections.push(`- ${lesson.rule}${appliesTo}`);
+			if (lesson.why) sections.push(`  Why: ${lesson.why}`);
+		}
+	}
+
+	// 5. Your Role in This Workflow — scoped to the current node when known.
 	const roleLines = buildRoleSection(workflow, nodeId, agentSlotName);
 	if (roleLines.length > 0) {
 		sections.push('');
@@ -309,7 +326,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(...roleLines);
 	}
 
-	// 4. Previous work summaries.
+	// 6. Previous work summaries.
 	if (previousTaskSummaries && previousTaskSummaries.length > 0) {
 		sections.push('');
 		sections.push('## Previous Work on This Goal');
@@ -319,7 +336,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// 5. Core memories are space-scoped and selected by background consolidation.
+	// 7. Core memories are space-scoped and selected by background consolidation.
 	const coreMemoryLines = buildCoreMemoryLines(coreMemories);
 	if (coreMemoryLines.length > 0) {
 		sections.push('');
@@ -328,7 +345,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(...coreMemoryLines);
 	}
 
-	// 6. Relevant persistent memories.
+	// 8. Relevant persistent memories.
 	if (relevantMemories && relevantMemories.length > 0) {
 		sections.push('');
 		sections.push('## Relevant Memories');
@@ -341,7 +358,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	// 6. Project context from the Space.
+	// 9. Project context from the Space.
 	if (space.backgroundContext) {
 		sections.push('');
 		sections.push('## Project Context');

@@ -200,6 +200,10 @@ function setupRequests(scope = makeScope()) {
 		if (method === 'evolution.review.get') {
 			return { episodes: [episode], lessons: [lesson], proposals: [proposal] };
 		}
+		if (method === 'evolution.lesson.list') {
+			expect(data).toEqual({ scopeId: scope.id, status: 'active' });
+			return { lessons: [makeLesson({ status: 'active' })] };
+		}
 		if (method === 'evolution.episode.createFromEvidence') {
 			expect(data).toEqual({ scopeId: scope.id, evidenceIds: ['evidence-1'] });
 			return {
@@ -213,8 +217,10 @@ function setupRequests(scope = makeScope()) {
 			return { episode: makeEpisode({ status: 'accepted' }) };
 		}
 		if (method === 'evolution.lesson.update') {
-			expect(data).toEqual({ id: 'lesson-1', params: { status: 'active' } });
-			return { lesson: makeLesson({ status: 'active' }) };
+			const payload = data as { id: string; params: { status: EvolutionLesson['status'] } };
+			expect(payload.id).toBe('lesson-1');
+			expect(['active', 'dismissed']).toContain(payload.params.status);
+			return { lesson: makeLesson({ status: payload.params.status }) };
 		}
 		if (method === 'evolution.taskProposal.update') {
 			expect(data).toEqual({ id: 'proposal-1', params: { status: 'accepted' } });
@@ -367,6 +373,23 @@ describe('SpaceForge', () => {
 			expect(mockRequest).toHaveBeenCalledWith('evolution.lesson.update', {
 				id: 'lesson-1',
 				params: { status: 'active' },
+			})
+		);
+	});
+
+	it('manages active lessons from scope detail', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'lessons' }));
+
+		expect(await screen.findByText('Use checklist before PR')).toBeTruthy();
+		fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.lesson.update', {
+				id: 'lesson-1',
+				params: { status: 'dismissed' },
 			})
 		);
 	});

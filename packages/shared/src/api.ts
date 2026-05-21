@@ -714,6 +714,15 @@ export interface EvolutionLessonListResponse {
 	lessons: EvolutionLesson[];
 }
 
+export interface EvolutionTaskLessonSelectRequest {
+	taskId: string;
+	limit?: number;
+}
+
+export interface EvolutionTaskLessonSelectResponse {
+	lessons: EvolutionLesson[];
+}
+
 export interface EvolutionTaskProposalCreateRequest {
 	params: CreateTaskProposalParams;
 }

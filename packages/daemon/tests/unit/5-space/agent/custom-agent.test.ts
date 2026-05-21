@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type {
+	EvolutionLesson,
 	Space,
 	SpaceAgent,
 	SpaceGoal,
@@ -88,6 +89,22 @@ function makeGoal(overrides?: Partial<SpaceGoal>): SpaceGoal {
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		completedAt: null,
+		...overrides,
+	};
+}
+
+function makeLesson(overrides?: Partial<EvolutionLesson>): EvolutionLesson {
+	return {
+		id: 'lesson-1',
+		scopeId: 'scope-1',
+		status: 'active',
+		appliesTo: ['review'],
+		rule: 'Run focused review before broad refactor',
+		why: 'Focused reviews caught regressions faster',
+		evidenceEpisodeIds: ['episode-1'],
+		confidence: 0.8,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
 		...overrides,
 	};
 }
@@ -315,6 +332,28 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).toContain('mark_complete goal_update');
 	});
 
+	it('renders active scope lessons in task message', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				relevantScopeLessons: [
+					makeLesson(),
+					makeLesson({
+						id: 'lesson-2',
+						appliesTo: [],
+						rule: 'Keep changes surgical',
+						why: 'Smaller diffs review faster',
+					}),
+				],
+			})
+		);
+
+		expect(message).toContain('## Relevant Scope Lessons');
+		expect(message).toContain('- Run focused review before broad refactor [review]');
+		expect(message).toContain('  Why: Focused reviews caught regressions faster');
+		expect(message).toContain('- Keep changes surgical');
+		expect(message).toContain('  Why: Smaller diffs review faster');
+	});
+
 	it('renders PR URL from gate data when present', () => {
 		const message = buildCustomAgentTaskMessage(
 			makeConfig({
@@ -402,6 +441,7 @@ describe('buildCustomAgentTaskMessage', () => {
 			})
 		);
 
+		expect(message).not.toContain('## Relevant Scope Lessons');
 		expect(message).not.toContain('## Previous Work on This Goal');
 		expect(message).not.toContain('## Project Context');
 		expect(message).not.toContain('## Standing Instructions');

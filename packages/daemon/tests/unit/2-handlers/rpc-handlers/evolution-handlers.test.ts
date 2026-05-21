@@ -76,6 +76,10 @@ describe('evolution RPC handlers', () => {
 					calls.push(['listMetricSnapshots', scopeId]);
 					return [{ id: 'snapshot-listed' }];
 				},
+				selectActiveLessonsForTask: (params: unknown) => {
+					calls.push(['selectActiveLessonsForTask', params]);
+					return [{ id: 'lesson-selected' }];
+				},
 			} as never
 		);
 
@@ -143,10 +147,14 @@ describe('evolution RPC handlers', () => {
 		expect(await handlers.get('evolution.metricSnapshot.list')?.({ scopeId: 'scope-1' })).toEqual({
 			snapshots: [{ id: 'snapshot-listed' }],
 		});
+		expect(
+			await handlers.get('evolution.task.lessons.select')?.({ taskId: 'task-1', limit: 3 })
+		).toEqual({ lessons: [{ id: 'lesson-selected' }] });
 
 		expect(calls).toContainEqual(['createScopeFromGoal', { spaceGoalId: 'goal-1' }]);
 		expect(calls).toContainEqual(['updateScope', { id: 'scope-1', params: { name: 'New' } }]);
 		expect(calls).toContainEqual(['listMetricSnapshots', 'scope-1']);
+		expect(calls).toContainEqual(['selectActiveLessonsForTask', { taskId: 'task-1', limit: 3 }]);
 	});
 
 	test('rejects non-object payloads', async () => {

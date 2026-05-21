@@ -248,7 +248,9 @@ export class EvolutionRepository {
 			values.push(status);
 		}
 		const rows = this.db
-			.prepare(`SELECT * FROM evolution_lessons ${where} ORDER BY updated_at DESC, id DESC`)
+			.prepare(
+				`SELECT * FROM evolution_lessons ${where} ORDER BY updated_at DESC, created_at DESC, id DESC`
+			)
 			.all(...values) as Record<string, unknown>[];
 		return rows.map(rowToLesson);
 	}
