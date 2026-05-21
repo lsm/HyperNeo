@@ -367,8 +367,7 @@ function hasProcessFriction(analysis: TraceAnalysis): boolean {
 		analysis.failedToolCallCount > 0 ||
 		analysis.repeatedErrors.length > 0 ||
 		analysis.retryLoops.length > 0 ||
-		analysis.permissionBlocks.length > 0 ||
-		analysis.fileChurn.length > 0
+		analysis.permissionBlocks.length > 0
 	);
 }
 

@@ -128,6 +128,50 @@ describe('EvolutionTraceEvidenceService', () => {
 		expect(retryLoop?.metadata.timeBeforeFirstPassingVerificationMs).toBeGreaterThan(0);
 	});
 
+	it('records test failure evidence for failing verification commands', () => {
+		const { scope, task } = createScopedTask('Test failure task');
+		insertToolExchange(task.id, 'session-1', 'test-1', 'Bash', { command: 'bun test' }, true, {
+			text: '2 tests failed',
+		});
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		const testFailure = listTraceEvidence(scope.id).find((item) => item.kind === 'test_failure');
+		expect(testFailure).toBeTruthy();
+		expect(testFailure?.metadata.testFailureCycles).toBe(1);
+		expect(testFailure?.metadata.rawTraceRefs).toMatchObject({
+			sessionIds: ['session-1'],
+			toolUseIds: ['test-1'],
+		});
+	});
+
+	it('records permission block evidence for denied or blocked actions', () => {
+		const { scope, task } = createScopedTask('Permission block task');
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'blocked-1',
+			'Bash',
+			{ command: 'rm -rf /tmp/x' },
+			true,
+			{
+				text: 'Permission denied: operation not permitted',
+			}
+		);
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		const permissionBlock = listTraceEvidence(scope.id).find(
+			(item) => item.kind === 'permission_block'
+		);
+		expect(permissionBlock).toBeTruthy();
+		expect(permissionBlock?.metadata.permissionBlockCount).toBe(1);
+		expect(permissionBlock?.metadata.rawTraceRefs).toMatchObject({
+			sessionIds: ['session-1'],
+			toolUseIds: ['blocked-1'],
+		});
+	});
+
 	it('does not create noisy trace evidence for clean short tasks', () => {
 		const { scope, task } = createScopedTask('Clean task');
 		insertToolExchange(task.id, 'session-1', 'check-1', 'Bash', { command: 'bun test' }, false, {
