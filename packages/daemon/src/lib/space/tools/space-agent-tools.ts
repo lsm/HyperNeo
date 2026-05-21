@@ -2097,6 +2097,67 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 		},
 
+		async list_forge_lessons(args: {
+			scope_id: string;
+			status?: EvolutionLessonStatus;
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const lessons = requireEvolutionEpisodeService().listLessons(args.scope_id, args.status);
+				logAudit('list_forge_lessons', { scope_id: args.scope_id, status: args.status });
+				return jsonResult({ success: true, lessons });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_forge_proposals(args: {
+			scope_id: string;
+			status?: TaskProposalStatus;
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const proposals = requireEvolutionEpisodeService().listTaskProposals(
+					args.scope_id,
+					args.status
+				);
+				logAudit('list_forge_proposals', { scope_id: args.scope_id, status: args.status });
+				return jsonResult({ success: true, proposals });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async resolve_forge_scope(args: { goal_id?: string; task_id?: string }): Promise<ToolResult> {
+			try {
+				let scope;
+				if (args.goal_id) {
+					requireGoalInSpace(args.goal_id);
+					scope = requireEvolutionScopeService().resolveScopeForGoal({
+						spaceGoalId: args.goal_id,
+					});
+				} else if (args.task_id) {
+					const task = taskRepo.getTask(args.task_id);
+					if (!task || task.spaceId !== spaceId) throw new Error(`Task not found: ${args.task_id}`);
+					scope = requireEvolutionScopeService().resolveScopeForTask({ taskId: args.task_id });
+				} else {
+					throw new Error('Provide goal_id or task_id');
+				}
+				if (!scope) return jsonResult({ success: false, error: 'No scope found' });
+				logAudit('resolve_forge_scope', {
+					goal_id: args.goal_id,
+					task_id: args.task_id,
+					scope_id: scope.id,
+				});
+				return jsonResult({ success: true, scope });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
 		async update_forge_episode(args: {
 			episode_id: string;
 			status?: EvolutionEpisodeStatus;
@@ -2897,7 +2958,8 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		const metadataSchema = z.record(z.string(), z.unknown());
 		const episodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);
 		const lessonStatusSchema = z.enum(['candidate', 'active', 'dismissed']);
-		const proposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed']);
+		const proposalUpdateStatusSchema = z.enum(['proposed', 'accepted', 'dismissed']);
+		const proposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed', 'created']);
 		const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 
 		tools.push(
@@ -3054,6 +3116,33 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 				(args) => handlers.list_forge_review_bundle(args)
 			),
 			tool(
+				'list_forge_lessons',
+				'List Forge lessons for a scope, optionally filtered by status.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					status: lessonStatusSchema.optional(),
+				},
+				(args) => handlers.list_forge_lessons(args)
+			),
+			tool(
+				'list_forge_proposals',
+				'List Forge task proposals for a scope, optionally filtered by status.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					status: proposalStatusSchema.optional(),
+				},
+				(args) => handlers.list_forge_proposals(args)
+			),
+			tool(
+				'resolve_forge_scope',
+				'Resolve a Forge scope from a linked goal_id or task_id when scope_id is unknown.',
+				{
+					goal_id: z.string().optional(),
+					task_id: z.string().optional(),
+				},
+				(args) => handlers.resolve_forge_scope(args)
+			),
+			tool(
 				'update_forge_episode',
 				'Accept, dismiss, or edit a Forge episode draft. Use status accepted/dismissed only after explicit decision.',
 				{
@@ -3099,7 +3188,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					description: z.string().optional(),
 					reason: z.string().optional(),
 					priority: prioritySchema.optional(),
-					status: proposalStatusSchema.optional(),
+					status: proposalUpdateStatusSchema.optional(),
 				},
 				(args) => handlers.update_forge_task_proposal(args)
 			),

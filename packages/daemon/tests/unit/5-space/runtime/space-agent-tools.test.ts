@@ -360,6 +360,9 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		expect(names).toContain('create_forge_scope');
 		expect(names).toContain('add_forge_manual_note');
 		expect(names).toContain('create_forge_episode');
+		expect(names).toContain('list_forge_lessons');
+		expect(names).toContain('list_forge_proposals');
+		expect(names).toContain('resolve_forge_scope');
 		expect(names).toContain('update_forge_lesson');
 		expect(names).toContain('create_task_from_forge_proposal');
 	});
@@ -603,6 +606,155 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		expect(rollup.episode.status).toBe('accepted');
 		expect(rollup.goal.summary).toBe('Dogfood path complete');
 		expect(rollup.goal.progress).toBe(42);
+	});
+
+	test('lists Forge lessons with optional status filter', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Lesson scope',
+					objective: 'List lessons',
+				})
+			).content[0].text
+		).scope;
+		const evidence = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Lesson evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episodeResult = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [evidence.id],
+				})
+			).content[0].text
+		);
+
+		const candidateLessons = JSON.parse(
+			(await handlers.list_forge_lessons({ scope_id: scope.id })).content[0].text
+		);
+		expect(candidateLessons.success).toBe(true);
+		expect(candidateLessons.lessons).toHaveLength(1);
+		expect(candidateLessons.lessons[0].status).toBe('candidate');
+
+		await handlers.update_forge_lesson({
+			lesson_id: episodeResult.lessons[0].id,
+			status: 'active',
+		});
+		const activeLessons = JSON.parse(
+			(await handlers.list_forge_lessons({ scope_id: scope.id, status: 'active' })).content[0].text
+		);
+		expect(activeLessons.success).toBe(true);
+		expect(activeLessons.lessons).toHaveLength(1);
+		expect(activeLessons.lessons[0].id).toBe(episodeResult.lessons[0].id);
+
+		const remainingCandidates = JSON.parse(
+			(await handlers.list_forge_lessons({ scope_id: scope.id, status: 'candidate' })).content[0]
+				.text
+		);
+		expect(remainingCandidates.lessons).toHaveLength(0);
+	});
+
+	test('lists Forge proposals with optional status filter', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Proposal list scope',
+					objective: 'List proposals',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Manual proposal',
+					description: 'Do thing',
+					reason: 'Need thing',
+				})
+			).content[0].text
+		).proposal;
+
+		const proposals = JSON.parse(
+			(await handlers.list_forge_proposals({ scope_id: scope.id })).content[0].text
+		);
+		expect(proposals.success).toBe(true);
+		expect(proposals.proposals).toHaveLength(1);
+		expect(proposals.proposals[0].id).toBe(proposal.id);
+
+		const proposed = JSON.parse(
+			(await handlers.list_forge_proposals({ scope_id: scope.id, status: 'proposed' })).content[0]
+				.text
+		);
+		expect(proposed.success).toBe(true);
+		expect(proposed.proposals).toHaveLength(1);
+		expect(proposed.proposals[0].status).toBe('proposed');
+
+		const accepted = JSON.parse(
+			(await handlers.list_forge_proposals({ scope_id: scope.id, status: 'accepted' })).content[0]
+				.text
+		);
+		expect(accepted.proposals).toHaveLength(0);
+	});
+
+	test('resolves Forge scope by goal or task', async () => {
+		const handlers = makeHandlers(ctx);
+		const goal = JSON.parse(
+			(
+				await handlers.create_goal({
+					title: 'Resolve goal',
+					type: 'recurring',
+				})
+			).content[0].text
+		).goal;
+		const scope = JSON.parse(
+			(await handlers.create_forge_scope_from_goal({ goal_id: goal.id })).content[0].text
+		).scope;
+
+		const byGoal = JSON.parse(
+			(await handlers.resolve_forge_scope({ goal_id: goal.id })).content[0].text
+		);
+		expect(byGoal.success).toBe(true);
+		expect(byGoal.scope.id).toBe(scope.id);
+
+		const task = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: 'Scoped task',
+			description: 'Has scope',
+			goalId: goal.id,
+			evolutionScopeId: scope.id,
+		});
+		const byTask = JSON.parse(
+			(await handlers.resolve_forge_scope({ task_id: task.id })).content[0].text
+		);
+		expect(byTask.success).toBe(true);
+		expect(byTask.scope.id).toBe(scope.id);
+
+		const unlinkedGoal = JSON.parse(
+			(
+				await handlers.create_goal({
+					title: 'Unlinked goal',
+					type: 'recurring',
+				})
+			).content[0].text
+		).goal;
+		const missing = JSON.parse(
+			(await handlers.resolve_forge_scope({ goal_id: unlinkedGoal.id })).content[0].text
+		);
+		expect(missing.success).toBe(false);
+		expect(missing.error).toBe('No scope found');
+
+		const noArgs = JSON.parse((await handlers.resolve_forge_scope({})).content[0].text);
+		expect(noArgs.success).toBe(false);
+		expect(noArgs.error).toContain('Provide goal_id or task_id');
 	});
 
 	test('rejects mismatched proposal evidence episodes', async () => {
