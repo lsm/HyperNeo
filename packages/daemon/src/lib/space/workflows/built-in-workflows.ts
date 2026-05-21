@@ -77,9 +77,22 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 const PR_INLINE_COMMENTS_POLL: GatePoll = {
 	intervalMs: 30_000,
 	script: [
+		'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+		'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
 		'if [ -z "$PR_URL" ]; then exit 0; fi',
+		'PR_HOST="${PR_HOST:-}"',
+		'if [ -z "${REPO_OWNER:-}" ] || [ -z "${REPO_NAME:-}" ] || [ -z "${PR_NUMBER:-}" ] || [ -z "$PR_HOST" ]; then',
+		'  PR_META=$(jq -nr --arg url "$PR_URL" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
+		'  if [ -z "$PR_META" ]; then exit 0; fi',
+		'  REPO_OWNER="${REPO_OWNER:-$(jq -r .owner <<< "$PR_META")}"',
+		'  REPO_NAME="${REPO_NAME:-$(jq -r .repo <<< "$PR_META")}"',
+		'  PR_NUMBER="${PR_NUMBER:-$(jq -r .number <<< "$PR_META")}"',
+		'  PR_HOST="${PR_HOST:-$(jq -r .host <<< "$PR_META")}"',
+		'fi',
+		'GH_HOST_ARGS=()',
+		'if [ -n "$PR_HOST" ]; then GH_HOST_ARGS=(--hostname "$PR_HOST"); fi',
 		"QUERY='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{author{login} body url}}}}}}}'",
-		'gh api graphql -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
+		'gh api graphql "${GH_HOST_ARGS[@]}" -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
 	].join('\n'),
 	target: 'from',
 	messageTemplate: 'Unresolved PR review comments:\n{{output}}',
@@ -522,7 +535,13 @@ const FULLSTACK_QA_PROMPT =
 	'post-approval result artifact has been saved for runtime dispatch.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
 	'Use when autonomy blocks self-close (and only when QA passes — see pre-conditions above).\n\n' +
-	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>" } })` and ' +
+	'UI/browser validation contract:\n' +
+	'- First determine whether the PR changes frontend/UI behavior by inspecting `gh pr diff` and changed files (for example `packages/web`, `packages/ui`, `packages/e2e`, CSS, or user-visible flows).\n' +
+	'- If UI changed, you MUST start NeoKai from this worktree with a worktree-safe DB, e.g. `make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db`, then exercise the changed UI flow in a real browser.\n' +
+	'- Browser validation must cover the golden path, relevant edge cases, and nearby-regression checks.\n' +
+	'- Do NOT approve UI-changing PRs unless browser validation passed, or you explicitly record why browser validation could not be performed.\n' +
+	'- Every QA result artifact must include `data: { ui_changed: boolean, dev_server_started: boolean, browser_validation: "<what was exercised or why skipped>", pr_url: "<url>" }`.\n\n' +
+	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
 	'the merge after the task transitions to `approved`. Never set a PR to ' +
 	'auto-merge — auto-merge is not allowed. If issues are found, send a detailed ' +
@@ -701,7 +720,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'pr_url',
 					type: 'string',
-					writers: ['Coding'],
+					writers: ['Coding', 'coder'],
 					check: { op: 'exists' },
 				},
 			],
@@ -1303,16 +1322,17 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'Expected outputs: QA pass recorded for runtime post-approval dispatch, or QA ' +
 							'feedback to Coding.\n\n' +
 							'Steps:\n' +
-							'1. Run backend and frontend test suites\n' +
-							'2. Run browser-based critical-path validation\n' +
-							'3. Validate CI and mergeability\n' +
-							'4. If fail: send detailed failures and repro steps to Coding, then call ' +
+							'1. Inspect the PR diff and classify `ui_changed` true/false\n' +
+							'2. Run backend/docs-only relevant checks, or frontend/UI checks when UI code changed\n' +
+							'3. If `ui_changed` is true, start NeoKai with `make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
+							'4. Validate CI and mergeability\n' +
+							'5. If fail: send detailed failures and repro steps to Coding, then call ' +
 							'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
 							'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
 							'carry the same approval semantic. Leave the workflow open for the next ' +
 							'Coding cycle.\n' +
-							'5. If all green:\n' +
-							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>" } })` ' +
+							'6. If all green:\n' +
+							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
 							'merge template — top-level keys outside `data` are silently stripped by ' +
@@ -1348,7 +1368,9 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 			id: 'code-pr-gate',
 			label: 'PR Ready',
 			description: 'Coding PR is open and mergeable for review.',
-			fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			fields: [
+				{ name: 'pr_url', type: 'string', writers: ['Coding', 'coder'], check: { op: 'exists' } },
+			],
 			script: {
 				interpreter: 'bash',
 				source: PR_READY_BASH_SCRIPT,
@@ -1365,13 +1387,18 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: ['Review', 'reviewer'],
 					check: { op: '==', value: true },
 				},
 			],
 			resetOnCycle: true,
 		},
 	],
+	layout: {
+		[FULLSTACK_CODING_NODE]: { x: 80, y: 160 },
+		[FULLSTACK_REVIEW_NODE]: { x: 420, y: 80 },
+		[FULLSTACK_QA_NODE]: { x: 760, y: 160 },
+	},
 	channels: [
 		{
 			from: 'Coding',
@@ -1739,6 +1766,14 @@ export function seedBuiltInWorkflows(
 					? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
 					: undefined,
 				gates: template.gates ? [...template.gates] : undefined,
+				layout: template.layout
+					? Object.fromEntries(
+							Object.entries(template.layout).map(([templateNodeId, position]) => [
+								nodeIdMap.get(templateNodeId) ?? templateNodeId,
+								position,
+							])
+						)
+					: undefined,
 				completionAutonomyLevel: template.completionAutonomyLevel,
 				// Pin the canonical handle so it is stable even if the name is later reworded.
 				...(template.handle ? { handle: template.handle } : {}),
