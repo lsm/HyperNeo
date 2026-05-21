@@ -733,7 +733,7 @@ describe('CODING_WORKFLOW template', () => {
 					'#!/usr/bin/env bash',
 					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
 					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
 					'  exit 0',
 					'fi',
 					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
