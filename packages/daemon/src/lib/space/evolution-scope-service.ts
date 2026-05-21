@@ -3,6 +3,7 @@ import type {
 	CreateEvolutionScopeParams,
 	CreateMetricSnapshotParams,
 	EvidenceRef,
+	EvolutionLesson,
 	EvolutionScope,
 	EvolutionScopeListParams,
 	MetricSnapshot,
@@ -63,6 +64,15 @@ export interface AddMetricSnapshotEvidenceParams {
 	capturedAt?: number;
 	summary?: string;
 	metadata?: Record<string, unknown>;
+}
+
+export interface ResolveScopeForTaskParams {
+	taskId: string;
+}
+
+export interface SelectTaskLessonsParams {
+	taskId: string;
+	limit?: number;
 }
 
 export interface ScopeTimeline {
@@ -127,6 +137,22 @@ export class EvolutionScopeService {
 		return (
 			this.deps.evolutionRepo.listScopes({ spaceId: goal.spaceId, spaceGoalId: goal.id })[0] ?? null
 		);
+	}
+
+	resolveScopeForTask(params: ResolveScopeForTaskParams): EvolutionScope | null {
+		const task = this.deps.taskRepo.getTask(params.taskId);
+		if (!task) throw new Error(`Task not found: ${params.taskId}`);
+		const scope = this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
+		if (!scope || scope.spaceId !== task.spaceId) return null;
+		return scope;
+	}
+
+	selectActiveLessonsForTask(params: SelectTaskLessonsParams): EvolutionLesson[] {
+		const scope = this.resolveScopeForTask({ taskId: params.taskId });
+		if (!scope) return [];
+		const limit = Math.max(0, params.limit ?? 3);
+		if (limit === 0) return [];
+		return this.deps.evolutionRepo.listLessons(scope.id, 'active').slice(0, limit);
 	}
 
 	createEvidence(params: CreateEvidenceRefParams): EvidenceRef {
@@ -264,16 +290,29 @@ export class EvolutionScopeService {
 		return scope;
 	}
 
+	private findScopeForTask(
+		evolutionScopeId: string | null,
+		goalId: string | null
+	): EvolutionScope | null {
+		if (evolutionScopeId) return this.deps.evolutionRepo.getScope(evolutionScopeId) ?? null;
+		if (!goalId) return null;
+		const goal = this.deps.goalRepo.getById(goalId);
+		if (!goal) return null;
+		return (
+			this.deps.evolutionRepo.listScopes({ spaceId: goal.spaceId, spaceGoalId: goal.id })[0] ?? null
+		);
+	}
+
 	private requireScopeForTask(
 		taskId: string,
 		evolutionScopeId: string | null,
 		goalId: string | null
 	): EvolutionScope {
-		if (evolutionScopeId) return this.requireScope(evolutionScopeId);
+		const scope = this.findScopeForTask(evolutionScopeId, goalId);
+		if (scope) return scope;
+		if (evolutionScopeId) throw new Error(`EvolutionScope not found: ${evolutionScopeId}`);
 		if (!goalId) throw new Error(`Task is not linked to an EvolutionScope or SpaceGoal: ${taskId}`);
-		const scope = this.resolveScopeForGoal({ spaceGoalId: goalId });
-		if (!scope) throw new Error(`EvolutionScope not found for SpaceGoal: ${goalId}`);
-		return scope;
+		throw new Error(`EvolutionScope not found for SpaceGoal: ${goalId}`);
 	}
 
 	private requireScopeForWorkflowRun(workflowRunId: string): EvolutionScope {

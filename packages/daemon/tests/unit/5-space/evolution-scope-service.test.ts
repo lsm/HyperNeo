@@ -121,6 +121,107 @@ describe('EvolutionScopeService', () => {
 		});
 	});
 
+	it('resolves task scope through linked goal and selects top 3 active lessons', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Weekly check-in', type: 'recurring' });
+		const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Scheduled check-in task',
+			description: 'Review goal progress',
+			goalId: goal.id,
+		});
+		for (let index = 1; index <= 5; index++) {
+			const lesson = evolutionRepo.createLesson({
+				scopeId: scope.id,
+				status: index === 5 ? 'candidate' : 'active',
+				rule: `Lesson ${index}`,
+				why: `Why ${index}`,
+			});
+			evolutionRepo.updateLesson(lesson.id, { confidence: index / 10 });
+		}
+
+		expect(service.resolveScopeForTask({ taskId: task.id })?.id).toBe(scope.id);
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toHaveLength(3);
+		expect(
+			service
+				.selectActiveLessonsForTask({ taskId: task.id })
+				.every((lesson) => lesson.status === 'active')
+		).toBe(true);
+	});
+
+	it('returns no active lessons for unscoped tasks', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Unscoped task',
+			description: 'No goal or explicit scope',
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+	});
+
+	it('returns no active lessons for tasks with stale goalId', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Stale goal task',
+			description: 'References missing goal',
+			goalId: 'missing-goal',
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			'EvolutionScope not found for SpaceGoal: missing-goal'
+		);
+	});
+
+	it('returns no active lessons for tasks with stale evolutionScopeId', () => {
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Stale scoped task',
+			description: 'References missing scope',
+			evolutionScopeId: 'missing-scope',
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			'EvolutionScope not found: missing-scope'
+		);
+	});
+
+	it('returns no active lessons for tasks with cross-space evolutionScopeId', () => {
+		const otherSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/other-forge-service-test',
+			slug: 'other-forge-service-test',
+			name: 'Other Forge Service Test',
+		}).id;
+		const otherScope = service.createScope({
+			spaceId: otherSpaceId,
+			kind: 'custom',
+			name: 'Other scope',
+			objective: 'Own unrelated lessons',
+		});
+		evolutionRepo.createLesson({
+			scopeId: otherScope.id,
+			status: 'active',
+			rule: 'Unrelated lesson',
+			why: 'Different space',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Cross-space scoped task',
+			description: 'References another space scope',
+			evolutionScopeId: otherScope.id,
+		});
+
+		expect(service.resolveScopeForTask({ taskId: task.id })).toBeNull();
+		expect(service.selectActiveLessonsForTask({ taskId: task.id })).toEqual([]);
+		expect(() => service.attachTaskEvidence({ taskId: task.id })).toThrow(
+			'Task and scope must belong to the same space'
+		);
+	});
+
 	it('attaches workflow-run evidence through explicit evolutionScopeId parent task', () => {
 		const scope = service.createScope({
 			spaceId,

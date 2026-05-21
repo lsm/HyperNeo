@@ -27,6 +27,8 @@ import type {
 	EvolutionScopeListResponse,
 	EvolutionScopeUpdateRequest,
 	EvolutionScopeUpdateResponse,
+	EvolutionTaskLessonSelectRequest,
+	EvolutionTaskLessonSelectResponse,
 	EvolutionTaskProposalListRequest,
 	EvolutionTaskProposalListResponse,
 	EvolutionTaskProposalUpdateRequest,
@@ -178,6 +180,14 @@ export function setupEvolutionHandlers(
 		async (data) => ({
 			snapshots: service.listMetricSnapshots(readRequiredString(data, 'scopeId')),
 		})
+	);
+
+	messageHub.onRequest<EvolutionTaskLessonSelectRequest, EvolutionTaskLessonSelectResponse>(
+		'evolution.task.lessons.select',
+		async (data) => {
+			const payload = readRecord(data) as unknown as EvolutionTaskLessonSelectRequest;
+			return { lessons: service.selectActiveLessonsForTask(payload) };
+		}
 	);
 
 	if (!episodeService) return;

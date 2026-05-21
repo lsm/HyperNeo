@@ -29,7 +29,7 @@ import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
-type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'episodes';
+type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'lessons' | 'episodes';
 
 type ReviewAction =
 	| { kind: 'episode'; id: string; status: EvolutionEpisode['status'] }
@@ -812,6 +812,95 @@ function EpisodesTab({ scope }: { scope: EvolutionScope }) {
 	);
 }
 
+function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
+	const { request } = useMessageHub();
+	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const requestVersion = useRef(0);
+
+	const loadLessons = useCallback(async () => {
+		const version = ++requestVersion.current;
+		setLoading(true);
+		setError(null);
+		try {
+			const response = await request<{ lessons: EvolutionLesson[] }>('evolution.lesson.list', {
+				scopeId: scope.id,
+				status: 'active',
+			});
+			if (requestVersion.current === version) setLessons(response.lessons ?? []);
+		} catch (err) {
+			if (requestVersion.current === version) {
+				setError(err instanceof Error ? err.message : 'Failed to load active lessons');
+			}
+		} finally {
+			if (requestVersion.current === version) setLoading(false);
+		}
+	}, [request, scope.id]);
+
+	useEffect(() => {
+		loadLessons().catch(() => undefined);
+	}, [loadLessons]);
+
+	const dismissLesson = async (lessonId: string) => {
+		try {
+			setError(null);
+			const response = await request<{ lesson: EvolutionLesson | null }>(
+				'evolution.lesson.update',
+				{
+					id: lessonId,
+					params: { status: 'dismissed' },
+				}
+			);
+			if (response.lesson) setLessons((current) => current.filter((item) => item.id !== lessonId));
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to dismiss lesson');
+		}
+	};
+
+	return (
+		<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+			<div class="mb-3">
+				<h3 class="text-sm font-medium text-gray-100">Active lessons</h3>
+				<p class="mt-1 text-xs text-gray-500">
+					Top active lessons from this scope are injected into future scoped task-agent messages.
+				</p>
+			</div>
+			{error && (
+				<div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+					{error}
+				</div>
+			)}
+			{loading ? (
+				<p class="text-sm text-gray-500">Loading active lessons…</p>
+			) : lessons.length === 0 ? (
+				<p class="text-sm text-gray-500">No active lessons yet.</p>
+			) : (
+				<div class="space-y-3">
+					{lessons.map((lesson) => (
+						<div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="text-sm text-gray-100">{lesson.rule}</p>
+									<p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
+									{lesson.appliesTo.length > 0 && (
+										<p class="mt-2 text-xs text-cyan-300">
+											Applies to: {lesson.appliesTo.join(', ')}
+										</p>
+									)}
+								</div>
+								<Button size="sm" variant="secondary" onClick={() => dismissLesson(lesson.id)}>
+									Dismiss
+								</Button>
+							</div>
+						</div>
+					))}
+				</div>
+			)}
+		</section>
+	);
+}
+
 function FindingCard({ finding }: { finding: EvolutionFinding }) {
 	return (
 		<div class="rounded-md border border-white/10 bg-black/20 p-3">
@@ -1066,7 +1155,7 @@ function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal
 				<p class="mt-1 text-sm text-gray-400">{scope.objective}</p>
 			</div>
 			<div class="flex gap-2 border-b border-white/10 px-5 py-3">
-				{(['overview', 'evidence', 'metrics', 'episodes'] as const).map((item) => (
+				{(['overview', 'evidence', 'metrics', 'lessons', 'episodes'] as const).map((item) => (
 					<button
 						key={item}
 						type="button"
@@ -1103,6 +1192,7 @@ function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal
 				)}
 				{tab === 'evidence' && <EvidenceTab scope={scope} />}
 				{tab === 'metrics' && <MetricsTab scope={scope} />}
+				{tab === 'lessons' && <ActiveLessonsTab scope={scope} />}
 				{tab === 'episodes' && <EpisodesTab scope={scope} />}
 			</div>
 		</div>

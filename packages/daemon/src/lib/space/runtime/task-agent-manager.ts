@@ -99,6 +99,7 @@ import { ChannelRouter } from './channel-router';
 import { AgentMessageRouter } from './agent-message-router';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
+import type { EvolutionScopeService } from '../evolution-scope-service';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -281,6 +282,8 @@ export interface TaskAgentManagerConfig {
 	};
 	/** Goal service for terminal goal-task side effects. */
 	goalService?: import('../goals/goal-service').SpaceGoalService;
+	/** Evolution scope service for scoped lesson injection. */
+	evolutionScopeService?: EvolutionScopeService;
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +749,12 @@ export class TaskAgentManager {
 				const relevantMemories = this.config.memoryRepo
 					? await this.config.memoryRepo.search(space.id, memoryQuery, 5)
 					: [];
+				const relevantScopeLessons = this.config.evolutionScopeService
+					? this.config.evolutionScopeService.selectActiveLessonsForTask({
+							taskId: task.id,
+							limit: 3,
+						})
+					: [];
 				const initialMessage = buildCustomAgentTaskMessage({
 					customAgent: customAgent!,
 					task,
@@ -755,6 +764,7 @@ export class TaskAgentManager {
 					sessionId: actualSessionId,
 					workspacePath,
 					goal: linkedGoal,
+					relevantScopeLessons,
 					slotOverrides,
 					nodeId: execution.workflowNodeId,
 					agentSlotName: execution.agentName,
