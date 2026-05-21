@@ -608,6 +608,62 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		expect(rollup.goal.progress).toBe(42);
 	});
 
+	test('rejects reopening terminal Forge episodes', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Terminal episode scope',
+					objective: 'Guard episode status',
+				})
+			).content[0].text
+		).scope;
+		const evidence = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Terminal episode evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episode = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [evidence.id],
+				})
+			).content[0].text
+		).episode;
+
+		const accepted = JSON.parse(
+			(
+				await handlers.update_forge_episode({
+					episode_id: episode.id,
+					status: 'accepted',
+				})
+			).content[0].text
+		);
+		expect(accepted.success).toBe(true);
+		expect(accepted.episode.status).toBe('accepted');
+
+		const reopen = JSON.parse(
+			(
+				await handlers.update_forge_episode({
+					episode_id: episode.id,
+					status: 'draft',
+				})
+			).content[0].text
+		);
+		expect(reopen.success).toBe(false);
+		expect(reopen.error).toContain('Terminal Forge episodes cannot be reopened');
+
+		const afterReopenAttempt = JSON.parse(
+			(await handlers.list_forge_review_bundle({ scope_id: scope.id })).content[0].text
+		).episodes[0];
+		expect(afterReopenAttempt.status).toBe('accepted');
+	});
+
 	test('lists Forge lessons with optional status filter', async () => {
 		const handlers = makeHandlers(ctx);
 		const scope = JSON.parse(

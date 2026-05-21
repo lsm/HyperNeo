@@ -2165,7 +2165,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			outcome_summary?: string;
 		}): Promise<ToolResult> {
 			try {
-				requireEvolutionEpisodeInSpace(args.episode_id);
+				const existing = requireEvolutionEpisodeInSpace(args.episode_id);
+				if (existing.status !== 'draft' && args.status && args.status !== existing.status) {
+					throw new Error('Terminal Forge episodes cannot be reopened');
+				}
 				const episode = requireEvolutionEpisodeService().updateEpisode(args.episode_id, {
 					status: args.status,
 					title: args.title,
