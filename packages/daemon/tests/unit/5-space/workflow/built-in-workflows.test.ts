@@ -438,11 +438,14 @@ describe('CODING_WORKFLOW template', () => {
 		expect(prField.check.op).toBe('exists');
 	});
 
-	test('code-ready-gate PR comment poll preserves GraphQL variable names for gh', () => {
+	test('code-ready-gate PR comment poll preserves GraphQL variable names and host for gh', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		expect(gate.poll?.script).toContain("QUERY='query($owner:String!,$name:String!,$number:Int!)");
 		expect(gate.poll?.script).toContain('repository(owner:$owner,name:$name)');
 		expect(gate.poll?.script).toContain('pullRequest(number:$number)');
+		expect(gate.poll?.script).toContain('PR_HOST="${PR_HOST:-$(jq -r .host <<< "$PR_META")}"');
+		expect(gate.poll?.script).toContain('GH_HOST_ARGS=(--hostname "$PR_HOST")');
+		expect(gate.poll?.script).toContain('gh api graphql "${GH_HOST_ARGS[@]}"');
 	});
 
 	test('code-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
