@@ -2,6 +2,36 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.29.0] - 2026-05-21
+
+Forge self-evolution system, actor messaging UI, and memory consolidation. 20 commits since v0.28.0.
+
+### Added
+
+- **Forge episode judge**: LLM-powered episode evaluation from scope evidence
+- **Forge scope UI foundation**: Frontend scaffolding for browsing evolution scopes, evidence, and episodes
+- **Forge evolution scope APIs**: Backend CRUD for scopes, evidence, metric snapshots, and lessons
+- **Forge proposal task creation**: Convert Forge proposals into real SpaceTasks
+- **Forge judge model selector**: Choose which model judges episodes per scope
+- **Forge space agent tools**: MCP tools for agents to interact with Forge (scopes, evidence, episodes, lessons)
+- **Scoped Forge lessons**: Inject active lessons from evolution scopes into agent prompts
+- **Forge rollup**: Accepted episodes roll metrics and summaries into linked recurring goals
+- **Memory consolidation job**: Background job to compress and deduplicate agent memories
+- **Actor messaging UI projections**: Frontend views for actor-targeted messages
+- **Forge review follow-ups**: Structured follow-up actions after episode review
+
+### Changed
+
+- Space MCP session policy centralized for consistent tool attachment
+- Forge evidence metadata included in episode judge prompts
+
+### Fixed
+
+- Review approval gate writer authorization
+- Coding with QA workflow gate transitions
+- Message search FTS write optimization (batched for lower I/O)
+- Forge dogfood loop test hardening
+
 ## [0.28.0] - 2026-05-20
 
 Space agent infrastructure, external event system, and semantic memory search. 19 commits since v0.27.1.

@@ -1,6 +1,6 @@
 {
 	"name": "neokai",
-	"version": "0.28.0",
+	"version": "0.29.0",
 	"description": "NeoKai - Claude Agent SDK Web Interface",
 	"bin": {
 		"kai": "bin/kai.js"
