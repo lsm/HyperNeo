@@ -721,6 +721,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 			setEpisodes((current) =>
 				current.map((item) => (item.id === response.episode.id ? response.episode : item))
 			);
+			spaceStore.upsertGoal(response.goal);
 			toast.success(`Rollup applied to "${response.goal.title}"`);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to apply rollup');

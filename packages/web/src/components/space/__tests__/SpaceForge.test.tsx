@@ -31,15 +31,20 @@ import { SpaceForge } from '../SpaceForge';
 const mockSpaceId = signal<string | null>('space-1');
 const mockGoals = signal<SpaceGoal[]>([]);
 const mockListGoals = vi.fn(async () => [] as SpaceGoal[]);
+const mockUpsertGoal = vi.fn((goal: SpaceGoal) => {
+	mockGoals.value = [goal, ...mockGoals.value.filter((current) => current.id !== goal.id)];
+});
 
 const mutableSpaceStore = spaceStore as unknown as {
 	spaceId: Signal<string | null>;
 	goals: Signal<SpaceGoal[]>;
 	listGoals: typeof mockListGoals;
+	upsertGoal: typeof mockUpsertGoal;
 };
 mutableSpaceStore.spaceId = mockSpaceId;
 mutableSpaceStore.goals = mockGoals;
 mutableSpaceStore.listGoals = mockListGoals;
+mutableSpaceStore.upsertGoal = mockUpsertGoal;
 
 function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
 	const now = Date.now();
@@ -243,7 +248,7 @@ function setupRequests(scope = makeScope()) {
 		if (method === 'evolution.rollup.apply') {
 			return {
 				episode: makeEpisode({ status: 'accepted' }),
-				goal: makeGoal({ title: 'Improve review loop' }),
+				goal: makeGoal({ title: 'Improve review loop', summary: 'Rollup summary', progress: 80 }),
 			};
 		}
 		if (method === 'evolution.evidence.addManualNote') {
@@ -490,6 +495,9 @@ describe('SpaceForge', () => {
 					nextSteps: ['Create follow-up', 'Measure again'],
 				},
 			})
+		);
+		expect(mockUpsertGoal).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'goal-1', summary: 'Rollup summary', progress: 80 })
 		);
 	});
 
