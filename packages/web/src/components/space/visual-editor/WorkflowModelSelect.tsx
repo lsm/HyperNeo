@@ -24,20 +24,20 @@ interface WorkflowModelSelectProps {
 
 type LoadState = 'loading' | 'ready' | 'no-providers';
 
+function encodeModelValue(model: Pick<ModelInfo, 'provider' | 'id'>): string {
+	return encodeURIComponent(JSON.stringify([model.provider, model.id]));
+}
+
 function dedupeModelsByProviderAndId(models: ModelInfo[]): ModelInfo[] {
 	const seen = new Set<string>();
 	const deduped: ModelInfo[] = [];
 	for (const model of models) {
-		const key = `${model.provider}:${model.id}`;
+		const key = encodeModelValue(model);
 		if (seen.has(key)) continue;
 		seen.add(key);
 		deduped.push(model);
 	}
 	return deduped;
-}
-
-function encodeModelValue(model: ModelInfo): string {
-	return encodeURIComponent(JSON.stringify([model.provider, model.id]));
 }
 
 function decodeModelValue(value: string, models: ModelInfo[]): WorkflowModelSelection {
@@ -71,10 +71,21 @@ export function WorkflowModelSelect({
 	const [models, setModels] = useState<ModelInfo[]>([]);
 	const [loadState, setLoadState] = useState<LoadState>('loading');
 	const [selectedProvider, setSelectedProvider] = useState<string | undefined>(provider);
+	const [selectedModelId, setSelectedModelId] = useState<string | undefined>(value);
 
 	useEffect(() => {
-		if (provider) setSelectedProvider(provider);
-	}, [provider]);
+		if (!value) {
+			setSelectedModelId(undefined);
+			setSelectedProvider(undefined);
+			return;
+		}
+		if (value === selectedModelId) {
+			if (provider) setSelectedProvider(provider);
+			return;
+		}
+		setSelectedModelId(value);
+		setSelectedProvider(provider);
+	}, [provider, selectedModelId, value]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -104,17 +115,19 @@ export function WorkflowModelSelect({
 		};
 	}, []);
 
+	const effectiveProvider = provider ?? selectedProvider;
 	const selectedValue = (() => {
 		if (!value) return '';
-		if (selectedProvider)
-			return encodeModelValue({ provider: selectedProvider, id: value } as ModelInfo);
+		if (effectiveProvider) return encodeModelValue({ provider: effectiveProvider, id: value });
 		const match = models.find((model) => model.id === value);
 		return match ? encodeModelValue(match) : value;
 	})();
 	const groupedModels = useMemo(() => groupModelsByProvider(models), [models]);
 	const hasCurrentOutsideList =
 		!!value &&
-		!models.some((model) => model.id === value && (!provider || model.provider === provider));
+		!models.some(
+			(model) => model.id === value && (!effectiveProvider || model.provider === effectiveProvider)
+		);
 
 	if (loadState === 'loading') {
 		return (
@@ -141,11 +154,13 @@ export function WorkflowModelSelect({
 			onChange={(e) => {
 				const nextValue = (e.currentTarget as HTMLSelectElement).value;
 				if (!nextValue) {
+					setSelectedModelId(undefined);
 					setSelectedProvider(undefined);
 					onChange(undefined);
 					return;
 				}
 				const selection = decodeModelValue(nextValue, models);
+				setSelectedModelId(selection.modelId);
 				setSelectedProvider(selection.provider);
 				onChange(selection.modelId, selection);
 			}}
@@ -155,7 +170,7 @@ export function WorkflowModelSelect({
 			{hasCurrentOutsideList && (
 				<option
 					value={selectedValue}
-				>{`Current (${provider ? `${provider}:` : ''}${value})`}</option>
+				>{`Current (${effectiveProvider ? `${effectiveProvider}:` : ''}${value})`}</option>
 			)}
 			{Array.from(groupedModels.entries()).map(([provider, providerModels]) => (
 				<optgroup key={provider} label={PROVIDER_LABELS[provider] || getProviderLabel(provider)}>
