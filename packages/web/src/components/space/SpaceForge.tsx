@@ -25,6 +25,7 @@ import type {
 	TaskProposal,
 	TaskProposalStatus,
 } from '@neokai/shared';
+import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { ComponentChild } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
@@ -133,80 +134,16 @@ function nextStepsFromText(value: string): string[] {
 
 function buildEvidenceQualityPreflight(
 	evidence: EvidenceRef[],
-	selectedEvidenceIds: string[]
+	selectedEvidenceIds: string[],
+	metricSnapshots: MetricSnapshot[] = []
 ): EvidenceQualityPreflight | null {
 	if (selectedEvidenceIds.length === 0) return null;
 	const selected = evidence.filter((item) => selectedEvidenceIds.includes(item.id));
 	if (selected.length === 0) return null;
-	const counts = {
-		total: selected.length,
-		manualNotes: selected.filter((item) => item.kind === 'manual_note').length,
-		taskResults: selected.filter((item) => item.kind === 'task_result').length,
-		workflowArtifacts: selected.filter(
-			(item) => item.kind === 'workflow_run' || item.kind === 'artifact' || item.kind === 'error'
-		).length,
-		metricSnapshots: selected.filter((item) => item.kind === 'metric_snapshot').length,
-		outcomes: countEvidenceOutcomes(selected),
-	};
-	let score = 0;
-	const reasons: string[] = [];
-	const warnings: string[] = [];
-	if (counts.taskResults > 0) {
-		score += 30;
-		reasons.push('Task result evidence selected.');
-	}
-	if (counts.workflowArtifacts > 0) {
-		score += 30;
-		reasons.push('Workflow run or artifact evidence selected.');
-	}
-	if (counts.metricSnapshots > 0) {
-		score += 15;
-		reasons.push('Metric snapshot evidence selected.');
-	}
-	if (counts.outcomes > 0) {
-		score += Math.min(25, counts.outcomes * 8);
-		reasons.push('Concrete outcome language found.');
-	}
-	if (counts.total > counts.manualNotes) score += 10;
-	const manualOnly = counts.total > 0 && counts.manualNotes === counts.total;
-	if (manualOnly) warnings.push('Only manual notes selected; judge output will be low confidence.');
-	if (counts.taskResults === 0) warnings.push('No task result evidence selected.');
-	if (counts.workflowArtifacts === 0)
-		warnings.push('No workflow run or artifact evidence selected.');
-	if (counts.metricSnapshots === 0) warnings.push('No metric snapshot evidence selected.');
-	if (counts.outcomes === 0)
-		warnings.push('No PR, QA, CI, merge, error, or completion outcome found.');
-	const boundedScore = Math.min(100, score);
-	const level = boundedScore >= 70 ? 'high' : boundedScore >= 45 ? 'medium' : 'low';
-	return {
-		level,
-		score: boundedScore,
-		maxScore: 100,
-		canGenerate: selected.length > 0,
-		requiresConfirmation: manualOnly || level === 'low',
-		reasons,
-		warnings,
-		counts,
-	};
-}
-
-function countEvidenceOutcomes(evidence: EvidenceRef[]): number {
-	const seen = new Set<string>();
-	for (const item of evidence) {
-		const text = `${item.summary} ${JSON.stringify(item.metadata)}`.toLowerCase();
-		if (/\b(pr|pull request|github\.com\/[^\s]+\/pull\/)\b/.test(text)) seen.add('pr');
-		if (/\b(qa|quality assurance|validated|validation)\b/.test(text)) seen.add('qa');
-		if (/\b(ci|check|checks|build|test|tests|passed|failing|failed)\b/.test(text)) seen.add('ci');
-		if (/\b(merge|merged|landed)\b/.test(text)) seen.add('merge');
-		if (
-			item.kind === 'error' ||
-			/\b(error|failure|failed|exception|rework|regression)\b/.test(text)
-		) {
-			seen.add('error');
-		}
-		if (/\b(done|completed|complete|approved|shipped)\b/.test(text)) seen.add('task completion');
-	}
-	return seen.size;
+	return scoreEvolutionEvidenceQuality({
+		evidence: selected,
+		metricSnapshotCount: metricSnapshots.length,
+	});
 }
 
 function getGoal(scope: EvolutionScope | null, goals: SpaceGoal[]): SpaceGoal | null {
@@ -632,6 +569,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
 	const [proposals, setProposals] = useState<TaskProposal[]>([]);
 	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+	const [metricSnapshots, setMetricSnapshots] = useState<MetricSnapshot[]>([]);
 	const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
 	const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
 	const [loading, setLoading] = useState(false);
@@ -651,17 +589,21 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		setLoading(true);
 		setError(null);
 		try {
-			const [reviewResponse, evidenceResponse] = await Promise.all([
+			const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
 				request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
 					scopeId: scope.id,
 				}),
 				request<EvolutionEvidenceListResponse>('evolution.evidence.list', { scopeId: scope.id }),
+				request<EvolutionMetricSnapshotListResponse>('evolution.metricSnapshot.list', {
+					scopeId: scope.id,
+				}),
 			]);
 			if (requestVersion.current !== version) return;
 			setEpisodes(reviewResponse.episodes ?? []);
 			setLessons(reviewResponse.lessons ?? []);
 			setProposals(reviewResponse.proposals ?? []);
 			setEvidence(evidenceResponse.evidence ?? []);
+			setMetricSnapshots(metricResponse.snapshots ?? []);
 			setSelectedEvidenceIds((current) =>
 				current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
 			);
@@ -704,8 +646,8 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		latestEpisode.status !== 'dismissed' &&
 		latestEpisode.rollupAppliedAt === null;
 	const preflight = useMemo(
-		() => buildEvidenceQualityPreflight(evidence, selectedEvidenceIds),
-		[evidence, selectedEvidenceIds]
+		() => buildEvidenceQualityPreflight(evidence, selectedEvidenceIds, metricSnapshots),
+		[evidence, metricSnapshots, selectedEvidenceIds]
 	);
 	const preflightReady = preflight?.requiresConfirmation ? confirmLowConfidence : true;
 

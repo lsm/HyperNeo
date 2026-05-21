@@ -268,6 +268,7 @@ describe('EvolutionEpisodeService', () => {
 		expect(input.preflight.warnings).toContain(
 			'Only manual notes selected; findings will be low confidence without task results or artifacts.'
 		);
+		expect(input.preflight.warnings).toContain('No task evidence selected.');
 		expect(prompt).toContain('Evidence quality preflight');
 		expect(prompt).toContain('low');
 		await expect(
@@ -306,7 +307,7 @@ describe('EvolutionEpisodeService', () => {
 		});
 		const taskEvidence = evolutionRepo.createEvidence({
 			scopeId: scope.id,
-			kind: 'task_result',
+			kind: 'task',
 			sourceId: task.id,
 			summary: 'Task completed with PR and CI outcome',
 		});
@@ -1083,41 +1084,45 @@ describe('EvolutionEpisodeService', () => {
 			kind: 'manual_note',
 			summary: 'Manual observation',
 		});
+		let judgePreflight: unknown;
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
 			workflowRunRepo,
 			artifactRepo,
-			judgeEpisode: async () => ({
-				title: 'Manual episode',
-				outcomeSummary: 'Observation summarized',
-				findings: [
-					{
-						domain: 'neokai_product',
-						kind: 'friction',
-						impact: 'high',
-						confidence: 0.9,
-						evidence: [evidence.id],
-						proposedAction: 'Reduce UI friction',
-					},
-				],
-				candidateLessons: [
-					{
-						appliesTo: ['ui'],
-						rule: 'Surface next step',
-						why: 'User got stuck',
-						confidence: 0.7,
-					},
-				],
-				proposals: [
-					{
-						title: 'Improve review UI',
-						description: 'Add clearer actions',
-						reason: 'Reduce friction',
-						priority: 'high',
-					},
-				],
-			}),
+			judgeEpisode: async (input) => {
+				judgePreflight = input.preflight;
+				return {
+					title: 'Manual episode',
+					outcomeSummary: 'Observation summarized',
+					findings: [
+						{
+							domain: 'neokai_product',
+							kind: 'friction',
+							impact: 'high',
+							confidence: 0.9,
+							evidence: [evidence.id],
+							proposedAction: 'Reduce UI friction',
+						},
+					],
+					candidateLessons: [
+						{
+							appliesTo: ['ui'],
+							rule: 'Surface next step',
+							why: 'User got stuck',
+							confidence: 0.7,
+						},
+					],
+					proposals: [
+						{
+							title: 'Improve review UI',
+							description: 'Add clearer actions',
+							reason: 'Reduce friction',
+							priority: 'high',
+						},
+					],
+				};
+			},
 		});
 
 		const result = await service.createFromEvidence({
@@ -1126,6 +1131,15 @@ describe('EvolutionEpisodeService', () => {
 			confirmLowConfidence: true,
 		});
 
+		expect(judgePreflight).toMatchObject({
+			level: 'low',
+			requiresConfirmation: true,
+			warnings: expect.arrayContaining([
+				'Only manual notes selected; findings will be low confidence without task results or artifacts.',
+			]),
+		});
+		expect(result.preflight).toBe(judgePreflight);
+		expect(result.preflight.score).toBeGreaterThanOrEqual(0);
 		expect(result.episode).toMatchObject({
 			status: 'draft',
 			title: 'Manual episode',

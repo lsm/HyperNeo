@@ -570,7 +570,9 @@ describe('SpaceForge', () => {
 		fireEvent.click(screen.getByLabelText(/Reviewer found regression before merge/));
 		expect(await screen.findByText('Evidence preflight: low confidence')).toBeTruthy();
 		expect(
-			screen.getByText('Only manual notes selected; judge output will be low confidence.')
+			screen.getByText(
+				'Only manual notes selected; findings will be low confidence without task results or artifacts.'
+			)
 		).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Create episode' }).hasAttribute('disabled')).toBe(
 			true
@@ -592,7 +594,7 @@ describe('SpaceForge', () => {
 		);
 	});
 
-	it('shows ready preflight state for artifact-backed evidence', async () => {
+	it('counts task evidence and existing metric snapshots in preflight readiness', async () => {
 		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
 			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
 			if (method === 'evolution.evidence.list') {
@@ -600,7 +602,7 @@ describe('SpaceForge', () => {
 					evidence: [
 						makeEvidence({
 							id: 'task-evidence',
-							kind: 'task_result',
+							kind: 'task',
 							summary: 'Task completed with PR merged after CI and QA passed',
 						}),
 						makeEvidence({
@@ -608,21 +610,17 @@ describe('SpaceForge', () => {
 							kind: 'artifact',
 							summary: 'Workflow artifact captured tests passed and merge completed',
 						}),
-						makeEvidence({
-							id: 'metric-evidence',
-							kind: 'metric_snapshot',
-							summary: 'Metric snapshot: review latency improved',
-						}),
 					],
 				};
 			}
 			if (method === 'evolution.review.get') {
 				return { episodes: [], lessons: [], proposals: [] };
 			}
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
 			if (method === 'evolution.episode.createFromEvidence') {
 				expect(data).toEqual({
 					scopeId: 'scope-1',
-					evidenceIds: ['task-evidence', 'artifact-evidence', 'metric-evidence'],
+					evidenceIds: ['task-evidence', 'artifact-evidence'],
 					confirmLowConfidence: undefined,
 				});
 				return {
@@ -640,10 +638,9 @@ describe('SpaceForge', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
 		fireEvent.click(await screen.findByLabelText(/Task completed with PR merged/));
 		fireEvent.click(screen.getByLabelText(/Workflow artifact captured tests passed/));
-		fireEvent.click(screen.getByLabelText(/Metric snapshot: review latency improved/));
 
 		expect(await screen.findByText('Evidence preflight: high confidence')).toBeTruthy();
-		expect(screen.getByText('Metric snapshot evidence selected.')).toBeTruthy();
+		expect(screen.getByText('Metric snapshot context can calibrate outcomes.')).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Create episode' }).hasAttribute('disabled')).toBe(
 			false
 		);
@@ -676,6 +673,7 @@ describe('SpaceForge', () => {
 		mockRequest.mockImplementation(async (method: string) => {
 			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
 			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
 			if (method === 'evolution.review.get') {
 				return {
 					episodes: [acceptedEpisode],
@@ -700,6 +698,7 @@ describe('SpaceForge', () => {
 		mockRequest.mockImplementation(async (method: string) => {
 			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
 			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
 			if (method === 'evolution.review.get') {
 				return {
 					episodes: [dismissedEpisode],
@@ -725,6 +724,7 @@ describe('SpaceForge', () => {
 		mockRequest.mockImplementation(async (method: string) => {
 			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
 			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [] };
 			if (method === 'evolution.review.get') {
 				return { episodes: [appliedEpisode], lessons: [makeLesson()], proposals: [makeProposal()] };
 			}

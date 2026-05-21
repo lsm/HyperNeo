@@ -23,6 +23,7 @@ import type {
 	UpdateEvolutionLessonParams,
 	UpdateTaskProposalParams,
 } from '@neokai/shared';
+import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -207,7 +208,20 @@ export class EvolutionEpisodeService {
 			tasks,
 			workflowRuns,
 			timeWindow: params.timeWindow ?? deriveTimeWindow(evidence),
-			preflight: scoreEvidenceQuality(evidence, tasks, workflowRuns, metricSnapshots),
+			preflight: scoreEvolutionEvidenceQuality({
+				evidence,
+				tasks: tasks.map(({ task }) => task),
+				workflowRuns: workflowRuns.map(({ run, tasks: runTasks, artifacts }) => ({
+					run,
+					tasks: runTasks,
+					artifacts: artifacts.map((artifact) => ({
+						type: artifact.artifactType,
+						key: artifact.artifactKey,
+						data: artifact.data,
+					})),
+				})),
+				metricSnapshotCount: metricSnapshots.length,
+			}),
 		};
 	}
 
@@ -695,152 +709,6 @@ function normalizeProposal(
 				? 'proposed'
 				: enumValue(record.status, PROPOSAL_STATUSES, 'proposal.status'),
 	};
-}
-
-export function scoreEvidenceQuality(
-	evidence: EvidenceRef[],
-	tasks: EpisodeTaskContext[] = [],
-	workflowRuns: EpisodeWorkflowRunContext[] = [],
-	metricSnapshots: MetricSnapshot[] = []
-): EvidenceQualityPreflight {
-	const selectedMetricSnapshots = evidence.filter((item) => item.kind === 'metric_snapshot').length;
-	const counts = {
-		total: evidence.length,
-		manualNotes: evidence.filter((item) => item.kind === 'manual_note').length,
-		taskResults: evidence.filter((item) => item.kind === 'task_result').length,
-		workflowArtifacts: evidence.filter(
-			(item) => item.kind === 'workflow_run' || item.kind === 'artifact' || item.kind === 'error'
-		).length,
-		metricSnapshots: Math.max(selectedMetricSnapshots, metricSnapshots.length > 0 ? 1 : 0),
-		outcomes: countConcreteOutcomes(evidence, tasks, workflowRuns),
-	};
-	let score = 0;
-	const reasons: string[] = [];
-	const warnings: string[] = [];
-	if (counts.taskResults > 0 || tasks.length > 0) {
-		score += 30;
-		reasons.push('Selected evidence includes task result context.');
-	}
-	if (counts.workflowArtifacts > 0 || workflowRuns.some((run) => run.artifacts.length > 0)) {
-		score += 30;
-		reasons.push('Selected evidence includes workflow run or artifact context.');
-	}
-	if (counts.metricSnapshots > 0) {
-		score += 15;
-		reasons.push('Metric snapshot context can calibrate outcomes.');
-	}
-	if (counts.outcomes > 0) {
-		score += Math.min(25, counts.outcomes * 8);
-		reasons.push(
-			'Evidence mentions concrete outcomes such as PR, QA, CI, merge, error, or completion.'
-		);
-	}
-	if (counts.total > counts.manualNotes) {
-		score += 10;
-	}
-	const manualOnly = counts.total > 0 && counts.manualNotes === counts.total;
-	if (manualOnly) {
-		warnings.push(
-			'Only manual notes selected; findings will be low confidence without task results or artifacts.'
-		);
-	}
-	if (counts.taskResults === 0 && tasks.length === 0) {
-		warnings.push('No task result evidence selected.');
-	}
-	if (counts.workflowArtifacts === 0 && workflowRuns.every((run) => run.artifacts.length === 0)) {
-		warnings.push('No workflow run or artifact evidence selected.');
-	}
-	if (counts.metricSnapshots === 0) {
-		warnings.push('No metric snapshot context selected.');
-	}
-	if (counts.outcomes === 0) {
-		warnings.push('No concrete PR, QA, CI, merge, error, or task-completion outcome found.');
-	}
-	const boundedScore = Math.min(100, score);
-	const level = boundedScore >= 70 ? 'high' : boundedScore >= 45 ? 'medium' : 'low';
-	return {
-		level,
-		score: boundedScore,
-		maxScore: 100,
-		canGenerate: counts.total > 0,
-		requiresConfirmation: manualOnly || level === 'low',
-		reasons,
-		warnings,
-		counts,
-	};
-}
-
-function countConcreteOutcomes(
-	evidence: EvidenceRef[],
-	tasks: EpisodeTaskContext[],
-	workflowRuns: EpisodeWorkflowRunContext[]
-): number {
-	let count = 0;
-	const seen = new Set<string>();
-	const visit = (value: unknown) => {
-		for (const token of extractOutcomeTokens(value)) {
-			seen.add(token);
-		}
-	};
-	for (const item of evidence) {
-		visit(item.summary);
-		visit(item.metadata);
-		if (item.kind === 'error') seen.add('error');
-	}
-	for (const { task } of tasks) {
-		visit(task.title);
-		visit(task.status);
-		visit(task.reportedStatus);
-		visit(task.reportedSummary);
-		visit(task.result);
-		if (task.status === 'done' || task.status === 'approved') seen.add('task completion');
-	}
-	for (const { run, tasks: runTasks, artifacts } of workflowRuns) {
-		visit(run.title);
-		visit(run.status);
-		visit(run.failureReason);
-		for (const task of runTasks) {
-			visit(task.title);
-			visit(task.status);
-			visit(task.reportedSummary);
-			visit(task.result);
-		}
-		for (const artifact of artifacts) {
-			visit(artifact.artifactType);
-			visit(artifact.artifactKey);
-			visit(artifact.data);
-		}
-	}
-	count = seen.size;
-	return count;
-}
-
-function extractOutcomeTokens(value: unknown): string[] {
-	const text = stringifyForOutcomeScan(value).toLowerCase();
-	const tokens: string[] = [];
-	const patterns: Array<[string, RegExp]> = [
-		['pr', /\b(pr|pull request|github\.com\/[^\s]+\/pull\/)\b/],
-		['qa', /\b(qa|quality assurance|validated|validation)\b/],
-		['ci', /\b(ci|check|checks|build|test|tests|passed|failing|failed)\b/],
-		['merge', /\b(merge|merged|landed)\b/],
-		['error', /\b(error|failure|failed|exception|rework|regression)\b/],
-		['task completion', /\b(done|completed|complete|approved|shipped)\b/],
-	];
-	for (const [token, pattern] of patterns) {
-		if (pattern.test(text)) tokens.push(token);
-	}
-	return tokens;
-}
-
-function stringifyForOutcomeScan(value: unknown): string {
-	if (value === null || value === undefined) return '';
-	if (typeof value === 'string') return value;
-	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-	try {
-		return JSON.stringify(value);
-	} catch {
-		return '';
-	}
 }
 
 function deriveTimeWindow(evidence: EvidenceRef[]): CreateEvolutionEpisodeParams['timeWindow'] {
