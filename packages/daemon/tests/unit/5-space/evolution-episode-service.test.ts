@@ -54,6 +54,42 @@ describe('EvolutionEpisodeService', () => {
 		db.close();
 	});
 
+	it('resolves episode judge model from scope policy before Space default', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Judge scope',
+			objective: 'Select judge model',
+			policy: { episodeJudgeModel: 'claude-opus-4-5', maxActiveLessons: 5 },
+		});
+		const input = {
+			scope,
+			evidence: [],
+			metricSnapshots: [],
+			tasks: [],
+			workflowRuns: [],
+			timeWindow: null,
+		};
+
+		await expect(
+			resolveEpisodeJudgeModel(input, {
+				getSpace: () => ({ defaultModel: 'claude-sonnet-4-5' }) as never,
+			})
+		).resolves.toEqual({ provider: 'anthropic', modelId: 'claude-opus-4-5' });
+
+		const cleared = evolutionRepo.updateScope(scope.id, {
+			policy: { maxActiveLessons: 5 },
+		});
+
+		expect(cleared?.policy).toEqual({ maxActiveLessons: 5 });
+		await expect(
+			resolveEpisodeJudgeModel(
+				{ ...input, scope: cleared as NonNullable<typeof cleared> },
+				{ getSpace: () => ({ defaultModel: 'claude-sonnet-4-5' }) as never }
+			)
+		).resolves.toEqual({ provider: 'anthropic', modelId: 'claude-sonnet-4-5' });
+	});
+
 	it('builds episode input with task results, workflow artifacts, metrics, and notes', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,

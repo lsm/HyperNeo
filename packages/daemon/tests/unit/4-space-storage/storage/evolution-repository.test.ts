@@ -63,10 +63,15 @@ describe('EvolutionRepository', () => {
 		const updated = repo.updateScope(scope.id, {
 			spaceGoalId: null,
 			objective: 'Reduce review churn and retries',
+			policy: { ...scope.policy, episodeJudgeModel: 'claude-sonnet-4-5' },
 		});
 
 		expect(updated?.spaceGoalId).toBeNull();
 		expect(updated?.objective).toBe('Reduce review churn and retries');
+		expect(updated?.policy).toMatchObject({
+			episodeJudgeModel: 'claude-sonnet-4-5',
+			maxActiveLessons: 3,
+		});
 		expect(repo.listScopes({ spaceId, spaceGoalId: null })[0]?.id).toBe(scope.id);
 	});
 

@@ -11,6 +11,7 @@ import type {
 	EvolutionScopeCreateResponse,
 	EvolutionScopeKind,
 	EvolutionScopeListResponse,
+	EvolutionScopeUpdateResponse,
 	EvolutionEvidenceListResponse,
 	EvolutionMetricSnapshotCreateResponse,
 	EvolutionMetricSnapshotListResponse,
@@ -1436,9 +1437,47 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
 	);
 }
 
-function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal[] }) {
+function ScopeDetail({
+	scope,
+	goals,
+	onScopeUpdated,
+}: {
+	scope: EvolutionScope;
+	goals: SpaceGoal[];
+	onScopeUpdated: (scope: EvolutionScope) => void;
+}) {
+	const { request } = useMessageHub();
 	const [tab, setTab] = useState<ScopeTab>('overview');
+	const [settingsError, setSettingsError] = useState<string | null>(null);
+	const [savingJudgeModel, setSavingJudgeModel] = useState(false);
 	const goal = getGoal(scope, goals);
+
+	const handleJudgeModelChange = async (value: string | undefined) => {
+		try {
+			setSavingJudgeModel(true);
+			setSettingsError(null);
+			const nextPolicy = { ...scope.policy };
+			if (value) {
+				nextPolicy.episodeJudgeModel = value;
+			} else {
+				delete nextPolicy.episodeJudgeModel;
+			}
+			const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
+				id: scope.id,
+				params: { policy: nextPolicy },
+			});
+			if (response.scope) {
+				onScopeUpdated(response.scope);
+				toast.success(
+					value ? 'Episode judge model updated' : 'Episode judge model override cleared'
+				);
+			}
+		} catch (err) {
+			setSettingsError(err instanceof Error ? err.message : 'Failed to update judge model');
+		} finally {
+			setSavingJudgeModel(false);
+		}
+	};
 
 	return (
 		<div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
@@ -1490,6 +1529,26 @@ function ScopeDetail({ scope, goals }: { scope: EvolutionScope; goals: SpaceGoal
 								</p>
 							</div>
 						</div>
+						<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+							<div class="mb-3">
+								<h3 class="text-sm font-medium text-gray-100">Episode judge model</h3>
+								<p class="mt-1 text-xs text-gray-500">
+									Override model for episode judging, or clear to use Space default.
+								</p>
+							</div>
+							<WorkflowModelSelect
+								value={
+									typeof scope.policy.episodeJudgeModel === 'string'
+										? scope.policy.episodeJudgeModel
+										: undefined
+								}
+								onChange={handleJudgeModelChange}
+								testId="scope-episode-judge-model-select"
+								className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+							/>
+							{savingJudgeModel && <p class="mt-2 text-xs text-gray-500">Saving…</p>}
+							{settingsError && <p class="mt-2 text-xs text-red-400">{settingsError}</p>}
+						</section>
 					</div>
 				)}
 				{tab === 'evidence' && <EvidenceTab scope={scope} />}
@@ -1568,6 +1627,11 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 		setSelectedScopeId(scope.id);
 	};
 
+	const handleScopeUpdated = (scope: EvolutionScope) => {
+		localMutationVersion.current += 1;
+		setScopes((current) => current.map((item) => (item.id === scope.id ? scope : item)));
+	};
+
 	return (
 		<div class="flex h-full min-h-0 overflow-hidden">
 			<aside class="flex w-80 flex-shrink-0 flex-col border-r border-white/10 bg-app-sidebar/40">
@@ -1628,7 +1692,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 			</aside>
 
 			{selectedScope ? (
-				<ScopeDetail scope={selectedScope} goals={goals} />
+				<ScopeDetail scope={selectedScope} goals={goals} onScopeUpdated={handleScopeUpdated} />
 			) : (
 				<div class="flex flex-1 items-center justify-center p-8 text-center">
 					<div>

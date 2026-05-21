@@ -30,20 +30,29 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 		value,
 		onChange,
 		testId,
+		className,
 	}: {
 		value?: string;
 		onChange: (value: string | undefined) => void;
-		testId?: string;
-	}) => (
-		<select
-			data-testid={testId}
-			value={value ?? ''}
-			onInput={(event) => onChange(event.currentTarget.value || undefined)}
-		>
-			<option value="">No override</option>
-			<option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-		</select>
-	),
+		testId: string;
+		className?: string;
+	}) => {
+		const handleChange = (event: Event) =>
+			onChange((event.currentTarget as HTMLSelectElement).value || undefined);
+		return (
+			<select
+				data-testid={testId}
+				value={value ?? ''}
+				onChange={handleChange}
+				onInput={handleChange}
+				class={className}
+			>
+				<option value="">— No override —</option>
+				<option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+				<option value="claude-opus-4-5">Claude Opus 4.5</option>
+			</select>
+		);
+	},
 }));
 
 import { spaceStore } from '../../../lib/space-store';
@@ -293,6 +302,11 @@ function setupRequests(scope = makeScope()) {
 				scope: makeScope({ id: 'scope-2', name: 'New scope', objective: 'Track review loop' }),
 			};
 		}
+		if (method === 'evolution.scope.update') {
+			const payload = data as { id: string; params: { policy: EvolutionScope['policy'] } };
+			expect(payload.id).toBe(scope.id);
+			return { scope: makeScope({ policy: payload.params.policy }) };
+		}
 		throw new Error(`Unexpected RPC ${method}`);
 	});
 }
@@ -320,6 +334,44 @@ describe('SpaceForge', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: 'metrics' }));
 		expect(screen.getAllByText('Review latency').length).toBeGreaterThan(0);
+	});
+
+	it('updates existing scope judge model while preserving policy keys', async () => {
+		setupRequests(makeScope({ policy: { maxActiveLessons: 3 } }));
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.change(screen.getByTestId('scope-episode-judge-model-select'), {
+			target: { value: 'claude-sonnet-4-6' },
+		});
+
+		await waitFor(() =>
+			expect(mockToastSuccess).toHaveBeenCalledWith('Episode judge model updated')
+		);
+		expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+			id: 'scope-1',
+			params: { policy: { maxActiveLessons: 3, episodeJudgeModel: 'claude-sonnet-4-6' } },
+		});
+	});
+
+	it('clears existing scope judge model override', async () => {
+		setupRequests(
+			makeScope({ policy: { maxActiveLessons: 3, episodeJudgeModel: 'claude-sonnet-4-5' } })
+		);
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.change(screen.getByTestId('scope-episode-judge-model-select'), {
+			target: { value: '' },
+		});
+
+		await waitFor(() =>
+			expect(mockToastSuccess).toHaveBeenCalledWith('Episode judge model override cleared')
+		);
+		expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+			id: 'scope-1',
+			params: { policy: { maxActiveLessons: 3 } },
+		});
 	});
 
 	it('attaches manual evidence note', async () => {
