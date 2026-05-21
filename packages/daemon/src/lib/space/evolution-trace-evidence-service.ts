@@ -117,10 +117,14 @@ export class EvolutionTraceEvidenceService {
 		const rows = this.deps.db
 			.prepare(
 				`SELECT id, session_id, message_type, sdk_message, timestamp, send_status
-				 FROM sdk_messages
-				 WHERE task_id = ?
-				 ORDER BY timestamp ASC, id ASC
-				 LIMIT ?`
+				 FROM (
+					 SELECT id, session_id, message_type, sdk_message, timestamp, send_status
+					 FROM sdk_messages
+					 WHERE task_id = ?
+					 ORDER BY timestamp DESC, id DESC
+					 LIMIT ?
+				 ) recent_trace_rows
+				 ORDER BY timestamp ASC, id ASC`
 			)
 			.all(taskId, MAX_ROWS) as Array<{
 			id: string;
@@ -402,7 +406,8 @@ function classifyResult(
 }
 
 function retryKey(result: ToolResultRecord): string {
-	return result.commandKey || result.toolName;
+	const target = result.filePath ?? result.commandKey;
+	return `${result.sessionId}:${result.toolName}:${target}`;
 }
 
 function normalizeCommand(command: string): string {

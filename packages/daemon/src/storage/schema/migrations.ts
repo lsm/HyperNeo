@@ -9551,6 +9551,7 @@ function backfillForgeMvpEvidence(db: BunDatabase): void {
 	if (!tableExists(db, 'space_tasks') || !tableExists(db, 'space_workflow_runs')) return;
 	if (!tableExists(db, 'workflow_run_artifacts')) return;
 
+	const hasTaskSpaceId = tableHasColumn(db, 'space_tasks', 'space_id');
 	const scope = db
 		.prepare(
 			`SELECT id, space_id FROM evolution_scopes
@@ -9567,15 +9568,18 @@ function backfillForgeMvpEvidence(db: BunDatabase): void {
 		) as { id: string; space_id: string } | undefined;
 	if (!scope) return;
 
+	const taskWhere = hasTaskSpaceId ? 'space_id = ? AND task_number = ?' : 'task_number = ?';
 	const tasks = [425, 426, 427, 428, 429, 430, 431];
 	for (const taskNumber of tasks) {
 		const task = db
 			.prepare(
 				`SELECT id, task_number, title, description, status, priority, workflow_run_id,
 				        reported_status, reported_summary, result, completed_at, updated_at
-				 FROM space_tasks WHERE space_id = ? AND task_number = ?`
+				 FROM space_tasks WHERE ${taskWhere}`
 			)
-			.get(scope.space_id, taskNumber) as ForgeMvpTaskRow | undefined;
+			.get(...(hasTaskSpaceId ? [scope.space_id, taskNumber] : [taskNumber])) as
+			| ForgeMvpTaskRow
+			| undefined;
 		if (!task?.workflow_run_id) continue;
 		const run = db
 			.prepare(

@@ -82,6 +82,32 @@ describe('EvolutionTraceEvidenceService', () => {
 		);
 	});
 
+	it('analyzes the latest trace window for long-running tasks', () => {
+		const { scope, task } = createScopedTask('Long trace task');
+		for (let index = 0; index < 260; index++) {
+			insertToolExchange(
+				task.id,
+				'session-1',
+				`early-${index}`,
+				'Bash',
+				{ command: 'true' },
+				false,
+				{
+					text: 'ok',
+				}
+			);
+		}
+		insertToolExchange(task.id, 'session-1', 'late-1', 'Bash', { command: 'bun test' }, true, {
+			text: 'Late failure still matters',
+		});
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		const testFailure = listTraceEvidence(scope.id).find((item) => item.kind === 'test_failure');
+		expect(testFailure).toBeTruthy();
+		expect(testFailure?.metadata.rawTraceRefs).toMatchObject({ toolUseIds: ['late-1'] });
+	});
+
 	it('records retry-loop friction even when verification eventually passes', () => {
 		const { scope, task } = createScopedTask('Retries before success');
 		insertToolExchange(
@@ -126,6 +152,47 @@ describe('EvolutionTraceEvidenceService', () => {
 		expect(retryLoop?.metadata.retriesBeforeSuccess).toBe(2);
 		expect(retryLoop?.metadata.messageCountBeforeFirstPassingVerification).toBe(6);
 		expect(retryLoop?.metadata.timeBeforeFirstPassingVerificationMs).toBeGreaterThan(0);
+	});
+
+	it('does not merge retry loops across sessions for the same command', () => {
+		const { scope, task } = createScopedTask('Independent retries');
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'session-1-fail',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Session 1 failed once',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-2',
+			'session-2-fail',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Session 2 failed once',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-3',
+			'session-3-pass',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: 'Session 3 passed',
+			}
+		);
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		expect(listTraceEvidence(scope.id).some((item) => item.kind === 'retry_loop')).toBe(false);
 	});
 
 	it('records test failure evidence for failing verification commands', () => {
