@@ -5,6 +5,7 @@ import {
 	EvolutionEpisodeService,
 	parseEpisodeJudgeJson,
 } from '../../../src/lib/space/evolution-episode-service';
+import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
@@ -440,6 +441,172 @@ describe('EvolutionEpisodeService', () => {
 				goalUpdate: { summary: 'Rollup' },
 			})
 		).toThrow('Dismissed episode cannot accept rollup');
+	});
+
+	it('dogfoods the Forge MVP loop from recurring goal to next scoped task', async () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Build NeoKai Forge MVP',
+			description: 'Verify the scoped learning loop end to end',
+			type: 'recurring',
+			metrics: {
+				completedTasks: 0,
+				acceptedLessons: 0,
+				reusedLessons: 0,
+				repeatedFailures: 1,
+				timeToNextTaskHours: null,
+			},
+		});
+		const scopeService = new EvolutionScopeService({
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+		});
+		const scope = scopeService.createScopeFromGoal({
+			spaceGoalId: goal.id,
+			name: 'Build NeoKai Forge MVP',
+			objective: 'Verify a usable end-to-end Forge scoped learning loop',
+			metricDefinitions: [
+				{ key: 'completedTasks', label: 'Completed tasks', direction: 'increase' },
+				{ key: 'acceptedLessons', label: 'Accepted lessons', direction: 'increase' },
+				{ key: 'reusedLessons', label: 'Reused lessons', direction: 'increase' },
+				{ key: 'repeatedFailures', label: 'Repeated failures', direction: 'decrease' },
+				{
+					key: 'timeToNextTaskHours',
+					label: 'Hours from completion to next task',
+					direction: 'decrease',
+				},
+			],
+		});
+		const completedTask = taskRepo.createTask({
+			spaceId,
+			title: 'Harden Forge MVP loop',
+			description: 'Dogfood Forge against its own implementation',
+			goalId: goal.id,
+			createdByTaskScheduleId: 'forge-recurring-schedule',
+		});
+		taskRepo.updateTask(completedTask.id, {
+			status: 'done',
+			result: 'Scope, evidence, episode, lesson, proposal, and rollup paths verified.',
+			reportedSummary: 'Forge loop completed with one accepted lesson and a follow-up task.',
+		});
+		const taskEvidence = scopeService.attachTaskEvidence({ taskId: completedTask.id });
+		const { evidence: metricEvidence } = scopeService.addMetricSnapshotEvidence({
+			scopeId: scope.id,
+			values: {
+				completedTasks: 1,
+				acceptedLessons: 1,
+				reusedLessons: 0,
+				repeatedFailures: 0,
+				timeToNextTaskHours: 2,
+			},
+			source: 'dogfood',
+			note: 'First complete Forge MVP dogfood pass',
+		});
+		const manualEvidence = scopeService.addManualNoteEvidence({
+			scopeId: scope.id,
+			summary: 'Lesson injection should be visible in the next scoped task prompt.',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			goalService: createGoalService(),
+			judgeEpisode: async (input) => ({
+				title: 'Forge MVP dogfood episode',
+				outcomeSummary: `Reviewed ${input.evidence.length} scoped evidence items.`,
+				findings: [
+					{
+						domain: 'neokai_product',
+						kind: 'friction',
+						impact: 'medium',
+						confidence: 0.8,
+						evidence: input.evidence.map((item) => item.id),
+						proposedAction: 'Keep end-to-end dogfood metrics visible in Forge.',
+					},
+				],
+				candidateLessons: [
+					{
+						appliesTo: ['workflow', 'prompt'],
+						rule: 'Attach completed scoped tasks as evidence before judging an episode.',
+						why: 'The judge needs task result context to produce reusable lessons.',
+						confidence: 0.85,
+					},
+				],
+				proposals: [
+					{
+						title: 'Polish Forge empty states',
+						description: 'Make empty states explain the next action in the learning loop.',
+						reason: 'Dogfood showed first-time operators need clearer prompts.',
+						priority: 'normal',
+					},
+				],
+			}),
+		});
+
+		const episodeResult = await service.createFromEvidence({
+			scopeId: scope.id,
+			evidenceIds: [taskEvidence.id, metricEvidence.id, manualEvidence.id],
+		});
+		const activeLesson = service.updateLesson(episodeResult.lessons[0].id, { status: 'active' });
+		const created = service.createTaskFromProposal(episodeResult.proposals[0].id);
+		const rollup = service.applyRollupGoalUpdate({
+			episodeId: episodeResult.episode.id,
+			goalUpdate: {
+				summary: 'Forge MVP dogfood loop completed once.',
+				progress: 80,
+				nextSteps: ['Run the created follow-up task with injected lesson context'],
+				metrics: {
+					completedTasks: 1,
+					acceptedLessons: 1,
+					reusedLessons: 1,
+					repeatedFailures: 0,
+					timeToNextTaskHours: 2,
+				},
+			},
+		});
+
+		expect(scope).toMatchObject({
+			spaceGoalId: goal.id,
+			name: 'Build NeoKai Forge MVP',
+			kind: 'mission',
+		});
+		expect(taskEvidence.metadata).toMatchObject({
+			status: 'done',
+			createdByTaskScheduleId: 'forge-recurring-schedule',
+		});
+		expect(episodeResult.episode.status).toBe('draft');
+		expect(episodeResult.episode.evidenceIds).toContain(taskEvidence.id);
+		expect(episodeResult.episode.evidenceIds).toContain(metricEvidence.id);
+		expect(episodeResult.episode.evidenceIds).toContain(manualEvidence.id);
+		expect(activeLesson).toMatchObject({ status: 'active' });
+		expect(created.task).toMatchObject({
+			goalId: goal.id,
+			evolutionScopeId: scope.id,
+			title: 'Polish Forge empty states',
+		});
+		expect(scopeService.selectActiveLessonsForTask({ taskId: created.task.id })).toMatchObject([
+			{
+				id: activeLesson?.id,
+				rule: 'Attach completed scoped tasks as evidence before judging an episode.',
+			},
+		]);
+		expect(rollup.episode.status).toBe('accepted');
+		expect(rollup.goal).toMatchObject({
+			summary: 'Forge MVP dogfood loop completed once.',
+			progress: 80,
+			nextSteps: ['Run the created follow-up task with injected lesson context'],
+			metrics: {
+				completedTasks: 1,
+				acceptedLessons: 1,
+				reusedLessons: 1,
+				repeatedFailures: 0,
+				timeToNextTaskHours: 2,
+			},
+		});
 	});
 
 	it('persists draft episode, candidate lessons, and proposals from judge output', async () => {

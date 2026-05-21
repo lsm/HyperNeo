@@ -489,7 +489,12 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 				{loading ? (
 					<p class="text-sm text-gray-500">Loading evidence…</p>
 				) : timeline.length === 0 ? (
-					<p class="text-sm text-gray-500">No evidence attached yet.</p>
+					<div class="text-sm text-gray-500">
+						<p>No evidence attached yet.</p>
+						<p class="mt-1 text-xs text-gray-600">
+							Attach a completed task, metric snapshot, or manual note before generating an episode.
+						</p>
+					</div>
 				) : (
 					<div class="space-y-3">
 						{timeline.map((item) => (
@@ -753,7 +758,12 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 					</Button>
 				</div>
 				{evidence.length === 0 ? (
-					<p class="text-sm text-gray-500">No evidence available.</p>
+					<div class="text-sm text-gray-500">
+						<p>No evidence available.</p>
+						<p class="mt-1 text-xs text-gray-600">
+							Add evidence from the Evidence or Metrics tab, then return here to draft an episode.
+						</p>
+					</div>
 				) : (
 					<div class="grid gap-2 md:grid-cols-2">
 						{evidence.map((item) => (
@@ -787,7 +797,10 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 				<p class="text-sm text-gray-500">Loading review…</p>
 			) : !latestEpisode ? (
 				<div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
-					No episode drafts yet.
+					<p>No episode drafts yet.</p>
+					<p class="mt-1 text-xs text-gray-600">
+						Select scoped evidence above to generate candidate lessons and next action proposals.
+					</p>
 				</div>
 			) : (
 				<div class="space-y-4">
@@ -1557,8 +1570,11 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 						<p class="p-3 text-sm text-gray-500">Loading scopes…</p>
 					) : scopes.length === 0 ? (
 						<div class="rounded-xl border border-dashed border-white/10 p-4 text-center">
-							<p class="text-sm text-gray-400">No scopes yet.</p>
-							<p class="mt-1 text-xs text-gray-600">Create one to track evidence and metrics.</p>
+							<p class="text-sm text-gray-400">No Forge scopes yet.</p>
+							<p class="mt-1 text-xs text-gray-600">
+								Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
+								tasks.
+							</p>
 							<Button type="button" size="sm" class="mt-3" onClick={() => setCreateOpen(true)}>
 								Create scope
 							</Button>
@@ -1596,7 +1612,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 					<div>
 						<h2 class="text-lg font-medium text-gray-200">Create first Forge scope</h2>
 						<p class="mt-2 text-sm text-gray-500">
-							Scopes collect evidence, metrics, and linked goal context.
+							Scopes collect evidence, metrics, accepted lessons, and goal-linked follow-up tasks.
 						</p>
 						<Button type="button" class="mt-4" onClick={() => setCreateOpen(true)}>
 							Create scope
