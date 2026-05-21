@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
 import { connectionManager } from '../../../lib/connection-manager';
 import {
@@ -54,11 +54,9 @@ function decodeModelValue(value: string, models: ModelInfo[]): WorkflowModelSele
 			return { provider: parsed[0], modelId: parsed[1] };
 		}
 	} catch {
-		// Fall through to legacy provider:model parsing.
+		// Fall through to raw model ID parsing.
 	}
-	const legacySeparator = value.lastIndexOf(':');
-	if (legacySeparator === -1) return { provider: '', modelId: value };
-	return { provider: value.slice(0, legacySeparator), modelId: value.slice(legacySeparator + 1) };
+	return { provider: '', modelId: value };
 }
 
 export function WorkflowModelSelect({
@@ -72,15 +70,18 @@ export function WorkflowModelSelect({
 	const [loadState, setLoadState] = useState<LoadState>('loading');
 	const [selectedProvider, setSelectedProvider] = useState<string | undefined>(provider);
 	const [selectedModelId, setSelectedModelId] = useState<string | undefined>(value);
+	const previousProvider = useRef<string | undefined>(provider);
 
 	useEffect(() => {
+		const providerChanged = provider !== previousProvider.current;
+		previousProvider.current = provider;
 		if (!value) {
 			setSelectedModelId(undefined);
 			setSelectedProvider(undefined);
 			return;
 		}
 		if (value === selectedModelId) {
-			if (provider) setSelectedProvider(provider);
+			if (providerChanged) setSelectedProvider(provider);
 			return;
 		}
 		setSelectedModelId(value);
@@ -175,7 +176,7 @@ export function WorkflowModelSelect({
 			{Array.from(groupedModels.entries()).map(([provider, providerModels]) => (
 				<optgroup key={provider} label={PROVIDER_LABELS[provider] || getProviderLabel(provider)}>
 					{providerModels.map((model) => (
-						<option key={`${provider}:${model.id}`} value={encodeModelValue(model)}>
+						<option key={encodeModelValue(model)} value={encodeModelValue(model)}>
 							{`${model.name} (${model.id})`}
 						</option>
 					))}

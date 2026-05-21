@@ -84,6 +84,7 @@ vi.mock('../../../../lib/connection-manager', () => ({
 	},
 }));
 
+import { WorkflowModelSelect } from '../WorkflowModelSelect';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
@@ -217,6 +218,25 @@ describe('NodeConfigPanel', () => {
 			);
 		});
 
+		it('preserves raw colon IDs in out-of-list current selections', async () => {
+			const onChange = vi.fn();
+			const { getByTestId } = render(
+				<WorkflowModelSelect
+					value="stale:model:with:colon"
+					onChange={onChange}
+					testId="stale-colon-model-select"
+				/>
+			);
+			const input = getByTestId('stale-colon-model-select') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('stale:model:with:colon');
+			fireEvent.change(input);
+			expect(onChange).toHaveBeenCalledWith('stale:model:with:colon', {
+				modelId: 'stale:model:with:colon',
+				provider: '',
+			});
+		});
+
 		it('keeps selected provider for duplicate model IDs without provider prop', async () => {
 			function Wrapper() {
 				const [step, setStep] = useState(makeStep());
@@ -250,6 +270,31 @@ describe('NodeConfigPanel', () => {
 			expect(input.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
 			fireEvent.click(getByText('Switch model'));
 			expect(input.value).toBe('%5B%22anthropic%22%2C%22claude-sonnet-4-6%22%5D');
+		});
+
+		it('clears cached provider when provider prop is removed for the same value', async () => {
+			function Wrapper() {
+				const [provider, setProvider] = useState<string | undefined>('custom:endpoint-2');
+				return (
+					<div>
+						<button type="button" onClick={() => setProvider(undefined)}>
+							Clear provider
+						</button>
+						<WorkflowModelSelect
+							value="gpt-5.4"
+							provider={provider}
+							onChange={vi.fn()}
+							testId="provider-clear-model-select"
+						/>
+					</div>
+				);
+			}
+			const { getByTestId, getByText } = render(<Wrapper />);
+			const input = getByTestId('provider-clear-model-select') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
+			fireEvent.click(getByText('Clear provider'));
+			expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
 		});
 
 		it('keeps provider/model pairs distinct when colon-delimited keys collide', async () => {
