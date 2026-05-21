@@ -1,3 +1,4 @@
+import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	CreateEvolutionEpisodeParams,
 	CreateEvolutionLessonParams,
@@ -100,7 +101,11 @@ export interface EvolutionEpisodeServiceDeps {
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo: WorkflowRunArtifactRepository;
-	goalService?: Pick<SpaceGoalService, 'updateGoal'>;
+	goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
+	db?: BunDatabase;
+	taskCreatedEventHub?: {
+		publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
+	};
 	judgeEpisode?: (input: EpisodeJudgePromptInput) => Promise<EpisodeJudgeOutput>;
 }
 
@@ -242,38 +247,58 @@ export class EvolutionEpisodeService {
 		id: string,
 		params: CreateTaskFromProposalParams = {}
 	): CreateTaskFromProposalResult {
-		const existing = this.deps.evolutionRepo.getTaskProposal(id);
-		if (!existing) throw new Error(`TaskProposal not found: ${id}`);
-		if (existing.status === 'created' && existing.createdTaskId) {
-			const existingTask = this.deps.taskRepo.getTask(existing.createdTaskId);
-			if (existingTask) return { proposal: existing, task: existingTask };
-		}
-		if (existing.status === 'dismissed') throw new Error('Dismissed proposal cannot create a task');
+		const result = this.runAtomic(() => {
+			const existing = this.deps.evolutionRepo.getTaskProposal(id);
+			if (!existing) throw new Error(`TaskProposal not found: ${id}`);
+			if (existing.status === 'created' && existing.createdTaskId) {
+				const existingTask = this.deps.taskRepo.getTask(existing.createdTaskId);
+				if (existingTask) return { proposal: existing, task: existingTask, created: false };
+				throw new Error('Created proposal references a missing task');
+			}
+			if (existing.status === 'dismissed')
+				throw new Error('Dismissed proposal cannot create a task');
 
-		const scope = this.requireScope(existing.scopeId);
-		const title = params.title?.trim() || existing.title;
-		const description = params.description?.trim() || existing.description;
-		const reason = params.reason?.trim() || existing.reason;
-		const priority = params.priority ?? existing.priority;
-		if (!title.trim()) throw new Error('title is required');
-		const task = this.deps.taskRepo.createTask({
-			spaceId: scope.spaceId,
-			title,
-			description: buildProposalTaskDescription(description, reason, existing.evidenceEpisodeIds),
-			priority,
-			goalId: scope.spaceGoalId,
-			evolutionScopeId: scope.id,
+			const claimed = this.deps.evolutionRepo.updateTaskProposalIfStatus(
+				existing.id,
+				['proposed', 'accepted'],
+				{ status: 'accepted' }
+			);
+			if (!claimed) {
+				const current = this.deps.evolutionRepo.getTaskProposal(id);
+				if (current?.status === 'created' && current.createdTaskId) {
+					const currentTask = this.deps.taskRepo.getTask(current.createdTaskId);
+					if (currentTask) return { proposal: current, task: currentTask, created: false };
+				}
+				throw new Error('Task proposal is already being created');
+			}
+
+			const scope = this.requireScope(existing.scopeId);
+			const title = params.title?.trim() || existing.title;
+			const description = params.description?.trim() || existing.description;
+			const reason = params.reason?.trim() || existing.reason;
+			const priority = params.priority ?? existing.priority;
+			if (!title.trim()) throw new Error('title is required');
+			const task = this.deps.taskRepo.createTask({
+				spaceId: scope.spaceId,
+				title,
+				description: buildProposalTaskDescription(description, reason, existing.evidenceEpisodeIds),
+				priority,
+				goalId: scope.spaceGoalId,
+				evolutionScopeId: scope.id,
+			});
+			const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {
+				title,
+				description,
+				reason,
+				priority,
+				status: 'created',
+				createdTaskId: task.id,
+			});
+			if (!proposal) throw new Error(`TaskProposal not found: ${id}`);
+			return { proposal, task, created: true };
 		});
-		const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {
-			title,
-			description,
-			reason,
-			priority,
-			status: 'created',
-			createdTaskId: task.id,
-		});
-		if (!proposal) throw new Error(`TaskProposal not found: ${id}`);
-		return { proposal, task };
+		if (result.created) this.emitTaskCreated(result.task);
+		return { proposal: result.proposal, task: result.task };
 	}
 
 	applyRollupGoalUpdate(params: ApplyRollupGoalUpdateParams): ApplyRollupGoalUpdateResult {
@@ -284,12 +309,20 @@ export class EvolutionEpisodeService {
 		if (episode.status === 'dismissed') throw new Error('Dismissed episode cannot accept rollup');
 		const scope = this.requireScope(episode.scopeId);
 		if (!scope.spaceGoalId) throw new Error('Episode scope is not linked to a recurring goal');
-		const accepted = this.deps.evolutionRepo.updateEpisode(episode.id, { status: 'accepted' });
-		if (!accepted) throw new Error(`EvolutionEpisode not found: ${params.episodeId}`);
+		const existingGoal = this.deps.goalService.getGoal(scope.spaceGoalId);
+		if (
+			!existingGoal ||
+			existingGoal.spaceId !== scope.spaceId ||
+			existingGoal.type !== 'recurring'
+		) {
+			throw new Error('Episode scope is not linked to a recurring goal');
+		}
 		const goal = this.deps.goalService.updateGoal(scope.spaceGoalId, params.goalUpdate, {
 			source: 'rpc',
-			note: `Forge rollup accepted: ${accepted.title}`,
+			note: `Forge rollup accepted: ${episode.title}`,
 		});
+		const accepted = this.deps.evolutionRepo.updateEpisode(episode.id, { status: 'accepted' });
+		if (!accepted) throw new Error(`EvolutionEpisode not found: ${params.episodeId}`);
 		return { episode: accepted, goal };
 	}
 
@@ -332,6 +365,25 @@ export class EvolutionEpisodeService {
 		const scope = this.deps.evolutionRepo.getScope(scopeId);
 		if (!scope) throw new Error(`EvolutionScope not found: ${scopeId}`);
 		return scope;
+	}
+
+	private runAtomic<T>(fn: () => T): T {
+		if (!this.deps.db) return fn();
+		return this.deps.db.transaction(fn)();
+	}
+
+	private emitTaskCreated(task: SpaceTask): void {
+		if (!this.deps.taskCreatedEventHub) return;
+		this.deps.taskCreatedEventHub
+			.publish('space.task.created', {
+				sessionId: 'global',
+				spaceId: task.spaceId,
+				taskId: task.id,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.created:', err);
+			});
 	}
 }
 
