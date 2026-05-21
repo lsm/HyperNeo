@@ -660,6 +660,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 142: Expand Forge evidence kinds and backfill MVP task evidence.
 	runMigration142(db);
+
+	// Migration 143: Expand Forge evidence kinds for trace-derived process evidence.
+	runMigration143(db);
 }
 
 /**
@@ -9487,10 +9490,23 @@ export function runMigration142(db: BunDatabase): void {
 	backfillForgeMvpEvidence(db);
 }
 
+export function runMigration143(db: BunDatabase): void {
+	widenEvolutionEvidenceKinds(db);
+}
+
 function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 	if (!tableExists(db, 'evolution_evidence')) return;
 	const sql = tableCreateSql(db, 'evolution_evidence');
-	if (sql?.includes("'task_result'") && sql.includes("'artifact'") && sql.includes("'error'")) {
+	if (
+		sql?.includes("'task_result'") &&
+		sql.includes("'artifact'") &&
+		sql.includes("'error'") &&
+		sql.includes("'error_cluster'") &&
+		sql.includes("'retry_loop'") &&
+		sql.includes("'tool_failure'") &&
+		sql.includes("'test_failure'") &&
+		sql.includes("'permission_block'")
+	) {
 		return;
 	}
 
@@ -9502,7 +9518,7 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 				id TEXT PRIMARY KEY,
 				scope_id TEXT NOT NULL,
 				kind TEXT NOT NULL
-					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error')),
+					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block')),
 				summary TEXT NOT NULL,
 				source_id TEXT,
 				metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -9537,7 +9553,7 @@ function backfillForgeMvpEvidence(db: BunDatabase): void {
 
 	const scope = db
 		.prepare(
-			`SELECT id FROM evolution_scopes
+			`SELECT id, space_id FROM evolution_scopes
 			 WHERE id = ?
 			    OR (space_goal_id = ? AND name = ?)
 			 ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
@@ -9548,7 +9564,7 @@ function backfillForgeMvpEvidence(db: BunDatabase): void {
 			'10612c8d-e412-4169-8429-b48fa4d3e234',
 			'Build and harden NeoKai Forge',
 			'b2ff245a-98ef-4429-954a-3e7b96366cfa'
-		) as { id: string } | undefined;
+		) as { id: string; space_id: string } | undefined;
 	if (!scope) return;
 
 	const tasks = [425, 426, 427, 428, 429, 430, 431];
@@ -9557,9 +9573,9 @@ function backfillForgeMvpEvidence(db: BunDatabase): void {
 			.prepare(
 				`SELECT id, task_number, title, description, status, priority, workflow_run_id,
 				        reported_status, reported_summary, result, completed_at, updated_at
-				 FROM space_tasks WHERE task_number = ?`
+				 FROM space_tasks WHERE space_id = ? AND task_number = ?`
 			)
-			.get(taskNumber) as ForgeMvpTaskRow | undefined;
+			.get(scope.space_id, taskNumber) as ForgeMvpTaskRow | undefined;
 		if (!task?.workflow_run_id) continue;
 		const run = db
 			.prepare(

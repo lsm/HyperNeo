@@ -349,7 +349,16 @@ export class EvolutionEpisodeService {
 
 	private collectTasks(scope: EvolutionScope, evidence: EvidenceRef[]): EpisodeTaskContext[] {
 		return evidence.flatMap((item) => {
-			if (item.kind !== 'task' && item.kind !== 'task_result') return [];
+			if (
+				item.kind !== 'task' &&
+				item.kind !== 'task_result' &&
+				item.kind !== 'error_cluster' &&
+				item.kind !== 'retry_loop' &&
+				item.kind !== 'tool_failure' &&
+				item.kind !== 'test_failure' &&
+				item.kind !== 'permission_block'
+			)
+				return [];
 			if (!item.sourceId) return [];
 			const task = this.deps.taskRepo.getTask(item.sourceId);
 			if (!task) return [];

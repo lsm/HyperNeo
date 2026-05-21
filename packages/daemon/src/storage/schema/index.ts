@@ -116,6 +116,8 @@ export { runMigration138 } from './migrations';
 export { configureMessageSearchFts, runMigration141 } from './migrations';
 // knip-ignore-next-line
 export { runMigration142 } from './migrations';
+// knip-ignore-next-line
+export { runMigration143 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
