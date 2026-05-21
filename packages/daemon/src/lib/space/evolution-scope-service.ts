@@ -431,8 +431,15 @@ function buildWorkflowRunEvidenceSummary(
 	artifacts: WorkflowRunArtifactRecord[]
 ): string {
 	const labels = summarizeArtifactTypes(artifacts);
-	const detail = findArtifactDetail(artifacts) ?? run.failureReason ?? 'no artifacts captured';
+	const detail =
+		findArtifactDetail(artifacts) ?? activeFailureReason(run) ?? 'no artifacts captured';
 	return `Workflow run ${run.status}: ${run.title} — ${labels.join(', ') || 'no artifact types'} — ${truncateText(detail, 180)}`;
+}
+
+function activeFailureReason(run: SpaceWorkflowRun): string | null {
+	return run.status === 'blocked' || run.status === 'cancelled'
+		? (run.failureReason ?? null)
+		: null;
 }
 
 function summarizeArtifactTypes(artifacts: WorkflowRunArtifactRecord[]): string[] {

@@ -322,6 +322,40 @@ describe('Forge evidence capture on task completion', () => {
 		expect(artifactEvidence?.metadata.failureReason).toBe('agentCrash');
 	});
 
+	it('does not include stale failureReason in recovered run summary without artifacts', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Recovered run without artifacts',
+			objective: 'Avoid stale failure details in success summaries',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Recovered workflow' });
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Recovered run without artifacts',
+		});
+		workflowRunRepo.updateRun(run.id, {
+			status: 'done',
+			failureReason: 'agentCrash',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Capture recovered run without artifacts',
+			description: 'Stale failureReason should stay out of summary',
+			evolutionScopeId: scope.id,
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Recovered without artifacts' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		const runEvidence = result.evidence.find((item) => item.kind === 'workflow_run');
+		expect(runEvidence?.summary).toContain('no artifacts captured');
+		expect(runEvidence?.summary).not.toContain('agentCrash');
+		expect(runEvidence?.metadata.failureReason).toBe('agentCrash');
+	});
+
 	it('updates existing task_result evidence when a task is completed again', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,
