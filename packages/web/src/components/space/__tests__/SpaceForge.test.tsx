@@ -612,6 +612,12 @@ describe('SpaceForge', () => {
 							sourceId: 'run-1',
 							summary: 'Workflow artifact attached',
 						}),
+						makeEvidence({
+							id: 'error-evidence',
+							kind: 'error',
+							sourceId: 'run-1',
+							summary: 'Workflow run error attached',
+						}),
 					],
 					preflightContext: {
 						tasks: [
@@ -629,7 +635,7 @@ describe('SpaceForge', () => {
 						],
 						workflowRuns: [
 							{
-								evidenceId: 'artifact-evidence',
+								evidenceIds: ['artifact-evidence', 'error-evidence'],
 								run: { title: 'Forge validation run', status: 'done' },
 								tasks: [
 									{
@@ -662,7 +668,7 @@ describe('SpaceForge', () => {
 			if (method === 'evolution.episode.createFromEvidence') {
 				expect(data).toEqual({
 					scopeId: 'scope-1',
-					evidenceIds: ['task-evidence', 'artifact-evidence'],
+					evidenceIds: ['task-evidence', 'error-evidence'],
 					confirmLowConfidence: undefined,
 				});
 				return {
@@ -679,7 +685,7 @@ describe('SpaceForge', () => {
 		await screen.findByRole('heading', { name: 'Review quality scope' });
 		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
 		fireEvent.click(await screen.findByLabelText(/Task linked to completed work/));
-		fireEvent.click(screen.getByLabelText(/Workflow artifact attached/));
+		fireEvent.click(screen.getByLabelText(/Workflow run error attached/));
 
 		expect(await screen.findByText('Evidence preflight: high confidence')).toBeTruthy();
 		expect(screen.getByText('Metric snapshot context can calibrate outcomes.')).toBeTruthy();

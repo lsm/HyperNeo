@@ -57,7 +57,6 @@ import type {
 	SpaceTask,
 	SpaceWorkflowRun,
 	UpdateSpaceGoalParams,
-	WorkflowRunArtifact,
 } from './types/space.ts';
 
 // Request types
@@ -659,10 +658,19 @@ export interface EvolutionPreflightTaskContext {
 }
 
 export interface EvolutionPreflightWorkflowRunContext {
-	evidenceId: string;
+	evidenceIds: string[];
 	run: SpaceWorkflowRun;
 	tasks: SpaceTask[];
-	artifacts: WorkflowRunArtifact[];
+	artifacts: Array<{
+		id: string;
+		runId: string;
+		nodeId: string;
+		artifactType: string;
+		artifactKey: string;
+		data: { summary: string };
+		createdAt: number;
+		updatedAt: number;
+	}>;
 }
 
 export interface EvolutionEvidenceListResponse {

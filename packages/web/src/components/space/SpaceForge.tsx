@@ -148,7 +148,7 @@ function buildEvidenceQualityPreflight(
 			.filter((item) => selectedIds.has(item.evidenceId))
 			.map(({ task }) => task),
 		workflowRuns: (preflightContext?.workflowRuns ?? [])
-			.filter((item) => selectedIds.has(item.evidenceId))
+			.filter((item) => item.evidenceIds.some((id) => selectedIds.has(id)))
 			.map(({ run, tasks, artifacts }) => ({
 				run,
 				tasks,

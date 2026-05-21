@@ -10,13 +10,23 @@ import type {
 	UpdateEvolutionScopeParams,
 	EvolutionEvidenceListResponse,
 } from '@neokai/shared';
-import type { WorkflowRunArtifact } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
+
+const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
+const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
+
+function summarizeArtifactData(data: Record<string, unknown>): string {
+	const summary = data.summary ?? data.result ?? data.status ?? data.error ?? data.message ?? data;
+	const text = typeof summary === 'string' ? summary : (JSON.stringify(summary) ?? '');
+	return text.length > MAX_PREFLIGHT_ARTIFACT_TEXT
+		? `${text.slice(0, MAX_PREFLIGHT_ARTIFACT_TEXT)}…`
+		: text;
+}
 
 export interface EvolutionScopeServiceDeps {
 	evolutionRepo: EvolutionRepository;
@@ -262,32 +272,41 @@ export class EvolutionScopeService {
 			if (!task || task.spaceId !== scope.spaceId) return [];
 			return [{ evidenceId: item.id, task }];
 		});
-		const seenRunIds = new Set<string>();
-		const workflowRuns = evidence.flatMap((item) => {
-			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error')
-				return [];
-			if (!item.sourceId) return [];
-			const run = this.deps.workflowRunRepo.getRun(item.sourceId);
-			if (!run || run.spaceId !== scope.spaceId || seenRunIds.has(run.id)) return [];
-			seenRunIds.add(run.id);
-			return [
-				{
-					evidenceId: item.id,
-					run,
-					tasks: this.deps.taskRepo.listByWorkflowRunIncludingArchived(run.id),
-					artifacts: (this.deps.artifactRepo?.listByRun(run.id) ?? []).map((artifact) => ({
-						id: artifact.id,
-						runId: artifact.runId,
-						nodeId: artifact.nodeId,
-						artifactType: artifact.artifactType,
-						artifactKey: artifact.artifactKey,
-						data: artifact.data,
-						createdAt: artifact.createdAt,
-						updatedAt: artifact.updatedAt,
-					})) satisfies WorkflowRunArtifact[],
-				},
-			];
-		});
+		const evidenceIdsByRunId = new Map<string, string[]>();
+		for (const item of evidence) {
+			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error') {
+				continue;
+			}
+			if (!item.sourceId) continue;
+			const current = evidenceIdsByRunId.get(item.sourceId) ?? [];
+			current.push(item.id);
+			evidenceIdsByRunId.set(item.sourceId, current);
+		}
+		const workflowRuns = Array.from(evidenceIdsByRunId.entries()).flatMap(
+			([runId, evidenceIds]) => {
+				const run = this.deps.workflowRunRepo.getRun(runId);
+				if (!run || run.spaceId !== scope.spaceId) return [];
+				return [
+					{
+						evidenceIds,
+						run,
+						tasks: this.deps.taskRepo.listByWorkflowRunIncludingArchived(run.id),
+						artifacts: (this.deps.artifactRepo?.listByRun(run.id) ?? [])
+							.slice(0, MAX_PREFLIGHT_ARTIFACTS_PER_RUN)
+							.map((artifact) => ({
+								id: artifact.id,
+								runId: artifact.runId,
+								nodeId: artifact.nodeId,
+								artifactType: artifact.artifactType,
+								artifactKey: artifact.artifactKey,
+								data: { summary: summarizeArtifactData(artifact.data) },
+								createdAt: artifact.createdAt,
+								updatedAt: artifact.updatedAt,
+							})),
+					},
+				];
+			}
+		);
 		return { tasks, workflowRuns };
 	}
 

@@ -327,6 +327,43 @@ describe('EvolutionEpisodeService', () => {
 			sourceId: run.id,
 			summary: 'Workflow artifact captured QA and merge outcome',
 		});
+		const errorEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'error',
+			sourceId: run.id,
+			summary: 'Workflow run had retryable error',
+		});
+		const scopeService = new EvolutionScopeService({
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+		const listed = scopeService.listEvidence(scope.id);
+		const runContext = listed.preflightContext?.workflowRuns[0];
+		const largePayload = 'x'.repeat(1000);
+		artifactRepo.upsert({
+			id: 'artifact-large',
+			runId: run.id,
+			nodeId: 'logs',
+			artifactType: 'log',
+			artifactKey: 'large',
+			data: { summary: largePayload },
+		});
+		for (let index = 0; index < 8; index++) {
+			artifactRepo.upsert({
+				id: `artifact-extra-${index}`,
+				runId: run.id,
+				nodeId: 'extra',
+				artifactType: 'result',
+				artifactKey: `extra-${index}`,
+				data: { summary: 'later artifact outside preflight window' },
+			});
+		}
+		const listedWithArtifacts = scopeService.listEvidence(scope.id);
+		const cappedRunContext = listedWithArtifacts.preflightContext?.workflowRuns[0];
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
@@ -344,6 +381,11 @@ describe('EvolutionEpisodeService', () => {
 		expect(input.preflight.counts.taskResults).toBe(1);
 		expect(input.preflight.counts.workflowArtifacts).toBe(1);
 		expect(input.preflight.counts.outcomes).toBeGreaterThanOrEqual(3);
+		expect(runContext?.evidenceIds).toContain(artifactEvidence.id);
+		expect(runContext?.evidenceIds).toContain(errorEvidence.id);
+		expect(cappedRunContext?.artifacts).toHaveLength(8);
+		expect(cappedRunContext?.artifacts[0]?.data.summary).toContain('QA passed');
+		expect(cappedRunContext?.artifacts.some((artifact) => 'large' in artifact.data)).toBe(false);
 	});
 
 	it('metric snapshot improves evidence readiness', () => {
