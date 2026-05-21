@@ -423,7 +423,7 @@ ${JSON.stringify(
 		kind: item.kind,
 		summary: item.summary,
 		sourceId: item.sourceId,
-		metadata: item.metadata,
+		metadata: truncate(JSON.stringify(item.metadata), MAX_TEXT),
 		createdAt: item.createdAt,
 	})),
 	null,

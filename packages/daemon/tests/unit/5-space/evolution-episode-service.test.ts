@@ -182,6 +182,49 @@ describe('EvolutionEpisodeService', () => {
 		});
 	});
 
+	it('includes evidence metadata so backfilled task artifacts reach the judge', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Forge dogfood',
+			objective: 'Generate useful episodes from completed task evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Implement Forge storage',
+			description: 'Add storage and shared contracts',
+			evolutionScopeId: scope.id,
+		});
+		const evidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'task',
+			sourceId: task.id,
+			summary: 'Task completed; workflow artifacts contain review and QA results.',
+			metadata: {
+				artifacts: [
+					{
+						type: 'result',
+						summary: 'Requested changes: missing review-path tests',
+						prUrl: 'https://github.com/lsm/neokai/pull/1963',
+					},
+				],
+			},
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const prompt = buildEpisodeJudgePrompt(
+			service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] })
+		);
+
+		expect(prompt).toContain('Requested changes: missing review-path tests');
+		expect(prompt).toContain('https://github.com/lsm/neokai/pull/1963');
+	});
+
 	it('parses fenced judge JSON and clamps confidence', () => {
 		const output = parseEpisodeJudgeJson(`\n\`\`\`json\n{
 			"title": "Review churn reduced",
