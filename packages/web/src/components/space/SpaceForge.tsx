@@ -603,6 +603,11 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 	);
 	const candidateLessons = lessons.filter((lesson) => lesson.status === 'candidate');
 	const proposedTasks = proposals.filter((proposal) => proposal.status === 'proposed');
+	const canApplyRollup =
+		!!goal &&
+		!!latestEpisode &&
+		latestEpisode.status !== 'dismissed' &&
+		latestEpisode.rollupAppliedAt === null;
 
 	const toggleEvidence = (id: string) => {
 		setSelectedEvidenceIds((current) =>
@@ -853,7 +858,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						</div>
 					</section>
 
-					{goal && latestEpisode.status === 'draft' && (
+					{canApplyRollup && (
 						<section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
 							<p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
 							<p class="mt-1 text-xs text-blue-200/70">

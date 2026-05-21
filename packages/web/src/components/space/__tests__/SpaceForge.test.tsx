@@ -150,6 +150,7 @@ function makeEpisode(overrides: Partial<EvolutionEpisode> = {}): EvolutionEpisod
 		id: 'episode-1',
 		scopeId: 'scope-1',
 		status: 'draft',
+		rollupAppliedAt: null,
 		title: 'Review loop episode',
 		timeWindow: { start: now - 1000, end: now },
 		evidenceIds: ['evidence-1'],
@@ -268,7 +269,7 @@ function setupRequests(scope = makeScope()) {
 		}
 		if (method === 'evolution.rollup.apply') {
 			return {
-				episode: makeEpisode({ status: 'accepted' }),
+				episode: makeEpisode({ status: 'accepted', rollupAppliedAt: Date.now() }),
 				goal: makeGoal({ title: 'Improve review loop', summary: 'Rollup summary', progress: 80 }),
 			};
 		}
@@ -393,11 +394,12 @@ describe('SpaceForge', () => {
 		);
 	});
 
-	it('accepts latest episode draft from review UI', async () => {
+	it('accepts latest episode draft from review UI without hiding rollup controls', async () => {
 		render(<SpaceForge spaceId="space-1" />);
 
 		await screen.findByRole('heading', { name: 'Review quality scope' });
 		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		expect(await screen.findByText('Manual rollup writeback')).toBeTruthy();
 		fireEvent.click((await screen.findAllByRole('button', { name: 'Accept' }))[0]);
 
 		await waitFor(() =>
@@ -406,6 +408,77 @@ describe('SpaceForge', () => {
 				params: { status: 'accepted' },
 			})
 		);
+		expect(screen.getByText('Manual rollup writeback')).toBeTruthy();
+	});
+
+	it('shows rollup controls for accepted episodes until rollup is applied', async () => {
+		const acceptedEpisode = makeEpisode({ status: 'accepted' });
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.review.get') {
+				return {
+					episodes: [acceptedEpisode],
+					lessons: [makeLesson()],
+					proposals: [makeProposal()],
+				};
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+
+		expect(await screen.findByText('Manual rollup writeback')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Apply rollup' })).toBeTruthy();
+	});
+
+	it('hides rollup controls for dismissed episodes', async () => {
+		const dismissedEpisode = makeEpisode({ status: 'dismissed' });
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.review.get') {
+				return {
+					episodes: [dismissedEpisode],
+					lessons: [makeLesson()],
+					proposals: [makeProposal()],
+				};
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+
+		await screen.findByText('Reviewer feedback identified recurring friction.');
+		expect(screen.queryByText('Manual rollup writeback')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Apply rollup' })).toBeNull();
+	});
+
+	it('hides rollup controls once rollup is applied', async () => {
+		const appliedEpisode = makeEpisode({ status: 'accepted', rollupAppliedAt: Date.now() });
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.review.get') {
+				return { episodes: [appliedEpisode], lessons: [makeLesson()], proposals: [makeProposal()] };
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+
+		await screen.findByText('Reviewer feedback identified recurring friction.');
+		expect(screen.queryByText('Manual rollup writeback')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Apply rollup' })).toBeNull();
 	});
 
 	it('activates candidate lesson from review UI', async () => {

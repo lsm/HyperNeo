@@ -435,8 +435,11 @@ describe('EvolutionEpisodeService', () => {
 				metrics: { latency: 3 },
 			},
 		});
+		const updated = service.updateEpisode(episode.id, { rollupAppliedAt: null });
 
 		expect(result.episode.status).toBe('accepted');
+		expect(result.episode.rollupAppliedAt).toBeNumber();
+		expect(updated?.rollupAppliedAt).toBe(result.episode.rollupAppliedAt);
 		expect(result.goal).toMatchObject({
 			summary: 'New rollup summary',
 			progress: 75,
@@ -509,11 +512,6 @@ describe('EvolutionEpisodeService', () => {
 			scopeId: oneShotScope.id,
 			title: 'One-shot rollup',
 		});
-		const acceptedEpisode = evolutionRepo.createEpisode({
-			scopeId: linkedScope.id,
-			title: 'Accepted rollup',
-			status: 'accepted',
-		});
 		const dismissedEpisode = evolutionRepo.createEpisode({
 			scopeId: linkedScope.id,
 			title: 'Dismissed rollup',
@@ -532,7 +530,11 @@ describe('EvolutionEpisodeService', () => {
 			artifactRepo,
 			goalService: createGoalService(),
 		});
-		const request = { episodeId: draftEpisode.id, goalUpdate: { summary: 'Rollup' } };
+		const serviceOnlyEpisode = evolutionRepo.createEpisode({
+			scopeId: linkedScope.id,
+			title: 'Service-only rollup',
+		});
+		const request = { episodeId: serviceOnlyEpisode.id, goalUpdate: { summary: 'Rollup' } };
 		const failingGoalService = {
 			getGoal: (goalId: string) => goalRepo.getById(goalId),
 			updateGoal: () => {
@@ -546,9 +548,21 @@ describe('EvolutionEpisodeService', () => {
 			artifactRepo,
 			goalService: failingGoalService,
 		});
+		const applied = service.applyRollupGoalUpdate({
+			episodeId: draftEpisode.id,
+			goalUpdate: { summary: 'Applied once' },
+		});
 
+		expect(applied.episode.status).toBe('accepted');
+		expect(applied.episode.rollupAppliedAt).toBeNumber();
+		expect(() =>
+			service.applyRollupGoalUpdate({
+				episodeId: draftEpisode.id,
+				goalUpdate: { summary: 'Rollup' },
+			})
+		).toThrow('Episode rollup already applied');
 		expect(() => failingService.applyRollupGoalUpdate(request)).toThrow('goal update failed');
-		expect(evolutionRepo.getEpisode(draftEpisode.id)?.status).toBe('draft');
+		expect(evolutionRepo.getEpisode(serviceOnlyEpisode.id)?.status).toBe('draft');
 		expect(() => serviceWithoutGoalService.applyRollupGoalUpdate(request)).toThrow(
 			'SpaceGoalService is required'
 		);
@@ -566,18 +580,11 @@ describe('EvolutionEpisodeService', () => {
 		).toThrow('Episode scope is not linked to a recurring goal');
 		expect(() =>
 			service.applyRollupGoalUpdate({
-				episodeId: acceptedEpisode.id,
-				goalUpdate: { summary: 'Rollup' },
-			})
-		).toThrow('Episode already accepted');
-		expect(() =>
-			service.applyRollupGoalUpdate({
 				episodeId: dismissedEpisode.id,
 				goalUpdate: { summary: 'Rollup' },
 			})
 		).toThrow('Dismissed episode cannot accept rollup');
 	});
-
 	it('dogfoods the Forge MVP loop from recurring goal to next scoped task', async () => {
 		const goal = goalRepo.create({
 			spaceId,
@@ -730,6 +737,7 @@ describe('EvolutionEpisodeService', () => {
 			},
 		]);
 		expect(rollup.episode.status).toBe('accepted');
+		expect(rollup.episode.rollupAppliedAt).toBeNumber();
 		expect(rollup.goal).toMatchObject({
 			summary: 'Forge MVP dogfood loop completed once.',
 			progress: 80,
