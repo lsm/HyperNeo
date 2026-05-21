@@ -37,15 +37,28 @@ function dedupeModelsByProviderAndId(models: ModelInfo[]): ModelInfo[] {
 }
 
 function encodeModelValue(model: ModelInfo): string {
-	return `${model.provider}:${model.id}`;
+	return encodeURIComponent(JSON.stringify([model.provider, model.id]));
 }
 
 function decodeModelValue(value: string, models: ModelInfo[]): WorkflowModelSelection {
 	const match = models.find((model) => encodeModelValue(model) === value);
 	if (match) return { provider: match.provider, modelId: match.id };
-	const separator = value.lastIndexOf(':');
-	if (separator === -1) return { provider: '', modelId: value };
-	return { provider: value.slice(0, separator), modelId: value.slice(separator + 1) };
+	try {
+		const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
+		if (
+			Array.isArray(parsed) &&
+			parsed.length === 2 &&
+			typeof parsed[0] === 'string' &&
+			typeof parsed[1] === 'string'
+		) {
+			return { provider: parsed[0], modelId: parsed[1] };
+		}
+	} catch {
+		// Fall through to legacy provider:model parsing.
+	}
+	const legacySeparator = value.lastIndexOf(':');
+	if (legacySeparator === -1) return { provider: '', modelId: value };
+	return { provider: value.slice(0, legacySeparator), modelId: value.slice(legacySeparator + 1) };
 }
 
 export function WorkflowModelSelect({
@@ -57,6 +70,11 @@ export function WorkflowModelSelect({
 }: WorkflowModelSelectProps) {
 	const [models, setModels] = useState<ModelInfo[]>([]);
 	const [loadState, setLoadState] = useState<LoadState>('loading');
+	const [selectedProvider, setSelectedProvider] = useState<string | undefined>(provider);
+
+	useEffect(() => {
+		if (provider) setSelectedProvider(provider);
+	}, [provider]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -88,7 +106,8 @@ export function WorkflowModelSelect({
 
 	const selectedValue = (() => {
 		if (!value) return '';
-		if (provider) return `${provider}:${value}`;
+		if (selectedProvider)
+			return encodeModelValue({ provider: selectedProvider, id: value } as ModelInfo);
 		const match = models.find((model) => model.id === value);
 		return match ? encodeModelValue(match) : value;
 	})();
@@ -122,10 +141,12 @@ export function WorkflowModelSelect({
 			onChange={(e) => {
 				const nextValue = (e.currentTarget as HTMLSelectElement).value;
 				if (!nextValue) {
+					setSelectedProvider(undefined);
 					onChange(undefined);
 					return;
 				}
 				const selection = decodeModelValue(nextValue, models);
+				setSelectedProvider(selection.provider);
 				onChange(selection.modelId, selection);
 			}}
 			class={className}

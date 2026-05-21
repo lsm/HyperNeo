@@ -40,7 +40,13 @@ const mockModelsResponse = {
 			provider: 'openai',
 		},
 		{
-			id: 'model:with:colon',
+			id: 'gpt-5.4',
+			display_name: 'GPT-5.4 via Custom',
+			description: '',
+			provider: 'custom:endpoint-2',
+		},
+		{
+			id: 'custom/model:with:colon',
 			display_name: 'Colon Model',
 			description: '',
 			provider: 'custom:endpoint-1',
@@ -179,7 +185,7 @@ describe('NodeConfigPanel', () => {
 			);
 			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
 			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
-			expect(input.value).toBe('openai:gpt-5.4');
+			expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
 		});
 
 		it('preserves provider-qualified selections containing colons', async () => {
@@ -187,10 +193,24 @@ describe('NodeConfigPanel', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
 			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
 			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
-			fireEvent.change(input, {
-				target: { value: 'custom:endpoint-1:model:with:colon' },
-			});
-			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'model:with:colon' }));
+			input.value = '%5B%22custom%3Aendpoint-1%22%2C%22custom%2Fmodel%3Awith%3Acolon%22%5D';
+			fireEvent.change(input);
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({ model: 'custom/model:with:colon' })
+			);
+		});
+
+		it('keeps selected provider for duplicate model IDs without provider prop', async () => {
+			function Wrapper() {
+				const [step, setStep] = useState(makeStep());
+				return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+			}
+			const { getByTestId } = render(<Wrapper />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
+			fireEvent.change(input);
+			expect(input.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
 		});
 
 		it('renders close button', () => {
@@ -332,9 +352,9 @@ describe('NodeConfigPanel', () => {
 					(getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
 				).toBeGreaterThan(1)
 			);
-			fireEvent.change(getByTestId('single-agent-model-input'), {
-				target: { value: 'openai:gpt-5.4' },
-			});
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			input.value = '%5B%22openai%22%2C%22gpt-5.4%22%5D';
+			fireEvent.change(input);
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4' }));
 		});
 
