@@ -18,6 +18,10 @@ import type {
 } from '@neokai/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import { Logger } from '../../logger';
+import type { EvolutionScopeService } from '../evolution-scope-service';
+
+const log = new Logger('space-task-manager');
 
 /**
  * Valid task status transitions for space tasks
@@ -66,7 +70,8 @@ export class SpaceTaskManager {
 	constructor(
 		private db: BunDatabase,
 		private spaceId: string,
-		private reactiveDb?: ReactiveDatabase
+		private reactiveDb?: ReactiveDatabase,
+		private evolutionScopeService?: EvolutionScopeService
 	) {
 		this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
 	}
@@ -285,6 +290,13 @@ export class SpaceTaskManager {
 		// change making blocked→open invalid) does not abort the parent
 		// `done` transition — the parent write is already committed.
 		if (newStatus === 'done') {
+			try {
+				this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
+			} catch (err) {
+				log.warn(
+					`Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
 			try {
 				const unblocked = await this.unblockDependentTasks(taskId);
 				if (unblocked.length > 0 && options?.onCascadedTasks) {

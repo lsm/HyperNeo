@@ -135,6 +135,11 @@ export interface PostApprovalRouterDeps {
 	livenessProbe?: SessionLivenessProbe;
 	/** Optional goal service for processing terminal goal-task side effects. */
 	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+	/** Optional Forge scope service for automatic terminal task evidence capture. */
+	evolutionScopeService?: Pick<
+		import('../evolution-scope-service').EvolutionScopeService,
+		'captureCompletedTaskEvidence'
+	>;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +270,14 @@ export class PostApprovalRouter {
 				postApprovalBlockedReason: null,
 			};
 			this.deps.taskRepo.updateTask(task.id, updates);
+			// Best-effort Forge evidence capture — must not block approval routing.
+			try {
+				this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
+			} catch (err) {
+				log.warn(
+					`Forge evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
 			// Best-effort goal terminal handling — must not block approval routing.
 			try {
 				this.deps.goalService?.handleTaskTerminal(task.id);
