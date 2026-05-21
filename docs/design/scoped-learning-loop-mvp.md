@@ -875,16 +875,39 @@ Campaigns and missions become self-improving loops.
 Use the MVP on its own implementation.
 
 ```text
-Scope: Build NeoKai self-evolve system MVP
-Objective: ship usable scoped learning loop inside NeoKai
+Scope: Build NeoKai Forge MVP
+Objective: verify a usable end-to-end scoped learning loop inside NeoKai
 Metrics:
-- completed MVP milestones
-- accepted lessons reused
-- repeated failure count
+- completed tasks
+- accepted lessons
+- reused lessons
+- repeated failures
 - time from task completion to next task creation
 ```
 
 This validates the loop in a controlled NeoKai-on-NeoKai setting.
+
+### MVP operation notes
+
+Run the first dogfood loop manually:
+
+1. Create recurring SpaceGoal `Build NeoKai Forge MVP`.
+2. Create a Forge scope linked to that goal with the five metrics above.
+3. Attach a completed goal-linked SpaceTask as task evidence.
+4. Add a metric snapshot for the same scope.
+5. Generate an episode draft from selected evidence.
+6. Accept one candidate lesson.
+7. Convert one proposal into a goal-linked SpaceTask.
+8. Confirm the next scoped task message includes `## Relevant Scope Lessons`.
+9. Apply manual rollup to update goal summary, progress, next steps, and metrics.
+
+Current MVP limitations:
+
+- Episode judging drafts only; users still accept lessons, proposals, and rollups manually.
+- Lesson reuse is prompt injection for scoped tasks, capped at three active lessons.
+- Metrics are manual snapshots; no automatic metric integrations yet.
+- Proposal conversion creates SpaceTasks but does not auto-start or auto-merge work.
+- Local research artifacts stay outside git; `research-papers/` is ignored.
 
 ## Second dogfood target
 
