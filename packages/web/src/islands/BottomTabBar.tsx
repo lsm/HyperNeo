@@ -13,6 +13,8 @@ import {
 	navigateToSettings,
 	navigateToSpaces,
 	navigateToSpace,
+	navigateToSpaceGoals,
+	navigateToSpaceForge,
 	navigateToSpaceTasks,
 	navigateToSpaceSessions,
 	navigateToSpaceAgent,
@@ -23,6 +25,8 @@ interface TabItem {
 	id:
 		| NavSection
 		| 'space-overview'
+		| 'space-goals'
+		| 'space-forge'
 		| 'space-tasks'
 		| 'space-sessions'
 		| 'space-agent'
@@ -81,6 +85,28 @@ const SpaceOverviewIcon = () => (
 	</svg>
 );
 
+const SpaceGoalsIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M9 12l2 2 4-4M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z"
+		/>
+	</svg>
+);
+
+const SpaceForgeIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M12 6V4m0 16v-2m6-6h2M4 12h2m10.243-4.243l1.414-1.414M6.343 17.657l1.414-1.414m0-8.486L6.343 6.343m11.314 11.314l-1.414-1.414M9 12a3 3 0 106 0 3 3 0 00-6 0z"
+		/>
+	</svg>
+);
+
 const SpaceTasksIcon = () => (
 	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 		<path
@@ -132,7 +158,9 @@ const SpaceSettingsIcon = () => (
 );
 
 const SPACE_BOTTOM_TABS: TabItem[] = [
-	{ id: 'space-overview', label: 'Overview', icon: SpaceOverviewIcon },
+	{ id: 'space-overview', label: 'Home', icon: SpaceOverviewIcon },
+	{ id: 'space-goals', label: 'Goals', icon: SpaceGoalsIcon },
+	{ id: 'space-forge', label: 'Forge', icon: SpaceForgeIcon },
 	{ id: 'space-tasks', label: 'Tasks', icon: SpaceTasksIcon },
 	{ id: 'space-sessions', label: 'Sessions', icon: SpaceSessionsIcon },
 	{ id: 'space-agent', label: 'Agent', icon: SpaceChatIcon },
@@ -194,6 +222,12 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 			case 'space-overview':
 				if (spaceId) navigateToSpace(spaceId);
 				break;
+			case 'space-goals':
+				if (spaceId) navigateToSpaceGoals(spaceId);
+				break;
+			case 'space-forge':
+				if (spaceId) navigateToSpaceForge(spaceId);
+				break;
 			case 'space-tasks':
 				if (spaceId) navigateToSpaceTasks(spaceId);
 				break;
@@ -213,6 +247,8 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 		if (isInSpaceContext) {
 			if (id === 'space-settings') return spaceViewMode === 'configure';
 			if (id === 'space-sessions') return spaceViewMode === 'sessions';
+			if (id === 'space-goals') return spaceViewMode === 'goals';
+			if (id === 'space-forge') return spaceViewMode === 'forge';
 			if (id === 'space-agent') return spaceSessionId === `space:chat:${spaceId}`;
 			if (id === 'space-tasks') return spaceViewMode === 'tasks' && spaceTaskId === null;
 			if (id === 'space-overview')
@@ -237,7 +273,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 			aria-label={isInSpaceContext ? 'Space navigation' : 'Main navigation'}
 		>
 			<div
-				class="flex w-full border-t border-dark-700 transition-opacity duration-200 ease-out"
+				class="flex w-full overflow-x-auto border-t border-dark-700 transition-opacity duration-200 ease-out"
 				style={{ height: BOTTOM_BAR_HEIGHT + 'px' }}
 				key={isInSpaceContext ? 'space' : 'global'}
 			>
@@ -252,7 +288,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 							aria-selected={isActive}
 							aria-label={tab.label}
 							onClick={() => handleTabClick(tab.id)}
-							class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
+							class={`flex min-w-[68px] flex-1 flex-col items-center justify-center gap-0.5 py-2 transition-colors duration-150 ${
 								isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
 							}`}
 						>

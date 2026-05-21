@@ -181,6 +181,23 @@ describe('SpaceGoals', () => {
 
 	afterEach(() => cleanup());
 
+	it('uses mobile drill-in classes and back navigation for goal details', async () => {
+		mockGoals.value = [makeGoal()];
+
+		const { container } = render(<SpaceGoals spaceId="space-1" />);
+
+		const listPane = container.querySelector('.lg\\:w-\\[420px\\]');
+		expect(listPane?.className).toContain('flex');
+		expect(listPane?.className).toContain('lg:flex');
+
+		fireEvent.click(await screen.findByRole('button', { name: /Keep release healthy/ }));
+		expect(listPane?.className).toContain('hidden');
+		expect(await screen.findByRole('button', { name: 'Goals' })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Goals' }));
+		expect(listPane?.className).toContain('flex');
+	});
+
 	it('renders goal cards, detail state, linked tasks, and recent events', async () => {
 		const goal = makeGoal();
 		mockGoals.value = [goal];

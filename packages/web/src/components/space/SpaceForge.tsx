@@ -1454,10 +1454,12 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
 function ScopeDetail({
 	scope,
 	goals,
+	onBack,
 	onScopeUpdated,
 }: {
 	scope: EvolutionScope;
 	goals: SpaceGoal[];
+	onBack?: () => void;
 	onScopeUpdated: (scope: EvolutionScope) => void;
 }) {
 	const { request } = useMessageHub();
@@ -1520,7 +1522,17 @@ function ScopeDetail({
 
 	return (
 		<div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-			<div class="border-b border-white/10 p-5">
+			<div class="border-b border-white/10 p-4 sm:p-5">
+				{onBack && (
+					<button
+						type="button"
+						onClick={onBack}
+						class="mb-3 inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-gray-300 hover:bg-white/5 lg:hidden"
+					>
+						<span aria-hidden="true">←</span>
+						Scopes
+					</button>
+				)}
 				<div class="mb-2 flex flex-wrap items-center gap-2">
 					<span class="rounded-full bg-cyan-500/10 px-2 py-1 text-xs text-cyan-300">
 						{formatKind(scope.kind)}
@@ -1534,13 +1546,13 @@ function ScopeDetail({
 				<h2 class="text-lg font-semibold text-gray-100">{scope.name}</h2>
 				<p class="mt-1 text-sm text-gray-400">{scope.objective}</p>
 			</div>
-			<div class="flex gap-2 border-b border-white/10 px-5 py-3">
+			<div class="flex gap-2 overflow-x-auto border-b border-white/10 px-4 py-3 sm:px-5">
 				{(['overview', 'evidence', 'metrics', 'lessons', 'episodes'] as const).map((item) => (
 					<button
 						key={item}
 						type="button"
 						onClick={() => setTab(item)}
-						class={`rounded-lg px-3 py-1.5 text-sm capitalize transition-colors ${tab === item ? 'bg-white/10 text-gray-100' : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'}`}
+						class={`shrink-0 rounded-lg px-3 py-1.5 text-sm capitalize transition-colors ${tab === item ? 'bg-white/10 text-gray-100' : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'}`}
 					>
 						{item}
 					</button>
@@ -1608,6 +1620,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	const { request } = useMessageHub();
 	const [scopes, setScopes] = useState<EvolutionScope[]>([]);
 	const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
+	const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -1645,6 +1658,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 			}
 			setScopes(nextScopes);
 			setSelectedScopeId(nextScopes[0]?.id ?? null);
+			setMobileDetailOpen(false);
 		} catch (err) {
 			if (requestVersion.current === version) {
 				setError(err instanceof Error ? err.message : 'Failed to load scopes');
@@ -1669,11 +1683,13 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 		localMutationVersion.current += 1;
 		setScopes((current) => [scope, ...current]);
 		setSelectedScopeId(scope.id);
+		setMobileDetailOpen(true);
 	};
 
 	const handleScopeSelected = (scopeId: string) => {
 		localMutationVersion.current += 1;
 		setSelectedScopeId(scopeId);
+		setMobileDetailOpen(true);
 	};
 
 	const handleScopeUpdated = (scope: EvolutionScope) => {
@@ -1682,8 +1698,10 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	};
 
 	return (
-		<div class="flex h-full min-h-0 overflow-hidden">
-			<aside class="flex w-80 flex-shrink-0 flex-col border-r border-white/10 bg-app-sidebar/40">
+		<div class="flex h-full min-h-0 flex-col overflow-hidden lg:flex-row">
+			<aside
+				class={`min-h-0 w-full flex-shrink-0 flex-col border-b border-white/10 bg-app-sidebar/40 lg:flex lg:w-80 lg:border-r lg:border-b-0 ${mobileDetailOpen ? 'hidden' : 'flex'}`}
+			>
 				<div class="border-b border-white/10 p-4">
 					<div class="mb-3 flex items-center justify-between gap-3">
 						<div>
@@ -1741,7 +1759,14 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 			</aside>
 
 			{selectedScope ? (
-				<ScopeDetail scope={selectedScope} goals={goals} onScopeUpdated={handleScopeUpdated} />
+				<div class={`min-h-0 min-w-0 flex-1 lg:flex ${mobileDetailOpen ? 'flex' : 'hidden'}`}>
+					<ScopeDetail
+						scope={selectedScope}
+						goals={goals}
+						onBack={() => setMobileDetailOpen(false)}
+						onScopeUpdated={handleScopeUpdated}
+					/>
+				</div>
 			) : (
 				<div class="flex flex-1 items-center justify-center p-8 text-center">
 					<div>

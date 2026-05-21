@@ -132,6 +132,7 @@ function GoalDetail({
 	goal,
 	tasks,
 	events,
+	onBack,
 	onEdit,
 	onRunAction,
 	actionLoading,
@@ -140,6 +141,7 @@ function GoalDetail({
 	goal: SpaceGoal;
 	tasks: SpaceTask[];
 	events: SpaceGoalEvent[];
+	onBack?: () => void;
 	onEdit: () => void;
 	onRunAction: (action: 'pause' | 'resume' | 'archive' | 'trigger') => void;
 	actionLoading: boolean;
@@ -156,8 +158,18 @@ function GoalDetail({
 
 	return (
 		<div class="flex h-full flex-col overflow-hidden">
-			<div class="border-b border-dark-700 p-5">
-				<div class="flex items-start justify-between gap-3">
+			<div class="border-b border-dark-700 p-4 sm:p-5">
+				{onBack && (
+					<button
+						type="button"
+						onClick={onBack}
+						class="mb-3 inline-flex items-center gap-2 rounded-lg border border-dark-600 px-3 py-1.5 text-xs font-medium text-gray-300 hover:bg-dark-800 lg:hidden"
+					>
+						<span aria-hidden="true">←</span>
+						Goals
+					</button>
+				)}
+				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 					<div class="min-w-0">
 						<div class="mb-2 flex flex-wrap items-center gap-2">
 							<GoalStatusBadge status={goal.status} />
@@ -174,13 +186,13 @@ function GoalDetail({
 					<button
 						type="button"
 						onClick={onEdit}
-						class="rounded-lg border border-dark-600 px-3 py-1.5 text-xs font-medium text-gray-300 hover:bg-dark-800"
+						class="w-full rounded-lg border border-dark-600 px-3 py-1.5 text-xs font-medium text-gray-300 hover:bg-dark-800 sm:w-auto"
 					>
 						Edit
 					</button>
 				</div>
 
-				<div class="mt-4 flex flex-wrap gap-2">
+				<div class="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
 					{goal.status === 'active' && (
 						<button
 							type="button"
@@ -348,6 +360,7 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 	const goals = spaceStore.goals.value;
 	const tasks = spaceStore.tasks.value;
 	const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+	const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 	const [showArchived, setShowArchived] = useState(false);
 	const [editingGoal, setEditingGoal] = useState<SpaceGoal | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -415,7 +428,9 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 
 	return (
 		<div class="flex h-full min-h-0 flex-col overflow-hidden lg:flex-row">
-			<div class="flex min-h-0 w-full flex-col border-b border-dark-700 lg:w-[420px] lg:border-r lg:border-b-0">
+			<div
+				class={`min-h-0 w-full flex-col border-b border-dark-700 lg:flex lg:w-[420px] lg:border-r lg:border-b-0 ${mobileDetailOpen ? 'hidden' : 'flex'}`}
+			>
 				<div class="flex items-center justify-between gap-3 border-b border-dark-700 p-4">
 					<div>
 						<h2 class="text-sm font-semibold text-gray-100">Goals</h2>
@@ -456,18 +471,24 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 							goal={goal}
 							selected={selectedGoal?.id === goal.id}
 							lastTask={goalTask(tasks, goal.lastTaskId)}
-							onSelect={() => setSelectedGoalId(goal.id)}
+							onSelect={() => {
+								setSelectedGoalId(goal.id);
+								setMobileDetailOpen(true);
+							}}
 						/>
 					))}
 				</div>
 			</div>
 
-			<div class="min-h-[420px] min-w-0 flex-1 border-t border-dark-700 lg:min-h-0 lg:border-t-0">
+			<div
+				class={`min-w-0 flex-1 border-t border-dark-700 lg:block lg:min-h-0 lg:border-t-0 ${mobileDetailOpen ? 'block min-h-0' : 'hidden min-h-[420px]'}`}
+			>
 				{selectedGoal ? (
 					<GoalDetail
 						goal={selectedGoal}
 						tasks={tasks}
 						events={selectedEvents}
+						onBack={() => setMobileDetailOpen(false)}
 						onEdit={() => setEditingGoal(selectedGoal)}
 						onRunAction={(action) => void runAction(action)}
 						actionLoading={actionLoading}
@@ -483,13 +504,19 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 			<SpaceGoalDialog
 				isOpen={createOpen}
 				onClose={() => setCreateOpen(false)}
-				onSaved={(goal) => setSelectedGoalId(goal.id)}
+				onSaved={(goal) => {
+					setSelectedGoalId(goal.id);
+					setMobileDetailOpen(true);
+				}}
 			/>
 			<SpaceGoalDialog
 				isOpen={Boolean(editingGoal)}
 				goal={editingGoal}
 				onClose={() => setEditingGoal(null)}
-				onSaved={(goal) => setSelectedGoalId(goal.id)}
+				onSaved={(goal) => {
+					setSelectedGoalId(goal.id);
+					setMobileDetailOpen(true);
+				}}
 			/>
 		</div>
 	);

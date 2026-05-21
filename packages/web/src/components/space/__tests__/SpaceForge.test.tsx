@@ -329,6 +329,25 @@ describe('SpaceForge', () => {
 		vi.clearAllMocks();
 	});
 
+	it('uses mobile drill-in classes and back navigation for scope details', async () => {
+		const { container } = render(<SpaceForge spaceId="space-1" />);
+
+		const scopeButton = await screen.findByRole('button', { name: /Review quality scope/ });
+		const sidebar = container.querySelector('aside');
+		expect(sidebar?.className).toContain('lg:flex');
+		expect(sidebar?.className).toContain('lg:w-80');
+
+		fireEvent.click(scopeButton);
+		expect(sidebar?.className).toContain('hidden');
+		expect(await screen.findByRole('button', { name: 'Scopes' })).toBeTruthy();
+
+		const tabs = screen.getByRole('button', { name: 'overview' }).parentElement;
+		expect(tabs?.className).toContain('overflow-x-auto');
+
+		fireEvent.click(screen.getByRole('button', { name: 'Scopes' }));
+		expect(sidebar?.className).toContain('flex');
+	});
+
 	it('renders scope list, detail, linked goal, and metric definitions', async () => {
 		render(<SpaceForge spaceId="space-1" />);
 
