@@ -26,6 +26,7 @@ import {
 	validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
+import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
 	CODING_WORKFLOW,
@@ -458,7 +459,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('.mergeStateStatus');
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
-		expect(gate.script!.source).toContain('"BLOCKED"');
+		expect(gate.script!.source).not.toContain('"BLOCKED"');
 		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
@@ -732,7 +733,7 @@ describe('CODING_WORKFLOW template', () => {
 					'#!/usr/bin/env bash',
 					`printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
 					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
-					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'`,
 					'  exit 0',
 					'fi',
 					'if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
@@ -1884,7 +1885,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const after = manager.getWorkflow(workflow.id)!;
 		const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
 		const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(approvedField.writers).toEqual(['Review']);
 		expect(approvedField.check).toEqual({ op: '==', value: true });
 	});
 
@@ -1943,6 +1944,19 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(afterRows).toEqual(savedRows);
 		expect(after.layout).toEqual(layout);
 		expect(afterCodingAgent.toolGuards).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.toolGuards);
+	});
+
+	test('seeds Coding with QA layout for actual generated node IDs', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflow = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+		const nodeIds = new Set(workflow.nodes.map((n) => n.id));
+		expect(workflow.layout).toBeDefined();
+		expect(Object.keys(workflow.layout!)).toHaveLength(workflow.nodes.length);
+		for (const layoutNodeId of Object.keys(workflow.layout!)) {
+			expect(nodeIds.has(layoutNodeId)).toBe(true);
+		}
 	});
 
 	test('is idempotent — leaves user-created workflows untouched', async () => {
@@ -2998,8 +3012,69 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		const approvalField = gate.fields!.find((f) => f.name === 'approved')!;
 
 		expect(approvalField.type).toBe('boolean');
-		expect(approvalField.writers).toEqual(['reviewer']);
+		expect(approvalField.writers).toEqual(['Review']);
 		expect(approvalField.check).toEqual({ op: '==', value: true });
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW code-pr-gate lets only Coding publish PR URL', () => {
+		const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
+		const prField = gate.fields!.find((f) => f.name === 'pr_url')!;
+
+		expect(prField.type).toBe('string');
+		expect(prField.writers).toEqual(['Coding']);
+		expect(prField.check).toEqual({ op: 'exists' });
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW has layout entries for actual template node IDs', () => {
+		const nodeIds = new Set(FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) => n.id));
+		expect(FULLSTACK_QA_LOOP_WORKFLOW.layout).toBeDefined();
+		expect(Object.keys(FULLSTACK_QA_LOOP_WORKFLOW.layout!)).toEqual(
+			FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) => n.id)
+		);
+		for (const layoutNodeId of Object.keys(FULLSTACK_QA_LOOP_WORKFLOW.layout!)) {
+			expect(nodeIds.has(layoutNodeId)).toBe(true);
+		}
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW PR gate blocks BLOCKED mergeStateStatus', async () => {
+		const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
+		const workspace = mkdtempSync(join(tmpdir(), 'neokai-fullstack-pr-ready-blocked-'));
+		const binDir = join(workspace, 'bin');
+		const ghPath = join(binDir, 'gh');
+		const prUrl = 'https://github.com/test/repo/pull/42';
+
+		try {
+			mkdirSync(binDir);
+			writeFileSync(
+				ghPath,
+				[
+					'#!/usr/bin/env bash',
+					`if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = ${JSON.stringify(prUrl)} ]; then`,
+					`  printf '%s\\n' '{"url":"${prUrl}","state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED"}'`,
+					'  exit 0',
+					'fi',
+					'printf "unexpected gh args: %s\\n" "$*" >&2',
+					'exit 2',
+				].join('\n')
+			);
+			chmodSync(ghPath, 0o755);
+
+			const result = await executeGateScript(
+				gate.script!,
+				{
+					workspacePath: workspace,
+					gateId: 'code-pr-gate',
+					runId: 'run-1',
+					gateData: { pr_url: prUrl },
+				},
+				{ PATH: `${binDir}:${process.env.PATH ?? ''}` }
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('mergeStateStatus: BLOCKED');
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
 	});
 
 	test('FULLSTACK_QA_LOOP_WORKFLOW Review node forbids gate-write while findings are open', () => {
@@ -3023,6 +3098,24 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 		// must call out the parallel so a future split (where the tools become
 		// available) does not accidentally remove the gating.
 		expect(prompt).toMatch(/same approval semantic/i);
+	});
+
+	test('post-approval merge instructions are safe for isolated worktrees', () => {
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('git fetch origin dev');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).toContain('do NOT `git checkout dev`');
+		expect(PR_MERGE_POST_APPROVAL_INSTRUCTIONS).not.toContain('git checkout dev && git pull');
+	});
+
+	test('FULLSTACK_QA_LOOP_WORKFLOW QA node requires browser validation artifact for UI changes', () => {
+		const qaNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+		const prompt = qaNode.agents[0].customPrompt!.value;
+
+		expect(prompt).toContain('UI/browser validation contract');
+		expect(prompt).toContain('ui_changed');
+		expect(prompt).toContain('dev_server_started');
+		expect(prompt).toContain('browser_validation');
+		expect(prompt).toContain('make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db');
+		expect(prompt).toContain('golden path, relevant edge cases, and nearby-regression checks');
 	});
 
 	test('FULLSTACK_QA_LOOP_WORKFLOW QA node prompt contains Terminal Action Pre-conditions block', () => {
