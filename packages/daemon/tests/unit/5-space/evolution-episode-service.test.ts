@@ -7,6 +7,7 @@ import {
 	resolveEpisodeJudgeModel,
 } from '../../../src/lib/space/evolution-episode-service';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import { clearModelsCache, setModelsCache } from '../../../src/lib/model-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
@@ -51,7 +52,189 @@ describe('EvolutionEpisodeService', () => {
 	});
 
 	afterEach(() => {
+		clearModelsCache('global');
 		db.close();
+	});
+
+	it('resolves episode judge model from scope policy before Space default', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Judge scope',
+			objective: 'Select judge model',
+			policy: { episodeJudgeModel: 'claude-opus-4-5', maxActiveLessons: 5 },
+		});
+		const input = {
+			scope,
+			evidence: [],
+			metricSnapshots: [],
+			tasks: [],
+			workflowRuns: [],
+			timeWindow: null,
+		};
+
+		await expect(
+			resolveEpisodeJudgeModel(input, {
+				getSpace: () => ({ defaultModel: 'claude-sonnet-4-5' }) as never,
+			})
+		).resolves.toEqual({ provider: 'anthropic', modelId: 'claude-opus-4-5' });
+
+		const cleared = evolutionRepo.updateScope(scope.id, {
+			policy: { maxActiveLessons: 5 },
+		});
+
+		expect(cleared?.policy).toEqual({ maxActiveLessons: 5 });
+		await expect(
+			resolveEpisodeJudgeModel(
+				{ ...input, scope: cleared as NonNullable<typeof cleared> },
+				{ getSpace: () => ({ defaultModel: 'claude-sonnet-4-5' }) as never }
+			)
+		).resolves.toEqual({ provider: 'anthropic', modelId: 'claude-sonnet-4-5' });
+	});
+
+	it('resolves episode judge model provider from cached model catalog', async () => {
+		setModelsCache(
+			new Map([
+				[
+					'global',
+					[
+						{
+							id: 'shared-model',
+							name: 'Shared model',
+							alias: 'shared',
+							family: 'sonnet',
+							provider: 'openrouter',
+							contextWindow: 200000,
+							description: 'Shared model ID with provider context',
+							releaseDate: '2026-01-01',
+							available: true,
+						},
+					],
+				],
+			])
+		);
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Judge scope',
+			objective: 'Select judge model',
+			policy: { episodeJudgeModel: 'shared' },
+		});
+
+		await expect(
+			resolveEpisodeJudgeModel({
+				scope,
+				evidence: [],
+				metricSnapshots: [],
+				tasks: [],
+				workflowRuns: [],
+				timeWindow: null,
+			})
+		).resolves.toEqual({ provider: 'openrouter', modelId: 'shared-model' });
+	});
+
+	it('resolves exact cached model IDs before alias fallback', async () => {
+		setModelsCache(
+			new Map([
+				[
+					'global',
+					[
+						{
+							id: 'sonnet',
+							name: 'Claude Sonnet',
+							alias: 'default',
+							family: 'sonnet',
+							provider: 'anthropic',
+							contextWindow: 200000,
+							description: 'Fallback sonnet',
+							releaseDate: '2026-01-01',
+							available: true,
+						},
+						{
+							id: 'default',
+							name: 'Custom default',
+							alias: 'custom-default',
+							family: 'sonnet',
+							provider: 'openrouter',
+							contextWindow: 200000,
+							description: 'Custom endpoint default model',
+							releaseDate: '2026-01-01',
+							available: true,
+						},
+					],
+				],
+			])
+		);
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Judge scope',
+			objective: 'Select judge model',
+			policy: { episodeJudgeModel: 'default' },
+		});
+
+		await expect(
+			resolveEpisodeJudgeModel({
+				scope,
+				evidence: [],
+				metricSnapshots: [],
+				tasks: [],
+				workflowRuns: [],
+				timeWindow: null,
+			})
+		).resolves.toEqual({ provider: 'openrouter', modelId: 'default' });
+	});
+
+	it('resolves scope judge model with stored provider identity', async () => {
+		setModelsCache(
+			new Map([
+				[
+					'global',
+					[
+						{
+							id: 'shared-model',
+							name: 'Anthropic shared',
+							alias: 'shared',
+							family: 'sonnet',
+							provider: 'anthropic',
+							contextWindow: 200000,
+							description: 'Anthropic shared model',
+							releaseDate: '2026-01-01',
+							available: true,
+						},
+						{
+							id: 'shared-model',
+							name: 'OpenRouter shared',
+							alias: 'shared',
+							family: 'sonnet',
+							provider: 'openrouter',
+							contextWindow: 200000,
+							description: 'OpenRouter shared model',
+							releaseDate: '2026-01-01',
+							available: true,
+						},
+					],
+				],
+			])
+		);
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Judge scope',
+			objective: 'Select judge model',
+			policy: { episodeJudgeModel: 'shared-model', episodeJudgeProvider: 'openrouter' },
+		});
+
+		await expect(
+			resolveEpisodeJudgeModel({
+				scope,
+				evidence: [],
+				metricSnapshots: [],
+				tasks: [],
+				workflowRuns: [],
+				timeWindow: null,
+			})
+		).resolves.toEqual({ provider: 'openrouter', modelId: 'shared-model' });
 	});
 
 	it('builds episode input with task results, workflow artifacts, metrics, and notes', () => {
