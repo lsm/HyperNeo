@@ -23,6 +23,7 @@ import { EvolutionRepository } from '../../../../src/storage/repositories/evolut
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -608,6 +609,113 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		expect(rollup.goal.progress).toBe(42);
 	});
 
+	test('covers untested Forge read tools', async () => {
+		const handlers = makeHandlers(ctx);
+		const created = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Read tools scope',
+					objective: 'Exercise read tools',
+				})
+			).content[0].text
+		).scope;
+		const note = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: created.id,
+					summary: 'Read note',
+				})
+			).content[0].text
+		).evidence;
+		const snapshot = JSON.parse(
+			(
+				await handlers.add_forge_metric_snapshot({
+					scope_id: created.id,
+					values: { quality: 7 },
+					source: 'manual',
+					note: 'Quality snapshot',
+				})
+			).content[0].text
+		);
+
+		const listed = JSON.parse((await handlers.list_forge_scopes({})).content[0].text);
+		expect(listed.success).toBe(true);
+		expect(listed.scopes.some((scope: { id: string }) => scope.id === created.id)).toBe(true);
+
+		const fetched = JSON.parse(
+			(await handlers.get_forge_scope({ scope_id: created.id })).content[0].text
+		);
+		expect(fetched.success).toBe(true);
+		expect(fetched.scope.id).toBe(created.id);
+
+		const timeline = JSON.parse(
+			(await handlers.get_forge_timeline({ scope_id: created.id })).content[0].text
+		);
+		expect(timeline.success).toBe(true);
+		expect(timeline.scope.id).toBe(created.id);
+		expect(timeline.evidence).toHaveLength(2);
+		expect(timeline.metricSnapshots).toHaveLength(1);
+
+		const evidence = JSON.parse(
+			(await handlers.list_forge_evidence({ scope_id: created.id })).content[0].text
+		);
+		expect(evidence.success).toBe(true);
+		expect(evidence.evidence.map((item: { id: string }) => item.id)).toContain(note.id);
+		expect(evidence.evidence.map((item: { id: string }) => item.id)).toContain(
+			snapshot.evidence.id
+		);
+
+		const snapshots = JSON.parse(
+			(await handlers.list_forge_metric_snapshots({ scope_id: created.id })).content[0].text
+		);
+		expect(snapshots.success).toBe(true);
+		expect(snapshots.snapshots).toHaveLength(1);
+		expect(snapshots.snapshots[0].values.quality).toBe(7);
+	});
+
+	test('attaches workflow run evidence', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Workflow evidence scope',
+					objective: 'Attach workflow evidence',
+				})
+			).content[0].text
+		).scope;
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Forge workflow evidence'
+		);
+		const run = ctx.workflowRunRepo.createRun({
+			spaceId: ctx.spaceId,
+			workflowId: wf.id,
+			title: 'Evidence run',
+		});
+
+		const attached = JSON.parse(
+			(
+				await handlers.attach_forge_workflow_run_evidence({
+					scope_id: scope.id,
+					workflow_run_id: run.id,
+					summary: 'Workflow run evidence',
+				})
+			).content[0].text
+		);
+		expect(attached.success).toBe(true);
+		expect(attached.evidence.sourceId).toBe(run.id);
+
+		const evidence = JSON.parse(
+			(await handlers.list_forge_evidence({ scope_id: scope.id })).content[0].text
+		);
+		expect(evidence.success).toBe(true);
+		expect(evidence.evidence[0].id).toBe(attached.evidence.id);
+	});
+
 	test('rejects reopening terminal Forge episodes', async () => {
 		const handlers = makeHandlers(ctx);
 		const scope = JSON.parse(
@@ -865,6 +973,56 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		expect(result.error).toContain('EvolutionEpisode not found in scope');
 	});
 
+	test('rejects reactivating dismissed lessons', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Dismissed lesson scope',
+					objective: 'Guard lesson status',
+				})
+			).content[0].text
+		).scope;
+		const evidence = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Lesson status evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episodeResult = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [evidence.id],
+				})
+			).content[0].text
+		);
+
+		const dismissed = JSON.parse(
+			(
+				await handlers.update_forge_lesson({
+					lesson_id: episodeResult.lessons[0].id,
+					status: 'dismissed',
+				})
+			).content[0].text
+		);
+		expect(dismissed.success).toBe(true);
+
+		const reactivated = JSON.parse(
+			(
+				await handlers.update_forge_lesson({
+					lesson_id: episodeResult.lessons[0].id,
+					status: 'active',
+				})
+			).content[0].text
+		);
+		expect(reactivated.success).toBe(false);
+		expect(reactivated.error).toContain('Dismissed lessons cannot be reactivated');
+	});
+
 	test('rejects unsafe proposal status updates', async () => {
 		const handlers = makeHandlers(ctx);
 		const scope = JSON.parse(
@@ -919,6 +1077,50 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		);
 		expect(idempotent.success).toBe(true);
 		expect(idempotent.task.id).toBe(taskResult.task.id);
+	});
+
+	test('rejects reopening dismissed proposals', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Dismissed proposal scope',
+					objective: 'Guard proposal status',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Dismissible proposal',
+					description: 'Can dismiss',
+					reason: 'Test guard',
+				})
+			).content[0].text
+		).proposal;
+
+		const dismissed = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'dismissed',
+				})
+			).content[0].text
+		);
+		expect(dismissed.success).toBe(true);
+
+		const accepted = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'accepted',
+				})
+			).content[0].text
+		);
+		expect(accepted.success).toBe(false);
+		expect(accepted.error).toContain('Dismissed proposals cannot be reopened');
 	});
 
 	test('rejects cross-space scope and task evidence access', async () => {
@@ -1027,6 +1229,27 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 		expect(parsed.error).toContain('run-missing');
 	});
 
+	test('rejects cross-space workflow run access', async () => {
+		const otherSpaceId = 'other-run-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-run-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Run WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space run',
+		});
+
+		const result = await makeHandlers(ctx).get_workflow_run({ run_id: rawRun.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
+	});
+
 	test('returns run with empty tasks when no tasks have been created', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'NoStep WF');
 		const rawRun = ctx.workflowRunRepo.createRun({
@@ -1102,6 +1325,30 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const result = await makeHandlers(ctx).change_plan({ run_id: 'run-missing' });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
+	});
+
+	test('rejects cross-space workflow run plan changes', async () => {
+		const otherSpaceId = 'other-plan-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-plan-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Plan WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space plan',
+		});
+
+		const result = await makeHandlers(ctx).change_plan({
+			run_id: rawRun.id,
+			description: 'should not update',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
 	});
 
 	test('returns error when trying to change plan on completed run', async () => {
@@ -1384,6 +1631,52 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 	});
 });
 
+describe('createSpaceAgentToolHandlers — approve_gate', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('rejects cross-space workflow runs', async () => {
+		const otherSpaceId = 'other-gate-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-gate-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Gate WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space gate',
+		});
+
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			gateDataRepo: new GateDataRepository(ctx.db),
+		});
+		const result = await handlers.approve_gate({
+			run_id: rawRun.id,
+			gate_id: 'gate-1',
+			approved: true,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
+	});
+});
+
 // ---------------------------------------------------------------------------
 // list_tasks
 // ---------------------------------------------------------------------------
@@ -1421,6 +1714,27 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.tasks).toHaveLength(1);
 		expect(parsed.tasks[0].workflowRunId).toBe(runId);
+	});
+
+	test('rejects cross-space workflow_run_id task filter', async () => {
+		const otherSpaceId = 'other-task-filter-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-task-filter-space');
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'Other Task WF'
+		);
+		const rawRun = ctx.workflowRunRepo.createRun({
+			spaceId: otherSpaceId,
+			workflowId: wf.id,
+			title: 'other-space task filter',
+		});
+
+		const result = await makeHandlers(ctx).list_tasks({ workflow_run_id: rawRun.id });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(rawRun.id);
 	});
 
 	test('filters tasks by status', async () => {

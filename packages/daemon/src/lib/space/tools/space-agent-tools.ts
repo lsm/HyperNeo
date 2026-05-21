@@ -434,7 +434,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 */
 		async get_workflow_run(args: { run_id: string }): Promise<ToolResult> {
 			const run = workflowRunRepo.getRun(args.run_id);
-			if (!run) {
+			if (!run || run.spaceId !== spaceId) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
@@ -459,7 +459,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			workflow_handle?: string;
 		}): Promise<ToolResult> {
 			const run = workflowRunRepo.getRun(args.run_id);
-			if (!run) {
+			if (!run || run.spaceId !== spaceId) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
@@ -660,6 +660,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		}): Promise<ToolResult> {
 			let tasks: SpaceTask[];
 			if (args.workflow_run_id) {
+				const run = workflowRunRepo.getRun(args.workflow_run_id);
+				if (!run || run.spaceId !== spaceId) {
+					return jsonResult({
+						success: false,
+						error: `Workflow run not found: ${args.workflow_run_id}`,
+					});
+				}
 				tasks = taskRepo.listByWorkflowRun(args.workflow_run_id);
 				if (args.status) {
 					tasks = tasks.filter((t) => t.status === args.status);
@@ -1389,7 +1396,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 
 			const run = workflowRunRepo.getRun(args.run_id);
-			if (!run) {
+			if (!run || run.spaceId !== spaceId) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 			if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
@@ -2191,7 +2198,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			confidence?: number;
 		}): Promise<ToolResult> {
 			try {
-				requireEvolutionLessonInSpace(args.lesson_id);
+				const existing = requireEvolutionLessonInSpace(args.lesson_id);
+				if (existing.status === 'dismissed' && args.status && args.status !== 'dismissed') {
+					throw new Error('Dismissed lessons cannot be reactivated');
+				}
 				const lesson = requireEvolutionEpisodeService().updateLesson(args.lesson_id, {
 					status: args.status,
 					appliesTo: args.applies_to,
@@ -2254,6 +2264,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 				if (existing.status === 'created' && args.status) {
 					throw new Error('Created task proposals cannot be reopened');
+				}
+				if (existing.status === 'dismissed' && args.status && args.status !== 'dismissed') {
+					throw new Error('Dismissed proposals cannot be reopened');
 				}
 				const proposal = requireEvolutionEpisodeService().updateTaskProposal(args.proposal_id, {
 					title: args.title,
