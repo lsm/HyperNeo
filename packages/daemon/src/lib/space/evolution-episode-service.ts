@@ -34,6 +34,7 @@ import type { SpaceGoalService } from './goals/goal-service';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { getAvailableModels } from '../model-service';
 import { inferProviderForModel } from '../providers/registry';
 
 const log = new Logger('evolution-episode-service');
@@ -522,7 +523,11 @@ export async function resolveEpisodeJudgeModel(
 		: spaceRepo?.getSpace(input.scope.spaceId)?.defaultModel;
 	const selectedModel = scopeModel ?? spaceModel?.trim();
 	if (selectedModel) {
-		return { provider: inferProviderForModel(selectedModel), modelId: selectedModel };
+		const cachedModel = findCachedModel(selectedModel);
+		return {
+			provider: cachedModel?.provider ?? inferProviderForModel(selectedModel),
+			modelId: cachedModel?.id ?? selectedModel,
+		};
 	}
 	const providerService = getProviderService();
 	const provider = await providerService.getDefaultProvider();
@@ -533,6 +538,12 @@ export async function resolveEpisodeJudgeModel(
 function readEpisodeJudgeModel(scope: EvolutionScope): string | undefined {
 	const value = scope.policy.episodeJudgeModel;
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function findCachedModel(modelId: string): { id: string; provider: string } | undefined {
+	return getAvailableModels('global').find(
+		(model) => model.id === modelId || model.alias === modelId
+	);
 }
 
 async function judgeEpisodeWithModel(

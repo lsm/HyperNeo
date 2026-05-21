@@ -1450,9 +1450,20 @@ function ScopeDetail({
 	const [tab, setTab] = useState<ScopeTab>('overview');
 	const [settingsError, setSettingsError] = useState<string | null>(null);
 	const [savingJudgeModel, setSavingJudgeModel] = useState(false);
+	const judgeModelRequestVersion = useRef(0);
+	const judgeModelScopeId = useRef(scope.id);
 	const goal = getGoal(scope, goals);
 
+	useEffect(() => {
+		if (judgeModelScopeId.current === scope.id) return;
+		judgeModelScopeId.current = scope.id;
+		judgeModelRequestVersion.current += 1;
+		setSavingJudgeModel(false);
+		setSettingsError(null);
+	}, [scope.id]);
+
 	const handleJudgeModelChange = async (value: string | undefined) => {
+		const version = ++judgeModelRequestVersion.current;
 		try {
 			setSavingJudgeModel(true);
 			setSettingsError(null);
@@ -1466,6 +1477,7 @@ function ScopeDetail({
 				id: scope.id,
 				params: { policy: nextPolicy },
 			});
+			if (judgeModelRequestVersion.current !== version) return;
 			if (response.scope) {
 				onScopeUpdated(response.scope);
 				toast.success(
@@ -1473,9 +1485,13 @@ function ScopeDetail({
 				);
 			}
 		} catch (err) {
-			setSettingsError(err instanceof Error ? err.message : 'Failed to update judge model');
+			if (judgeModelRequestVersion.current === version) {
+				setSettingsError(err instanceof Error ? err.message : 'Failed to update judge model');
+			}
 		} finally {
-			setSavingJudgeModel(false);
+			if (judgeModelRequestVersion.current === version) {
+				setSavingJudgeModel(false);
+			}
 		}
 	};
 

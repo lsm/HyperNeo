@@ -374,6 +374,85 @@ describe('SpaceForge', () => {
 		});
 	});
 
+	it('ignores stale judge model update responses', async () => {
+		let resolveFirst: (value: { scope: EvolutionScope }) => void = () => undefined;
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
+			if (method === 'evolution.review.get') {
+				return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
+			}
+			if (method === 'evolution.scope.update') {
+				const payload = data as { params: { policy: EvolutionScope['policy'] } };
+				if (payload.params.policy.episodeJudgeModel === 'claude-sonnet-4-6') {
+					return new Promise((resolve) => {
+						resolveFirst = resolve;
+					});
+				}
+				return { scope: makeScope({ policy: payload.params.policy }) };
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.change(screen.getByTestId('scope-episode-judge-model-select'), {
+			target: { value: 'claude-sonnet-4-6' },
+		});
+		fireEvent.change(screen.getByTestId('scope-episode-judge-model-select'), {
+			target: { value: 'claude-opus-4-5' },
+		});
+
+		await waitFor(() =>
+			expect(mockToastSuccess).toHaveBeenCalledWith('Episode judge model updated')
+		);
+		expect(
+			(screen.getByTestId('scope-episode-judge-model-select') as HTMLSelectElement).value
+		).toBe('claude-opus-4-5');
+
+		resolveFirst({ scope: makeScope({ policy: { episodeJudgeModel: 'claude-sonnet-4-6' } }) });
+
+		await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+		expect(
+			(screen.getByTestId('scope-episode-judge-model-select') as HTMLSelectElement).value
+		).toBe('claude-opus-4-5');
+	});
+
+	it('clears judge model save state after scope selection changes', async () => {
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method === 'evolution.scope.list') {
+				return {
+					scopes: [
+						makeScope({ id: 'scope-1', name: 'Review quality scope' }),
+						makeScope({ id: 'scope-2', name: 'Other scope', policy: {} }),
+					],
+				};
+			}
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
+			if (method === 'evolution.review.get') {
+				return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
+			}
+			if (method === 'evolution.scope.update') {
+				return new Promise(() => undefined);
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.change(screen.getByTestId('scope-episode-judge-model-select'), {
+			target: { value: 'claude-sonnet-4-6' },
+		});
+		expect(await screen.findByText('Saving…')).toBeTruthy();
+
+		fireEvent.click(screen.getByRole('button', { name: /Other scope/ }));
+
+		expect(await screen.findByRole('heading', { name: 'Other scope' })).toBeTruthy();
+		expect(screen.queryByText('Saving…')).toBeNull();
+	});
+
 	it('attaches manual evidence note', async () => {
 		render(<SpaceForge spaceId="space-1" />);
 

@@ -7,6 +7,7 @@ import {
 	resolveEpisodeJudgeModel,
 } from '../../../src/lib/space/evolution-episode-service';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import { clearModelsCache, setModelsCache } from '../../../src/lib/model-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
@@ -51,6 +52,7 @@ describe('EvolutionEpisodeService', () => {
 	});
 
 	afterEach(() => {
+		clearModelsCache('global');
 		db.close();
 	});
 
@@ -88,6 +90,47 @@ describe('EvolutionEpisodeService', () => {
 				{ getSpace: () => ({ defaultModel: 'claude-sonnet-4-5' }) as never }
 			)
 		).resolves.toEqual({ provider: 'anthropic', modelId: 'claude-sonnet-4-5' });
+	});
+
+	it('resolves episode judge model provider from cached model catalog', async () => {
+		setModelsCache(
+			new Map([
+				[
+					'global',
+					[
+						{
+							id: 'shared-model',
+							name: 'Shared model',
+							alias: 'shared',
+							family: 'sonnet',
+							provider: 'openrouter',
+							contextWindow: 200000,
+							description: 'Shared model ID with provider context',
+							releaseDate: '2026-01-01',
+							available: true,
+						},
+					],
+				],
+			])
+		);
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Judge scope',
+			objective: 'Select judge model',
+			policy: { episodeJudgeModel: 'shared' },
+		});
+
+		await expect(
+			resolveEpisodeJudgeModel({
+				scope,
+				evidence: [],
+				metricSnapshots: [],
+				tasks: [],
+				workflowRuns: [],
+				timeWindow: null,
+			})
+		).resolves.toEqual({ provider: 'openrouter', modelId: 'shared-model' });
 	});
 
 	it('builds episode input with task results, workflow artifacts, metrics, and notes', () => {

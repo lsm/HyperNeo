@@ -354,7 +354,6 @@ export class ProviderService {
 		return provider.ownsModel(model);
 	}
 
-
 	/**
 	 * Get environment variables for SDK subprocess based on explicit (modelId, providerId) pair.
 	 *
