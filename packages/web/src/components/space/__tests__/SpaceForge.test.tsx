@@ -501,6 +501,24 @@ describe('SpaceForge', () => {
 		);
 	});
 
+	it('skips rollup goal cache update after switching spaces', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.input(await screen.findByLabelText('Rollup summary'), {
+			target: { value: 'Rollup summary' },
+		});
+		fireEvent.input(screen.getByLabelText('Rollup progress'), { target: { value: '80' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Apply rollup' }));
+		mockSpaceId.value = 'space-2';
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.rollup.apply', expect.anything())
+		);
+		expect(mockUpsertGoal).not.toHaveBeenCalled();
+	});
+
 	it('creates scope with linked recurring goal and metrics', async () => {
 		render(<SpaceForge spaceId="space-1" />);
 
