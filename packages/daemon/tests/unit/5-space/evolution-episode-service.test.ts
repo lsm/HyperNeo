@@ -97,6 +97,13 @@ describe('EvolutionEpisodeService', () => {
 			summary: 'Workflow completed',
 			createdAt: 200,
 		});
+		const errorEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'error',
+			sourceId: run.id,
+			summary: 'Same workflow run had rework',
+			createdAt: 225,
+		});
 		const note = evolutionRepo.createEvidence({
 			scopeId: scope.id,
 			kind: 'manual_note',
@@ -119,11 +126,13 @@ describe('EvolutionEpisodeService', () => {
 
 		const input = service.buildEpisodeInput({
 			scopeId: scope.id,
-			evidenceIds: [taskEvidence.id, runEvidence.id, note.id],
+			evidenceIds: [taskEvidence.id, runEvidence.id, errorEvidence.id, note.id],
 		});
 		const prompt = buildEpisodeJudgePrompt(input);
 
-		expect(input.timeWindow).toEqual({ start: 100, end: 200 });
+		expect(input.timeWindow).toEqual({ start: 100, end: 225 });
+		expect(input.workflowRuns).toHaveLength(1);
+		expect(input.workflowRuns[0]?.run.id).toBe(run.id);
 		expect(prompt).toContain('Reduce review churn');
 		expect(prompt).toContain('Resolved reviewer comments');
 		expect(prompt).toContain('PR updated and tests pass');

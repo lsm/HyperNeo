@@ -346,6 +346,7 @@ export class EvolutionEpisodeService {
 		scope: EvolutionScope,
 		evidence: EvidenceRef[]
 	): EpisodeWorkflowRunContext[] {
+		const seenRunIds = new Set<string>();
 		return evidence.flatMap((item) => {
 			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error')
 				return [];
@@ -355,6 +356,8 @@ export class EvolutionEpisodeService {
 			if (run.spaceId !== scope.spaceId) {
 				throw new Error(`Workflow run and scope must belong to the same space: ${run.id}`);
 			}
+			if (seenRunIds.has(run.id)) return [];
+			seenRunIds.add(run.id);
 			return [
 				{
 					evidenceId: item.id,
