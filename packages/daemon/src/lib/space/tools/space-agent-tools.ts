@@ -2051,7 +2051,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		async list_forge_evidence(args: { scope_id: string }): Promise<ToolResult> {
 			try {
 				requireEvolutionScopeInSpace(args.scope_id);
-				const evidence = requireEvolutionScopeService().listEvidence(args.scope_id);
+				const { evidence } = requireEvolutionScopeService().listEvidence(args.scope_id);
 				return jsonResult({ success: true, evidence });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);

@@ -603,14 +603,56 @@ describe('SpaceForge', () => {
 						makeEvidence({
 							id: 'task-evidence',
 							kind: 'task',
-							summary: 'Task completed with PR merged after CI and QA passed',
+							sourceId: 'task-1',
+							summary: 'Task linked to completed work',
 						}),
 						makeEvidence({
 							id: 'artifact-evidence',
 							kind: 'artifact',
-							summary: 'Workflow artifact captured tests passed and merge completed',
+							sourceId: 'run-1',
+							summary: 'Workflow artifact attached',
 						}),
 					],
+					preflightContext: {
+						tasks: [
+							{
+								evidenceId: 'task-evidence',
+								task: {
+									id: 'task-1',
+									title: 'Ship Forge preflight',
+									status: 'done',
+									reportedStatus: null,
+									reportedSummary: 'Validated with reviewer sign-off',
+									result: 'PR merged after CI and QA passed',
+								},
+							},
+						],
+						workflowRuns: [
+							{
+								evidenceId: 'artifact-evidence',
+								run: { title: 'Forge validation run', status: 'done' },
+								tasks: [
+									{
+										title: 'Supervised completion gate',
+										status: 'review',
+										reportedStatus: 'done',
+										reportedSummary: 'Ready after validation',
+										result: null,
+									},
+								],
+								artifacts: [
+									{
+										artifactType: 'result',
+										artifactKey: 'qa',
+										data: {
+											summary:
+												'QA passed, CI green, PR https://github.com/lsm/neokai/pull/1 merged',
+										},
+									},
+								],
+							},
+						],
+					},
 				};
 			}
 			if (method === 'evolution.review.get') {
@@ -636,8 +678,8 @@ describe('SpaceForge', () => {
 
 		await screen.findByRole('heading', { name: 'Review quality scope' });
 		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
-		fireEvent.click(await screen.findByLabelText(/Task completed with PR merged/));
-		fireEvent.click(screen.getByLabelText(/Workflow artifact captured tests passed/));
+		fireEvent.click(await screen.findByLabelText(/Task linked to completed work/));
+		fireEvent.click(screen.getByLabelText(/Workflow artifact attached/));
 
 		expect(await screen.findByText('Evidence preflight: high confidence')).toBeTruthy();
 		expect(screen.getByText('Metric snapshot context can calibrate outcomes.')).toBeTruthy();

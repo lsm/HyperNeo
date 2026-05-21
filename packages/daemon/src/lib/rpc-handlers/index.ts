@@ -466,6 +466,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalRepo: spaceGoalRepo,
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
+		artifactRepo,
 	});
 	const evolutionEpisodeService = new EvolutionEpisodeService({
 		evolutionRepo: deps.db.evolution,

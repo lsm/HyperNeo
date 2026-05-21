@@ -135,13 +135,29 @@ function nextStepsFromText(value: string): string[] {
 function buildEvidenceQualityPreflight(
 	evidence: EvidenceRef[],
 	selectedEvidenceIds: string[],
-	metricSnapshots: MetricSnapshot[] = []
+	metricSnapshots: MetricSnapshot[] = [],
+	preflightContext?: EvolutionEvidenceListResponse['preflightContext']
 ): EvidenceQualityPreflight | null {
 	if (selectedEvidenceIds.length === 0) return null;
 	const selected = evidence.filter((item) => selectedEvidenceIds.includes(item.id));
 	if (selected.length === 0) return null;
+	const selectedIds = new Set(selected.map((item) => item.id));
 	return scoreEvolutionEvidenceQuality({
 		evidence: selected,
+		tasks: (preflightContext?.tasks ?? [])
+			.filter((item) => selectedIds.has(item.evidenceId))
+			.map(({ task }) => task),
+		workflowRuns: (preflightContext?.workflowRuns ?? [])
+			.filter((item) => selectedIds.has(item.evidenceId))
+			.map(({ run, tasks, artifacts }) => ({
+				run,
+				tasks,
+				artifacts: artifacts.map((artifact) => ({
+					type: artifact.artifactType,
+					key: artifact.artifactKey,
+					data: artifact.data,
+				})),
+			})),
 		metricSnapshotCount: metricSnapshots.length,
 	});
 }
@@ -569,6 +585,8 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
 	const [proposals, setProposals] = useState<TaskProposal[]>([]);
 	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+	const [preflightContext, setPreflightContext] =
+		useState<EvolutionEvidenceListResponse['preflightContext']>();
 	const [metricSnapshots, setMetricSnapshots] = useState<MetricSnapshot[]>([]);
 	const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
 	const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
@@ -603,6 +621,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 			setLessons(reviewResponse.lessons ?? []);
 			setProposals(reviewResponse.proposals ?? []);
 			setEvidence(evidenceResponse.evidence ?? []);
+			setPreflightContext(evidenceResponse.preflightContext);
 			setMetricSnapshots(metricResponse.snapshots ?? []);
 			setSelectedEvidenceIds((current) =>
 				current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
@@ -646,8 +665,14 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		latestEpisode.status !== 'dismissed' &&
 		latestEpisode.rollupAppliedAt === null;
 	const preflight = useMemo(
-		() => buildEvidenceQualityPreflight(evidence, selectedEvidenceIds, metricSnapshots),
-		[evidence, metricSnapshots, selectedEvidenceIds]
+		() =>
+			buildEvidenceQualityPreflight(
+				evidence,
+				selectedEvidenceIds,
+				metricSnapshots,
+				preflightContext
+			),
+		[evidence, metricSnapshots, preflightContext, selectedEvidenceIds]
 	);
 	const preflightReady = preflight?.requiresConfirmation ? confirmLowConfidence : true;
 

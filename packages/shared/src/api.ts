@@ -52,7 +52,13 @@ import type {
 	UpdateEvolutionScopeParams,
 	UpdateTaskProposalParams,
 } from './types/evolution.ts';
-import type { SpaceGoal, SpaceTask, UpdateSpaceGoalParams } from './types/space.ts';
+import type {
+	SpaceGoal,
+	SpaceTask,
+	SpaceWorkflowRun,
+	UpdateSpaceGoalParams,
+	WorkflowRunArtifact,
+} from './types/space.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -647,8 +653,24 @@ export interface EvolutionEvidenceListRequest {
 	scopeId: string;
 }
 
+export interface EvolutionPreflightTaskContext {
+	evidenceId: string;
+	task: SpaceTask;
+}
+
+export interface EvolutionPreflightWorkflowRunContext {
+	evidenceId: string;
+	run: SpaceWorkflowRun;
+	tasks: SpaceTask[];
+	artifacts: WorkflowRunArtifact[];
+}
+
 export interface EvolutionEvidenceListResponse {
 	evidence: EvidenceRef[];
+	preflightContext?: {
+		tasks: EvolutionPreflightTaskContext[];
+		workflowRuns: EvolutionPreflightWorkflowRunContext[];
+	};
 }
 
 export interface EvolutionEpisodeCreateRequest {

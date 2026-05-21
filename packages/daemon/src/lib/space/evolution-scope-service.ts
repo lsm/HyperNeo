@@ -8,12 +8,15 @@ import type {
 	EvolutionScopeListParams,
 	MetricSnapshot,
 	UpdateEvolutionScopeParams,
+	EvolutionEvidenceListResponse,
 } from '@neokai/shared';
+import type { WorkflowRunArtifact } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 
 export interface EvolutionScopeServiceDeps {
 	evolutionRepo: EvolutionRepository;
@@ -21,6 +24,7 @@ export interface EvolutionScopeServiceDeps {
 	goalRepo: SpaceGoalRepository;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	artifactRepo?: WorkflowRunArtifactRepository;
 }
 
 export interface CreateScopeFromGoalParams {
@@ -238,9 +242,53 @@ export class EvolutionScopeService {
 		return { snapshot, evidence };
 	}
 
-	listEvidence(scopeId: string): EvidenceRef[] {
-		this.requireScope(scopeId);
-		return this.deps.evolutionRepo.listEvidence(scopeId);
+	listEvidence(scopeId: string): EvolutionEvidenceListResponse {
+		const scope = this.requireScope(scopeId);
+		const evidence = this.deps.evolutionRepo.listEvidence(scopeId);
+		return {
+			evidence,
+			preflightContext: this.buildPreflightContext(scope, evidence),
+		};
+	}
+
+	private buildPreflightContext(
+		scope: EvolutionScope,
+		evidence: EvidenceRef[]
+	): NonNullable<EvolutionEvidenceListResponse['preflightContext']> {
+		const tasks = evidence.flatMap((item) => {
+			if (item.kind !== 'task' && item.kind !== 'task_result') return [];
+			if (!item.sourceId) return [];
+			const task = this.deps.taskRepo.getTask(item.sourceId);
+			if (!task || task.spaceId !== scope.spaceId) return [];
+			return [{ evidenceId: item.id, task }];
+		});
+		const seenRunIds = new Set<string>();
+		const workflowRuns = evidence.flatMap((item) => {
+			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error')
+				return [];
+			if (!item.sourceId) return [];
+			const run = this.deps.workflowRunRepo.getRun(item.sourceId);
+			if (!run || run.spaceId !== scope.spaceId || seenRunIds.has(run.id)) return [];
+			seenRunIds.add(run.id);
+			return [
+				{
+					evidenceId: item.id,
+					run,
+					tasks: this.deps.taskRepo.listByWorkflowRunIncludingArchived(run.id),
+					artifacts: (this.deps.artifactRepo?.listByRun(run.id) ?? []).map((artifact) => ({
+						id: artifact.id,
+						runId: artifact.runId,
+						nodeId: artifact.nodeId,
+						artifactType: artifact.artifactType,
+						artifactKey: artifact.artifactKey,
+						data: artifact.data,
+						createdAt: artifact.createdAt,
+						updatedAt: artifact.updatedAt,
+					})) satisfies WorkflowRunArtifact[],
+				},
+			];
+		});
+		return { tasks, workflowRuns };
 	}
 
 	listMetricSnapshots(scopeId: string): MetricSnapshot[] {

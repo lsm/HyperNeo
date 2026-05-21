@@ -168,6 +168,7 @@ function countConcreteOutcomes(
 		for (const task of runTasks) {
 			visit(task.title);
 			visit(task.status);
+			visit(task.reportedStatus);
 			visit(task.reportedSummary);
 			visit(task.result);
 		}

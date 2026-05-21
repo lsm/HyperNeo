@@ -309,7 +309,17 @@ describe('EvolutionEpisodeService', () => {
 			scopeId: scope.id,
 			kind: 'task',
 			sourceId: task.id,
-			summary: 'Task completed with PR and CI outcome',
+			summary: 'Task linked to completed work',
+		});
+		const workflowTask = taskRepo.createTask({
+			spaceId,
+			title: 'Supervised completion gate',
+			description: 'Report completion before human approval',
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(workflowTask.id, {
+			reportedStatus: 'done',
+			reportedSummary: 'Ready for review after validation',
 		});
 		const artifactEvidence = evolutionRepo.createEvidence({
 			scopeId: scope.id,
