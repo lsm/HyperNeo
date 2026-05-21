@@ -639,7 +639,12 @@ export class SpaceRuntimeService {
 			taskRepo: this.config.taskRepo,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
-			taskManager: new SpaceTaskManager(this.config.db, space.id, this.config.reactiveDb),
+			taskManager: new SpaceTaskManager(
+				this.config.db,
+				space.id,
+				this.config.reactiveDb,
+				this.config.evolutionScopeService
+			),
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this.taskAgentManager ?? undefined,
 			gateDataRepo: this.config.gateDataRepo,
@@ -1246,7 +1251,12 @@ export class SpaceRuntimeService {
 			taskRepo: this.config.taskRepo,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
-			taskManager: new SpaceTaskManager(this.config.db, space.id, this.config.reactiveDb),
+			taskManager: new SpaceTaskManager(
+				this.config.db,
+				space.id,
+				this.config.reactiveDb,
+				this.config.evolutionScopeService
+			),
 			spaceAgentManager: this.config.spaceAgentManager,
 			taskAgentManager: this.taskAgentManager ?? undefined,
 			gateDataRepo: this.config.gateDataRepo,
@@ -1364,7 +1374,12 @@ export class SpaceRuntimeService {
 			taskRepo,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			workflowRunRepo,
-			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
+			taskManager: new SpaceTaskManager(
+				db,
+				space.id,
+				this.config.reactiveDb,
+				this.config.evolutionScopeService
+			),
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager ?? undefined,
 			gateDataRepo: this.config.gateDataRepo,

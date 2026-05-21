@@ -385,6 +385,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	});
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
+	const evolutionScopeService = new EvolutionScopeService({
+		evolutionRepo: deps.db.evolution,
+		spaceRepo,
+		goalRepo: spaceGoalRepo,
+		taskRepo: spaceTaskRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		artifactRepo,
+	});
+
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
 	const agentLookup: SpaceAgentLookup = {
@@ -397,7 +406,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
-		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
+		return new SpaceTaskManager(
+			deps.db.getDatabase(),
+			spaceId,
+			deps.reactiveDb,
+			evolutionScopeService
+		);
 	};
 
 	// Space agent handlers
@@ -459,14 +473,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Reply Routing Registry — shared between space-agent-tools (register)
 	// and task-agent-tools / node-agent-tools (lookup).
 	const replyRoutingRegistry = new ReplyRoutingRegistry();
-
-	const evolutionScopeService = new EvolutionScopeService({
-		evolutionRepo: deps.db.evolution,
-		spaceRepo,
-		goalRepo: spaceGoalRepo,
-		taskRepo: spaceTaskRepo,
-		workflowRunRepo: spaceWorkflowRunRepo,
-	});
 	const evolutionEpisodeService = new EvolutionEpisodeService({
 		evolutionRepo: deps.db.evolution,
 		spaceRepo,
@@ -705,7 +711,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space workflow run handlers — reuse the same factory pattern as spaceTask handlers
 	const spaceWorkflowRunTaskManagerFactory: SpaceWorkflowRunTaskManagerFactory = (spaceId) => {
-		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
+		return new SpaceTaskManager(
+			deps.db.getDatabase(),
+			spaceId,
+			deps.reactiveDb,
+			evolutionScopeService
+		);
 	};
 	setupSpaceWorkflowRunHandlers(
 		deps.messageHub,
