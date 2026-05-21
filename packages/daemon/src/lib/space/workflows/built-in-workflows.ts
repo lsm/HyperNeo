@@ -596,6 +596,10 @@ const FULLSTACK_QA_PROMPT =
 	'- Browser validation must cover the golden path, relevant edge cases, and nearby-regression checks.\n' +
 	'- Do NOT approve UI-changing PRs unless browser validation passed, or you explicitly record why browser validation could not be performed.\n' +
 	'- Every QA result artifact must include `data: { ui_changed: boolean, dev_server_started: boolean, browser_validation: "<what was exercised or why skipped>", pr_url: "<url>" }`.\n\n' +
+	'Project QA instructions:\n' +
+	'- Before running checks, look for a project-level QA instructions file (e.g. `QA.md`, `docs/QA.md`, or `.qa/QA.md`) in the worktree root.\n' +
+	'- If found, read and follow its project-specific QA instructions in addition to the standard checks below.\n' +
+	'- Project QA instructions may define additional test suites, validation steps, or acceptance criteria specific to this codebase.\n\n' +
 	'If everything passes, `save_artifact({ type: "result", append: true, summary: "QA passed.", data: { pr_url: "<url>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` and ' +
 	'`approve_task`. Do NOT merge the PR yourself — a post-approval reviewer session runs ' +
 	'the merge after the task transitions to `approved`. Never set a PR to ' +
@@ -1377,16 +1381,17 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'Expected outputs: QA pass recorded for runtime post-approval dispatch, or QA ' +
 							'feedback to Coding.\n\n' +
 							'Steps:\n' +
-							'1. Inspect the PR diff and classify `ui_changed` true/false\n' +
-							'2. Run backend/docs-only relevant checks, or frontend/UI checks when UI code changed\n' +
-							'3. If `ui_changed` is true, start NeoKai with `make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
-							'4. Validate CI and mergeability\n' +
-							'5. If fail: send detailed failures and repro steps to Coding, then call ' +
+							'1. Check for project QA instructions (`QA.md`, `docs/QA.md`, `.qa/QA.md`) in the worktree root and follow any found\n' +
+							'2. Inspect the PR diff and classify `ui_changed` true/false\n' +
+							'3. Run backend/docs-only relevant checks, or frontend/UI checks when UI code changed\n' +
+							'4. If `ui_changed` is true, start NeoKai with `make dev PORT=<free-port> DB_PATH=/tmp/neokai-qa-<task-id>.db` and exercise the changed flow in a browser (golden path, relevant edge cases, nearby regressions)\n' +
+							'5. Validate CI and mergeability\n' +
+							'6. If fail: send detailed failures and repro steps to Coding, then call ' +
 							'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
 							'NOT call `approve_task` or `submit_for_approval` — both are TERMINAL and ' +
 							'carry the same approval semantic. Leave the workflow open for the next ' +
 							'Coding cycle.\n' +
-							'6. If all green:\n' +
+							'7. If all green:\n' +
 							'   a. Call `save_artifact({ type: "result", append: true, summary, data: { pr_url: "<url>", test_output: "<output>", ui_changed: <boolean>, dev_server_started: <boolean>, browser_validation: "<what was exercised or why skipped>" } })` ' +
 							'to record the audit entry. The `pr_url` inside `data` is what ' +
 							'`dispatchPostApproval` reads when interpolating `{{pr_url}}` into the ' +
