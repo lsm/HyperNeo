@@ -2153,8 +2153,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		}): Promise<ToolResult> {
 			try {
 				requireEvolutionScopeInSpace(args.scope_id);
-				for (const episodeId of args.evidence_episode_ids ?? [])
-					requireEvolutionEpisodeInSpace(episodeId);
+				for (const episodeId of args.evidence_episode_ids ?? []) {
+					const episode = requireEvolutionEpisodeInSpace(episodeId);
+					if (episode.scopeId !== args.scope_id) {
+						throw new Error(`EvolutionEpisode not found in scope: ${episodeId}`);
+					}
+				}
 				const proposal = requireEvolutionEpisodeService().createTaskProposal({
 					scopeId: args.scope_id,
 					title: args.title,
@@ -2180,7 +2184,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			status?: TaskProposalStatus;
 		}): Promise<ToolResult> {
 			try {
-				requireTaskProposalInSpace(args.proposal_id);
+				const existing = requireTaskProposalInSpace(args.proposal_id);
+				if (args.status === 'created') {
+					throw new Error('Use create_task_from_forge_proposal to create tasks from proposals');
+				}
+				if (existing.status === 'created' && args.status) {
+					throw new Error('Created task proposals cannot be reopened');
+				}
 				const proposal = requireEvolutionEpisodeService().updateTaskProposal(args.proposal_id, {
 					title: args.title,
 					description: args.description,
@@ -2887,7 +2897,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		const metadataSchema = z.record(z.string(), z.unknown());
 		const episodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);
 		const lessonStatusSchema = z.enum(['candidate', 'active', 'dismissed']);
-		const proposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed', 'created']);
+		const proposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed']);
 		const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 
 		tools.push(

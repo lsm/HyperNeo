@@ -605,6 +605,114 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		expect(rollup.goal.progress).toBe(42);
 	});
 
+	test('rejects mismatched proposal evidence episodes', async () => {
+		const handlers = makeHandlers(ctx);
+		const scopeA = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Scope A',
+					objective: 'First scope',
+				})
+			).content[0].text
+		).scope;
+		const scopeB = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Scope B',
+					objective: 'Second scope',
+				})
+			).content[0].text
+		).scope;
+		const evidenceB = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scopeB.id,
+					summary: 'Scope B evidence',
+				})
+			).content[0].text
+		).evidence;
+		const episodeB = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scopeB.id,
+					evidence_ids: [evidenceB.id],
+				})
+			).content[0].text
+		).episode;
+
+		const result = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scopeA.id,
+					title: 'Wrong scope proposal',
+					description: 'Should fail',
+					reason: 'Episode belongs elsewhere',
+					evidence_episode_ids: [episodeB.id],
+				})
+			).content[0].text
+		);
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('EvolutionEpisode not found in scope');
+	});
+
+	test('rejects unsafe proposal status updates', async () => {
+		const handlers = makeHandlers(ctx);
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Proposal scope',
+					objective: 'Guard proposal status',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Proposal',
+					description: 'Create task later',
+					reason: 'Need task',
+				})
+			).content[0].text
+		).proposal;
+
+		const manualCreated = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'created',
+				})
+			).content[0].text
+		);
+		expect(manualCreated.success).toBe(false);
+		expect(manualCreated.error).toContain('create_task_from_forge_proposal');
+
+		const taskResult = JSON.parse(
+			(await handlers.create_task_from_forge_proposal({ proposal_id: proposal.id })).content[0].text
+		);
+		expect(taskResult.success).toBe(true);
+
+		const reopen = JSON.parse(
+			(
+				await handlers.update_forge_task_proposal({
+					proposal_id: proposal.id,
+					status: 'accepted',
+				})
+			).content[0].text
+		);
+		expect(reopen.success).toBe(false);
+		expect(reopen.error).toContain('cannot be reopened');
+
+		const idempotent = JSON.parse(
+			(await handlers.create_task_from_forge_proposal({ proposal_id: proposal.id })).content[0].text
+		);
+		expect(idempotent.success).toBe(true);
+		expect(idempotent.task.id).toBe(taskResult.task.id);
+	});
+
 	test('rejects cross-space scope and task evidence access', async () => {
 		const otherSpaceId = 'other-forge-space';
 		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-forge');
