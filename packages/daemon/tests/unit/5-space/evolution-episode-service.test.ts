@@ -225,6 +225,34 @@ describe('EvolutionEpisodeService', () => {
 		expect(prompt).toContain('https://github.com/lsm/neokai/pull/1963');
 	});
 
+	it('truncates manual note metadata in every prompt section', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Manual note metadata',
+			objective: 'Keep prompt metadata bounded',
+		});
+		const note = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Manual note with oversized metadata',
+			metadata: { marker: 'metadata-marker', payload: 'x'.repeat(1500) },
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const prompt = buildEpisodeJudgePrompt(
+			service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [note.id] })
+		);
+
+		expect(prompt).toContain('metadata-marker');
+		expect(prompt).not.toContain('x'.repeat(1300));
+	});
+
 	it('parses fenced judge JSON and clamps confidence', () => {
 		const output = parseEpisodeJudgeJson(`\n\`\`\`json\n{
 			"title": "Review churn reduced",
