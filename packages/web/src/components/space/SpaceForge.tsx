@@ -615,7 +615,10 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 				request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
 					scopeId: scope.id,
 				}),
-				request<EvolutionEvidenceListResponse>('evolution.evidence.list', { scopeId: scope.id }),
+				request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
+					scopeId: scope.id,
+					includePreflightContext: true,
+				}),
 				metricSnapshotsPromise,
 			]);
 			if (requestVersion.current !== version) return;

@@ -620,6 +620,7 @@ describe('SpaceForge', () => {
 		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
 			if (method === 'evolution.scope.list') return { scopes: [makeScope()] };
 			if (method === 'evolution.evidence.list') {
+				expect(data).toEqual({ scopeId: 'scope-1', includePreflightContext: true });
 				return {
 					evidence: [
 						makeEvidence({

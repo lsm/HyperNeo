@@ -152,7 +152,13 @@ export function setupEvolutionHandlers(
 
 	messageHub.onRequest<EvolutionEvidenceListRequest, EvolutionEvidenceListResponse>(
 		'evolution.evidence.list',
-		async (data) => service.listEvidence(readRequiredString(data, 'scopeId'))
+		async (data) => {
+			const payload = readRecord(data) as unknown as EvolutionEvidenceListRequest;
+			return service.listEvidence(
+				readRequiredString(payload, 'scopeId'),
+				payload.includePreflightContext === true
+			);
+		}
 	);
 
 	messageHub.onRequest<

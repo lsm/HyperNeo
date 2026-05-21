@@ -650,17 +650,26 @@ export interface EvolutionEvidenceCreateResponse {
 
 export interface EvolutionEvidenceListRequest {
 	scopeId: string;
+	includePreflightContext?: boolean;
+}
+
+export interface EvolutionPreflightTaskSummary {
+	title: string;
+	status: string;
+	reportedStatus: string | null;
+	reportedSummary: string | null;
+	result: string | null;
 }
 
 export interface EvolutionPreflightTaskContext {
 	evidenceId: string;
-	task: SpaceTask;
+	task: EvolutionPreflightTaskSummary;
 }
 
 export interface EvolutionPreflightWorkflowRunContext {
 	evidenceIds: string[];
 	run: SpaceWorkflowRun;
-	tasks: SpaceTask[];
+	tasks: EvolutionPreflightTaskSummary[];
 	artifacts: Array<{
 		id: string;
 		runId: string;

@@ -341,8 +341,21 @@ describe('EvolutionEpisodeService', () => {
 			workflowRunRepo,
 			artifactRepo,
 		});
-		const listed = scopeService.listEvidence(scope.id);
+		const listedWithoutContext = scopeService.listEvidence(scope.id);
+		expect(listedWithoutContext.preflightContext).toBeUndefined();
+
+		const listed = scopeService.listEvidence(scope.id, true);
+		const taskContext = listed.preflightContext?.tasks[0]?.task;
 		const runContext = listed.preflightContext?.workflowRuns[0];
+		expect(taskContext).toEqual({
+			title: 'Ship Forge preflight',
+			status: 'done',
+			reportedStatus: null,
+			reportedSummary: 'Completed with artifact-backed validation',
+			result: 'PR merged after CI and QA passed',
+		});
+		expect('description' in (taskContext ?? {})).toBe(false);
+		expect('metadata' in (taskContext ?? {})).toBe(false);
 		const largePayload = 'x'.repeat(1000);
 		artifactRepo.upsert({
 			id: 'artifact-large',
@@ -366,7 +379,7 @@ describe('EvolutionEpisodeService', () => {
 				data: { summary: 'later artifact outside preflight window' },
 			});
 		}
-		const listedWithArtifacts = scopeService.listEvidence(scope.id);
+		const listedWithArtifacts = scopeService.listEvidence(scope.id, true);
 		const cappedRunContext = listedWithArtifacts.preflightContext?.workflowRuns[0];
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,

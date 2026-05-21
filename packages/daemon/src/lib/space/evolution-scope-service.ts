@@ -12,6 +12,7 @@ import type {
 	SpaceWorkflowRun,
 	UpdateEvolutionScopeParams,
 	EvolutionEvidenceListResponse,
+	EvolutionPreflightTaskSummary,
 } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
@@ -331,13 +332,15 @@ export class EvolutionScopeService {
 		return { snapshot, evidence };
 	}
 
-	listEvidence(scopeId: string): EvolutionEvidenceListResponse {
+	listEvidence(scopeId: string, includePreflightContext = false): EvolutionEvidenceListResponse {
 		const scope = this.requireScope(scopeId);
 		const evidence = this.deps.evolutionRepo.listEvidence(scopeId);
-		return {
-			evidence,
-			preflightContext: this.buildPreflightContext(scope, evidence),
-		};
+		return includePreflightContext
+			? {
+					evidence,
+					preflightContext: this.buildPreflightContext(scope, evidence),
+				}
+			: { evidence };
 	}
 
 	private buildPreflightContext(
@@ -349,7 +352,7 @@ export class EvolutionScopeService {
 			if (!item.sourceId) return [];
 			const task = this.deps.taskRepo.getTask(item.sourceId);
 			if (!task || task.spaceId !== scope.spaceId) return [];
-			return [{ evidenceId: item.id, task }];
+			return [{ evidenceId: item.id, task: summarizeTaskForPreflight(task) }];
 		});
 		const evidenceIdsByRunId = new Map<string, string[]>();
 		for (const item of evidence) {
@@ -369,7 +372,9 @@ export class EvolutionScopeService {
 					{
 						evidenceIds,
 						run,
-						tasks: this.deps.taskRepo.listByWorkflowRunIncludingArchived(run.id),
+						tasks: this.deps.taskRepo
+							.listByWorkflowRunIncludingArchived(run.id)
+							.map(summarizeTaskForPreflight),
 						artifacts: (this.deps.artifactRepo?.listByRun(run.id) ?? [])
 							.slice(0, MAX_PREFLIGHT_ARTIFACTS_PER_RUN)
 							.map((artifact) => ({
@@ -491,6 +496,16 @@ export class EvolutionScopeService {
 function buildTaskResultEvidenceSummary(task: SpaceTask): string {
 	const outcome = task.result ?? task.reportedSummary ?? 'completed without task.result';
 	return `Task #${task.taskNumber} done: ${task.title} — ${truncateText(outcome, 180)}`;
+}
+
+function summarizeTaskForPreflight(task: SpaceTask): EvolutionPreflightTaskSummary {
+	return {
+		title: task.title,
+		status: task.status,
+		reportedStatus: task.reportedStatus ?? null,
+		reportedSummary: task.reportedSummary ?? null,
+		result: task.result ?? null,
+	};
 }
 
 function selectWorkflowEvidenceKind(
