@@ -31,7 +31,10 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
+import {
+	WorkflowModelSelect,
+	type WorkflowModelSelection,
+} from './visual-editor/WorkflowModelSelect';
 
 type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'lessons' | 'episodes';
 
@@ -139,6 +142,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 	const [kind, setKind] = useState<EvolutionScopeKind>('project');
 	const [spaceGoalId, setSpaceGoalId] = useState('');
 	const [episodeJudgeModel, setEpisodeJudgeModel] = useState<string | undefined>(undefined);
+	const [episodeJudgeProvider, setEpisodeJudgeProvider] = useState<string | undefined>(undefined);
 	const [metrics, setMetrics] = useState<MetricDefinitionDraft[]>([]);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -153,6 +157,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 		setKind('project');
 		setSpaceGoalId('');
 		setEpisodeJudgeModel(undefined);
+		setEpisodeJudgeProvider(undefined);
 		setMetrics([]);
 		setError(null);
 	};
@@ -160,6 +165,14 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 	const handleClose = () => {
 		reset();
 		onClose();
+	};
+
+	const handleEpisodeJudgeModelChange = (
+		value: string | undefined,
+		selection?: WorkflowModelSelection
+	) => {
+		setEpisodeJudgeModel(value);
+		setEpisodeJudgeProvider(selection?.provider);
 	};
 
 	const addMetric = () => {
@@ -209,7 +222,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 					objective: objective.trim(),
 					spaceGoalId: spaceGoalId || null,
 					metricDefinitions,
-					...(episodeJudgeModel ? { policy: { episodeJudgeModel } } : {}),
+					...(episodeJudgeModel ? { policy: { episodeJudgeModel, episodeJudgeProvider } } : {}),
 				},
 			});
 			toast.success(`Scope "${response.scope.name}" created`);
@@ -294,7 +307,8 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 					<label class="mb-1.5 block text-sm font-medium text-gray-300">Episode judge model</label>
 					<WorkflowModelSelect
 						value={episodeJudgeModel}
-						onChange={setEpisodeJudgeModel}
+						provider={episodeJudgeProvider}
+						onChange={handleEpisodeJudgeModelChange}
 						testId="forge-scope-model-select"
 						className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
 					/>
@@ -1462,7 +1476,10 @@ function ScopeDetail({
 		setSettingsError(null);
 	}, [scope.id]);
 
-	const handleJudgeModelChange = async (value: string | undefined) => {
+	const handleJudgeModelChange = async (
+		value: string | undefined,
+		selection?: WorkflowModelSelection
+	) => {
 		const version = ++judgeModelRequestVersion.current;
 		try {
 			setSavingJudgeModel(true);
@@ -1470,8 +1487,14 @@ function ScopeDetail({
 			const nextPolicy = { ...scope.policy };
 			if (value) {
 				nextPolicy.episodeJudgeModel = value;
+				if (selection?.provider) {
+					nextPolicy.episodeJudgeProvider = selection.provider;
+				} else {
+					delete nextPolicy.episodeJudgeProvider;
+				}
 			} else {
 				delete nextPolicy.episodeJudgeModel;
+				delete nextPolicy.episodeJudgeProvider;
 			}
 			const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
 				id: scope.id,
@@ -1556,6 +1579,11 @@ function ScopeDetail({
 								value={
 									typeof scope.policy.episodeJudgeModel === 'string'
 										? scope.policy.episodeJudgeModel
+										: undefined
+								}
+								provider={
+									typeof scope.policy.episodeJudgeProvider === 'string'
+										? scope.policy.episodeJudgeProvider
 										: undefined
 								}
 								onChange={handleJudgeModelChange}
@@ -1643,6 +1671,11 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 		setSelectedScopeId(scope.id);
 	};
 
+	const handleScopeSelected = (scopeId: string) => {
+		localMutationVersion.current += 1;
+		setSelectedScopeId(scopeId);
+	};
+
 	const handleScopeUpdated = (scope: EvolutionScope) => {
 		localMutationVersion.current += 1;
 		setScopes((current) => current.map((item) => (item.id === scope.id ? scope : item)));
@@ -1690,7 +1723,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 									<button
 										key={scope.id}
 										type="button"
-										onClick={() => setSelectedScopeId(scope.id)}
+										onClick={() => handleScopeSelected(scope.id)}
 										class={`w-full rounded-xl border p-3 text-left transition-colors ${selected ? 'border-cyan-500/40 bg-cyan-500/10' : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'}`}
 									>
 										<div class="mb-1 flex items-center justify-between gap-2">

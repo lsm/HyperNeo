@@ -9,28 +9,46 @@ import {
 	type RawModelEntry,
 } from '../../../hooks/useModelSwitcher';
 
+export interface WorkflowModelSelection {
+	modelId: string;
+	provider: string;
+}
+
 interface WorkflowModelSelectProps {
 	value?: string;
-	onChange: (value: string | undefined) => void;
+	provider?: string;
+	onChange: (value: string | undefined, selection?: WorkflowModelSelection) => void;
 	testId: string;
 	className?: string;
 }
 
 type LoadState = 'loading' | 'ready' | 'no-providers';
 
-function dedupeModelsById(models: ModelInfo[]): ModelInfo[] {
+function dedupeModelsByProviderAndId(models: ModelInfo[]): ModelInfo[] {
 	const seen = new Set<string>();
 	const deduped: ModelInfo[] = [];
 	for (const model of models) {
-		if (seen.has(model.id)) continue;
-		seen.add(model.id);
+		const key = `${model.provider}:${model.id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
 		deduped.push(model);
 	}
 	return deduped;
 }
 
+function encodeModelValue(model: ModelInfo): string {
+	return `${model.provider}:${model.id}`;
+}
+
+function decodeModelValue(value: string): WorkflowModelSelection {
+	const separator = value.indexOf(':');
+	if (separator === -1) return { provider: '', modelId: value };
+	return { provider: value.slice(0, separator), modelId: value.slice(separator + 1) };
+}
+
 export function WorkflowModelSelect({
 	value,
+	provider,
 	onChange,
 	testId,
 	className = 'w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed',
@@ -49,7 +67,7 @@ export function WorkflowModelSelect({
 					useCache: true,
 				})) as { models: RawModelEntry[] };
 				if (cancelled) return;
-				const loaded = dedupeModelsById(mapRawModelsToModelInfos(response.models ?? []));
+				const loaded = dedupeModelsByProviderAndId(mapRawModelsToModelInfos(response.models ?? []));
 				setModels(loaded);
 				setLoadState(loaded.length > 0 ? 'ready' : 'no-providers');
 			} catch {
@@ -66,8 +84,11 @@ export function WorkflowModelSelect({
 		};
 	}, []);
 
+	const selectedValue = provider && value ? `${provider}:${value}` : value || '';
 	const groupedModels = useMemo(() => groupModelsByProvider(models), [models]);
-	const hasCurrentOutsideList = !!value && !models.some((model) => model.id === value);
+	const hasCurrentOutsideList =
+		!!value &&
+		!models.some((model) => model.id === value && (!provider || model.provider === provider));
 
 	if (loadState === 'loading') {
 		return (
@@ -90,19 +111,28 @@ export function WorkflowModelSelect({
 	return (
 		<select
 			data-testid={testId}
-			value={value ?? ''}
+			value={selectedValue}
 			onChange={(e) => {
 				const nextValue = (e.currentTarget as HTMLSelectElement).value;
-				onChange(nextValue || undefined);
+				if (!nextValue) {
+					onChange(undefined);
+					return;
+				}
+				const selection = decodeModelValue(nextValue);
+				onChange(selection.modelId, selection);
 			}}
 			class={className}
 		>
 			<option value="">— No override —</option>
-			{hasCurrentOutsideList && <option value={value}>{`Current (${value})`}</option>}
+			{hasCurrentOutsideList && (
+				<option
+					value={selectedValue}
+				>{`Current (${provider ? `${provider}:` : ''}${value})`}</option>
+			)}
 			{Array.from(groupedModels.entries()).map(([provider, providerModels]) => (
 				<optgroup key={provider} label={PROVIDER_LABELS[provider] || getProviderLabel(provider)}>
 					{providerModels.map((model) => (
-						<option key={`${provider}:${model.id}`} value={model.id}>
+						<option key={`${provider}:${model.id}`} value={encodeModelValue(model)}>
 							{`${model.name} (${model.id})`}
 						</option>
 					))}

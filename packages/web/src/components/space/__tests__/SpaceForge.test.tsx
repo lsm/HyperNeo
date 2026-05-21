@@ -33,12 +33,17 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 		className,
 	}: {
 		value?: string;
-		onChange: (value: string | undefined) => void;
+		onChange: (
+			value: string | undefined,
+			selection?: { modelId: string; provider: string }
+		) => void;
 		testId: string;
 		className?: string;
 	}) => {
-		const handleChange = (event: Event) =>
-			onChange((event.currentTarget as HTMLSelectElement).value || undefined);
+		const handleChange = (event: Event) => {
+			const modelId = (event.currentTarget as HTMLSelectElement).value || undefined;
+			onChange(modelId, modelId ? { modelId, provider: 'anthropic' } : undefined);
+		};
 		return (
 			<select
 				data-testid={testId}
@@ -350,13 +355,25 @@ describe('SpaceForge', () => {
 		);
 		expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
 			id: 'scope-1',
-			params: { policy: { maxActiveLessons: 3, episodeJudgeModel: 'claude-sonnet-4-6' } },
+			params: {
+				policy: {
+					maxActiveLessons: 3,
+					episodeJudgeModel: 'claude-sonnet-4-6',
+					episodeJudgeProvider: 'anthropic',
+				},
+			},
 		});
 	});
 
 	it('clears existing scope judge model override', async () => {
 		setupRequests(
-			makeScope({ policy: { maxActiveLessons: 3, episodeJudgeModel: 'claude-sonnet-4-5' } })
+			makeScope({
+				policy: {
+					maxActiveLessons: 3,
+					episodeJudgeModel: 'claude-sonnet-4-5',
+					episodeJudgeProvider: 'anthropic',
+				},
+			})
 		);
 		render(<SpaceForge spaceId="space-1" />);
 
@@ -417,6 +434,43 @@ describe('SpaceForge', () => {
 		expect(
 			(screen.getByTestId('scope-episode-judge-model-select') as HTMLSelectElement).value
 		).toBe('claude-opus-4-5');
+	});
+
+	it('invalidates pending judge model saves before scope selection commits', async () => {
+		let resolveFirst: (value: { scope: EvolutionScope }) => void = () => undefined;
+		mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+			if (method === 'evolution.scope.list') {
+				return {
+					scopes: [
+						makeScope({ id: 'scope-1', name: 'Review quality scope' }),
+						makeScope({ id: 'scope-2', name: 'Other scope', policy: {} }),
+					],
+				};
+			}
+			if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+			if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
+			if (method === 'evolution.review.get') {
+				return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
+			}
+			if (method === 'evolution.scope.update') {
+				return new Promise((resolve) => {
+					resolveFirst = resolve;
+				});
+			}
+			throw new Error(`Unexpected RPC ${method}`);
+		});
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.change(screen.getByTestId('scope-episode-judge-model-select'), {
+			target: { value: 'claude-sonnet-4-6' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Other scope/ }));
+		resolveFirst({ scope: makeScope({ policy: { episodeJudgeModel: 'claude-sonnet-4-6' } }) });
+
+		expect(await screen.findByRole('heading', { name: 'Other scope' })).toBeTruthy();
+		expect(mockToastSuccess).not.toHaveBeenCalledWith('Episode judge model updated');
+		expect(screen.queryByText('Saving…')).toBeNull();
 	});
 
 	it('clears judge model save state after scope selection changes', async () => {
@@ -782,7 +836,10 @@ describe('SpaceForge', () => {
 						targetValue: undefined,
 					},
 				],
-				policy: { episodeJudgeModel: 'claude-sonnet-4-6' },
+				policy: {
+					episodeJudgeModel: 'claude-sonnet-4-6',
+					episodeJudgeProvider: 'anthropic',
+				},
 			},
 		});
 	});

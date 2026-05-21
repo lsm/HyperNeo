@@ -24,6 +24,7 @@ export type EvolutionFindingKind =
 export type EvolutionImpact = 'low' | 'medium' | 'high';
 export interface EvolutionPolicy extends Record<string, unknown> {
 	episodeJudgeModel?: string;
+	episodeJudgeProvider?: string;
 }
 export type MetricSnapshotValues = Record<string, string | number | boolean | null>;
 

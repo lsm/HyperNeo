@@ -518,14 +518,15 @@ export async function resolveEpisodeJudgeModel(
 	spaceRepo?: Pick<SpaceRepository, 'getSpace'>
 ): Promise<{ provider: string; modelId: string }> {
 	const scopeModel = readEpisodeJudgeModel(input.scope);
+	const scopeProvider = scopeModel ? readEpisodeJudgeProvider(input.scope) : undefined;
 	const spaceModel = scopeModel
 		? undefined
 		: spaceRepo?.getSpace(input.scope.spaceId)?.defaultModel;
 	const selectedModel = scopeModel ?? spaceModel?.trim();
 	if (selectedModel) {
-		const cachedModel = findCachedModel(selectedModel);
+		const cachedModel = findCachedModel(selectedModel, scopeProvider);
 		return {
-			provider: cachedModel?.provider ?? inferProviderForModel(selectedModel),
+			provider: scopeProvider ?? cachedModel?.provider ?? inferProviderForModel(selectedModel),
 			modelId: cachedModel?.id ?? selectedModel,
 		};
 	}
@@ -540,9 +541,20 @@ function readEpisodeJudgeModel(scope: EvolutionScope): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function findCachedModel(modelId: string): { id: string; provider: string } | undefined {
-	return getAvailableModels('global').find(
-		(model) => model.id === modelId || model.alias === modelId
+function readEpisodeJudgeProvider(scope: EvolutionScope): string | undefined {
+	const value = scope.policy.episodeJudgeProvider;
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function findCachedModel(
+	modelId: string,
+	provider?: string
+): { id: string; provider: string } | undefined {
+	const models = getAvailableModels('global');
+	const providerMatches = provider ? models.filter((model) => model.provider === provider) : models;
+	return (
+		providerMatches.find((model) => model.id === modelId) ??
+		providerMatches.find((model) => model.alias === modelId)
 	);
 }
 
