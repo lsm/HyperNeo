@@ -544,6 +544,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		artifactRepo,
+		goalService: spaceGoalService,
 	});
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
 

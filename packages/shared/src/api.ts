@@ -51,6 +51,7 @@ import type {
 	UpdateEvolutionScopeParams,
 	UpdateTaskProposalParams,
 } from './types/evolution.ts';
+import type { SpaceGoal, SpaceTask, UpdateSpaceGoalParams } from './types/space.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -747,6 +748,26 @@ export interface EvolutionTaskProposalListRequest {
 
 export interface EvolutionTaskProposalListResponse {
 	proposals: TaskProposal[];
+}
+
+export interface EvolutionTaskProposalCreateTaskRequest {
+	id: string;
+	params?: Partial<Pick<TaskProposal, 'title' | 'description' | 'reason' | 'priority'>>;
+}
+
+export interface EvolutionTaskProposalCreateTaskResponse {
+	proposal: TaskProposal;
+	task: SpaceTask;
+}
+
+export interface EvolutionRollupApplyRequest {
+	episodeId: string;
+	goalUpdate: Pick<UpdateSpaceGoalParams, 'summary' | 'progress' | 'nextSteps' | 'metrics'>;
+}
+
+export interface EvolutionRollupApplyResponse {
+	episode: EvolutionEpisode;
+	goal: SpaceGoal;
 }
 
 export interface EvolutionMetricSnapshotCreateRequest {

@@ -7,11 +7,14 @@ import {
 } from '../../../src/lib/space/evolution-episode-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
+import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
+import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../src/storage/repositories/workflow-run-artifact-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
+import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('EvolutionEpisodeService', () => {
@@ -21,14 +24,17 @@ describe('EvolutionEpisodeService', () => {
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let artifactRepo: WorkflowRunArtifactRepository;
 	let workflowRepo: SpaceWorkflowRepository;
+	let goalRepo: SpaceGoalRepository;
+	let spaceRepo: SpaceRepository;
 	let spaceId: string;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
 		createSpaceTables(db);
-		const spaceRepo = new SpaceRepository(db as never);
+		spaceRepo = new SpaceRepository(db as never);
 		evolutionRepo = new EvolutionRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
+		goalRepo = new SpaceGoalRepository(db as never);
 		workflowRunRepo = new SpaceWorkflowRunRepository(
 			db as never,
 			new GateOpenStateRepository(db as never)
@@ -175,6 +181,112 @@ describe('EvolutionEpisodeService', () => {
 				})
 			)
 		).toThrow('finding.domain must be one of');
+	});
+
+	it('creates a scoped SpaceTask from a proposal and records evidence context', async () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Improve review loop',
+			type: 'recurring',
+		});
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Review scope',
+			objective: 'Track review health',
+		});
+		const episode = evolutionRepo.createEpisode({
+			scopeId: scope.id,
+			title: 'Manual rollup',
+			outcomeSummary: 'Review friction found',
+		});
+		const proposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Improve review UI',
+			description: 'Make actions clearer',
+			reason: 'Users miss next steps',
+			priority: 'high',
+			evidenceEpisodeIds: [episode.id],
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const result = service.createTaskFromProposal(proposal.id);
+
+		expect(result.proposal).toMatchObject({
+			status: 'created',
+			createdTaskId: result.task.id,
+		});
+		expect(result.task).toMatchObject({
+			spaceId,
+			goalId: goal.id,
+			evolutionScopeId: scope.id,
+			title: 'Improve review UI',
+			priority: 'high',
+		});
+		expect(result.task.description).toContain('Make actions clearer');
+		expect(result.task.description).toContain('Proposal reason:\nUsers miss next steps');
+		expect(result.task.description).toContain(episode.id);
+	});
+
+	it('applies accepted rollup fields to the linked recurring goal', () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Recurring review goal',
+			type: 'recurring',
+			summary: 'Old summary',
+			progress: 20,
+			nextSteps: ['Old step'],
+		});
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Review scope',
+			objective: 'Track review health',
+		});
+		const episode = evolutionRepo.createEpisode({
+			scopeId: scope.id,
+			title: 'Weekly rollup',
+			outcomeSummary: 'Progress improved',
+		});
+		const goalService = new SpaceGoalService({
+			goalRepo,
+			goalEventRepo: new SpaceGoalEventRepository(db as never),
+			taskRepo,
+			spaceRepo,
+			scheduleService: {} as never,
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			goalService,
+		});
+
+		const result = service.applyRollupGoalUpdate({
+			episodeId: episode.id,
+			goalUpdate: {
+				summary: 'New rollup summary',
+				progress: 75,
+				nextSteps: ['Create follow-up task'],
+				metrics: { latency: 3 },
+			},
+		});
+
+		expect(result.episode.status).toBe('accepted');
+		expect(result.goal).toMatchObject({
+			summary: 'New rollup summary',
+			progress: 75,
+			nextSteps: ['Create follow-up task'],
+			metrics: { latency: 3 },
+		});
 	});
 
 	it('persists draft episode, candidate lessons, and proposals from judge output', async () => {

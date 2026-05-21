@@ -223,8 +223,28 @@ function setupRequests(scope = makeScope()) {
 			return { lesson: makeLesson({ status: payload.params.status }) };
 		}
 		if (method === 'evolution.taskProposal.update') {
-			expect(data).toEqual({ id: 'proposal-1', params: { status: 'accepted' } });
-			return { proposal: makeProposal({ status: 'accepted' }) };
+			const payload = data as { id: string; params: { status: TaskProposal['status'] } };
+			expect(payload.id).toBe('proposal-1');
+			expect(['accepted', 'dismissed']).toContain(payload.params.status);
+			return { proposal: makeProposal({ status: payload.params.status }) };
+		}
+		if (method === 'evolution.taskProposal.createTask') {
+			const payload = data as { id: string; params?: Partial<TaskProposal> };
+			expect(payload.id).toBe('proposal-1');
+			return {
+				proposal: makeProposal({ status: 'created', createdTaskId: 'task-1' }),
+				task: {
+					id: 'task-1',
+					taskNumber: 7,
+					title: payload.params?.title ?? 'Improve review UI',
+				},
+			};
+		}
+		if (method === 'evolution.rollup.apply') {
+			return {
+				episode: makeEpisode({ status: 'accepted' }),
+				goal: makeGoal({ title: 'Improve review loop' }),
+			};
 		}
 		if (method === 'evolution.evidence.addManualNote') {
 			expect(data).toEqual({ scopeId: scope.id, summary: 'Manual proof' });
@@ -394,17 +414,81 @@ describe('SpaceForge', () => {
 		);
 	});
 
-	it('accepts task proposal from review UI', async () => {
+	it('creates task from proposal from review UI', async () => {
 		render(<SpaceForge spaceId="space-1" />);
 
 		await screen.findByRole('heading', { name: 'Review quality scope' });
 		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
-		fireEvent.click((await screen.findAllByRole('button', { name: 'Accept' }))[1]);
+		fireEvent.click(await screen.findByRole('button', { name: 'Create Task' }));
+
+		await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Task #7 created'));
+		expect(mockRequest).toHaveBeenCalledWith('evolution.taskProposal.createTask', {
+			id: 'proposal-1',
+			params: undefined,
+		});
+	});
+
+	it('edits and creates task from proposal from review UI', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.click(await screen.findByRole('button', { name: 'Edit & Create' }));
+		fireEvent.input(screen.getByLabelText('Proposal title'), {
+			target: { value: 'Edited review UI task' },
+		});
+		fireEvent.click(await screen.findByRole('button', { name: 'Save & Create' }));
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.taskProposal.createTask', {
+				id: 'proposal-1',
+				params: {
+					title: 'Edited review UI task',
+					description: 'Make accept/dismiss actions clearer',
+					reason: 'Reduce NeoKai friction',
+					priority: 'high',
+				},
+			})
+		);
+	});
+
+	it('dismisses task proposal from review UI', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.click((await screen.findAllByRole('button', { name: 'Dismiss' }))[2]);
 
 		await waitFor(() =>
 			expect(mockRequest).toHaveBeenCalledWith('evolution.taskProposal.update', {
 				id: 'proposal-1',
-				params: { status: 'accepted' },
+				params: { status: 'dismissed' },
+			})
+		);
+	});
+
+	it('applies manual rollup to linked recurring goal from review UI', async () => {
+		render(<SpaceForge spaceId="space-1" />);
+
+		await screen.findByRole('heading', { name: 'Review quality scope' });
+		fireEvent.click(screen.getByRole('button', { name: 'episodes' }));
+		fireEvent.input(await screen.findByLabelText('Rollup summary'), {
+			target: { value: 'Rollup summary' },
+		});
+		fireEvent.input(screen.getByLabelText('Rollup progress'), { target: { value: '80' } });
+		fireEvent.input(screen.getByLabelText('Rollup next steps'), {
+			target: { value: 'Create follow-up\nMeasure again' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Apply rollup' }));
+
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('evolution.rollup.apply', {
+				episodeId: 'episode-1',
+				goalUpdate: {
+					summary: 'Rollup summary',
+					progress: 80,
+					nextSteps: ['Create follow-up', 'Measure again'],
+				},
 			})
 		);
 	});

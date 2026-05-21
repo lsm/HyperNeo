@@ -29,10 +29,14 @@ import type {
 	EvolutionScopeUpdateResponse,
 	EvolutionTaskLessonSelectRequest,
 	EvolutionTaskLessonSelectResponse,
+	EvolutionTaskProposalCreateTaskRequest,
+	EvolutionTaskProposalCreateTaskResponse,
 	EvolutionTaskProposalListRequest,
 	EvolutionTaskProposalListResponse,
 	EvolutionTaskProposalUpdateRequest,
 	EvolutionTaskProposalUpdateResponse,
+	EvolutionRollupApplyRequest,
+	EvolutionRollupApplyResponse,
 	MessageHub,
 } from '@neokai/shared';
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
@@ -264,6 +268,27 @@ export function setupEvolutionHandlers(
 			const id = readRequiredString(payload, 'id');
 			const params = readRecord(payload.params) as EvolutionTaskProposalUpdateRequest['params'];
 			return { proposal: episodeService.updateTaskProposal(id, params) };
+		}
+	);
+
+	messageHub.onRequest<
+		EvolutionTaskProposalCreateTaskRequest,
+		EvolutionTaskProposalCreateTaskResponse
+	>('evolution.taskProposal.createTask', async (data) => {
+		const payload = readRecord(data);
+		const id = readRequiredString(payload, 'id');
+		const params = payload.params === undefined ? {} : readRecord(payload.params);
+		return episodeService.createTaskFromProposal(
+			id,
+			params as EvolutionTaskProposalCreateTaskRequest['params']
+		);
+	});
+
+	messageHub.onRequest<EvolutionRollupApplyRequest, EvolutionRollupApplyResponse>(
+		'evolution.rollup.apply',
+		async (data) => {
+			const payload = readRecord(data) as unknown as EvolutionRollupApplyRequest;
+			return episodeService.applyRollupGoalUpdate(payload);
 		}
 	);
 }
