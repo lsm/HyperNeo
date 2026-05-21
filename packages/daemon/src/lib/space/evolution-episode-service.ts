@@ -34,6 +34,7 @@ import type { SpaceGoalService } from './goals/goal-service';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { getAvailableModels } from '../model-service';
 import { inferProviderForModel } from '../providers/registry';
 
 const log = new Logger('evolution-episode-service');
@@ -216,7 +217,8 @@ export class EvolutionEpisodeService {
 	}
 
 	updateEpisode(id: string, params: UpdateEvolutionEpisodeParams): EvolutionEpisode | null {
-		return this.deps.evolutionRepo.updateEpisode(id, params);
+		const { rollupAppliedAt: _rollupAppliedAt, ...safeParams } = params;
+		return this.deps.evolutionRepo.updateEpisode(id, safeParams);
 	}
 
 	listReviewBundle(scopeId: string): EpisodeReviewBundle {
@@ -321,7 +323,7 @@ export class EvolutionEpisodeService {
 		if (!this.deps.goalService) throw new Error('SpaceGoalService is required');
 		const episode = this.deps.evolutionRepo.getEpisode(params.episodeId);
 		if (!episode) throw new Error(`EvolutionEpisode not found: ${params.episodeId}`);
-		if (episode.status === 'accepted') throw new Error('Episode already accepted');
+		if (episode.rollupAppliedAt !== null) throw new Error('Episode rollup already applied');
 		if (episode.status === 'dismissed') throw new Error('Dismissed episode cannot accept rollup');
 		const scope = this.requireScope(episode.scopeId);
 		if (!scope.spaceGoalId) throw new Error('Episode scope is not linked to a recurring goal');
@@ -337,7 +339,10 @@ export class EvolutionEpisodeService {
 			source: 'rpc',
 			note: `Forge rollup accepted: ${episode.title}`,
 		});
-		const accepted = this.deps.evolutionRepo.updateEpisode(episode.id, { status: 'accepted' });
+		const accepted = this.deps.evolutionRepo.updateEpisode(episode.id, {
+			status: 'accepted',
+			rollupAppliedAt: Date.now(),
+		});
 		if (!accepted) throw new Error(`EvolutionEpisode not found: ${params.episodeId}`);
 		return { episode: accepted, goal };
 	}
@@ -526,12 +531,17 @@ export async function resolveEpisodeJudgeModel(
 	spaceRepo?: Pick<SpaceRepository, 'getSpace'>
 ): Promise<{ provider: string; modelId: string }> {
 	const scopeModel = readEpisodeJudgeModel(input.scope);
+	const scopeProvider = scopeModel ? readEpisodeJudgeProvider(input.scope) : undefined;
 	const spaceModel = scopeModel
 		? undefined
 		: spaceRepo?.getSpace(input.scope.spaceId)?.defaultModel;
 	const selectedModel = scopeModel ?? spaceModel?.trim();
 	if (selectedModel) {
-		return { provider: inferProviderForModel(selectedModel), modelId: selectedModel };
+		const cachedModel = findCachedModel(selectedModel, scopeProvider);
+		return {
+			provider: scopeProvider ?? cachedModel?.provider ?? inferProviderForModel(selectedModel),
+			modelId: cachedModel?.id ?? selectedModel,
+		};
 	}
 	const providerService = getProviderService();
 	const provider = await providerService.getDefaultProvider();
@@ -542,6 +552,23 @@ export async function resolveEpisodeJudgeModel(
 function readEpisodeJudgeModel(scope: EvolutionScope): string | undefined {
 	const value = scope.policy.episodeJudgeModel;
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function readEpisodeJudgeProvider(scope: EvolutionScope): string | undefined {
+	const value = scope.policy.episodeJudgeProvider;
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function findCachedModel(
+	modelId: string,
+	provider?: string
+): { id: string; provider: string } | undefined {
+	const models = getAvailableModels('global');
+	const providerMatches = provider ? models.filter((model) => model.provider === provider) : models;
+	return (
+		providerMatches.find((model) => model.id === modelId) ??
+		providerMatches.find((model) => model.alias === modelId)
+	);
 }
 
 async function judgeEpisodeWithModel(

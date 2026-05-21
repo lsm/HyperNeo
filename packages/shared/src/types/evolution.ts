@@ -24,6 +24,7 @@ export type EvolutionFindingKind =
 export type EvolutionImpact = 'low' | 'medium' | 'high';
 export interface EvolutionPolicy extends Record<string, unknown> {
 	episodeJudgeModel?: string;
+	episodeJudgeProvider?: string;
 }
 export type MetricSnapshotValues = Record<string, string | number | boolean | null>;
 
@@ -108,6 +109,7 @@ export interface EvolutionEpisode {
 	id: string;
 	scopeId: string;
 	status: EvolutionEpisodeStatus;
+	rollupAppliedAt: number | null;
 	title: string;
 	timeWindow: EvolutionEpisodeTimeWindow | null;
 	evidenceIds: string[];
@@ -129,6 +131,7 @@ export interface CreateEvolutionEpisodeParams {
 
 export interface UpdateEvolutionEpisodeParams {
 	status?: EvolutionEpisodeStatus;
+	rollupAppliedAt?: number | null;
 	title?: string;
 	timeWindow?: EvolutionEpisodeTimeWindow | null;
 	evidenceIds?: string[];

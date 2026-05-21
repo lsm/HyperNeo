@@ -25,21 +25,47 @@ import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preac
 import { useState } from 'preact/hooks';
 import type { SpaceAgent } from '@neokai/shared';
 
+const mockModels = [
+	{
+		id: 'claude-sonnet-4-6',
+		display_name: 'Claude Sonnet 4.6',
+		description: '',
+		provider: 'anthropic',
+	},
+	{
+		id: 'gpt-5.4',
+		display_name: 'GPT-5.4',
+		description: '',
+		provider: 'openai',
+	},
+	{
+		id: 'gpt-5.4',
+		display_name: 'GPT-5.4 via Custom',
+		description: '',
+		provider: 'custom:endpoint-2',
+	},
+	{
+		id: 'custom/model:with:colon',
+		display_name: 'Colon Model',
+		description: '',
+		provider: 'custom:endpoint-1',
+	},
+	{
+		id: 'endpoint-1:shared',
+		display_name: 'Collision A',
+		description: '',
+		provider: 'custom',
+	},
+	{
+		id: 'shared',
+		display_name: 'Collision B',
+		description: '',
+		provider: 'custom:endpoint-1',
+	},
+];
+
 const mockModelsResponse = {
-	models: [
-		{
-			id: 'claude-sonnet-4-6',
-			display_name: 'Claude Sonnet 4.6',
-			description: '',
-			provider: 'anthropic',
-		},
-		{
-			id: 'gpt-5.4',
-			display_name: 'GPT-5.4',
-			description: '',
-			provider: 'openai',
-		},
-	],
+	models: mockModels.map((model) => ({ ...model })),
 };
 
 const mockHub = {
@@ -58,11 +84,15 @@ vi.mock('../../../../lib/connection-manager', () => ({
 	},
 }));
 
+import { WorkflowModelSelect } from '../WorkflowModelSelect';
 import { NodeConfigPanel } from '../NodeConfigPanel';
 import type { NodeConfigPanelProps } from '../NodeConfigPanel';
 import type { NodeDraft } from '../../WorkflowNodeCard';
 
-afterEach(() => cleanup());
+afterEach(() => {
+	cleanup();
+	mockModelsResponse.models = mockModels.map((model) => ({ ...model }));
+});
 
 // ============================================================================
 // Fixtures
@@ -165,6 +195,140 @@ describe('NodeConfigPanel', () => {
 			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
 			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
 			expect(input.value).toBe('');
+		});
+
+		it('shows selected single-agent model when provider is omitted', async () => {
+			const { getByTestId } = render(
+				<NodeConfigPanel {...makeProps({ step: makeStep({ model: 'gpt-5.4' }) })} />
+			);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
+		});
+
+		it('preserves provider-qualified selections containing colons', async () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			input.value = '%5B%22custom%3Aendpoint-1%22%2C%22custom%2Fmodel%3Awith%3Acolon%22%5D';
+			fireEvent.change(input);
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({ model: 'custom/model:with:colon' })
+			);
+		});
+
+		it('preserves raw colon IDs in out-of-list current selections', async () => {
+			const onChange = vi.fn();
+			const { getByTestId } = render(
+				<WorkflowModelSelect
+					value="stale:model:with:colon"
+					onChange={onChange}
+					testId="stale-colon-model-select"
+				/>
+			);
+			const input = getByTestId('stale-colon-model-select') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('stale:model:with:colon');
+			fireEvent.change(input);
+			expect(onChange).toHaveBeenCalledWith('stale:model:with:colon', {
+				modelId: 'stale:model:with:colon',
+				provider: '',
+			});
+		});
+
+		it('keeps selected provider for duplicate model IDs without provider prop', async () => {
+			function Wrapper() {
+				const [step, setStep] = useState(makeStep());
+				return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+			}
+			const { getByTestId } = render(<Wrapper />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
+			fireEvent.change(input);
+			expect(input.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
+		});
+
+		it('resets cached provider when providerless value changes', async () => {
+			function Wrapper() {
+				const [step, setStep] = useState(makeStep());
+				return (
+					<div>
+						<button type="button" onClick={() => setStep(makeStep({ model: 'claude-sonnet-4-6' }))}>
+							Switch model
+						</button>
+						<NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />
+					</div>
+				);
+			}
+			const { getByTestId, getByText } = render(<Wrapper />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			input.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
+			fireEvent.change(input);
+			expect(input.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
+			fireEvent.click(getByText('Switch model'));
+			expect(input.value).toBe('%5B%22anthropic%22%2C%22claude-sonnet-4-6%22%5D');
+		});
+
+		it('clears cached provider when provider prop is removed for the same value', async () => {
+			function Wrapper() {
+				const [provider, setProvider] = useState<string | undefined>('custom:endpoint-2');
+				return (
+					<div>
+						<button type="button" onClick={() => setProvider(undefined)}>
+							Clear provider
+						</button>
+						<WorkflowModelSelect
+							value="gpt-5.4"
+							provider={provider}
+							onChange={vi.fn()}
+							testId="provider-clear-model-select"
+						/>
+					</div>
+				);
+			}
+			const { getByTestId, getByText } = render(<Wrapper />);
+			const input = getByTestId('provider-clear-model-select') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
+			fireEvent.click(getByText('Clear provider'));
+			expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
+		});
+
+		it('keeps provider/model pairs distinct when colon-delimited keys collide', async () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			const optionValues = Array.from(input.options).map((option) => option.value);
+			expect(optionValues).toContain('%5B%22custom%22%2C%22endpoint-1%3Ashared%22%5D');
+			expect(optionValues).toContain('%5B%22custom%3Aendpoint-1%22%2C%22shared%22%5D');
+		});
+
+		it('shows current fallback when cached provider value disappears but same model id remains', async () => {
+			mockModelsResponse.models = mockModels
+				.filter((model) => model.provider !== 'custom:endpoint-2')
+				.map((model) => ({ ...model }));
+			const { getByTestId, unmount } = render(
+				<NodeConfigPanel {...makeProps({ step: makeStep({ model: 'gpt-5.4' }) })} />
+			);
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+			expect(input.value).toBe('%5B%22openai%22%2C%22gpt-5.4%22%5D');
+			unmount();
+
+			function Wrapper() {
+				const [step, setStep] = useState(makeStep());
+				return <NodeConfigPanel {...makeProps({ step, onUpdate: setStep })} />;
+			}
+			mockModelsResponse.models = mockModels.map((model) => ({ ...model }));
+			const { getByTestId: getByTestIdWithCustom } = render(<Wrapper />);
+			const customInput = getByTestIdWithCustom('single-agent-model-input') as HTMLSelectElement;
+			await waitFor(() => expect(customInput.options.length).toBeGreaterThan(1));
+			customInput.value = '%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D';
+			fireEvent.change(customInput);
+			expect(customInput.value).toBe('%5B%22custom%3Aendpoint-2%22%2C%22gpt-5.4%22%5D');
 		});
 
 		it('renders close button', () => {
@@ -306,9 +470,9 @@ describe('NodeConfigPanel', () => {
 					(getByTestId('single-agent-model-input') as HTMLSelectElement).options.length
 				).toBeGreaterThan(1)
 			);
-			fireEvent.change(getByTestId('single-agent-model-input'), {
-				target: { value: 'gpt-5.4' },
-			});
+			const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+			input.value = '%5B%22openai%22%2C%22gpt-5.4%22%5D';
+			fireEvent.change(input);
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4' }));
 		});
 
