@@ -25,6 +25,27 @@ vi.mock('../../../lib/toast', () => ({
 	toast: { success: mockToastSuccess },
 }));
 
+vi.mock('../visual-editor/WorkflowModelSelect', () => ({
+	WorkflowModelSelect: ({
+		value,
+		onChange,
+		testId,
+	}: {
+		value?: string;
+		onChange: (value: string | undefined) => void;
+		testId?: string;
+	}) => (
+		<select
+			data-testid={testId}
+			value={value ?? ''}
+			onInput={(event) => onChange(event.currentTarget.value || undefined)}
+		>
+			<option value="">No override</option>
+			<option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+		</select>
+	),
+}));
+
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceForge } from '../SpaceForge';
 
@@ -506,6 +527,9 @@ describe('SpaceForge', () => {
 		fireEvent.input(screen.getByLabelText('Linked recurring goal'), {
 			target: { value: 'goal-1' },
 		});
+		fireEvent.input(screen.getByTestId('forge-scope-model-select'), {
+			target: { value: 'claude-sonnet-4-6' },
+		});
 		fireEvent.click(screen.getByRole('button', { name: 'Add metric' }));
 		fireEvent.input(screen.getByPlaceholderText('key'), { target: { value: 'quality' } });
 		fireEvent.input(screen.getByPlaceholderText('Label'), { target: { value: 'Review quality' } });
@@ -528,6 +552,7 @@ describe('SpaceForge', () => {
 						targetValue: undefined,
 					},
 				],
+				policy: { episodeJudgeModel: 'claude-sonnet-4-6' },
 			},
 		});
 	});

@@ -22,6 +22,7 @@ import type {
 	UpdateTaskProposalParams,
 } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
+import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type {
@@ -32,6 +33,7 @@ import type { SpaceGoalService } from './goals/goal-service';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { inferProviderForModel } from '../providers/registry';
 
 const log = new Logger('evolution-episode-service');
 
@@ -97,6 +99,7 @@ export interface ApplyRollupGoalUpdateResult {
 
 export interface EvolutionEpisodeServiceDeps {
 	evolutionRepo: EvolutionRepository;
+	spaceRepo?: Pick<SpaceRepository, 'getSpace'>;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo: WorkflowRunArtifactRepository;
@@ -142,7 +145,7 @@ export class EvolutionEpisodeService {
 		const input = this.buildEpisodeInput(params);
 		const judged = this.deps.judgeEpisode
 			? await this.deps.judgeEpisode(input)
-			: await judgeEpisodeWithModel(input);
+			: await judgeEpisodeWithModel(input, this.deps.spaceRepo);
 		const episode = this.deps.evolutionRepo.createEpisode({
 			scopeId: input.scope.id,
 			status: 'draft',
@@ -431,7 +434,10 @@ export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {
 	} else {
 		const start = text.indexOf('{');
 		const end = text.lastIndexOf('}');
-		if (start >= 0 && end > start) text = text.slice(start, end + 1);
+		if (start < 0) {
+			throw new Error(`Episode judge returned non-JSON text: ${truncate(text, 300)}`);
+		}
+		if (end > start) text = text.slice(start, end + 1);
 	}
 	let parsed: unknown;
 	try {
@@ -444,11 +450,35 @@ export function parseEpisodeJudgeJson(raw: string): EpisodeJudgeOutput {
 	return normalizeJudgeOutput(parsed);
 }
 
-async function judgeEpisodeWithModel(input: EpisodeJudgePromptInput): Promise<EpisodeJudgeOutput> {
+export async function resolveEpisodeJudgeModel(
+	input: EpisodeJudgePromptInput,
+	spaceRepo?: Pick<SpaceRepository, 'getSpace'>
+): Promise<{ provider: string; modelId: string }> {
+	const scopeModel = readEpisodeJudgeModel(input.scope);
+	const spaceModel = scopeModel
+		? undefined
+		: spaceRepo?.getSpace(input.scope.spaceId)?.defaultModel;
+	const selectedModel = scopeModel ?? spaceModel?.trim();
+	if (selectedModel) {
+		return { provider: inferProviderForModel(selectedModel), modelId: selectedModel };
+	}
 	const providerService = getProviderService();
 	const provider = await providerService.getDefaultProvider();
 	const cfg = await providerService.getTitleGenerationConfig(provider);
-	const modelId = cfg.modelId;
+	return { provider, modelId: cfg.modelId };
+}
+
+function readEpisodeJudgeModel(scope: EvolutionScope): string | undefined {
+	const value = scope.policy.episodeJudgeModel;
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+async function judgeEpisodeWithModel(
+	input: EpisodeJudgePromptInput,
+	spaceRepo?: Pick<SpaceRepository, 'getSpace'>
+): Promise<EpisodeJudgeOutput> {
+	const providerService = getProviderService();
+	const { provider, modelId } = await resolveEpisodeJudgeModel(input, spaceRepo);
 	const prompt = buildEpisodeJudgePrompt(input);
 	const originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
 	try {

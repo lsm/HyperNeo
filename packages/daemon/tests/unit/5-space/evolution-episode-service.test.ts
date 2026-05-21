@@ -4,6 +4,7 @@ import {
 	buildEpisodeJudgePrompt,
 	EvolutionEpisodeService,
 	parseEpisodeJudgeJson,
+	resolveEpisodeJudgeModel,
 } from '../../../src/lib/space/evolution-episode-service';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
@@ -60,6 +61,7 @@ describe('EvolutionEpisodeService', () => {
 			name: 'Review loop',
 			objective: 'Reduce review churn',
 			metricDefinitions: [{ key: 'comments', label: 'Comments', direction: 'decrease' }],
+			policy: { episodeJudgeModel: 'claude-sonnet-4-6' },
 		});
 		const task = taskRepo.createTask({
 			spaceId,
@@ -128,6 +130,56 @@ describe('EvolutionEpisodeService', () => {
 		expect(prompt).toContain('Implementation ready');
 		expect(prompt).toContain('Reviewer saw repeated confusion');
 		expect(prompt).toContain('comments');
+		expect(prompt).toContain('claude-sonnet-4-6');
+	});
+
+	it('resolves judge model from scope policy before Space default', async () => {
+		const scopedInput = {
+			scope: evolutionRepo.createScope({
+				spaceId,
+				kind: 'custom',
+				name: 'Scoped model',
+				objective: 'Use scope override',
+				policy: { episodeJudgeModel: 'claude-opus-4-7' },
+			}),
+			evidence: [],
+			metricSnapshots: [],
+			tasks: [],
+			workflowRuns: [],
+			timeWindow: undefined,
+		};
+
+		expect(await resolveEpisodeJudgeModel(scopedInput, spaceRepo)).toEqual({
+			provider: 'anthropic',
+			modelId: 'claude-opus-4-7',
+		});
+	});
+
+	it('falls back to Space default model when scope has no judge model', async () => {
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/episode-service-default-model',
+			slug: 'episode-service-default-model',
+			name: 'Episode Service Default Model',
+			defaultModel: 'claude-sonnet-4-6',
+		});
+		const input = {
+			scope: evolutionRepo.createScope({
+				spaceId: space.id,
+				kind: 'custom',
+				name: 'Space model',
+				objective: 'Use space default',
+			}),
+			evidence: [],
+			metricSnapshots: [],
+			tasks: [],
+			workflowRuns: [],
+			timeWindow: undefined,
+		};
+
+		expect(await resolveEpisodeJudgeModel(input, spaceRepo)).toEqual({
+			provider: 'anthropic',
+			modelId: 'claude-sonnet-4-6',
+		});
 	});
 
 	it('parses fenced judge JSON and clamps confidence', () => {
@@ -163,6 +215,9 @@ describe('EvolutionEpisodeService', () => {
 	});
 
 	it('rejects malformed judge JSON and invalid enum values', () => {
+		expect(() => parseEpisodeJudgeJson('Failed to authenticate')).toThrow(
+			'Episode judge returned non-JSON text: Failed to authenticate'
+		);
 		expect(() => parseEpisodeJudgeJson('{ nope')).toThrow('Episode judge returned invalid JSON');
 		expect(() =>
 			parseEpisodeJudgeJson(
