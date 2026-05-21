@@ -23,12 +23,20 @@
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type {
+	CreateEvolutionEpisodeParams,
+	EvolutionEpisodeStatus,
+	EvolutionLessonStatus,
+	EvolutionPolicy,
+	EvolutionScopeKind,
+	MetricDefinition,
+	MetricSnapshotValues,
 	NodeExecution,
 	SpaceGoalStatus,
 	SpaceGoalType,
 	SpaceTask,
 	SpaceTaskPriority,
 	SpaceTaskStatus,
+	TaskProposalStatus,
 	TaskScheduleStatus,
 	TaskScheduleTriggerType,
 } from '@neokai/shared';
@@ -254,8 +262,12 @@ export interface SpaceAgentToolsConfig {
 	 * session instead of the canonical space:chat: session.
 	 */
 	replyRoutingRegistry?: ReplyRoutingRegistry;
-	/** Goal service for terminal goal-task side effects. */
+	/** Goal service for terminal goal-task side effects and goal MCP tools. */
 	goalService?: import('../goals/goal-service').SpaceGoalService;
+	/** Forge scope/evidence service for EvolutionScope MCP tools. */
+	evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+	/** Forge episode/review service for lesson, proposal, and rollup MCP tools. */
+	evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
 	/** Generic Space actor resolver for @handle/@role DMs. */
 	messageResolver?: ActorResolver;
 	/** Deliver to or activate long-term Space agents. */
@@ -324,6 +336,44 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		const goal = requireGoalService().getGoal(goalId);
 		if (!goal || goal.spaceId !== spaceId) throw new Error(`Goal not found: ${goalId}`);
 		return goal;
+	}
+
+	function requireEvolutionScopeService() {
+		if (!config.evolutionScopeService) throw new Error('Forge scope management not available');
+		return config.evolutionScopeService;
+	}
+
+	function requireEvolutionEpisodeService() {
+		if (!config.evolutionEpisodeService) throw new Error('Forge episode management not available');
+		return config.evolutionEpisodeService;
+	}
+
+	function requireEvolutionScopeInSpace(scopeId: string) {
+		const scope = requireEvolutionScopeService().getScope(scopeId);
+		if (!scope || scope.spaceId !== spaceId)
+			throw new Error(`EvolutionScope not found: ${scopeId}`);
+		return scope;
+	}
+
+	function requireEvolutionEpisodeInSpace(episodeId: string) {
+		const episode = requireEvolutionEpisodeService().getEpisode(episodeId);
+		if (!episode) throw new Error(`EvolutionEpisode not found: ${episodeId}`);
+		requireEvolutionScopeInSpace(episode.scopeId);
+		return episode;
+	}
+
+	function requireEvolutionLessonInSpace(lessonId: string) {
+		const lesson = requireEvolutionEpisodeService().getLesson(lessonId);
+		if (!lesson) throw new Error(`EvolutionLesson not found: ${lessonId}`);
+		requireEvolutionScopeInSpace(lesson.scopeId);
+		return lesson;
+	}
+
+	function requireTaskProposalInSpace(proposalId: string) {
+		const proposal = requireEvolutionEpisodeService().getTaskProposal(proposalId);
+		if (!proposal) throw new Error(`TaskProposal not found: ${proposalId}`);
+		requireEvolutionScopeInSpace(proposal.scopeId);
+		return proposal;
 	}
 
 	const goalToolContext = {
@@ -1752,6 +1802,455 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			}
 		},
 
+		async create_forge_scope(args: {
+			goal_id?: string | null;
+			kind: EvolutionScopeKind;
+			name: string;
+			objective: string;
+			parent_scope_id?: string | null;
+			metric_definitions?: MetricDefinition[];
+			policy?: EvolutionPolicy;
+		}): Promise<ToolResult> {
+			try {
+				if (args.goal_id) requireGoalInSpace(args.goal_id);
+				if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
+				const scope = requireEvolutionScopeService().createScope({
+					spaceId,
+					spaceGoalId: args.goal_id ?? null,
+					kind: args.kind,
+					name: args.name,
+					objective: args.objective,
+					parentScopeId: args.parent_scope_id ?? null,
+					metricDefinitions: args.metric_definitions,
+					policy: args.policy,
+				});
+				logAudit('create_forge_scope', { name: args.name, kind: args.kind, goal_id: args.goal_id });
+				return jsonResult({ success: true, scope });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async create_forge_scope_from_goal(args: {
+			goal_id: string;
+			name?: string;
+			objective?: string;
+			metric_definitions?: MetricDefinition[];
+			policy?: EvolutionPolicy;
+		}): Promise<ToolResult> {
+			try {
+				requireGoalInSpace(args.goal_id);
+				const scope = requireEvolutionScopeService().createScopeFromGoal({
+					spaceGoalId: args.goal_id,
+					name: args.name,
+					objective: args.objective,
+					metricDefinitions: args.metric_definitions,
+					policy: args.policy,
+				});
+				logAudit('create_forge_scope_from_goal', { goal_id: args.goal_id, name: args.name });
+				return jsonResult({ success: true, scope });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_forge_scopes(
+			args: { goal_id?: string | null; kind?: EvolutionScopeKind } = {}
+		): Promise<ToolResult> {
+			try {
+				if (args.goal_id) requireGoalInSpace(args.goal_id);
+				const scopes = requireEvolutionScopeService().listScopes({
+					spaceId,
+					spaceGoalId: args.goal_id,
+					kind: args.kind,
+				});
+				return jsonResult({ success: true, scopes });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async get_forge_scope(args: { scope_id: string }): Promise<ToolResult> {
+			try {
+				const scope = requireEvolutionScopeInSpace(args.scope_id);
+				return jsonResult({ success: true, scope });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async update_forge_scope(args: {
+			scope_id: string;
+			goal_id?: string | null;
+			kind?: EvolutionScopeKind;
+			name?: string;
+			objective?: string;
+			parent_scope_id?: string | null;
+			metric_definitions?: MetricDefinition[];
+			policy?: EvolutionPolicy;
+			episode_judge_model?: string | null;
+		}): Promise<ToolResult> {
+			try {
+				const existing = requireEvolutionScopeInSpace(args.scope_id);
+				if (args.goal_id) requireGoalInSpace(args.goal_id);
+				if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
+				const policy =
+					args.episode_judge_model !== undefined
+						? { ...(args.policy ?? existing.policy), episodeJudgeModel: args.episode_judge_model }
+						: args.policy;
+				const scope = requireEvolutionScopeService().updateScope(args.scope_id, {
+					spaceGoalId: args.goal_id,
+					kind: args.kind,
+					name: args.name,
+					objective: args.objective,
+					parentScopeId: args.parent_scope_id,
+					metricDefinitions: args.metric_definitions,
+					policy,
+				});
+				logAudit('update_forge_scope', { scope_id: args.scope_id });
+				return jsonResult({ success: true, scope });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async get_forge_timeline(args: { scope_id: string }): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const timeline = requireEvolutionScopeService().listTimeline(args.scope_id);
+				return jsonResult({ success: true, ...timeline });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async add_forge_manual_note(args: {
+			scope_id: string;
+			summary: string;
+			metadata?: Record<string, unknown>;
+			created_at?: number;
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const evidence = requireEvolutionScopeService().addManualNoteEvidence({
+					scopeId: args.scope_id,
+					summary: args.summary,
+					metadata: args.metadata,
+					createdAt: args.created_at,
+				});
+				logAudit('add_forge_manual_note', { scope_id: args.scope_id });
+				return jsonResult({ success: true, evidence });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async attach_forge_task_evidence(args: {
+			task_id: string;
+			scope_id?: string;
+			summary?: string;
+			metadata?: Record<string, unknown>;
+		}): Promise<ToolResult> {
+			try {
+				const task = taskRepo.getTask(args.task_id);
+				if (!task || task.spaceId !== spaceId) throw new Error(`Task not found: ${args.task_id}`);
+				if (args.scope_id) requireEvolutionScopeInSpace(args.scope_id);
+				const evidence = requireEvolutionScopeService().attachTaskEvidence({
+					taskId: args.task_id,
+					scopeId: args.scope_id,
+					summary: args.summary,
+					metadata: args.metadata,
+				});
+				requireEvolutionScopeInSpace(evidence.scopeId);
+				logAudit('attach_forge_task_evidence', {
+					scope_id: evidence.scopeId,
+					task_id: args.task_id,
+				});
+				return jsonResult({ success: true, evidence });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async attach_forge_workflow_run_evidence(args: {
+			workflow_run_id: string;
+			scope_id?: string;
+			summary?: string;
+			metadata?: Record<string, unknown>;
+		}): Promise<ToolResult> {
+			try {
+				const run = workflowRunRepo.getRun(args.workflow_run_id);
+				if (!run || run.spaceId !== spaceId) {
+					throw new Error(`Workflow run not found: ${args.workflow_run_id}`);
+				}
+				if (args.scope_id) requireEvolutionScopeInSpace(args.scope_id);
+				const evidence = requireEvolutionScopeService().attachWorkflowRunEvidence({
+					workflowRunId: args.workflow_run_id,
+					scopeId: args.scope_id,
+					summary: args.summary,
+					metadata: args.metadata,
+				});
+				requireEvolutionScopeInSpace(evidence.scopeId);
+				logAudit('attach_forge_workflow_run_evidence', {
+					scope_id: evidence.scopeId,
+					workflow_run_id: args.workflow_run_id,
+				});
+				return jsonResult({ success: true, evidence });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async add_forge_metric_snapshot(args: {
+			scope_id: string;
+			values: MetricSnapshotValues;
+			source: string;
+			note?: string | null;
+			captured_at?: number;
+			summary?: string;
+			metadata?: Record<string, unknown>;
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const result = requireEvolutionScopeService().addMetricSnapshotEvidence({
+					scopeId: args.scope_id,
+					values: args.values,
+					source: args.source,
+					note: args.note,
+					capturedAt: args.captured_at,
+					summary: args.summary,
+					metadata: args.metadata,
+				});
+				logAudit('add_forge_metric_snapshot', { scope_id: args.scope_id, source: args.source });
+				return jsonResult({ success: true, ...result });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_forge_evidence(args: { scope_id: string }): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const evidence = requireEvolutionScopeService().listEvidence(args.scope_id);
+				return jsonResult({ success: true, evidence });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_forge_metric_snapshots(args: { scope_id: string }): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const snapshots = requireEvolutionScopeService().listMetricSnapshots(args.scope_id);
+				return jsonResult({ success: true, snapshots });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async create_forge_episode(args: {
+			scope_id: string;
+			evidence_ids: string[];
+			time_window?: CreateEvolutionEpisodeParams['timeWindow'];
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const result = await requireEvolutionEpisodeService().createFromEvidence({
+					scopeId: args.scope_id,
+					evidenceIds: args.evidence_ids,
+					timeWindow: args.time_window,
+				});
+				logAudit('create_forge_episode', {
+					scope_id: args.scope_id,
+					evidence_count: args.evidence_ids.length,
+				});
+				return jsonResult({ success: true, ...result });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_forge_review_bundle(args: { scope_id: string }): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				const bundle = requireEvolutionEpisodeService().listReviewBundle(args.scope_id);
+				return jsonResult({ success: true, ...bundle });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async update_forge_episode(args: {
+			episode_id: string;
+			status?: EvolutionEpisodeStatus;
+			title?: string;
+			outcome_summary?: string;
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionEpisodeInSpace(args.episode_id);
+				const episode = requireEvolutionEpisodeService().updateEpisode(args.episode_id, {
+					status: args.status,
+					title: args.title,
+					outcomeSummary: args.outcome_summary,
+				});
+				logAudit('update_forge_episode', { episode_id: args.episode_id, status: args.status });
+				return jsonResult({ success: true, episode });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async update_forge_lesson(args: {
+			lesson_id: string;
+			status?: EvolutionLessonStatus;
+			applies_to?: string[];
+			rule?: string;
+			why?: string;
+			confidence?: number;
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionLessonInSpace(args.lesson_id);
+				const lesson = requireEvolutionEpisodeService().updateLesson(args.lesson_id, {
+					status: args.status,
+					appliesTo: args.applies_to,
+					rule: args.rule,
+					why: args.why,
+					confidence: args.confidence,
+				});
+				logAudit('update_forge_lesson', { lesson_id: args.lesson_id, status: args.status });
+				return jsonResult({ success: true, lesson });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async create_forge_task_proposal(args: {
+			scope_id: string;
+			title: string;
+			description: string;
+			reason: string;
+			priority?: SpaceTaskPriority;
+			evidence_episode_ids?: string[];
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionScopeInSpace(args.scope_id);
+				for (const episodeId of args.evidence_episode_ids ?? [])
+					requireEvolutionEpisodeInSpace(episodeId);
+				const proposal = requireEvolutionEpisodeService().createTaskProposal({
+					scopeId: args.scope_id,
+					title: args.title,
+					description: args.description,
+					reason: args.reason,
+					priority: args.priority,
+					evidenceEpisodeIds: args.evidence_episode_ids,
+				});
+				logAudit('create_forge_task_proposal', { scope_id: args.scope_id, title: args.title });
+				return jsonResult({ success: true, proposal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async update_forge_task_proposal(args: {
+			proposal_id: string;
+			title?: string;
+			description?: string;
+			reason?: string;
+			priority?: SpaceTaskPriority;
+			status?: TaskProposalStatus;
+		}): Promise<ToolResult> {
+			try {
+				requireTaskProposalInSpace(args.proposal_id);
+				const proposal = requireEvolutionEpisodeService().updateTaskProposal(args.proposal_id, {
+					title: args.title,
+					description: args.description,
+					reason: args.reason,
+					priority: args.priority,
+					status: args.status,
+				});
+				logAudit('update_forge_task_proposal', {
+					proposal_id: args.proposal_id,
+					status: args.status,
+				});
+				return jsonResult({ success: true, proposal });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async create_task_from_forge_proposal(args: {
+			proposal_id: string;
+			title?: string;
+			description?: string;
+			reason?: string;
+			priority?: SpaceTaskPriority;
+		}): Promise<ToolResult> {
+			try {
+				requireTaskProposalInSpace(args.proposal_id);
+				const result = requireEvolutionEpisodeService().createTaskFromProposal(args.proposal_id, {
+					title: args.title,
+					description: args.description,
+					reason: args.reason,
+					priority: args.priority,
+				});
+				logAudit(
+					'create_task_from_forge_proposal',
+					{ proposal_id: args.proposal_id },
+					result.task.id
+				);
+				return jsonResult({ success: true, ...result });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async apply_forge_rollup(args: {
+			episode_id: string;
+			goal_update: {
+				summary?: string;
+				progress?: number;
+				next_steps?: string[];
+				metrics?: Record<string, string | number | boolean | null>;
+			};
+		}): Promise<ToolResult> {
+			try {
+				requireEvolutionEpisodeInSpace(args.episode_id);
+				const result = requireEvolutionEpisodeService().applyRollupGoalUpdate({
+					episodeId: args.episode_id,
+					goalUpdate: {
+						summary: args.goal_update.summary,
+						progress: args.goal_update.progress,
+						nextSteps: args.goal_update.next_steps,
+						metrics: args.goal_update.metrics,
+					},
+				});
+				logAudit('apply_forge_rollup', { episode_id: args.episode_id });
+				return jsonResult({ success: true, ...result });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
 		/**
 		 * Create a recurring (cron) or one-shot (at) scheduled task.
 		 */
@@ -2220,14 +2719,15 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 	];
 
+	const goalStatusSchema = z.enum(['active', 'paused', 'completed', 'archived']);
+	const goalTypeSchema = z.enum(['one_shot', 'measurable', 'recurring']);
+	const goalMetricsSchema = z.record(
+		z.string(),
+		z.union([z.string(), z.number(), z.boolean(), z.null()])
+	);
+
 	// Goal management tools — only registered when goalService is provided.
 	if (config.goalService) {
-		const goalStatusSchema = z.enum(['active', 'paused', 'completed', 'archived']);
-		const goalTypeSchema = z.enum(['one_shot', 'measurable', 'recurring']);
-		const goalMetricsSchema = z.record(
-			z.string(),
-			z.union([z.string(), z.number(), z.boolean(), z.null()])
-		);
 		const goalUpdateShape = {
 			title: z.string().min(1).optional().describe('New goal title'),
 			description: z.string().optional().describe('New goal description'),
@@ -2361,6 +2861,260 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 						.describe('Cursor event ID for same-timestamp pagination'),
 				},
 				(args) => handlers.list_goal_events(args)
+			)
+		);
+	}
+
+	// Forge management tools — only registered when Forge services are provided.
+	if (config.evolutionScopeService && config.evolutionEpisodeService) {
+		const forgeScopeKindSchema = z.enum(['mission', 'project', 'campaign', 'workflow', 'custom']);
+		const forgePolicySchema = z.record(z.string(), z.unknown());
+		const metricDefinitionSchema = z.object({
+			key: z.string().min(1).describe('Stable metric key'),
+			label: z.string().min(1).describe('Human-readable metric label'),
+			description: z.string().optional().describe('What this metric measures'),
+			direction: z.enum(['increase', 'decrease', 'target', 'maintain']),
+			targetValue: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+			unit: z.string().optional(),
+		});
+		const metricValuesSchema = z.record(
+			z.string(),
+			z.union([z.string(), z.number(), z.boolean(), z.null()])
+		);
+		const metadataSchema = z.record(z.string(), z.unknown());
+		const episodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);
+		const lessonStatusSchema = z.enum(['candidate', 'active', 'dismissed']);
+		const proposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed', 'created']);
+		const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
+
+		tools.push(
+			tool(
+				'create_forge_scope',
+				'Create a Forge EvolutionScope in this space. Use goal_id to link it to a recurring goal; policy can include episodeJudgeModel and other judge guidance.',
+				{
+					goal_id: z.string().nullable().optional().describe('Optional linked SpaceGoal ID'),
+					kind: forgeScopeKindSchema.describe('Scope kind'),
+					name: z.string().min(1).describe('Scope name'),
+					objective: z.string().min(1).describe('Scope objective'),
+					parent_scope_id: z.string().nullable().optional().describe('Optional parent scope ID'),
+					metric_definitions: z
+						.array(metricDefinitionSchema)
+						.optional()
+						.describe('Metric definitions tracked by this scope'),
+					policy: forgePolicySchema.optional().describe('Scope policy JSON for judge guidance'),
+				},
+				(args) => handlers.create_forge_scope(args)
+			),
+			tool(
+				'create_forge_scope_from_goal',
+				'Create a mission Forge scope linked to an existing SpaceGoal, defaulting name/objective from the goal.',
+				{
+					goal_id: z.string().describe('SpaceGoal ID in this space'),
+					name: z.string().optional().describe('Override scope name'),
+					objective: z.string().optional().describe('Override scope objective'),
+					metric_definitions: z.array(metricDefinitionSchema).optional(),
+					policy: forgePolicySchema.optional(),
+				},
+				(args) => handlers.create_forge_scope_from_goal(args)
+			),
+			tool(
+				'list_forge_scopes',
+				'List Forge scopes in this space, optionally filtered by linked goal or kind.',
+				{
+					goal_id: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Filter by linked goal ID; null means unlinked scopes'),
+					kind: forgeScopeKindSchema.optional().describe('Filter by scope kind'),
+				},
+				(args) => handlers.list_forge_scopes(args)
+			),
+			tool(
+				'get_forge_scope',
+				'Get one Forge scope in this space, including linked goal, metric definitions, and policy.',
+				{ scope_id: z.string().describe('EvolutionScope ID') },
+				(args) => handlers.get_forge_scope(args)
+			),
+			tool(
+				'update_forge_scope',
+				'Update a Forge scope. Use goal_id to link/unlink a goal, policy to replace policy JSON, or episode_judge_model to update policy.episodeJudgeModel.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					goal_id: z.string().nullable().optional().describe('Linked SpaceGoal ID; null unlinks'),
+					kind: forgeScopeKindSchema.optional(),
+					name: z.string().min(1).optional(),
+					objective: z.string().min(1).optional(),
+					parent_scope_id: z.string().nullable().optional(),
+					metric_definitions: z.array(metricDefinitionSchema).optional(),
+					policy: forgePolicySchema.optional().describe('Replacement policy JSON'),
+					episode_judge_model: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Convenience setter for policy.episodeJudgeModel'),
+				},
+				(args) => handlers.update_forge_scope(args)
+			),
+			tool(
+				'get_forge_timeline',
+				'Get scope overview/timeline: scope, evidence, and metric snapshots.',
+				{ scope_id: z.string().describe('EvolutionScope ID') },
+				(args) => handlers.get_forge_timeline(args)
+			),
+			tool(
+				'add_forge_manual_note',
+				'Attach manual note evidence to a Forge scope.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					summary: z.string().min(1).describe('Evidence note text'),
+					metadata: metadataSchema.optional(),
+					created_at: z.number().int().optional().describe('Optional timestamp ms'),
+				},
+				(args) => handlers.add_forge_manual_note(args)
+			),
+			tool(
+				'attach_forge_task_evidence',
+				'Attach a completed or relevant SpaceTask as Forge evidence. If scope_id omitted, resolves from task.evolutionScopeId or task.goalId.',
+				{
+					task_id: z.string().describe('SpaceTask ID'),
+					scope_id: z.string().optional().describe('Optional explicit EvolutionScope ID'),
+					summary: z.string().optional(),
+					metadata: metadataSchema.optional(),
+				},
+				(args) => handlers.attach_forge_task_evidence(args)
+			),
+			tool(
+				'attach_forge_workflow_run_evidence',
+				'Attach a workflow run as Forge evidence. If scope_id omitted, resolves via first task in the run.',
+				{
+					workflow_run_id: z.string().describe('Workflow run ID'),
+					scope_id: z.string().optional().describe('Optional explicit EvolutionScope ID'),
+					summary: z.string().optional(),
+					metadata: metadataSchema.optional(),
+				},
+				(args) => handlers.attach_forge_workflow_run_evidence(args)
+			),
+			tool(
+				'add_forge_metric_snapshot',
+				'Add metric snapshot evidence to a Forge scope.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					values: metricValuesSchema.describe('Metric values keyed by metric name'),
+					source: z.string().min(1).describe('Source label, e.g. manual, CI, analytics'),
+					note: z.string().nullable().optional(),
+					captured_at: z.number().int().optional().describe('Optional timestamp ms'),
+					summary: z.string().optional().describe('Optional evidence summary'),
+					metadata: metadataSchema.optional(),
+				},
+				(args) => handlers.add_forge_metric_snapshot(args)
+			),
+			tool(
+				'list_forge_evidence',
+				'List evidence refs for a Forge scope.',
+				{ scope_id: z.string().describe('EvolutionScope ID') },
+				(args) => handlers.list_forge_evidence(args)
+			),
+			tool(
+				'list_forge_metric_snapshots',
+				'List metric snapshots for a Forge scope.',
+				{ scope_id: z.string().describe('EvolutionScope ID') },
+				(args) => handlers.list_forge_metric_snapshots(args)
+			),
+			tool(
+				'create_forge_episode',
+				'Generate a draft Forge episode from selected evidence. Calls the episode judge; LLM/model/auth errors are surfaced clearly.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					evidence_ids: z.array(z.string()).min(1).describe('Evidence IDs from this scope'),
+					time_window: z
+						.object({ start: z.number().int(), end: z.number().int() })
+						.nullable()
+						.optional(),
+				},
+				(args) => handlers.create_forge_episode(args)
+			),
+			tool(
+				'list_forge_review_bundle',
+				'List episodes, lessons, and task proposals for reviewing a Forge scope.',
+				{ scope_id: z.string().describe('EvolutionScope ID') },
+				(args) => handlers.list_forge_review_bundle(args)
+			),
+			tool(
+				'update_forge_episode',
+				'Accept, dismiss, or edit a Forge episode draft. Use status accepted/dismissed only after explicit decision.',
+				{
+					episode_id: z.string().describe('EvolutionEpisode ID'),
+					status: episodeStatusSchema.optional(),
+					title: z.string().min(1).optional(),
+					outcome_summary: z.string().optional(),
+				},
+				(args) => handlers.update_forge_episode(args)
+			),
+			tool(
+				'update_forge_lesson',
+				'Activate, dismiss, or edit a candidate lesson. Activation requires explicit tool call.',
+				{
+					lesson_id: z.string().describe('EvolutionLesson ID'),
+					status: lessonStatusSchema.optional(),
+					applies_to: z.array(z.string()).optional(),
+					rule: z.string().min(1).optional(),
+					why: z.string().optional(),
+					confidence: z.number().min(0).max(1).optional(),
+				},
+				(args) => handlers.update_forge_lesson(args)
+			),
+			tool(
+				'create_forge_task_proposal',
+				'Create a Forge task proposal manually for this scope. Later use create_task_from_forge_proposal to make a real SpaceTask.',
+				{
+					scope_id: z.string().describe('EvolutionScope ID'),
+					title: z.string().min(1),
+					description: z.string(),
+					reason: z.string(),
+					priority: prioritySchema.optional(),
+					evidence_episode_ids: z.array(z.string()).optional(),
+				},
+				(args) => handlers.create_forge_task_proposal(args)
+			),
+			tool(
+				'update_forge_task_proposal',
+				'Edit, accept, or dismiss a Forge task proposal. Creating a SpaceTask is separate and explicit.',
+				{
+					proposal_id: z.string().describe('TaskProposal ID'),
+					title: z.string().min(1).optional(),
+					description: z.string().optional(),
+					reason: z.string().optional(),
+					priority: prioritySchema.optional(),
+					status: proposalStatusSchema.optional(),
+				},
+				(args) => handlers.update_forge_task_proposal(args)
+			),
+			tool(
+				'create_task_from_forge_proposal',
+				'Create a real SpaceTask from a Forge proposal, preserving linked goalId and evolutionScopeId. Idempotent when task already exists.',
+				{
+					proposal_id: z.string().describe('TaskProposal ID'),
+					title: z.string().optional().describe('Optional edited task title'),
+					description: z.string().optional().describe('Optional edited task description'),
+					reason: z.string().optional().describe('Optional edited proposal reason'),
+					priority: prioritySchema.optional(),
+				},
+				(args) => handlers.create_task_from_forge_proposal(args)
+			),
+			tool(
+				'apply_forge_rollup',
+				'Accept a Forge episode and roll summary/progress/metrics/next steps into its linked recurring goal.',
+				{
+					episode_id: z.string().describe('EvolutionEpisode ID'),
+					goal_update: z.object({
+						summary: z.string().optional(),
+						progress: z.number().int().min(0).max(100).optional(),
+						next_steps: z.array(z.string()).optional(),
+						metrics: goalMetricsSchema.optional(),
+					}),
+				},
+				(args) => handlers.apply_forge_rollup(args)
 			)
 		);
 	}

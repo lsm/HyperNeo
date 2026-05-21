@@ -19,6 +19,8 @@ import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/s
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
@@ -29,6 +31,8 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import {
 	createSpaceAgentMcpServer,
 	createSpaceAgentToolHandlers,
@@ -128,6 +132,9 @@ interface TestCtx {
 	nodeExecutionRepo: NodeExecutionRepository;
 	spaceManager: SpaceManager;
 	goalService: SpaceGoalService;
+	evolutionRepo: EvolutionRepository;
+	evolutionScopeService: EvolutionScopeService;
+	evolutionEpisodeService: EvolutionEpisodeService;
 }
 
 function makeCtx(): TestCtx {
@@ -170,13 +177,59 @@ function makeCtx(): TestCtx {
 		jobQueue: new JobQueueRepository(db),
 		spaceRepo,
 	});
+	const goalRepo = new SpaceGoalRepository(db);
 	const goalService = new SpaceGoalService({
-		goalRepo: new SpaceGoalRepository(db),
+		goalRepo,
 		goalEventRepo: new SpaceGoalEventRepository(db),
 		taskRepo,
 		spaceRepo,
 		scheduleService,
 		db,
+	});
+	const evolutionRepo = new EvolutionRepository(db);
+	const evolutionScopeService = new EvolutionScopeService({
+		evolutionRepo,
+		spaceRepo,
+		goalRepo,
+		taskRepo,
+		workflowRunRepo,
+	});
+	const evolutionEpisodeService = new EvolutionEpisodeService({
+		evolutionRepo,
+		taskRepo,
+		workflowRunRepo,
+		artifactRepo: new WorkflowRunArtifactRepository(db),
+		goalService,
+		judgeEpisode: async () => ({
+			title: 'Dogfood episode',
+			outcomeSummary: 'Scoped evidence reviewed',
+			findings: [
+				{
+					domain: 'workflow',
+					kind: 'optimization',
+					impact: 'medium',
+					confidence: 0.8,
+					evidence: ['manual note'],
+					proposedAction: 'Add follow-up task',
+				},
+			],
+			candidateLessons: [
+				{
+					appliesTo: ['workflow'],
+					rule: 'Keep evidence scoped',
+					why: 'Reduces drift',
+					confidence: 0.9,
+				},
+			],
+			proposals: [
+				{
+					title: 'Improve Forge MCP dogfood',
+					description: 'Use MCP tools for Forge path',
+					reason: 'Judge found next step',
+					priority: 'high',
+				},
+			],
+		}),
 	});
 
 	return {
@@ -192,6 +245,9 @@ function makeCtx(): TestCtx {
 		nodeExecutionRepo,
 		spaceManager,
 		goalService,
+		evolutionRepo,
+		evolutionScopeService,
+		evolutionEpisodeService,
 	};
 }
 
@@ -207,6 +263,8 @@ function makeHandlers(ctx: TestCtx) {
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		spaceManager: ctx.spaceManager,
 		goalService: ctx.goalService,
+		evolutionScopeService: ctx.evolutionScopeService,
+		evolutionEpisodeService: ctx.evolutionEpisodeService,
 	});
 }
 
@@ -281,6 +339,29 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		expect(names).toContain('trigger_goal_task');
 		expect(names).toContain('list_goal_tasks');
 		expect(names).toContain('list_goal_events');
+	});
+
+	test('registers Forge tools when evolution services are configured', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			goalService: ctx.goalService,
+			evolutionScopeService: ctx.evolutionScopeService,
+			evolutionEpisodeService: ctx.evolutionEpisodeService,
+		});
+
+		const names = getRegisteredToolNames(server);
+		expect(names).toContain('create_forge_scope');
+		expect(names).toContain('add_forge_manual_note');
+		expect(names).toContain('create_forge_episode');
+		expect(names).toContain('update_forge_lesson');
+		expect(names).toContain('create_task_from_forge_proposal');
 	});
 });
 
@@ -404,6 +485,158 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
 		const events = JSON.parse(eventsOut.content[0].text);
 		expect(events.success).toBe(false);
 		expect(events.error).toContain('Goal not found');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Forge tools
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — Forge tools', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('runs dogfood path with scope, evidence, episode, lesson, proposal task, and rollup', async () => {
+		const handlers = makeHandlers(ctx);
+		const goal = JSON.parse(
+			(
+				await handlers.create_goal({
+					title: 'Forge dogfood',
+					type: 'recurring',
+					progress: 5,
+					next_steps: ['Collect evidence'],
+				})
+			).content[0].text
+		).goal;
+
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope_from_goal({
+					goal_id: goal.id,
+					policy: { cadence: 'weekly', episodeJudgeModel: 'claude-sonnet-4-5' },
+				})
+			).content[0].text
+		).scope;
+		expect(scope.spaceGoalId).toBe(goal.id);
+
+		const updatedScope = JSON.parse(
+			(
+				await handlers.update_forge_scope({
+					scope_id: scope.id,
+					episode_judge_model: 'claude-opus-4-5',
+				})
+			).content[0].text
+		).scope;
+		expect(updatedScope.policy.episodeJudgeModel).toBe('claude-opus-4-5');
+
+		const note = JSON.parse(
+			(
+				await handlers.add_forge_manual_note({
+					scope_id: scope.id,
+					summary: 'Manual dogfood note',
+					metadata: { source: 'test' },
+				})
+			).content[0].text
+		).evidence;
+		const snapshot = JSON.parse(
+			(
+				await handlers.add_forge_metric_snapshot({
+					scope_id: scope.id,
+					values: { friction: 2 },
+					source: 'manual',
+					note: 'Less friction',
+				})
+			).content[0].text
+		);
+		expect(snapshot.evidence.kind).toBe('metric_snapshot');
+
+		const episodeResult = JSON.parse(
+			(
+				await handlers.create_forge_episode({
+					scope_id: scope.id,
+					evidence_ids: [note.id, snapshot.evidence.id],
+				})
+			).content[0].text
+		);
+		expect(episodeResult.success).toBe(true);
+		expect(episodeResult.lessons).toHaveLength(1);
+		expect(episodeResult.proposals).toHaveLength(1);
+
+		const lesson = JSON.parse(
+			(
+				await handlers.update_forge_lesson({
+					lesson_id: episodeResult.lessons[0].id,
+					status: 'active',
+				})
+			).content[0].text
+		).lesson;
+		expect(lesson.status).toBe('active');
+
+		const taskResult = JSON.parse(
+			(
+				await handlers.create_task_from_forge_proposal({
+					proposal_id: episodeResult.proposals[0].id,
+				})
+			).content[0].text
+		);
+		expect(taskResult.task.goalId).toBe(goal.id);
+		expect(taskResult.task.evolutionScopeId).toBe(scope.id);
+
+		const rollup = JSON.parse(
+			(
+				await handlers.apply_forge_rollup({
+					episode_id: episodeResult.episode.id,
+					goal_update: {
+						summary: 'Dogfood path complete',
+						progress: 42,
+						next_steps: ['Use proposal task'],
+						metrics: { friction: 2 },
+					},
+				})
+			).content[0].text
+		);
+		expect(rollup.episode.status).toBe('accepted');
+		expect(rollup.goal.summary).toBe('Dogfood path complete');
+		expect(rollup.goal.progress).toBe(42);
+	});
+
+	test('rejects cross-space scope and task evidence access', async () => {
+		const otherSpaceId = 'other-forge-space';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-forge');
+		const otherScope = ctx.evolutionScopeService.createScope({
+			spaceId: otherSpaceId,
+			kind: 'custom',
+			name: 'Other scope',
+			objective: 'Other objective',
+		});
+		const otherTask = ctx.taskRepo.createTask({
+			spaceId: otherSpaceId,
+			title: 'Other task',
+			description: 'Outside this space',
+		});
+		const handlers = makeHandlers(ctx);
+
+		const scopeOut = JSON.parse(
+			(await handlers.get_forge_scope({ scope_id: otherScope.id })).content[0].text
+		);
+		expect(scopeOut.success).toBe(false);
+		expect(scopeOut.error).toContain('EvolutionScope not found');
+
+		const evidenceOut = JSON.parse(
+			(
+				await handlers.attach_forge_task_evidence({
+					scope_id: otherScope.id,
+					task_id: otherTask.id,
+				})
+			).content[0].text
+		);
+		expect(evidenceOut.success).toBe(false);
+		expect(evidenceOut.error).toContain('Task not found');
 	});
 });
 

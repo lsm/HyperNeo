@@ -460,6 +460,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// and task-agent-tools / node-agent-tools (lookup).
 	const replyRoutingRegistry = new ReplyRoutingRegistry();
 
+	const evolutionScopeService = new EvolutionScopeService({
+		evolutionRepo: deps.db.evolution,
+		spaceRepo,
+		goalRepo: spaceGoalRepo,
+		taskRepo: spaceTaskRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+	});
+	const evolutionEpisodeService = new EvolutionEpisodeService({
+		evolutionRepo: deps.db.evolution,
+		taskRepo: spaceTaskRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		artifactRepo,
+		goalService: spaceGoalService,
+	});
+	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
+
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
 		dbPath: deps.db.getDatabasePath(),
@@ -494,6 +510,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		replyRoutingRegistry,
 		memoryRepo: deps.db.agentMemory,
 		goalService: spaceGoalService,
+		evolutionScopeService,
+		evolutionEpisodeService,
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -531,22 +549,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalService: spaceGoalService,
 		spaceManager: deps.spaceManager,
 	});
-
-	const evolutionScopeService = new EvolutionScopeService({
-		evolutionRepo: deps.db.evolution,
-		spaceRepo,
-		goalRepo: spaceGoalRepo,
-		taskRepo: spaceTaskRepo,
-		workflowRunRepo: spaceWorkflowRunRepo,
-	});
-	const evolutionEpisodeService = new EvolutionEpisodeService({
-		evolutionRepo: deps.db.evolution,
-		taskRepo: spaceTaskRepo,
-		workflowRunRepo: spaceWorkflowRunRepo,
-		artifactRepo,
-		goalService: spaceGoalService,
-	});
-	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
 
 	// Register Space RPC handlers now that spaceRuntimeService exists.
 	// spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()

@@ -225,6 +225,10 @@ export class EvolutionEpisodeService {
 		return this.deps.evolutionRepo.listLessons(scopeId, status);
 	}
 
+	getLesson(id: string): EvolutionLesson | null {
+		return this.deps.evolutionRepo.getLesson(id);
+	}
+
 	updateLesson(id: string, params: UpdateEvolutionLessonParams): EvolutionLesson | null {
 		return this.deps.evolutionRepo.updateLesson(id, params);
 	}
@@ -232,6 +236,15 @@ export class EvolutionEpisodeService {
 	listTaskProposals(scopeId: string, status?: TaskProposalStatus): TaskProposal[] {
 		this.requireScope(scopeId);
 		return this.deps.evolutionRepo.listTaskProposals(scopeId, status);
+	}
+
+	getTaskProposal(id: string): TaskProposal | null {
+		return this.deps.evolutionRepo.getTaskProposal(id);
+	}
+
+	createTaskProposal(params: CreateTaskProposalParams): TaskProposal {
+		this.requireScope(params.scopeId);
+		return this.deps.evolutionRepo.createTaskProposal(params);
 	}
 
 	updateTaskProposal(id: string, params: UpdateTaskProposalParams): TaskProposal | null {
