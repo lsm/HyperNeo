@@ -331,7 +331,8 @@ export class EvolutionEpisodeService {
 
 	private collectTasks(scope: EvolutionScope, evidence: EvidenceRef[]): EpisodeTaskContext[] {
 		return evidence.flatMap((item) => {
-			if (item.kind !== 'task' || !item.sourceId) return [];
+			if (item.kind !== 'task' && item.kind !== 'task_result') return [];
+			if (!item.sourceId) return [];
 			const task = this.deps.taskRepo.getTask(item.sourceId);
 			if (!task) return [];
 			if (task.spaceId !== scope.spaceId) {
@@ -346,7 +347,9 @@ export class EvolutionEpisodeService {
 		evidence: EvidenceRef[]
 	): EpisodeWorkflowRunContext[] {
 		return evidence.flatMap((item) => {
-			if (item.kind !== 'workflow_run' || !item.sourceId) return [];
+			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error')
+				return [];
+			if (!item.sourceId) return [];
 			const run = this.deps.workflowRunRepo.getRun(item.sourceId);
 			if (!run) return [];
 			if (run.spaceId !== scope.spaceId) {

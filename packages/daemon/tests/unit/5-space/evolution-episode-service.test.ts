@@ -85,14 +85,14 @@ describe('EvolutionEpisodeService', () => {
 		});
 		const taskEvidence = evolutionRepo.createEvidence({
 			scopeId: scope.id,
-			kind: 'task',
+			kind: 'task_result',
 			sourceId: task.id,
 			summary: 'Task completed',
 			createdAt: 100,
 		});
 		const runEvidence = evolutionRepo.createEvidence({
 			scopeId: scope.id,
-			kind: 'workflow_run',
+			kind: 'artifact',
 			sourceId: run.id,
 			summary: 'Workflow completed',
 			createdAt: 200,
