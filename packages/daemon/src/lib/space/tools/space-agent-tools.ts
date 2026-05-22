@@ -440,6 +440,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		return agent;
 	}
 
+	function emitSpaceAgentCreated(agent: SpaceAgent): void {
+		if (!internalEventBus) return;
+		void internalEventBus
+			.publish('spaceAgent.created', {
+				sessionId: `space:${agent.spaceId}`,
+				spaceId: agent.spaceId,
+				agent,
+			})
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit spaceAgent.created for agent ${agent.id}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
+	}
+
 	function emitSpaceAgentUpdated(agent: SpaceAgent): void {
 		if (!internalEventBus) return;
 		void internalEventBus
@@ -537,6 +552,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 				if (!result.ok) return jsonResult({ success: false, error: result.error });
 				logAudit('create_agent', { name: args.name, tools: args.tools });
+				emitSpaceAgentCreated(result.value);
 				return jsonResult({ success: true, agent: result.value });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -577,6 +593,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				template_name: args.template_name,
 				name: args.name,
 			});
+			emitSpaceAgentCreated(result.value);
 			return jsonResult({ success: true, agent: result.value });
 		},
 
@@ -746,8 +763,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				requireSpaceAgentInSpace(args.agent_id);
 				requireLongHorizonAgentDb()
 					.prepare(
-						`INSERT OR REPLACE INTO space_agent_event_subscriptions
-						 (space_id, agent_id, topic_pattern, label, created_at) VALUES (?, ?, ?, ?, ?)`
+						`INSERT INTO space_agent_event_subscriptions
+						 (space_id, agent_id, topic_pattern, label, created_at) VALUES (?, ?, ?, ?, ?)
+							 ON CONFLICT(agent_id, topic_pattern) DO UPDATE SET label = excluded.label`
 					)
 					.run(spaceId, args.agent_id, args.topic_pattern, args.label ?? null, Date.now());
 				logAudit('subscribe_agent_event', args);
@@ -2890,168 +2908,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 	// oxlint-disable-next-line typescript/no-explicit-any -- SDK tool list is heterogeneous by schema.
 	const tools: SdkMcpToolDefinition<any>[] = [
 		tool(
-			'list_agents',
-			'List long-horizon Space agents in this space.',
-			{
-				status: agentStatusSchema.optional().describe('Filter by agent lifecycle status'),
-				compact: z.boolean().optional().describe('Return compact agent summaries'),
-			},
-			(args) => handlers.list_agents(args)
-		),
-		tool(
-			'get_agent',
-			'Get one long-horizon Space agent by ID.',
-			{ agent_id: z.string().describe('SpaceAgent ID') },
-			(args) => handlers.get_agent(args)
-		),
-		tool(
-			'create_agent',
-			'Create a custom long-horizon Space agent. Tool-permission changes are validated against the known tool allowlist.',
-			{
-				name: z.string().min(1).describe('Agent name, unique within the space'),
-				description: z.string().optional().describe('Agent specialization summary'),
-				model: z.string().optional().describe('Model override'),
-				thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
-				provider: z.string().optional().describe('Provider override'),
-				custom_prompt: z.string().nullable().optional().describe('Operator prompt for this agent'),
-				tools: z.array(z.string()).optional().describe('Tool allowlist override'),
-				setting_sources: settingSourcesSchema
-					.nullable()
-					.optional()
-					.describe('Settings sources for this agent'),
-			},
-			(args) => handlers.create_agent(args)
-		),
-		tool(
-			'create_agent_from_template',
-			'Create a long-horizon Space agent from a built-in preset template.',
-			{
-				template_name: z.string().describe('Preset template name such as Coder, Reviewer, or QA'),
-				name: z.string().optional().describe('Optional new agent name; defaults to template name'),
-				model: z.string().optional().describe('Model override'),
-				provider: z.string().optional().describe('Provider override'),
-				thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
-			},
-			(args) => handlers.create_agent_from_template(args)
-		),
-		tool(
-			'update_agent',
-			'Update a long-horizon Space agent. Autonomy/tool-permission escalation is limited by manager validation and audited.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				name: z.string().optional().describe('New agent name'),
-				status: agentStatusSchema.optional().describe('Lifecycle status'),
-				description: z.string().nullable().optional().describe('New description'),
-				model: z.string().nullable().optional().describe('Model override, or null to clear'),
-				thinking_level: thinkingLevelSchema
-					.nullable()
-					.optional()
-					.describe('Thinking level override, or null to clear'),
-				provider: z.string().nullable().optional().describe('Provider override, or null to clear'),
-				custom_prompt: z
-					.string()
-					.nullable()
-					.optional()
-					.describe('Prompt override, or null to clear'),
-				tools: z
-					.array(z.string())
-					.nullable()
-					.optional()
-					.describe('Tool allowlist override, or null to clear'),
-				setting_sources: settingSourcesSchema
-					.nullable()
-					.optional()
-					.describe('Settings sources override, or null to clear'),
-			},
-			(args) => handlers.update_agent(args)
-		),
-		tool(
-			'pause_agent',
-			'Pause a long-horizon Space agent without deleting it.',
-			{ agent_id: z.string().describe('SpaceAgent ID') },
-			(args) => handlers.pause_agent(args)
-		),
-		tool(
-			'archive_agent',
-			'Archive a long-horizon Space agent.',
-			{ agent_id: z.string().describe('SpaceAgent ID') },
-			(args) => handlers.archive_agent(args)
-		),
-		tool(
-			'assign_agent_to_goal',
-			'Assign a long-horizon Space agent to a goal.',
-			{ agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
-			(args) => handlers.assign_agent_to_goal(args)
-		),
-		tool(
-			'unassign_agent_from_goal',
-			'Remove a long-horizon Space agent goal assignment.',
-			{ agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
-			(args) => handlers.unassign_agent_from_goal(args)
-		),
-		tool(
-			'assign_agent_to_forge_scope',
-			'Assign a long-horizon Space agent to a Forge scope.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				scope_id: z.string().describe('Forge scope ID'),
-			},
-			(args) => handlers.assign_agent_to_forge_scope(args)
-		),
-		tool(
-			'unassign_agent_from_forge_scope',
-			'Remove a long-horizon Space agent Forge scope assignment.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				scope_id: z.string().describe('Forge scope ID'),
-			},
-			(args) => handlers.unassign_agent_from_forge_scope(args)
-		),
-		tool(
-			'create_agent_reminder',
-			'Create a reminder for a long-horizon Space agent.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				message: z.string().min(1).describe('Reminder message'),
-				remind_at: z.number().int().describe('Reminder timestamp in ms since epoch'),
-			},
-			(args) => handlers.create_agent_reminder(args)
-		),
-		tool(
-			'list_agent_reminders',
-			'List reminders for a long-horizon Space agent.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				status: z.enum(['active', 'done', 'cancelled']).optional().describe('Reminder status'),
-			},
-			(args) => handlers.list_agent_reminders(args)
-		),
-		tool(
-			'subscribe_agent_event',
-			'Record an external-event subscription for a long-horizon Space agent.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				topic_pattern: z.string().describe('External event topic glob pattern'),
-				label: z.string().optional().describe('Human-readable subscription label'),
-			},
-			(args) => handlers.subscribe_agent_event(args)
-		),
-		tool(
-			'unsubscribe_agent_event',
-			'Remove an external-event subscription from a long-horizon Space agent.',
-			{
-				agent_id: z.string().describe('SpaceAgent ID'),
-				topic_pattern: z.string().describe('External event topic glob pattern'),
-			},
-			(args) => handlers.unsubscribe_agent_event(args)
-		),
-		tool(
-			'list_agent_event_subscriptions',
-			'List external-event subscriptions for a long-horizon Space agent.',
-			{ agent_id: z.string().describe('SpaceAgent ID') },
-			(args) => handlers.list_agent_event_subscriptions(args)
-		),
-		tool(
 			'list_workflows',
 			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
 			{},
@@ -3351,6 +3207,185 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			(args) => handlers.approve_task(args)
 		),
 	];
+
+	// Long-horizon agent tools need database-backed assignment metadata.
+	if (config.db) {
+		tools.unshift(
+			tool(
+				'list_agents',
+				'List long-horizon Space agents in this space.',
+				{
+					status: agentStatusSchema.optional().describe('Filter by agent lifecycle status'),
+					compact: z.boolean().optional().describe('Return compact agent summaries'),
+				},
+				(args) => handlers.list_agents(args)
+			),
+			tool(
+				'get_agent',
+				'Get one long-horizon Space agent by ID.',
+				{ agent_id: z.string().describe('SpaceAgent ID') },
+				(args) => handlers.get_agent(args)
+			),
+			tool(
+				'create_agent',
+				'Create a custom long-horizon Space agent. Tool-permission changes are validated against the known tool allowlist.',
+				{
+					name: z.string().min(1).describe('Agent name, unique within the space'),
+					description: z.string().optional().describe('Agent specialization summary'),
+					model: z.string().optional().describe('Model override'),
+					thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
+					provider: z.string().optional().describe('Provider override'),
+					custom_prompt: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Operator prompt for this agent'),
+					tools: z.array(z.string()).optional().describe('Tool allowlist override'),
+					setting_sources: settingSourcesSchema
+						.nullable()
+						.optional()
+						.describe('Settings sources for this agent'),
+				},
+				(args) => handlers.create_agent(args)
+			),
+			tool(
+				'create_agent_from_template',
+				'Create a long-horizon Space agent from a built-in preset template.',
+				{
+					template_name: z.string().describe('Preset template name such as Coder, Reviewer, or QA'),
+					name: z
+						.string()
+						.optional()
+						.describe('Optional new agent name; defaults to template name'),
+					model: z.string().optional().describe('Model override'),
+					provider: z.string().optional().describe('Provider override'),
+					thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
+				},
+				(args) => handlers.create_agent_from_template(args)
+			),
+			tool(
+				'update_agent',
+				'Update a long-horizon Space agent. Autonomy/tool-permission escalation is limited by manager validation and audited.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					name: z.string().optional().describe('New agent name'),
+					status: agentStatusSchema.optional().describe('Lifecycle status'),
+					description: z.string().nullable().optional().describe('New description'),
+					model: z.string().nullable().optional().describe('Model override, or null to clear'),
+					thinking_level: thinkingLevelSchema
+						.nullable()
+						.optional()
+						.describe('Thinking level override, or null to clear'),
+					provider: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Provider override, or null to clear'),
+					custom_prompt: z
+						.string()
+						.nullable()
+						.optional()
+						.describe('Prompt override, or null to clear'),
+					tools: z
+						.array(z.string())
+						.nullable()
+						.optional()
+						.describe('Tool allowlist override, or null to clear'),
+					setting_sources: settingSourcesSchema
+						.nullable()
+						.optional()
+						.describe('Settings sources override, or null to clear'),
+				},
+				(args) => handlers.update_agent(args)
+			),
+			tool(
+				'pause_agent',
+				'Pause a long-horizon Space agent without deleting it.',
+				{ agent_id: z.string().describe('SpaceAgent ID') },
+				(args) => handlers.pause_agent(args)
+			),
+			tool(
+				'archive_agent',
+				'Archive a long-horizon Space agent.',
+				{ agent_id: z.string().describe('SpaceAgent ID') },
+				(args) => handlers.archive_agent(args)
+			),
+			tool(
+				'assign_agent_to_goal',
+				'Assign a long-horizon Space agent to a goal.',
+				{ agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
+				(args) => handlers.assign_agent_to_goal(args)
+			),
+			tool(
+				'unassign_agent_from_goal',
+				'Remove a long-horizon Space agent goal assignment.',
+				{ agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
+				(args) => handlers.unassign_agent_from_goal(args)
+			),
+			tool(
+				'assign_agent_to_forge_scope',
+				'Assign a long-horizon Space agent to a Forge scope.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					scope_id: z.string().describe('Forge scope ID'),
+				},
+				(args) => handlers.assign_agent_to_forge_scope(args)
+			),
+			tool(
+				'unassign_agent_from_forge_scope',
+				'Remove a long-horizon Space agent Forge scope assignment.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					scope_id: z.string().describe('Forge scope ID'),
+				},
+				(args) => handlers.unassign_agent_from_forge_scope(args)
+			),
+			tool(
+				'create_agent_reminder',
+				'Create a reminder for a long-horizon Space agent.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					message: z.string().min(1).describe('Reminder message'),
+					remind_at: z.number().int().describe('Reminder timestamp in ms since epoch'),
+				},
+				(args) => handlers.create_agent_reminder(args)
+			),
+			tool(
+				'list_agent_reminders',
+				'List reminders for a long-horizon Space agent.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					status: z.enum(['active', 'done', 'cancelled']).optional().describe('Reminder status'),
+				},
+				(args) => handlers.list_agent_reminders(args)
+			),
+			tool(
+				'subscribe_agent_event',
+				'Record an external-event subscription for a long-horizon Space agent.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					topic_pattern: z.string().describe('External event topic glob pattern'),
+					label: z.string().optional().describe('Human-readable subscription label'),
+				},
+				(args) => handlers.subscribe_agent_event(args)
+			),
+			tool(
+				'unsubscribe_agent_event',
+				'Remove an external-event subscription from a long-horizon Space agent.',
+				{
+					agent_id: z.string().describe('SpaceAgent ID'),
+					topic_pattern: z.string().describe('External event topic glob pattern'),
+				},
+				(args) => handlers.unsubscribe_agent_event(args)
+			),
+			tool(
+				'list_agent_event_subscriptions',
+				'List external-event subscriptions for a long-horizon Space agent.',
+				{ agent_id: z.string().describe('SpaceAgent ID') },
+				(args) => handlers.list_agent_event_subscriptions(args)
+			)
+		);
+	}
 
 	const goalStatusSchema = z.enum(['active', 'paused', 'completed', 'archived']);
 	const goalTypeSchema = z.enum(['one_shot', 'measurable', 'recurring']);

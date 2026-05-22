@@ -319,10 +319,29 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		const names = getRegisteredToolNames(server);
 		expect(names).not.toContain('start_workflow_run');
 		expect(names).toContain('create_standalone_task');
+		expect(names).not.toContain('create_agent');
+		expect(names).not.toContain('assign_agent_to_goal');
+		expect(names).not.toContain('create_agent_reminder');
+		expect(names).not.toContain('create_goal');
+	});
+
+	test('registers long-horizon agent tools when database is configured', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			db: ctx.db,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+		});
+
+		const names = getRegisteredToolNames(server);
 		expect(names).toContain('create_agent');
 		expect(names).toContain('assign_agent_to_goal');
 		expect(names).toContain('create_agent_reminder');
-		expect(names).not.toContain('create_goal');
 	});
 
 	test('registers goal tools when goalService is configured', () => {
@@ -513,6 +532,96 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 					.content[0].text
 			).success
 		).toBe(true);
+	});
+
+	test('returns errors for missing and cross-space agents', async () => {
+		const handlers = makeHandlers(ctx);
+		const missingId = 'missing-agent';
+
+		const missing = JSON.parse((await handlers.get_agent({ agent_id: missingId })).content[0].text);
+		expect(missing.success).toBe(false);
+		expect(missing.error).toBe(`Agent not found: ${missingId}`);
+
+		const otherSpaceId = 'other-space';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		seedAgentRow(ctx.db, 'agent-other-space', otherSpaceId, 'Other Space Agent');
+
+		const crossSpace = JSON.parse(
+			(
+				await handlers.update_agent({
+					agent_id: 'agent-other-space',
+					description: 'Should not update',
+				})
+			).content[0].text
+		);
+		expect(crossSpace.success).toBe(false);
+		expect(crossSpace.error).toBe('Agent not found: agent-other-space');
+
+		const missingReminder = JSON.parse(
+			(
+				await handlers.create_agent_reminder({
+					agent_id: missingId,
+					message: 'No target',
+					remind_at: Date.now(),
+				})
+			).content[0].text
+		);
+		expect(missingReminder.success).toBe(false);
+		expect(missingReminder.error).toBe(`Agent not found: ${missingId}`);
+	});
+
+	test('returns errors from database-backed tools when database is not configured', async () => {
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			spaceManager: ctx.spaceManager,
+			goalService: ctx.goalService,
+			evolutionScopeService: ctx.evolutionScopeService,
+			evolutionEpisodeService: ctx.evolutionEpisodeService,
+		});
+
+		const agent = JSON.parse(
+			(await handlers.create_agent({ name: 'No Db Agent' })).content[0].text
+		).agent;
+		const goal = JSON.parse(
+			(await handlers.create_goal({ title: 'No DB Goal', description: 'Desc' })).content[0].text
+		).goal;
+
+		const assignment = JSON.parse(
+			(await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+				.text
+		);
+		expect(assignment.success).toBe(false);
+		expect(assignment.error).toBe('Long-horizon agent management not available');
+
+		const reminder = JSON.parse(
+			(
+				await handlers.create_agent_reminder({
+					agent_id: agent.id,
+					message: 'No DB',
+					remind_at: Date.now(),
+				})
+			).content[0].text
+		);
+		expect(reminder.success).toBe(false);
+		expect(reminder.error).toBe('Long-horizon agent management not available');
+
+		const subscription = JSON.parse(
+			(
+				await handlers.subscribe_agent_event({
+					agent_id: agent.id,
+					topic_pattern: 'github/*',
+				})
+			).content[0].text
+		);
+		expect(subscription.success).toBe(false);
+		expect(subscription.error).toBe('Long-horizon agent management not available');
 	});
 });
 
