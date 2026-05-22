@@ -415,7 +415,8 @@ function buildEvidenceParams(
 		});
 	}
 
-	if (analysis.failedToolCallCount > 0 && params.length === 0) {
+	const hasFailureEvidence = params.some((param) => param.kind !== 'slow_tool_call');
+	if (analysis.failedToolCallCount > 0 && !hasFailureEvidence) {
 		params.push({
 			scopeId,
 			kind: 'tool_failure',

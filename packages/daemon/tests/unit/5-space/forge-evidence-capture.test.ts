@@ -703,6 +703,45 @@ describe('Forge evidence capture on task completion', () => {
 		expect(diagnostics[0]?.metadata.error).toBeUndefined();
 	});
 
+	it('does not enqueue duplicate conversation friction analysis beyond the newest 100 jobs', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Large queue scope',
+			objective: 'Avoid duplicate analyzer jobs',
+		});
+		const duplicateTask = taskRepo.createTask({
+			spaceId,
+			title: 'Already queued task',
+			description: 'Existing old job should be found',
+			evolutionScopeId: scope.id,
+		});
+		for (let index = 0; index < 101; index += 1) {
+			jobQueue.enqueue({
+				queue: 'space.conversationFriction.analyze',
+				payload: {
+					scopeId: scope.id,
+					taskId: index === 0 ? duplicateTask.id : `other-task-${index}`,
+				},
+			});
+		}
+		await taskRepo.updateTask(duplicateTask.id, { status: 'in_progress', result: 'Done' });
+		const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+		await manager.setTaskStatus(duplicateTask.id, 'done');
+
+		expect(
+			(
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count FROM job_queue
+						 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+					)
+					.get(duplicateTask.id) as { count: number }
+			).count
+		).toBe(1);
+	});
+
 	it('captures slow successful tool calls as trace-derived evidence', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,
@@ -740,6 +779,42 @@ describe('Forge evidence capture on task completion', () => {
 		expect(
 			(slowEvidence?.metadata.slowToolCalls as Array<{ durationMs: number }>)[0]?.durationMs
 		).toBe(45_000);
+	});
+
+	it('captures tool failure evidence for slow failed generic commands', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Slow failed tool scope',
+			objective: 'Preserve failure signal for slow failed operations',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Slow failed generic command',
+			description: 'Slow failed Bash call should emit both slow and failure evidence',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchangeAt(
+			task.id,
+			'session-slow-failed',
+			'tool-slow-failed-1',
+			'Bash',
+			{ command: 'curl https://example.invalid' },
+			true,
+			{ text: 'Error: connection timed out' },
+			1_700_000_000_000,
+			1_700_000_045_000
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Recovered after slow failure' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		expect(result.traceDiagnostic?.failedToolCallCount).toBe(1);
+		expect(result.traceDiagnostic?.slowToolCallCount).toBe(1);
+		const evidenceKinds = evolutionRepo.listEvidence(scope.id).map((item) => item.kind);
+		expect(evidenceKinds).toContain('slow_tool_call');
+		expect(evidenceKinds).toContain('tool_failure');
 	});
 
 	it('records a trace diagnostic when completed task trace has no friction', () => {

@@ -53,7 +53,7 @@ export interface EvolutionScopeServiceDeps {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo?: WorkflowRunArtifactRepository;
 	traceEvidenceService?: EvolutionTraceEvidenceService;
-	jobQueue?: Pick<JobQueueRepository, 'enqueue' | 'listJobs'>;
+	jobQueue?: Pick<JobQueueRepository, 'enqueue' | 'listJobs' | 'countByStatus'>;
 }
 
 export interface CreateScopeFromGoalParams {
@@ -504,10 +504,11 @@ export class EvolutionScopeService {
 	private enqueueConversationFrictionAnalysis(scopeId: string, taskId: string): void {
 		const jobQueue = this.deps.jobQueue;
 		if (!jobQueue) return;
+		const counts = jobQueue.countByStatus(SPACE_CONVERSATION_FRICTION_ANALYZE);
 		const existing = jobQueue.listJobs({
 			queue: SPACE_CONVERSATION_FRICTION_ANALYZE,
 			status: ['pending', 'processing'],
-			limit: 100,
+			limit: counts.pending + counts.processing,
 		});
 		if (existing.some((job) => job.payload.scopeId === scopeId && job.payload.taskId === taskId)) {
 			return;
