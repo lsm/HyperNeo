@@ -87,6 +87,16 @@ describe('JobQueueRepository', () => {
 				payload: { scopeId: 'scope-1', taskId: 'task-1' },
 				matchPayload: { scopeId: 'scope-1', taskId: 'task-1' },
 			});
+			const nullKey = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: null },
+				matchPayload: { scopeId: 'scope-1', taskId: null },
+			});
+			const nullKeyDuplicate = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: null },
+				matchPayload: { scopeId: 'scope-1', taskId: null },
+			});
 			const other = repository.enqueueUniquePending({
 				queue: 'conversation-friction',
 				payload: { scopeId: 'scope-1', taskId: 'task-2' },
@@ -95,8 +105,10 @@ describe('JobQueueRepository', () => {
 
 			expect(first).not.toBeNull();
 			expect(duplicate).toBeNull();
+			expect(nullKey).not.toBeNull();
+			expect(nullKeyDuplicate).toBeNull();
 			expect(other).not.toBeNull();
-			expect(repository.listJobs({ queue: 'conversation-friction', limit: 10 })).toHaveLength(2);
+			expect(repository.listJobs({ queue: 'conversation-friction', limit: 10 })).toHaveLength(3);
 		});
 
 		it('assigns each job a unique UUID', () => {

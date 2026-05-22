@@ -214,7 +214,9 @@ export class JobQueueRepository {
 	): Job | null {
 		if (activeStatuses.length === 0) return null;
 		const statusPlaceholders = activeStatuses.map(() => '?').join(',');
-		const payloadPredicates = Object.keys(matchPayload).map(() => `json_extract(payload, ?) = ?`);
+		const payloadPredicates = Object.values(matchPayload).map((value) =>
+			value === null ? `json_type(payload, ?) = 'null'` : `json_extract(payload, ?) = ?`
+		);
 		const stmt = this.db.prepare(
 			`SELECT * FROM job_queue
 			 WHERE queue = ?
@@ -225,7 +227,8 @@ export class JobQueueRepository {
 		);
 		const params: (string | number | null)[] = [queue, ...activeStatuses];
 		for (const [key, value] of Object.entries(matchPayload)) {
-			params.push(`$.${key}`, sqliteJsonScalar(value));
+			params.push(`$.${key}`);
+			if (value !== null) params.push(sqliteJsonScalar(value));
 		}
 		const row = stmt.get(...params) as Record<string, unknown> | undefined;
 		return row ? this.rowToJob(row) : null;
