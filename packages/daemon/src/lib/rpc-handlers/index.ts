@@ -155,7 +155,7 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
 			(schedule) =>
 				schedule.goalId === goal.id &&
 				schedule.createdByAgent === 'goal-automation-service' &&
-				schedule.labels.includes(scopeLabel)
+				readSelfNagScheduleScopeId(schedule) === scope.id
 		);
 	if (!policy.selfNagCronExpression) {
 		if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);
@@ -181,11 +181,23 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
 		description: `Run Forge automation for goal: ${goal.title}`,
 		priority: goal.priority,
 		labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
+		metadata: goalAutomationSelfNagMetadata(scope.id),
 		triggerType: 'cron',
 		cronExpression: policy.selfNagCronExpression,
 		timezone: policy.selfNagTimezone ?? 'UTC',
 		createdByAgent: 'goal-automation-service',
 	});
+}
+
+export function readSelfNagScheduleScopeId(schedule: {
+	metadata?: Record<string, unknown>;
+}): string | null {
+	const scopeId = schedule.metadata?.goalAutomationScopeId;
+	return typeof scopeId === 'string' && scopeId.trim() ? scopeId : null;
+}
+
+function goalAutomationSelfNagMetadata(scopeId: string): Record<string, unknown> {
+	return { goalAutomationKind: 'self_nag', goalAutomationScopeId: scopeId };
 }
 
 function createGoalAutomationSelfNagSchedules(

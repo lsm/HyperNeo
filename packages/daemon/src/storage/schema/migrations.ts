@@ -8734,6 +8734,7 @@ export function runMigration125(db: BunDatabase): void {
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			preferred_workflow_id TEXT DEFAULT NULL,
 			labels TEXT NOT NULL DEFAULT '[]',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
 			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at')),
 			cron_expression TEXT DEFAULT NULL,
 			run_at INTEGER DEFAULT NULL,
@@ -9033,6 +9034,9 @@ export function runMigration131(db: BunDatabase): void {
 
 	if (tableExists(db, 'task_schedules') && !tableHasColumn(db, 'task_schedules', 'goal_id')) {
 		db.exec(`ALTER TABLE task_schedules ADD COLUMN goal_id TEXT DEFAULT NULL`);
+	}
+	if (tableExists(db, 'task_schedules') && !tableHasColumn(db, 'task_schedules', 'metadata_json')) {
+		db.exec(`ALTER TABLE task_schedules ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`);
 	}
 	if (tableExists(db, 'task_schedules')) {
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_task_schedules_goal ON task_schedules(goal_id)`);

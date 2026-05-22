@@ -126,6 +126,16 @@ describe('TaskScheduleRepository', () => {
 			expect(schedule.labels).toEqual(['bug', 'recurring']);
 		});
 
+		it('stores metadata as a JSON object', () => {
+			const schedule = repo.create(
+				makeCronParams({
+					spaceId,
+					metadata: { goalAutomationScopeId: 'scope-1' },
+				})
+			);
+			expect(schedule.metadata).toEqual({ goalAutomationScopeId: 'scope-1' });
+		});
+
 		it('stores createdByAgent and createdBySession', () => {
 			const schedule = repo.create(
 				makeCronParams({ spaceId, createdByAgent: 'agent-1', createdBySession: 'session-1' })

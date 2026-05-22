@@ -21,6 +21,7 @@ export interface CreateTaskScheduleParams {
 	priority?: SpaceTaskPriority;
 	preferredWorkflowId?: string | null;
 	labels?: string[];
+	metadata?: Record<string, unknown>;
 	triggerType: TaskScheduleTriggerType;
 	cronExpression?: string | null;
 	runAt?: number | null;
@@ -29,6 +30,15 @@ export interface CreateTaskScheduleParams {
 	createdByAgent?: string | null;
 	createdBySession?: string | null;
 	goalId?: string | null;
+}
+
+function parseJson<T>(value: unknown, fallback: T): T {
+	if (typeof value !== 'string') return fallback;
+	try {
+		return JSON.parse(value) as T;
+	} catch {
+		return fallback;
+	}
 }
 
 export interface UpdateTaskScheduleParams {
@@ -56,10 +66,10 @@ export class TaskScheduleRepository {
 			.prepare(
 				`INSERT INTO task_schedules (
 					id, space_id, title, description, priority, preferred_workflow_id,
-					labels, trigger_type, cron_expression, run_at, timezone,
+					labels, metadata_json, trigger_type, cron_expression, run_at, timezone,
 					next_run_at, last_run_at, last_created_task_id, pending_job_id,
 					status, created_by_agent, created_by_session, goal_id, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -69,6 +79,7 @@ export class TaskScheduleRepository {
 				params.priority ?? 'normal',
 				params.preferredWorkflowId ?? null,
 				JSON.stringify(params.labels ?? []),
+				JSON.stringify(params.metadata ?? {}),
 				params.triggerType,
 				params.cronExpression ?? null,
 				params.runAt ?? null,
@@ -387,7 +398,8 @@ export class TaskScheduleRepository {
 			description: (row.description as string) ?? '',
 			priority: (row.priority as SpaceTaskPriority) ?? 'normal',
 			preferredWorkflowId: (row.preferred_workflow_id as string | null) ?? null,
-			labels: JSON.parse((row.labels as string) ?? '[]') as string[],
+			labels: parseJson<string[]>(row.labels, []),
+			metadata: parseJson<Record<string, unknown>>(row.metadata_json, {}),
 			triggerType: row.trigger_type as TaskScheduleTriggerType,
 			cronExpression: (row.cron_expression as string | null) ?? null,
 			runAt: (row.run_at as number | null) ?? null,

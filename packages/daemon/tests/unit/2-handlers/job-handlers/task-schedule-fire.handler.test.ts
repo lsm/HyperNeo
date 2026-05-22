@@ -142,6 +142,39 @@ describe('handleTaskScheduleFire', () => {
 		return schedule.id;
 	}
 
+	it('routes goal automation self-nag by immutable schedule metadata', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Automation goal', type: 'recurring' });
+		const scheduleId = scheduleRepo.create({
+			spaceId,
+			title: 'Forge self nag',
+			description: 'Automation schedule',
+			triggerType: 'cron',
+			cronExpression: '0 9 * * 1-5',
+			timezone: 'UTC',
+			nextRunAt: Date.now() + 60_000,
+			goalId: goal.id,
+			labels: ['user-edited'],
+			metadata: { goalAutomationScopeId: 'scope-stable' },
+			createdByAgent: 'goal-automation-service',
+		}).id;
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		const calls: unknown[][] = [];
+
+		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+			...makeDeps(),
+			goalAutomationService: {
+				onSelfNag: (...args: unknown[]) => {
+					calls.push(args);
+					return { enqueued: true, reason: 'queued' as const };
+				},
+			},
+		});
+
+		expect(result.skipped).toBe(false);
+		expect(result.taskId).toBeNull();
+		expect(calls).toEqual([[goal.id, scheduleId, 'scope-stable']]);
+	});
+
 	it('creates a SpaceTask from the cron schedule template and re-enqueues itself', async () => {
 		const scheduleId = createCronSchedule('goal-1');
 		// Set pendingJobId so idempotency check sees a match.

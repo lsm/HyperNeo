@@ -75,7 +75,8 @@ export class GoalAutomationService {
 		const dueEvidence = selectEvidenceAfterCursor(
 			this.deps.evolutionRepo.listEvidence(scope.id),
 			cursor?.lastEvidenceCreatedAt ?? null,
-			Number.POSITIVE_INFINITY
+			Number.POSITIVE_INFINITY,
+			cursor?.lastEvidenceId ?? null
 		).filter((item) => item.kind === 'task_result' && item.sourceId !== null);
 		const completedTaskIds = new Set(dueEvidence.map((item) => item.sourceId as string));
 		if (completedTaskIds.size < threshold) {
@@ -107,7 +108,8 @@ export class GoalAutomationService {
 		const evidence = selectEvidenceAfterCursor(
 			this.deps.evolutionRepo.listEvidence(scope.id),
 			cursor?.lastEvidenceCreatedAt ?? null,
-			Number.POSITIVE_INFINITY
+			Number.POSITIVE_INFINITY,
+			cursor?.lastEvidenceId ?? null
 		);
 		if (evidence.length === 0) return { enqueued: false, reason: 'not_applicable', count: 0 };
 		this.enqueue({

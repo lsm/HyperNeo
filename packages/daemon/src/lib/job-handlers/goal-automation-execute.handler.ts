@@ -246,6 +246,7 @@ function findExistingAutomationReviewTask(
 	scopeId: string,
 	payload: GoalAutomationExecutePayload
 ): { reviewTask: SpaceTask; episodeId: string } | null {
+	if (payload.triggerKind === 'self_nag') return null;
 	const scope = deps.evolutionRepo.getScope(scopeId);
 	if (!scope) return null;
 	const token = automationTriggerToken(payload);
