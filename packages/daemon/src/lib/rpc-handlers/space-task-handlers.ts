@@ -289,10 +289,12 @@ export function setupSpaceTaskHandlers(
 		if (!currentTaskForOverrides) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
-		const nextWorkflowId =
-			updateParams.preferredWorkflowId ?? currentTaskForOverrides.preferredWorkflowId;
+		const nextWorkflowId = Object.hasOwn(updateParams, 'preferredWorkflowId')
+			? updateParams.preferredWorkflowId
+			: currentTaskForOverrides.preferredWorkflowId;
 		const taskForOverrideValidation =
-			updateParams.status !== undefined && updateParams.status !== currentTaskForOverrides.status
+			updateParams.status === 'in_progress' &&
+			updateParams.status !== currentTaskForOverrides.status
 				? { ...currentTaskForOverrides, status: updateParams.status, startedAt: Date.now() }
 				: currentTaskForOverrides;
 		const validatedWorkflowModelOverrides = await validateWorkflowModelOverrides(
@@ -304,6 +306,16 @@ export function setupSpaceTaskHandlers(
 		if (validatedWorkflowModelOverrides !== undefined) {
 			updateParams.workflowModelOverrides = validatedWorkflowModelOverrides;
 		}
+		const ensureWorkflowOverridesStillUnlocked = async (fields: Record<string, unknown>) => {
+			if (!Object.hasOwn(fields, 'workflowModelOverrides')) return;
+			const latestTask = await taskManager.getTask(taskId);
+			if (!latestTask) {
+				throw new Error(`Task not found: ${taskId}`);
+			}
+			if (latestTask.workflowRunId || latestTask.startedAt) {
+				throw new Error('Workflow model overrides are locked after the task starts');
+			}
+		};
 
 		let task: SpaceTask;
 		let emitTaskUpdated = true;
@@ -356,6 +368,7 @@ export function setupSpaceTaskHandlers(
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
 						emitTaskUpdated = true;
+						await ensureWorkflowOverridesStillUnlocked(otherFields);
 						task = await taskManager.updateTask(taskId, otherFields, {
 							onCascadedTasks: emitCascadedTasks,
 						});
@@ -447,6 +460,7 @@ export function setupSpaceTaskHandlers(
 						...otherFields
 					} = updateParams;
 					if (Object.keys(otherFields).length > 0) {
+						await ensureWorkflowOverridesStillUnlocked(otherFields);
 						task = await taskManager.updateTask(taskId, otherFields, {
 							onCascadedTasks: emitCascadedTasks,
 						});
@@ -457,6 +471,7 @@ export function setupSpaceTaskHandlers(
 				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
 				// strips it internally (guard: params.status !== task.status is false) so no
 				// transition check fires and the status column is left untouched in the DB.
+				await ensureWorkflowOverridesStillUnlocked(updateParams);
 				task = await taskManager.updateTask(taskId, updateParams, {
 					onCascadedTasks: emitCascadedTasks,
 				});

@@ -980,6 +980,42 @@ describe('space-task-handlers', () => {
 			);
 		});
 
+		it('rejects workflow model overrides when clearing workflow selection', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					preferredWorkflowId: null,
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Select a workflow before setting model overrides');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('allows workflow model override updates with non-start status changes', async () => {
+			setup(mockSpace, makeTask({ status: 'draft', preferredWorkflowId: 'workflow-1' }));
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'open',
+				workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+			});
+
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'open', {
+				result: undefined,
+				approvalReason: undefined,
+				approvalSource: undefined,
+			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' } },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
 		it('rejects workflow model override updates combined with task start', async () => {
 			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
 
@@ -993,6 +1029,28 @@ describe('space-task-handlers', () => {
 			).rejects.toThrow('Workflow model overrides are locked after the task starts');
 			expect(taskManager.updateTask).not.toHaveBeenCalled();
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+		});
+
+		it('rechecks workflow model override lock immediately before write', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+			(
+				taskManager.getTask as unknown as {
+					mockImplementation: (fn: () => Promise<SpaceTask>) => void;
+				}
+			).mockImplementation(() =>
+				Promise.resolve(
+					makeTask({ preferredWorkflowId: 'workflow-1', workflowRunId: 'run-1', startedAt: NOW })
+				)
+			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Workflow model overrides are locked after the task starts');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
 		});
 
 		it('applies non-status fields (e.g. taskAgentSessionId) after status transition', async () => {
