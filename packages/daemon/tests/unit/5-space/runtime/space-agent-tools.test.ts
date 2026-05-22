@@ -255,6 +255,7 @@ function makeCtx(): TestCtx {
 function makeHandlers(ctx: TestCtx) {
 	return createSpaceAgentToolHandlers({
 		spaceId: ctx.spaceId,
+		db: ctx.db,
 		runtime: ctx.runtime,
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
@@ -318,6 +319,9 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		const names = getRegisteredToolNames(server);
 		expect(names).not.toContain('start_workflow_run');
 		expect(names).toContain('create_standalone_task');
+		expect(names).toContain('create_agent');
+		expect(names).toContain('assign_agent_to_goal');
+		expect(names).toContain('create_agent_reminder');
 		expect(names).not.toContain('create_goal');
 	});
 
@@ -372,6 +376,145 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 // ---------------------------------------------------------------------------
 // goal tools
 // ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('creates, updates, pauses, archives, and templates agents', async () => {
+		const handlers = makeHandlers(ctx);
+
+		const created = JSON.parse(
+			(
+				await handlers.create_agent({
+					name: 'Scout',
+					description: 'Tracks quality signals',
+					tools: ['Read', 'Grep'],
+				})
+			).content[0].text
+		);
+		expect(created.success).toBe(true);
+		expect(created.agent.status).toBe('active');
+		expect(created.agent.tools).toEqual(['Read', 'Grep']);
+
+		const updated = JSON.parse(
+			(
+				await handlers.update_agent({
+					agent_id: created.agent.id,
+					description: 'Tracks product-quality signals',
+					thinking_level: 'think8k',
+				})
+			).content[0].text
+		);
+		expect(updated.success).toBe(true);
+		expect(updated.agent.thinkingLevel).toBe('think8k');
+
+		const paused = JSON.parse(
+			(await handlers.pause_agent({ agent_id: created.agent.id })).content[0].text
+		);
+		expect(paused.agent.status).toBe('paused');
+		const archived = JSON.parse(
+			(await handlers.archive_agent({ agent_id: created.agent.id })).content[0].text
+		);
+		expect(archived.agent.status).toBe('archived');
+
+		const templated = JSON.parse(
+			(
+				await handlers.create_agent_from_template({
+					template_name: 'Reviewer',
+					name: 'Reviewer Copy',
+				})
+			).content[0].text
+		);
+		expect(templated.success).toBe(true);
+		expect(templated.agent.templateName).toBe('Reviewer');
+
+		const listed = JSON.parse((await handlers.list_agents({ status: 'archived' })).content[0].text);
+		expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
+	});
+
+	test('manages agent assignments, reminders, and event subscriptions', async () => {
+		const handlers = makeHandlers(ctx);
+		const agent = JSON.parse(
+			(await handlers.create_agent({ name: 'Manager' })).content[0].text
+		).agent;
+		const goal = JSON.parse(
+			(await handlers.create_goal({ title: 'Goal', description: 'Desc' })).content[0].text
+		).goal;
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Scope',
+					objective: 'Track evidence',
+				})
+			).content[0].text
+		).scope;
+
+		expect(
+			JSON.parse(
+				(await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+					.text
+			).success
+		).toBe(true);
+		expect(
+			JSON.parse(
+				(await handlers.assign_agent_to_forge_scope({ agent_id: agent.id, scope_id: scope.id }))
+					.content[0].text
+			).success
+		).toBe(true);
+
+		const reminder = JSON.parse(
+			(
+				await handlers.create_agent_reminder({
+					agent_id: agent.id,
+					message: 'Check progress',
+					remind_at: Date.now() + 60_000,
+				})
+			).content[0].text
+		);
+		expect(reminder.success).toBe(true);
+		const reminders = JSON.parse(
+			(await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
+				.text
+		);
+		expect(reminders.reminders).toHaveLength(1);
+
+		expect(
+			JSON.parse(
+				(
+					await handlers.subscribe_agent_event({
+						agent_id: agent.id,
+						topic_pattern: 'github/*/*/pull_request/*',
+						label: 'PR activity',
+					})
+				).content[0].text
+			).success
+		).toBe(true);
+		const subscriptions = JSON.parse(
+			(await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
+		);
+		expect(subscriptions.subscriptions[0].topic_pattern).toBe('github/*/*/pull_request/*');
+
+		expect(
+			JSON.parse(
+				(await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))
+					.content[0].text
+			).success
+		).toBe(true);
+		expect(
+			JSON.parse(
+				(await handlers.unassign_agent_from_forge_scope({ agent_id: agent.id, scope_id: scope.id }))
+					.content[0].text
+			).success
+		).toBe(true);
+	});
+});
 
 describe('createSpaceAgentToolHandlers — goal tools', () => {
 	let ctx: TestCtx;

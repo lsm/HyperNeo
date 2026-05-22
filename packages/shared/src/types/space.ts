@@ -1151,6 +1151,8 @@ export interface CreateWorkflowRunParams {
  * A named agent configuration within a Space.
  * SpaceAgents can be referenced by name in SpaceWorkflow nodes.
  */
+export type SpaceAgentStatus = 'active' | 'paused' | 'archived';
+
 export interface SpaceAgent {
 	/** Unique identifier */
 	id: string;
@@ -1158,6 +1160,8 @@ export interface SpaceAgent {
 	spaceId: string;
 	/** Human-readable name (unique within a space) */
 	name: string;
+	/** Long-horizon agent lifecycle state */
+	status?: SpaceAgentStatus;
 	/** Optional description of this agent's specialization */
 	description?: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
@@ -1207,6 +1211,7 @@ export interface SpaceAgent {
 export interface CreateSpaceAgentParams {
 	spaceId: string;
 	name: string;
+	status?: SpaceAgentStatus;
 	description?: string;
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
@@ -1239,6 +1244,7 @@ export interface CreateSpaceAgentParams {
  */
 export interface UpdateSpaceAgentParams {
 	name?: string;
+	status?: SpaceAgentStatus;
 	description?: string | null;
 	model?: string | null;
 	thinkingLevel?: ThinkingLevel | null;

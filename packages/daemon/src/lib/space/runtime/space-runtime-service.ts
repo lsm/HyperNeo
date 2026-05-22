@@ -643,6 +643,7 @@ export class SpaceRuntimeService {
 	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
 		return createSpaceAgentMcpServer({
 			spaceId: space.id,
+			db: this.config.db,
 			runtime: this.runtime,
 			workflowManager: this.config.spaceWorkflowManager,
 			spaceManager: this.config.spaceManager,
@@ -1258,6 +1259,7 @@ export class SpaceRuntimeService {
 		const spaceManagerForApproval = this.config.spaceManager;
 		const mcpServer = createSpaceAgentMcpServer({
 			spaceId: space.id,
+			db: this.config.db,
 			runtime: this.runtime,
 			workflowManager: this.config.spaceWorkflowManager,
 			spaceManager: this.config.spaceManager,
@@ -1382,6 +1384,7 @@ export class SpaceRuntimeService {
 		const spaceManagerForApproval = this.config.spaceManager;
 		const mcpServer = createSpaceAgentMcpServer({
 			spaceId: space.id,
+			db: this.config.db,
 			runtime: this.runtime,
 			workflowManager: spaceWorkflowManager,
 			spaceManager: this.config.spaceManager,
