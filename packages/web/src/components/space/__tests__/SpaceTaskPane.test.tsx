@@ -228,6 +228,7 @@ mockNodeExecutions = signal<NodeExecution[]>([]);
 mockNodeExecutionsByNodeId = signal<Map<string, unknown[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
+import { rightPanelTargetSignal } from '../../../lib/signals';
 
 function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 	return {
@@ -322,6 +323,7 @@ describe('SpaceTaskPane', () => {
 		mockSpaceOverlayTaskContextSignal.value = null;
 		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
 		mockCurrentSpaceIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 		mockWorkflowCanvasOnNodeClick.mockClear();
 	});
 
@@ -352,13 +354,21 @@ describe('SpaceTaskPane', () => {
 		mockTasks.value = [makeTask({ title: 'Review launch checklist', taskNumber: 173 })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByText('Review launch checklist')).toBeTruthy();
-		expect(getByText('#173')).toBeTruthy();
+		expect(getByText((_content, element) => element?.textContent === '#173')).toBeTruthy();
 	});
 
-	it('omits the header status badge for review tasks because the approval banner owns that state', () => {
-		mockTasks.value = [makeTask({ status: 'review', taskAgentSessionId: 'session-abc' })];
-		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+	it('omits review status from the header when the approval action bar is active', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'review',
+				pendingCheckpointType: 'task_completion',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		const { getByTestId, getByText, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(queryByTestId('task-status-label')).toBeNull();
+		expect(getByText('Normal Priority')).toBeTruthy();
+		expect(getByTestId('pending-task-completion-banner')).toBeTruthy();
 	});
 
 	it('renders unified task thread component when workflow run exists', () => {
@@ -585,6 +595,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		mockSpaceOverlayTaskContextSignal.value = null;
 		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
 		mockCurrentSpaceIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 	});
 
 	afterEach(() => {
@@ -657,20 +668,23 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(canvas.getAttribute('data-run-id')).toBe('run-1');
 	});
 
-	it('switching to artifacts view closes canvas view', () => {
+	it('routes legacy artifacts view into the right panel and returns to thread', async () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
-		const { getByTestId, queryByTestId } = render(
-			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
-		);
+		mockCurrentSpaceTaskViewTabSignal.value = 'artifacts';
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
-		// Open canvas first
-		fireEvent.click(getByTestId('canvas-toggle'));
-		expect(getByTestId('canvas-view')).toBeTruthy();
-
-		// Open artifacts — should close canvas
-		fireEvent.click(getByTestId('artifacts-toggle'));
 		expect(queryByTestId('canvas-view')).toBeNull();
+		expect(queryByTestId('task-thread-panel')).toBeTruthy();
+		await waitFor(() =>
+			expect(rightPanelTargetSignal.value).toEqual({
+				type: 'task',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				tab: 'artifacts',
+			})
+		);
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread', true);
 	});
 
 	it('canvas toggle aria-pressed reflects current state', () => {
@@ -976,22 +990,21 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Code Reviewer');
 	});
 
-	it('switching to canvas view closes the artifacts panel', () => {
+	it('main view control only exposes the canvas toggle', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId, queryByTestId } = render(
 			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
 		);
 
-		// Open artifacts first
-		fireEvent.click(getByTestId('artifacts-toggle'));
-		// Artifacts panel replaces the thread — canvas-view is not shown
-		expect(queryByTestId('canvas-view')).toBeNull();
+		expect(queryByTestId('thread-toggle')).toBeNull();
+		expect(getByTestId('canvas-toggle')).toBeTruthy();
+		expect(queryByTestId('artifacts-toggle')).toBeNull();
+		expect(queryByTestId('timeline-toggle')).toBeNull();
+		expect(queryByTestId('execution-log-toggle')).toBeNull();
 
-		// Open canvas — should close artifacts and show canvas
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(getByTestId('canvas-view')).toBeTruthy();
-		// thread panel is not shown when canvas is active
 		expect(queryByTestId('task-thread-panel')).toBeNull();
 	});
 });
@@ -1045,7 +1058,7 @@ describe('SpaceTaskPane — blocked reason banner', () => {
 		expect(queryByTestId('task-blocked-banner')).toBeNull();
 	});
 
-	it('shows status label as Blocked in the header', () => {
+	it('moves blocked status into the action bar instead of the header label', () => {
 		mockTasks.value = [
 			makeTask({
 				status: 'blocked',
@@ -1053,8 +1066,11 @@ describe('SpaceTaskPane — blocked reason banner', () => {
 				taskAgentSessionId: 'session-abc',
 			}),
 		];
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByTestId('task-status-label').textContent).toBe('Blocked');
+		const { getByTestId, queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('task-status-label')).toBeNull();
+		expect(getByTestId('task-blocked-banner').textContent).toContain('Blocked');
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 	});
 });
 
@@ -1443,7 +1459,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 	});
 });
 
-describe('SpaceTaskPane — floating tab pill layout', () => {
+describe('SpaceTaskPane — header view toggle layout', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
@@ -1456,35 +1472,32 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		mockNavigateToSpaceTask.mockClear();
 		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
 		mockCurrentSpaceIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 	});
 
 	afterEach(() => {
 		cleanup();
 	});
 
-	it('renders the tab pill as a floating overlay inside the content area', () => {
+	it('renders the thread/canvas toggle in the header instead of the content area', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		const { getByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
 
-		const pill = getByTestId('task-view-tab-pill');
-		// Floating overlay: absolute-positioned near the top-right with a
-		// high z-index so the pill always sits above the rendered view. (CSS
-		// class strings are asserted directly because Tailwind utilities aren't
-		// loaded in jsdom — getComputedStyle would return defaults.)
-		expect(pill.className).toContain('absolute');
-		expect(pill.className).toContain('top-3');
-		expect(pill.className).toContain('justify-center');
-		expect(pill.className).toContain('z-20');
+		const toggle = getByTestId('task-view-toggle');
+		expect(queryByTestId('task-view-tab-pill')).toBeNull();
+		expect(toggle.className).toContain('h-7');
+		expect(toggle.className).not.toContain('absolute');
 
-		// The pill is a direct child of the content wrapper, not nested inside
-		// the rendered view, so it overlays rather than displaces content.
+		// The toggle belongs to the compact header metadata row, so it should not
+		// sit inside the scrollable content wrapper.
 		const contentWrapper = getByTestId('task-pane-content');
-		expect(pill.parentElement).toBe(contentWrapper);
-		expect(pill.contains(getByTestId('task-thread-panel'))).toBe(false);
+		expect(contentWrapper.contains(toggle)).toBe(false);
 	});
 
-	it('floating pill remains visible across thread, canvas, and artifacts views', () => {
+	it('header canvas toggle remains visible across thread and canvas views', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId, queryByTestId } = render(
@@ -1492,30 +1505,26 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		);
 
 		// Thread view (default)
-		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
+		expect(queryByTestId('task-view-toggle')).toBeTruthy();
 
 		// Canvas view
 		fireEvent.click(getByTestId('canvas-toggle'));
-		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
+		expect(queryByTestId('task-view-toggle')).toBeTruthy();
 		expect(getByTestId('canvas-view')).toBeTruthy();
 
-		// Return to thread, then activate Artifacts — exercising a clean
-		// thread→artifacts transition rather than canvas→artifacts.
-		fireEvent.click(getByTestId('thread-toggle'));
-		fireEvent.click(getByTestId('artifacts-toggle'));
-		expect(queryByTestId('task-view-tab-pill')).toBeTruthy();
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(queryByTestId('task-view-toggle')).toBeTruthy();
+		expect(getByTestId('task-thread-panel')).toBeTruthy();
 	});
 
-	it('pill buttons are interactive', () => {
+	it('header toggle buttons are interactive', () => {
 		mockCurrentSpaceIdSignal.value = 'space-1';
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
-		// The outer overlay ignores pointer events while the inner control
-		// receives clicks directly.
 		fireEvent.click(getByTestId('canvas-toggle'));
-		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas');
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'canvas', true);
 	});
 
 	it('falls back to task.spaceId for tab navigation when no route space id is available', () => {
@@ -1531,15 +1540,15 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
 		fireEvent.click(getByTestId('canvas-toggle'));
-		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('task-space', 'task-1', 'canvas');
+		expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('task-space', 'task-1', 'canvas', true);
 	});
 
-	it('passes dynamic inset pixels to SpaceTaskUnifiedThread so messages clear floating controls', () => {
+	it('does not reserve top inset space for the thread now that controls live in the header', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		const thread = getByTestId('space-task-unified-thread');
-		expect(thread.getAttribute('data-top-inset')).toBe('pt-12');
+		expect(thread.getAttribute('data-top-inset')).toBe('');
 		expect(Number(thread.getAttribute('data-bottom-inset-px'))).toBeGreaterThanOrEqual(144);
 		expect(thread.getAttribute('data-bottom-inset')).toBe('');
 		expect(thread.getAttribute('data-bottom-scroll-padding')).toBe('');
@@ -1558,7 +1567,7 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 			mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 			const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 			fireEvent.click(getByTestId('canvas-toggle'));
-			fireEvent.click(getByTestId('thread-toggle'));
+			fireEvent.click(getByTestId('canvas-toggle'));
 
 			const thread = getByTestId('space-task-unified-thread');
 			expect(Number(thread.getAttribute('data-bottom-inset-px'))).toBe(236);
@@ -1590,13 +1599,12 @@ describe('SpaceTaskPane — floating tab pill layout', () => {
 		// Banner content (the underlying TaskBlockedBanner) renders inside.
 		expect(getByTestId('task-blocked-banner')).toBeTruthy();
 
-		// Switching to Canvas / Artifacts must not unmount the banner.
+		// Switching to Canvas and back must not unmount the banner.
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(getByTestId('task-pane-banner')).toBeTruthy();
 		expect(getByTestId('task-blocked-banner')).toBeTruthy();
 
-		fireEvent.click(getByTestId('thread-toggle'));
-		fireEvent.click(getByTestId('artifacts-toggle'));
+		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(getByTestId('task-pane-banner')).toBeTruthy();
 		expect(getByTestId('task-blocked-banner')).toBeTruthy();
 	});

@@ -52,7 +52,7 @@ export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStat
 	// `review` is allowed from `blocked` so that a review node can call
 	// `submit_for_approval` after the task was parked in `blocked` (e.g.
 	// waiting for a dependency or a prior human-input gate).
-	blocked: ['open', 'in_progress', 'review', 'archived'], // Restart allowed + archive
+	blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'], // Restart/cancel allowed + archive
 	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
 };

@@ -38,7 +38,9 @@ export const currentSpaceConfigureTabSignal = signal<SpaceConfigureTab>('agents'
 export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'draft' | 'scheduled';
 export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');
 
-// Task detail sub-view (thread | timeline | log | canvas | artifacts) — driven by URL
+// Task detail sub-view (thread | timeline | log | canvas | artifacts) — driven by URL.
+// Thread/canvas render in the main column; timeline/log/artifacts route into
+// the contextual right panel for backward-compatible deep links.
 export type SpaceTaskViewTab = 'thread' | 'timeline' | 'log' | 'canvas' | 'artifacts';
 export const currentSpaceTaskViewTabSignal = signal<SpaceTaskViewTab>('thread');
 
@@ -92,10 +94,23 @@ export type CommandPaletteMode = 'commands' | 'quick-open';
 export const commandPaletteOpenSignal = signal<boolean>(false);
 export const commandPaletteModeSignal = signal<CommandPaletteMode>('commands');
 
-// Global right-side panel. Starts with Git session status, but the shell is
-// intentionally target-based so Space can attach task/agent panels later.
-export type RightPanelTarget = { type: 'git'; sessionId: string };
+// Global right-side panel. The shell is target-based so any view can attach a
+// contextual detail panel: Git status for sessions, goal/scope detail for the
+// Space Goals and Forge views.
+export type RightPanelTarget =
+	| { type: 'git'; sessionId: string }
+	| { type: 'goal'; spaceId: string; goalId: string }
+	| { type: 'scope'; spaceId: string; scopeId: string }
+	| { type: 'task'; spaceId: string; taskId: string; tab?: TaskRightPanelTab };
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
+
+export type TaskRightPanelTab = 'timeline' | 'log' | 'artifacts';
+
+// Current selection within the Space Goals / Forge lists. Drives card highlight
+// and gives the right-panel toggle something to (re)open. Distinct from
+// rightPanelTargetSignal, which only tracks what is currently open.
+export const currentSpaceGoalIdSignal = signal<string | null>(null);
+export const currentSpaceScopeIdSignal = signal<string | null>(null);
 
 // Settings section signal - which settings section is active
 export type SettingsSection =

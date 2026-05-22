@@ -15,7 +15,11 @@ import {
 	pushOverlayHistory,
 	pushOverlayHistoryForPendingAgent,
 } from '../../lib/router';
-import { currentSpaceIdSignal, currentSpaceTaskViewTabSignal } from '../../lib/signals';
+import {
+	currentSpaceIdSignal,
+	currentSpaceTaskViewTabSignal,
+	rightPanelTargetSignal,
+} from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
@@ -28,9 +32,6 @@ import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
-import { TaskArtifactsPanel } from './TaskArtifactsPanel';
-import { TaskTimelineFeed } from './TaskTimelineFeed';
-import { WorkflowExecutionLogFeed } from './WorkflowExecutionLogFeed';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { getTransitionActions } from './TaskStatusActions';
@@ -204,17 +205,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const activeView = currentSpaceTaskViewTabSignal.value;
 
 	useEffect(() => {
-		if (activeView === 'log' && task && !task.workflowRunId) {
-			navigateToSpaceTask(
-				spaceId ?? currentSpaceIdSignal.value ?? task.spaceId,
-				task.id,
-				'thread',
-				true
-			);
-		}
-	}, [activeView, task, spaceId]);
-
-	useEffect(() => {
 		setThreadSendError(null);
 		setSelectedTargetId(null);
 		setTargetLocked(false);
@@ -267,6 +257,26 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const navigationSpaceId = spaceId ?? currentSpaceIdSignal.value ?? task.spaceId;
+	const auxiliaryPanelTab =
+		activeView === 'timeline' || activeView === 'log' || activeView === 'artifacts'
+			? activeView
+			: null;
+
+	useEffect(() => {
+		if (!auxiliaryPanelTab) return;
+		if ((auxiliaryPanelTab === 'log' || auxiliaryPanelTab === 'artifacts') && !task.workflowRunId) {
+			navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
+			return;
+		}
+		rightPanelTargetSignal.value = {
+			type: 'task',
+			spaceId: navigationSpaceId,
+			taskId: task.id,
+			tab: auxiliaryPanelTab,
+		};
+		navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
+	}, [auxiliaryPanelTab, navigationSpaceId, task.id, task.workflowRunId]);
+
 	// Resolve the primary agent session from activity members (node-agent sessions).
 	// Previously derived from threadSessionId (task-agent session), which no longer exists.
 	const agentSessionId =
@@ -452,9 +462,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const canSendThreadMessage =
 		!isTerminalTask && !ensuringThread && !sendingThread && composerTargets.length > 0;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
-	const canShowArtifactsTab = !!task.workflowRunId;
 	const activitySummary = STATUS_LABELS[task.status];
-	const showHeaderStatusBadge = task.status !== 'review';
+	const activeBanner = resolveActiveTaskBanner(task, gateSummaries);
+	const showHeaderStatusBadge = activeBanner === null;
 	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -555,13 +565,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		if (activeView === 'canvas' && !canShowCanvasTab) {
-			navigateToSpaceTask(navigationSpaceId, taskId, 'thread');
-			return;
+			navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
 		}
-		if (activeView === 'artifacts' && !canShowArtifactsTab) {
-			navigateToSpaceTask(navigationSpaceId, taskId, 'thread');
-		}
-	}, [activeView, canShowCanvasTab, canShowArtifactsTab]);
+	}, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
 	const handleNodeClick = (_nodeId: string, _nodeName: string, _agentSlotNames: string[]) => {
 		// Match against activity member roles (slot names like “reviewer”, “coder”).
@@ -661,6 +667,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setThreadSendError(null);
 			if (task.status === 'draft' && newStatus === 'open') {
 				await spaceStore.publishTask(task.id);
+			} else if (task.workflowRunId && newStatus === 'cancelled') {
+				await spaceStore.cancelWorkflowRun(task.workflowRunId);
 			} else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
 				await spaceStore.recoverWorkflowTask(task.id, newStatus);
 			} else {
@@ -824,14 +832,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
 			<div
 				data-tauri-drag-region
-				class={`px-3 sm:px-4 h-[52px] flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default}`}
+				class={`flex h-[88px] flex-shrink-0 items-center bg-dark-850 border-b px-4 ${borderColors.ui.default}`}
 			>
-				<div class="flex h-full items-center gap-2 sm:gap-3" data-tauri-drag-region>
+				<div class="flex w-full items-center gap-3 pr-12" data-tauri-drag-region>
 					{onClose && (
 						<button
 							type="button"
 							onClick={onClose}
-							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors flex-shrink-0"
+							class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
 							aria-label="Back"
 							data-testid="task-back-button"
 						>
@@ -845,58 +853,86 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							</svg>
 						</button>
 					)}
-					<div class="min-w-0 flex flex-1 items-center gap-2 sm:gap-3" data-tauri-drag-region>
-						<div class="flex items-center gap-2 min-w-0 flex-1" data-tauri-drag-region>
+					<div class="min-w-0 flex-1" data-tauri-drag-region>
+						<div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
 							<h2
-								class="text-sm font-semibold text-gray-100 min-w-0 leading-5 flex-1 truncate"
+								class="min-w-0 truncate text-base font-semibold leading-6 text-gray-100"
 								title={task.title}
 								data-tauri-drag-region
 							>
 								{task.title}
 							</h2>
-							<span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
-								#{task.taskNumber}
-							</span>
+							{taskActionItems.length > 0 && (
+								<Dropdown
+									items={taskActionItems}
+									position="right"
+									trigger={
+										<button
+											type="button"
+											class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+											data-testid="task-actions-menu-trigger"
+											aria-label="Task Actions"
+											title="Task Actions"
+										>
+											<svg
+												class="h-4 w-4"
+												viewBox="0 0 20 20"
+												fill="currentColor"
+												aria-hidden="true"
+											>
+												<circle cx="10" cy="4" r="1.75" />
+												<circle cx="10" cy="10" r="1.75" />
+												<circle cx="10" cy="16" r="1.75" />
+											</svg>
+										</button>
+									}
+								/>
+							)}
 						</div>
-						<div class="flex items-center gap-1.5 overflow-hidden flex-shrink-0">
-							{showHeaderStatusBadge && (
-								<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
-									<span data-testid="task-status-label">{activitySummary}</span>
-								</TaskMetaBadge>
-							)}
-							{task.priority === 'low' && (
-								<span class="inline-flex h-6 items-center whitespace-nowrap text-[11px] font-medium leading-none text-gray-600">
-									Low Priority
+						<div class="mt-2 flex min-w-0 items-center justify-between gap-3">
+							<div class="flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
+								<span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-dark-600 bg-dark-800/60 px-2 font-mono text-[11px] font-medium leading-none text-gray-300 tabular-nums">
+									#{task.taskNumber}
 								</span>
-							)}
-							{task.priority !== 'normal' && task.priority !== 'low' && (
+								{showHeaderStatusBadge && (
+									<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
+										<span data-testid="task-status-label">{activitySummary}</span>
+									</TaskMetaBadge>
+								)}
 								<TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
 									{PRIORITY_LABELS[task.priority]} Priority
 								</TaskMetaBadge>
+							</div>
+							{canShowCanvasTab && (
+								<div
+									class="flex h-7 flex-shrink-0 items-center gap-1 rounded-lg border border-dark-700 bg-dark-900/70 p-1"
+									data-testid="task-view-toggle"
+								>
+									<button
+										type="button"
+										onClick={() => {
+											if (activeView === 'canvas') {
+												navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
+												return;
+											}
+											spaceStore.ensureNodeExecutions().catch(() => {});
+											navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
+										}}
+										class={cn(
+											'rounded-md px-2 py-1 text-[11px] font-medium leading-none transition-colors whitespace-nowrap',
+											activeView === 'canvas'
+												? 'bg-sky-500/15 text-sky-200 shadow-sm ring-1 ring-sky-400/30'
+												: 'text-gray-400 hover:bg-dark-800 hover:text-gray-200'
+										)}
+										data-testid="canvas-toggle"
+										aria-pressed={activeView === 'canvas'}
+									>
+										Canvas
+									</button>
+								</div>
 							)}
 						</div>
 					</div>
-					{taskActionItems.length > 0 && (
-						<Dropdown
-							items={taskActionItems}
-							position="right"
-							trigger={
-								<button
-									type="button"
-									class="flex-shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors"
-									data-testid="task-actions-menu-trigger"
-									aria-label="Task Actions"
-									title="Task Actions"
-								>
-									<svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-										<circle cx="10" cy="4" r="1.75" />
-										<circle cx="10" cy="10" r="1.75" />
-										<circle cx="10" cy="16" r="1.75" />
-									</svg>
-								</button>
-							}
-						/>
-					)}
 				</div>
 			</div>
 
@@ -911,7 +947,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				//   blocked > post_approval_blocked > task_completion_pending > gate_pending
 				// The helper captures the rule so it can be unit-tested
 				// independently of the render tree.
-				const banner = resolveActiveTaskBanner(task, gateSummaries);
+				const banner = activeBanner;
 				if (!banner) return null;
 				const child =
 					banner.kind === 'blocked' ? (
@@ -941,110 +977,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			})()}
 
 			<div class="flex-1 min-h-0 overflow-hidden relative" data-testid="task-pane-content">
-				{/* Keep the tab switcher floating above each view without making
-				    the full overlay rectangle intercept clicks. */}
-				<div
-					class="pointer-events-none absolute top-3 left-3 right-3 z-20 flex justify-center"
-					data-testid="task-view-tab-pill"
-				>
-					<div class="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-dark-700 bg-dark-800/75 p-1 shadow-lg shadow-black/10 backdrop-blur-sm">
-						<button
-							type="button"
-							onClick={() => navigateToSpaceTask(navigationSpaceId, taskId, 'thread')}
-							class={cn(
-								'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
-								activeView === 'thread'
-									? 'text-gray-100 bg-dark-700/70 shadow-sm'
-									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-							)}
-							data-testid="thread-toggle"
-							aria-pressed={activeView === 'thread'}
-						>
-							Thread
-						</button>
-						<button
-							type="button"
-							onClick={() => navigateToSpaceTask(navigationSpaceId, taskId, 'timeline')}
-							class={cn(
-								'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
-								activeView === 'timeline'
-									? 'text-gray-100 bg-dark-700/70 shadow-sm'
-									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-							)}
-							data-testid="timeline-toggle"
-							aria-pressed={activeView === 'timeline'}
-						>
-							Timeline
-						</button>
-						{task.workflowRunId && (
-							<button
-								type="button"
-								onClick={() => navigateToSpaceTask(navigationSpaceId, taskId, 'log')}
-								class={cn(
-									'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
-									activeView === 'log'
-										? 'text-gray-100 bg-dark-700/70 shadow-sm'
-										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-								)}
-								data-testid="execution-log-toggle"
-								aria-pressed={activeView === 'log'}
-							>
-								Log
-							</button>
-						)}
-						{canShowCanvasTab && (
-							<button
-								type="button"
-								onClick={() => {
-									if (activeView === 'canvas') {
-										navigateToSpaceTask(navigationSpaceId, taskId, 'thread');
-										return;
-									}
-									spaceStore.ensureNodeExecutions().catch(() => {});
-									navigateToSpaceTask(navigationSpaceId, taskId, 'canvas');
-								}}
-								class={cn(
-									'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
-									activeView === 'canvas'
-										? 'text-gray-100 bg-dark-700/70 shadow-sm'
-										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-								)}
-								data-testid="canvas-toggle"
-								aria-pressed={activeView === 'canvas'}
-							>
-								Canvas
-							</button>
-						)}
-						{canShowArtifactsTab && (
-							<button
-								type="button"
-								onClick={() =>
-									currentSpaceTaskViewTabSignal.value === 'artifacts'
-										? navigateToSpaceTask(navigationSpaceId, taskId, 'thread')
-										: navigateToSpaceTask(navigationSpaceId, taskId, 'artifacts')
-								}
-								class={cn(
-									'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
-									activeView === 'artifacts'
-										? 'text-gray-100 bg-dark-700/70 shadow-sm'
-										: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
-								)}
-								data-testid="artifacts-toggle"
-								aria-pressed={activeView === 'artifacts'}
-							>
-								Artifacts
-							</button>
-						)}
-					</div>
-				</div>
-				{activeView === 'timeline' ? (
-					<TaskTimelineFeed taskId={task.id} bottomInsetPx={taskComposerPaddingPx} />
-				) : activeView === 'log' && task.workflowRunId ? (
-					<WorkflowExecutionLogFeed
-						workflowRunId={task.workflowRunId}
-						bottomInsetPx={taskComposerPaddingPx}
-					/>
-				) : activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
+				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
 						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
@@ -1054,13 +987,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							class="h-full"
 						/>
 					</div>
-				) : activeView === 'artifacts' && task.workflowRunId ? (
-					<TaskArtifactsPanel
-						runId={task.workflowRunId}
-						taskId={task.id}
-						onClose={() => navigateToSpaceTask(navigationSpaceId, taskId, 'thread')}
-						class="h-full"
-					/>
 				) : (
 					<div
 						class="h-full flex flex-col relative"
@@ -1070,7 +996,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
-									topInsetClass="pt-12"
 									bottomInsetPx={taskComposerPaddingPx}
 									activeAgentLabels={activeAgentLabels}
 									overlayTaskId={task.id}

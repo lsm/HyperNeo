@@ -64,16 +64,12 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 
 	const [showGateReview, setShowGateReview] = useState(false);
 	const [pendingGate, setPendingGate] = useState<PendingGate | null>(null);
-	const [gateLoading, setGateLoading] = useState(
-		reason === 'gate_rejected' && !!task.workflowRunId
-	);
 
 	// For gate_rejected tasks, fetch the pending gate data on mount
 	useEffect(() => {
 		if (reason !== 'gate_rejected' || !task.workflowRunId) return;
 
 		let cancelled = false;
-		setGateLoading(true);
 		spaceStore
 			.listGateData(task.workflowRunId)
 			.then((records) => {
@@ -91,14 +87,26 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 			})
 			.catch(() => {
 				// Gate data fetch is best-effort
-			})
-			.finally(() => {
-				if (!cancelled) setGateLoading(false);
 			});
 		return () => {
 			cancelled = true;
 		};
 	}, [reason, task.workflowRunId]);
+
+	const actions: InlineStatusBannerAction[] = [
+		{
+			label: 'Reopen',
+			onClick: () => onStatusTransition?.('in_progress'),
+			variant: 'secondary',
+			testId: 'task-blocked-reopen-btn',
+		},
+		{
+			label: 'Cancel',
+			onClick: () => onStatusTransition?.('cancelled'),
+			variant: 'danger',
+			testId: 'task-blocked-cancel-btn',
+		},
+	];
 
 	// Human-input requests render the question body as a "Question" message in
 	// the thread (space-task-thread-events.ts). Here we show only a thin hint
@@ -110,6 +118,7 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 				tone="blue"
 				icon={<span aria-hidden="true">💬</span>}
 				label="Awaiting your input — reply via the composer below."
+				actions={actions}
 				testId="task-blocked-banner"
 				dataAttrs={{ 'data-reason': 'human_input_requested' }}
 			/>
@@ -132,29 +141,12 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 
 	const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
 
-	const actions: InlineStatusBannerAction[] = [];
 	if (reason === 'gate_rejected' && pendingGate) {
-		actions.push({
+		actions.unshift({
 			label: 'Review & Approve',
 			onClick: () => setShowGateReview(true),
 			variant: 'secondary',
 			testId: 'gate-review-btn',
-		});
-	}
-	if (reason === 'gate_rejected' && !pendingGate && !gateLoading) {
-		actions.push({
-			label: 'Resume',
-			onClick: () => onStatusTransition?.('in_progress'),
-			variant: 'secondary',
-			testId: 'gate-resume-btn',
-		});
-	}
-	if (reason === 'execution_failed' || reason === 'agent_crashed') {
-		actions.push({
-			label: 'Resume',
-			onClick: () => onStatusTransition?.('in_progress'),
-			variant: 'secondary',
-			testId: 'task-resume-btn',
 		});
 	}
 
