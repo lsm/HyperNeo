@@ -763,7 +763,7 @@ describe('EvolutionEpisodeService', () => {
 		).toThrow('finding.domain must be one of');
 	});
 
-	it('creates a scoped SpaceTask from a proposal and records evidence context', async () => {
+	it('atomically creates a scoped SpaceTask from a proposal with dependencies', async () => {
 		const goal = goalRepo.create({
 			spaceId,
 			title: 'Improve review loop',
@@ -789,6 +789,11 @@ describe('EvolutionEpisodeService', () => {
 			priority: 'high',
 			evidenceEpisodeIds: [episode.id],
 		});
+		const dependency = taskRepo.createTask({
+			spaceId,
+			title: 'Dependency task',
+			description: 'Must finish first',
+		});
 		const publishedEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
@@ -803,13 +808,14 @@ describe('EvolutionEpisodeService', () => {
 			},
 		});
 
-		const result = service.createTaskFromProposal(proposal.id);
+		const result = service.createTaskFromProposal(proposal.id, { dependsOn: [dependency.id] });
 		const duplicate = service.createTaskFromProposal(proposal.id);
 
 		expect(duplicate.task.id).toBe(result.task.id);
 		expect(
 			taskRepo.listBySpace(spaceId).filter((item) => item.title === 'Improve review UI')
 		).toHaveLength(1);
+		expect(taskRepo.getTask(result.task.id)?.dependsOn).toEqual([dependency.id]);
 		expect(publishedEvents).toHaveLength(1);
 		expect(publishedEvents[0]).toMatchObject({
 			event: 'space.task.created',
@@ -825,6 +831,7 @@ describe('EvolutionEpisodeService', () => {
 			evolutionScopeId: scope.id,
 			title: 'Improve review UI',
 			priority: 'high',
+			dependsOn: [dependency.id],
 		});
 		expect(result.task.description).toContain('Make actions clearer');
 		expect(result.task.description).toContain('Proposal reason:\nUsers miss next steps');

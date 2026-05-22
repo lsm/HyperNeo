@@ -81,6 +81,7 @@ export interface CreateTaskFromProposalParams {
 	description?: string;
 	reason?: string;
 	priority?: SpaceTaskPriority;
+	dependsOn?: string[];
 }
 
 export interface CreateTaskFromProposalResult {
@@ -290,7 +291,15 @@ export class EvolutionEpisodeService {
 	): CreateTaskFromProposalResult {
 		const result = this.runAtomic(() => {
 			const existing = this.deps.evolutionRepo.getTaskProposal(id);
+			const dependsOn = params.dependsOn ?? [];
 			if (!existing) throw new Error(`TaskProposal not found: ${id}`);
+			const scope = this.requireScope(existing.scopeId);
+			for (const depId of dependsOn) {
+				const dep = this.deps.taskRepo.getTask(depId);
+				if (!dep || dep.spaceId !== scope.spaceId) {
+					throw new Error(`Dependency task not found in space: ${depId}`);
+				}
+			}
 			if (existing.status === 'created' && existing.createdTaskId) {
 				const existingTask = this.deps.taskRepo.getTask(existing.createdTaskId);
 				if (existingTask) return { proposal: existing, task: existingTask, created: false };
@@ -313,7 +322,6 @@ export class EvolutionEpisodeService {
 				throw new Error('Task proposal is already being created');
 			}
 
-			const scope = this.requireScope(existing.scopeId);
 			const title = params.title?.trim() || existing.title;
 			const description = params.description?.trim() || existing.description;
 			const reason = params.reason?.trim() || existing.reason;
@@ -326,6 +334,7 @@ export class EvolutionEpisodeService {
 				priority,
 				goalId: scope.spaceGoalId,
 				evolutionScopeId: scope.id,
+				dependsOn,
 			});
 			const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {
 				title,
