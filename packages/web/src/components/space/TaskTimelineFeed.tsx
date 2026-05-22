@@ -6,11 +6,7 @@ interface TaskTimelineFeedProps {
 	bottomInsetPx?: number;
 }
 
-export function TaskTimelineFeed({
-	taskId,
-	topInsetClass,
-	bottomInsetPx,
-}: TaskTimelineFeedProps) {
+export function TaskTimelineFeed({ taskId, topInsetClass, bottomInsetPx }: TaskTimelineFeedProps) {
 	return (
 		<ActorMessageProjectionFeed
 			scope="task_timeline"

@@ -58,7 +58,13 @@ const TASK_PANEL_TABS: Array<{ id: TaskRightPanelTab; label: string; needsRun?: 
 	{ id: 'log', label: 'Log', needsRun: true },
 ];
 
-function TaskPanelBadge({ children, class: className }: { children: ComponentChildren; class?: string }) {
+function TaskPanelBadge({
+	children,
+	class: className,
+}: {
+	children: ComponentChildren;
+	class?: string;
+}) {
 	return (
 		<span
 			class={cn(

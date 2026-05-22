@@ -60,6 +60,7 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 	},
 }));
 
+import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceForge } from '../SpaceForge';
 
@@ -228,14 +229,14 @@ function makeProposal(overrides: Partial<TaskProposal> = {}): TaskProposal {
 	};
 }
 
-function setupRequests(scope = makeScope()) {
+function setupRequests(scope = makeScope(), scopes = [scope]) {
 	const evidence = [makeEvidence()];
 	const snapshot = makeSnapshot();
 	const episode = makeEpisode();
 	const lesson = makeLesson();
 	const proposal = makeProposal();
 	mockRequest.mockImplementation(async (method: string, data?: unknown) => {
-		if (method === 'evolution.scope.list') return { scopes: [scope] };
+		if (method === 'evolution.scope.list') return { scopes };
 		if (method === 'evolution.evidence.list') return { evidence };
 		if (method === 'evolution.metricSnapshot.list') return { snapshots: [snapshot] };
 		if (method === 'evolution.review.get') {
@@ -325,11 +326,15 @@ describe('SpaceForge', () => {
 		mockSpaceId.value = 'space-1';
 		mockGoals.value = [makeGoal()];
 		mockListGoals.mockResolvedValue(mockGoals.value);
+		currentSpaceScopeIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 		setupRequests();
 	});
 
 	afterEach(() => {
 		cleanup();
+		currentSpaceScopeIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 		vi.clearAllMocks();
 	});
 
@@ -343,6 +348,21 @@ describe('SpaceForge', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: 'metrics' }));
 		expect(screen.getAllByText('Review latency').length).toBeGreaterThan(0);
+	});
+
+	it('writes the current scope selection for the right-panel toggle', async () => {
+		setupRequests(makeScope(), [makeScope(), makeScope({ id: 'scope-2', name: 'Second scope' })]);
+		const { unmount } = render(<SpaceForge spaceId="space-1" />);
+
+		await waitFor(() => expect(currentSpaceScopeIdSignal.value).toBe('scope-1'));
+		fireEvent.click(screen.getByRole('button', { name: /Second scope/ }));
+		expect(currentSpaceScopeIdSignal.value).toBe('scope-2');
+
+		rightPanelTargetSignal.value = { type: 'scope', spaceId: 'space-1', scopeId: 'scope-2' };
+		unmount();
+
+		expect(currentSpaceScopeIdSignal.value).toBeNull();
+		expect(rightPanelTargetSignal.value).toBeNull();
 	});
 
 	it('updates existing scope judge model while preserving policy keys', async () => {

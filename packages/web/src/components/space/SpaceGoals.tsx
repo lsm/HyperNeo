@@ -2,6 +2,7 @@ import type { SpaceGoal, SpaceGoalEvent, SpaceGoalStatus, SpaceTask } from '@neo
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';
+import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { cn, getRelativeTime } from '../../lib/utils';
@@ -347,7 +348,7 @@ function GoalDetail({
 export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 	const goals = spaceStore.goals.value;
 	const tasks = spaceStore.tasks.value;
-	const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+	const selectedGoalId = currentSpaceGoalIdSignal.value;
 	const [showArchived, setShowArchived] = useState(false);
 	const [editingGoal, setEditingGoal] = useState<SpaceGoal | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -383,11 +384,27 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 		});
 	}, [goals, showArchived]);
 
+	useEffect(() => {
+		return () => {
+			currentSpaceGoalIdSignal.value = null;
+			if (rightPanelTargetSignal.value?.type === 'goal') {
+				rightPanelTargetSignal.value = null;
+			}
+		};
+	}, [spaceId]);
+
 	const selectedGoal =
 		visibleGoals.find((goal) => goal.id === selectedGoalId) ?? visibleGoals[0] ?? null;
 	const selectedEvents = selectedGoal
 		? (spaceStore.goalEvents.value.get(selectedGoal.id) ?? [])
 		: [];
+
+	useEffect(() => {
+		const nextGoalId = selectedGoal?.id ?? null;
+		if (currentSpaceGoalIdSignal.value !== nextGoalId) {
+			currentSpaceGoalIdSignal.value = nextGoalId;
+		}
+	}, [selectedGoal?.id]);
 
 	useEffect(() => {
 		if (!selectedGoal) return;
@@ -456,7 +473,9 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 							goal={goal}
 							selected={selectedGoal?.id === goal.id}
 							lastTask={goalTask(tasks, goal.lastTaskId)}
-							onSelect={() => setSelectedGoalId(goal.id)}
+							onSelect={() => {
+								currentSpaceGoalIdSignal.value = goal.id;
+							}}
 						/>
 					))}
 				</div>
@@ -483,13 +502,17 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
 			<SpaceGoalDialog
 				isOpen={createOpen}
 				onClose={() => setCreateOpen(false)}
-				onSaved={(goal) => setSelectedGoalId(goal.id)}
+				onSaved={(goal) => {
+					currentSpaceGoalIdSignal.value = goal.id;
+				}}
 			/>
 			<SpaceGoalDialog
 				isOpen={Boolean(editingGoal)}
 				goal={editingGoal}
 				onClose={() => setEditingGoal(null)}
-				onSaved={(goal) => setSelectedGoalId(goal.id)}
+				onSaved={(goal) => {
+					currentSpaceGoalIdSignal.value = goal.id;
+				}}
 			/>
 		</div>
 	);

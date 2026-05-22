@@ -29,6 +29,7 @@ import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { ComponentChild } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
+import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -1713,7 +1714,7 @@ export function ScopeDetail({
 export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	const { request } = useMessageHub();
 	const [scopes, setScopes] = useState<EvolutionScope[]>([]);
-	const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
+	const selectedScopeId = currentSpaceScopeIdSignal.value;
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -1725,7 +1726,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 		const version = ++requestVersion.current;
 		const mutationVersion = localMutationVersion.current;
 		setScopes([]);
-		setSelectedScopeId(null);
+		currentSpaceScopeIdSignal.value = null;
 		setLoading(true);
 		setError(null);
 		try {
@@ -1750,7 +1751,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 				return;
 			}
 			setScopes(nextScopes);
-			setSelectedScopeId(nextScopes[0]?.id ?? null);
+			currentSpaceScopeIdSignal.value = nextScopes[0]?.id ?? null;
 		} catch (err) {
 			if (requestVersion.current === version) {
 				setError(err instanceof Error ? err.message : 'Failed to load scopes');
@@ -1764,6 +1765,12 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 
 	useEffect(() => {
 		loadScopes().catch(() => undefined);
+		return () => {
+			currentSpaceScopeIdSignal.value = null;
+			if (rightPanelTargetSignal.value?.type === 'scope') {
+				rightPanelTargetSignal.value = null;
+			}
+		};
 	}, [loadScopes]);
 
 	const selectedScope = useMemo(
@@ -1774,12 +1781,12 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 	const handleCreated = (scope: EvolutionScope) => {
 		localMutationVersion.current += 1;
 		setScopes((current) => [scope, ...current]);
-		setSelectedScopeId(scope.id);
+		currentSpaceScopeIdSignal.value = scope.id;
 	};
 
 	const handleScopeSelected = (scopeId: string) => {
 		localMutationVersion.current += 1;
-		setSelectedScopeId(scopeId);
+		currentSpaceScopeIdSignal.value = scopeId;
 	};
 
 	const handleScopeUpdated = (scope: EvolutionScope) => {

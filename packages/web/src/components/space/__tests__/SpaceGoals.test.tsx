@@ -39,6 +39,7 @@ vi.mock('../../../lib/utils', () => ({
 	getRelativeTime: () => '1m ago',
 }));
 
+import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceGoals } from '../SpaceGoals';
 
@@ -176,10 +177,16 @@ describe('SpaceGoals', () => {
 		mockUpdateGoal.mockImplementation(async (goalId: string, params: Partial<SpaceGoal>) =>
 			makeGoal({ id: goalId, title: params.title ?? 'Updated goal' })
 		);
+		currentSpaceGoalIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 		vi.clearAllMocks();
 	});
 
-	afterEach(() => cleanup());
+	afterEach(() => {
+		cleanup();
+		currentSpaceGoalIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
+	});
 
 	it('renders goal cards, detail state, linked tasks, and recent events', async () => {
 		const goal = makeGoal();
@@ -201,6 +208,22 @@ describe('SpaceGoals', () => {
 		expect(screen.getByText('Task completed')).toBeTruthy();
 		expect(mockListGoals).toHaveBeenCalledWith({ includeArchived: false });
 		expect(mockListGoalEvents).toHaveBeenCalledWith(goal.id);
+	});
+
+	it('writes the current goal selection for the right-panel toggle', async () => {
+		mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
+
+		const { unmount } = render(<SpaceGoals spaceId="space-1" />);
+
+		await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe('goal-1'));
+		fireEvent.click(screen.getByRole('button', { name: /Second goal/ }));
+		expect(currentSpaceGoalIdSignal.value).toBe('goal-2');
+
+		rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-2' };
+		unmount();
+
+		expect(currentSpaceGoalIdSignal.value).toBeNull();
+		expect(rightPanelTargetSignal.value).toBeNull();
 	});
 
 	it('runs pause, resume, archive, and immediate task actions', async () => {

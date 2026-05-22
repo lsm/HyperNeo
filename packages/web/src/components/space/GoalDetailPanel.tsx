@@ -146,7 +146,9 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
 					)}
 
 					<section>
-						<h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Linked Tasks</h3>
+						<h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">
+							Linked Tasks
+						</h3>
 						<div class="mt-2 space-y-2">
 							{linkedTasks.length === 0 ? (
 								<p class="text-sm text-gray-500">No linked tasks yet.</p>
