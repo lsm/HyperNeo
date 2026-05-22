@@ -329,6 +329,31 @@ describe('Space Agent RPC Handlers', () => {
 			expect(result.draft.tools).toEqual(['Read', 'Grep']);
 		});
 
+		it('preserves disallowed tool restrictions in the draft', async () => {
+			insertSession(db, {
+				id: 'session-disallowed-tools',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
+					disallowedTools: ['Bash', 'Write', 'UnknownTool'],
+				},
+			});
+
+			const result = await call<{ draft: { tools?: string[] } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-disallowed-tools' }
+			);
+
+			expect(result.draft.tools).not.toContain('Bash');
+			expect(result.draft.tools).not.toContain('Write');
+			expect(result.draft.tools).toContain('Read');
+		});
+
 		it('keeps the newest standing context when truncating long drafts', async () => {
 			insertSession(db, {
 				id: 'session-long-context',
@@ -367,6 +392,23 @@ describe('Space Agent RPC Handlers', () => {
 					sessionId: 'session-2',
 				})
 			).rejects.toThrow('Session not found: session-2');
+		});
+
+		it('rejects promotion when the target space no longer exists', async () => {
+			insertSession(db, {
+				id: 'session-deleted-space',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+			});
+			spaceManagerData.getSpaceMock.mockResolvedValue(null as never);
+
+			await expect(
+				call(hubData.handlers, 'spaceAgent.promoteSession', {
+					spaceId: 'space-1',
+					sessionId: 'session-deleted-space',
+					name: 'Deleted Space Agent',
+				})
+			).rejects.toThrow('Space not found: space-1');
 		});
 
 		it('creates an agent from a reviewed promotion draft', async () => {

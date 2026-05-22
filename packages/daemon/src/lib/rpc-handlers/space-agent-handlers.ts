@@ -58,7 +58,12 @@ function extractTools(session: Session): string[] | undefined {
 		const tools = preset.filter((tool) => known.has(tool));
 		return [...new Set(tools)];
 	}
-	return undefined;
+
+	const disallowedTools = session.config.disallowedTools?.filter((tool) => known.has(tool)) ?? [];
+	if (disallowedTools.length === 0) return undefined;
+
+	const disallowed = new Set(disallowedTools);
+	return KNOWN_TOOLS.filter((tool) => !disallowed.has(tool));
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {
@@ -224,6 +229,9 @@ export function setupSpaceAgentHandlers(
 		if (!params.spaceId) throw new Error('spaceId is required');
 		if (!params.sessionId) throw new Error('sessionId is required');
 		if (!params.name) throw new Error('name is required');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
 		const session = db.getSession(params.sessionId);
 		if (!session) throw new Error(`Session not found: ${params.sessionId}`);

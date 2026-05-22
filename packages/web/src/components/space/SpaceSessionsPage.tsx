@@ -9,7 +9,7 @@
  * where handlePopState restores spaceViewMode = 'sessions'.
  */
 
-import { useMemo, useState } from 'preact/hooks';
+import { useMemo, useRef, useState } from 'preact/hooks';
 import type { SpaceAgentPromotionDraft } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
@@ -227,6 +227,7 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 	const storeSessions = spaceStore.sessions.value;
 	const agents = spaceStore.agents.value;
 	const [promotionDraft, setPromotionDraft] = useState<SpaceAgentPromotionDraft | null>(null);
+	const promotionRequestId = useRef(0);
 
 	const sessions = useMemo(() => {
 		const isSystemSpaceSession = (sessionId: string): boolean =>
@@ -241,10 +242,14 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 	const existingAgentNames = agents.map((agent) => agent.name);
 
 	const handlePromote = async (session: Session) => {
+		const requestId = promotionRequestId.current + 1;
+		promotionRequestId.current = requestId;
 		try {
 			const draft = await spaceStore.getAgentPromotionDraft(session.id);
+			if (promotionRequestId.current !== requestId) return;
 			setPromotionDraft(draft);
 		} catch (err) {
+			if (promotionRequestId.current !== requestId) return;
 			toast.error(
 				`Failed to generate promotion draft: ${err instanceof Error ? err.message : String(err)}`
 			);
