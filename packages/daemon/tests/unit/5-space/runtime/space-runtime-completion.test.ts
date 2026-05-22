@@ -1528,7 +1528,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(taskAfter?.reportedSummary).toBe('Filled null task result');
 		});
 
-		test('existing task result is preserved when result artifact exists', async () => {
+		test('fresh result artifact replaces stale task result from prior review cycle', async () => {
 			const rt = makeRuntimeWithTam();
 
 			const workflow = workflowManager.createWorkflow({
@@ -1549,20 +1549,21 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				nodeId: 'End',
 				artifactType: 'result',
 				artifactKey: 'final',
-				data: { summary: 'Short artifact summary' },
+				data: { summary: 'Fresh artifact summary after retry' },
 			});
 			taskRepo.updateTask(tasks[0].id, {
 				status: 'in_progress',
-				result: 'Manual result with richer detail',
+				result: 'Stale result from rejected cycle',
 				reportedStatus: 'done',
+				reportedSummary: 'Stale reported summary from rejected cycle',
 			});
 			seedNodeExec(db, run.id, 'preserve-end', 'End', 'idle');
 
 			await rt.executeTick();
 
 			const taskAfter = taskRepo.getTask(tasks[0].id);
-			expect(taskAfter?.result).toBe('Manual result with richer detail');
-			expect(taskAfter?.reportedSummary).toBe('Short artifact summary');
+			expect(taskAfter?.result).toBe('Fresh artifact summary after retry');
+			expect(taskAfter?.reportedSummary).toBe('Fresh artifact summary after retry');
 		});
 
 		test('reportedStatus alone is enough to mark a run for completion resolution', async () => {

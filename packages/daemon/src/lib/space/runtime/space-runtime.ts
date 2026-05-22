@@ -1816,8 +1816,8 @@ export class SpaceRuntime {
 					: undefined;
 				return this.buildTaskOutcomeUpdates(
 					task,
-					task.result?.trim() ? task.result : (artifactSummary ?? task.reportedSummary ?? null),
-					task.reportedSummary ?? artifactSummary ?? null
+					artifactSummary ?? (task.result?.trim() ? task.result : (task.reportedSummary ?? null)),
+					artifactSummary ?? task.reportedSummary ?? null
 				);
 			},
 			spawner: {
@@ -2259,15 +2259,9 @@ export class SpaceRuntime {
 				.find((task) => !!task.result)?.result;
 			const reportedSummary = canonicalTask.reportedSummary ?? null;
 			const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
-			const nextResult =
-				existingResult ??
-				summaryFromArtifact ??
-				summaryFromWorkflow ??
-				reportedSummary ??
-				summaryFromSibling ??
-				null;
-			const nextReportedSummary =
-				reportedSummary ?? summaryFromArtifact ?? summaryFromWorkflow ?? summaryFromSibling ?? null;
+			const freshSummary = summaryFromArtifact ?? summaryFromWorkflow ?? summaryFromSibling ?? null;
+			const nextResult = freshSummary ?? existingResult ?? reportedSummary ?? null;
+			const nextReportedSummary = freshSummary ?? reportedSummary ?? null;
 
 			// Skip tasks already at a terminal or paused state — matches the
 			// active-tick guard (`taskAlreadyResolved`) at processRunTick.
@@ -4293,9 +4287,9 @@ export class SpaceRuntime {
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
 				const reportedSummary = canonicalTask.reportedSummary ?? null;
 				const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
-				const nextTaskResult =
-					existingResult ?? summaryFromArtifact ?? summary ?? reportedSummary ?? null;
-				const nextReportedSummary = reportedSummary ?? summaryFromArtifact ?? summary ?? null;
+				const freshSummary = summaryFromArtifact ?? summary ?? null;
+				const nextTaskResult = freshSummary ?? existingResult ?? reportedSummary ?? null;
+				const nextReportedSummary = freshSummary ?? reportedSummary ?? null;
 
 				// Skip re-resolution when the task is already at a non-`open`/non-`in_progress`
 				// status — `done`/`cancelled` are terminal; `approved` means
