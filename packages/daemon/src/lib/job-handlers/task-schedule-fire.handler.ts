@@ -422,7 +422,10 @@ function fireGoalAutomationSchedule(params: {
 		}
 		throw err;
 	}
-	goalAutomationService?.onSelfNag(schedule.goalId as string, schedule.id);
+	const scopeId = schedule.labels
+		.find((label) => label.startsWith('scope:'))
+		?.slice('scope:'.length);
+	goalAutomationService?.onSelfNag(schedule.goalId as string, schedule.id, scopeId);
 	const emittedSchedule = scheduleRepo.getById(schedule.id);
 	if (eventHub && emittedSchedule) {
 		eventHub

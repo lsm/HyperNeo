@@ -126,7 +126,7 @@ import {
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
 
-function syncGoalAutomationSelfNagScheduleForScope(params: {
+export function syncGoalAutomationSelfNagScheduleForScope(params: {
 	goalRepo: SpaceGoalRepository;
 	scheduleService: ScheduleService;
 	scope: EvolutionScope;
@@ -136,20 +136,26 @@ function syncGoalAutomationSelfNagScheduleForScope(params: {
 	const goal = goalRepo.getById(scope.spaceGoalId);
 	if (!goal || goal.status !== 'active') return;
 	const policy = readAutomationPolicyForScope(scope);
-	if (!policy.selfNagCronExpression) return;
+	const scopeLabel = `scope:${scope.id}`;
 	const existing = scheduleService
 		.listSchedules(goal.spaceId)
 		.find(
 			(schedule) =>
-				schedule.goalId === goal.id && schedule.createdByAgent === 'goal-automation-service'
+				schedule.goalId === goal.id &&
+				schedule.createdByAgent === 'goal-automation-service' &&
+				schedule.labels.includes(scopeLabel)
 		);
+	if (!policy.selfNagCronExpression) {
+		if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);
+		return;
+	}
 	if (existing) {
 		if (existing.status !== 'active') return;
 		scheduleService.updateSchedule(existing.id, {
 			title: `Forge self-nag: ${goal.title}`,
 			description: `Run Forge automation for goal: ${goal.title}`,
 			priority: goal.priority,
-			labels: ['forge', 'automation', `goal:${goal.id}`],
+			labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
 			cronExpression: policy.selfNagCronExpression,
 			timezone: policy.selfNagTimezone ?? 'UTC',
 		});
@@ -161,7 +167,7 @@ function syncGoalAutomationSelfNagScheduleForScope(params: {
 		title: `Forge self-nag: ${goal.title}`,
 		description: `Run Forge automation for goal: ${goal.title}`,
 		priority: goal.priority,
-		labels: ['forge', 'automation', `goal:${goal.id}`],
+		labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
 		triggerType: 'cron',
 		cronExpression: policy.selfNagCronExpression,
 		timezone: policy.selfNagTimezone ?? 'UTC',
@@ -595,15 +601,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	);
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService, {
 		onScopeSaved: (scope) => {
-			try {
-				syncGoalAutomationSelfNagScheduleForScope({
-					goalRepo: spaceGoalRepo,
-					scheduleService,
-					scope,
-				});
-			} catch (err) {
-				log.warn('could not sync Forge self-nag schedule', err);
-			}
+			syncGoalAutomationSelfNagScheduleForScope({
+				goalRepo: spaceGoalRepo,
+				scheduleService,
+				scope,
+			});
 		},
 	});
 

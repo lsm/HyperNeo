@@ -10047,6 +10047,7 @@ export function runMigration139(db: BunDatabase): void {
 				FROM goal_automation_cursors_old
 			`);
 			db.exec(`DROP TABLE goal_automation_cursors_old`);
+			createEvolutionTables(db);
 		}
 	}
 	if (tableExists(db, 'space_tasks') && !tableHasColumn(db, 'space_tasks', 'evolution_scope_id')) {

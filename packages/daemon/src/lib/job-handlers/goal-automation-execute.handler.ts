@@ -89,7 +89,7 @@ export async function handleGoalAutomationExecute(
 		cursor?.lastEvidenceCreatedAt ?? null,
 		Number.POSITIVE_INFINITY
 	);
-	const evidence = dueEvidence.slice(0, maxEvidence);
+	const evidence = selectEvidenceForTrigger(dueEvidence, payload, maxEvidence);
 	if (evidence.length === 0) {
 		return skipped(payload, 'no_evidence');
 	}
@@ -131,6 +131,20 @@ export async function handleGoalAutomationExecute(
 		evidenceCount: evidence.length,
 		skipped: false,
 	};
+}
+
+function selectEvidenceForTrigger(
+	dueEvidence: EvidenceRef[],
+	payload: GoalAutomationExecutePayload,
+	maxEvidence: number
+): EvidenceRef[] {
+	const selected = dueEvidence.slice(0, maxEvidence);
+	if (payload.triggerKind !== 'external_event' || !payload.externalEventId) return selected;
+	if (selected.some((item) => item.sourceId === payload.externalEventId)) return selected;
+	const triggerEvidence = dueEvidence.find((item) => item.sourceId === payload.externalEventId);
+	if (!triggerEvidence) return selected;
+	if (selected.length < maxEvidence) return [...selected, triggerEvidence];
+	return [...selected.slice(0, Math.max(0, maxEvidence - 1)), triggerEvidence];
 }
 
 function ensureExternalEventEvidence(

@@ -16,6 +16,9 @@ import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goa
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
+import { TaskScheduleRepository } from '../../../src/storage/repositories/task-schedule-repository';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../src/lib/rpc-handlers';
+import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 function createJobQueueTable(db: Database): void {
@@ -46,6 +49,8 @@ describe('GoalAutomationService', () => {
 	let goalRepo: SpaceGoalRepository;
 	let jobQueue: JobQueueRepository;
 	let service: GoalAutomationService;
+	let scheduleRepo: TaskScheduleRepository;
+	let scheduleService: ScheduleService;
 	let scopeService: EvolutionScopeService;
 	let spaceRepo: SpaceRepository;
 	let taskRepo: SpaceTaskRepository;
@@ -59,8 +64,15 @@ describe('GoalAutomationService', () => {
 		cursorRepo = new GoalAutomationCursorRepository(db as never);
 		goalRepo = new SpaceGoalRepository(db as never);
 		jobQueue = new JobQueueRepository(db as never);
+		scheduleRepo = new TaskScheduleRepository(db as never);
 		spaceRepo = new SpaceRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
+		scheduleService = new ScheduleService({
+			db: db as never,
+			scheduleRepo,
+			jobQueue,
+			spaceRepo,
+		});
 		scopeService = new EvolutionScopeService({
 			evolutionRepo,
 			spaceRepo,
@@ -362,6 +374,85 @@ describe('GoalAutomationService', () => {
 		);
 	});
 
+	it('syncs one self-nag schedule per scope', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Scoped self nag', type: 'recurring' });
+		const firstScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'First cadence',
+			objective: 'First',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		const secondScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Second cadence',
+			objective: 'Second',
+			policy: { automation: { selfNagCronExpression: '30 * * * *' } },
+		});
+
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope: firstScope });
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope: secondScope });
+
+		const schedules = scheduleService.listSchedules(spaceId, 'active');
+		expect(schedules).toHaveLength(2);
+		expect(schedules.map((schedule) => schedule.labels).flat()).toContain(`scope:${firstScope.id}`);
+		expect(schedules.map((schedule) => schedule.labels).flat()).toContain(
+			`scope:${secondScope.id}`
+		);
+		expect(schedules.map((schedule) => schedule.cronExpression).sort()).toEqual([
+			'0 * * * *',
+			'30 * * * *',
+		]);
+	});
+
+	it('pauses active self-nag schedule when cron policy is removed', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Disable self nag', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Disable cadence',
+			objective: 'Disable',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+		const activeSchedule = scheduleService.listSchedules(spaceId, 'active')[0];
+		expect(activeSchedule.labels).toContain(`scope:${scope.id}`);
+
+		const updatedScope = evolutionRepo.updateScope(scope.id, { policy: { automation: {} } });
+		expect(updatedScope).not.toBeNull();
+		syncGoalAutomationSelfNagScheduleForScope({
+			goalRepo,
+			scheduleService,
+			scope: updatedScope as typeof scope,
+		});
+
+		expect(scheduleService.listSchedules(spaceId, 'active')).toHaveLength(0);
+		const pausedSchedule = scheduleService.listSchedules(spaceId, 'paused')[0];
+		expect(pausedSchedule.id).toBe(activeSchedule.id);
+		expect(pausedSchedule.pendingJobId).toBeNull();
+	});
+
+	it('fails scope sync when self-nag cron is invalid', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Invalid self nag', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Invalid cadence',
+			objective: 'Reject invalid cron',
+			policy: { automation: { selfNagCronExpression: 'not-a-cron' } },
+		});
+
+		expect(() =>
+			syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope })
+		).toThrow(/Invalid cron expression/);
+		expect(scheduleService.listSchedules(spaceId)).toHaveLength(0);
+	});
+
 	it('tracks automation cursors per scope', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Scoped cursors', type: 'recurring' });
 		const firstScope = evolutionRepo.createScope({
@@ -615,6 +706,90 @@ describe('handleGoalAutomationExecute', () => {
 		});
 		const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:pull_request/*');
 		expect(cursor?.lastExternalEventId).toBe('event-2');
+	});
+
+	it('always includes triggering external event when due evidence is capped', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Capped external events', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Capped external events',
+			objective: 'Include triggering event',
+			policy: { automation: { eventSubscriptions: [{ topic: 'pull_request/*' }] } },
+		});
+		for (let i = 1; i <= 12; i++) {
+			evolutionRepo.createEvidence({
+				scopeId: scope.id,
+				kind: 'manual_note',
+				sourceId: `old-${i}`,
+				summary: `Old evidence ${i}`,
+				createdAt: i,
+			});
+		}
+		let episodeEvidenceIds: string[] = [];
+
+		const result = await handleGoalAutomationExecute(
+			{
+				id: 'job-capped-event',
+				queue: GOAL_AUTOMATION_EXECUTE,
+				status: 'processing',
+				payload: {
+					goalId: goal.id,
+					scopeId: scope.id,
+					triggerKind: 'external_event',
+					triggerKey: 'event:*:pull_request/*',
+					reason: 'external_event',
+					externalEventId: 'fresh-event',
+					externalEvent: {
+						source: 'github',
+						topic: 'pull_request/closed',
+						summary: 'Fresh PR merged',
+						payload: { action: 'closed' },
+						occurredAt: 20,
+						ingestedAt: 30,
+					},
+				},
+				result: null,
+				error: null,
+				priority: 0,
+				maxRetries: 2,
+				retryCount: 0,
+				runAt: Date.now(),
+				createdAt: Date.now(),
+				startedAt: Date.now(),
+				completedAt: null,
+			} satisfies Job,
+			{
+				goalRepo,
+				taskRepo,
+				evolutionRepo,
+				cursorRepo,
+				episodeService: {
+					createFromEvidence: async ({ evidenceIds }) => {
+						episodeEvidenceIds = evidenceIds;
+						return {
+							episode: evolutionRepo.createEpisode({
+								scopeId: scope.id,
+								title: 'Capped event retrospective',
+								evidenceIds,
+								outcomeSummary: 'Included fresh event',
+								findings: [],
+							}),
+							proposals: [],
+							lessons: [],
+						};
+					},
+				},
+			}
+		);
+
+		expect(result.skipped).toBe(false);
+		const freshEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.find((item) => item.sourceId === 'fresh-event');
+		expect(freshEvidence).toBeDefined();
+		expect(episodeEvidenceIds).toContain(freshEvidence?.id as string);
 	});
 
 	it('deduplicates external event evidence across retries', async () => {

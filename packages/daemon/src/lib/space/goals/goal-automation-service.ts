@@ -79,11 +79,15 @@ export class GoalAutomationService {
 		return { enqueued: true, reason: 'queued', count: completedTaskIds.size };
 	}
 
-	onSelfNag(goalId: string, scheduleId: string): GoalAutomationEnqueueResult {
+	onSelfNag(goalId: string, scheduleId: string, scopeId?: string): GoalAutomationEnqueueResult {
 		const goal = this.deps.goalRepo.getById(goalId);
 		if (!isActiveGoal(goal)) return { enqueued: false, reason: 'disabled' };
-		const scope = resolveScopeForGoal(this.deps.evolutionRepo, goal);
-		if (!scope) return { enqueued: false, reason: 'missing_scope' };
+		const scope = scopeId
+			? this.deps.evolutionRepo.getScope(scopeId)
+			: resolveScopeForGoal(this.deps.evolutionRepo, goal);
+		if (!scope || scope.spaceGoalId !== goal.id || scope.spaceId !== goal.spaceId) {
+			return { enqueued: false, reason: 'missing_scope' };
+		}
 		const policy = readAutomationPolicyForScope(scope);
 		if (!policy.selfNagCronExpression) return { enqueued: false, reason: 'disabled' };
 		const cursor = this.deps.cursorRepo.get(goal.id, scope.id, 'self_nag', scheduleId);
