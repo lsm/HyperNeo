@@ -358,18 +358,26 @@ describe('SpaceAgentList', () => {
 			}),
 			makeAgent({ id: 'coder-1', name: 'Coder' }),
 		];
-		mockGoals.value = [{ id: 'goal-1', status: 'active' }];
+		mockGoals.value = [
+			{ id: 'goal-1', status: 'active' },
+			{ id: 'goal-2', status: 'completed' },
+			{ id: 'goal-3', status: 'paused' },
+		];
 		mockSchedules.value = [{ id: 'schedule-1', status: 'active' }];
 
-		const { container, getByText, getByLabelText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		const { container, getByText, queryByLabelText } = render(
+			<SpaceAgentList {...DEFAULT_PROPS} />
+		);
 
 		expect(getByText('Default Coordinator')).toBeTruthy();
 		expect(container.textContent).toContain('managed goals');
 		expect(container.textContent).toContain('Forge scopes');
 		expect(container.textContent).toContain('reminders');
 		expect(container.textContent).toContain('event subscriptions');
-		expect(getByLabelText('Forge scope filter')).toBeTruthy();
-		expect(getByLabelText('Event subscription pattern')).toBeTruthy();
+		expect(container.textContent).toContain('Per-Agent Forge scope policy coming soon.');
+		expect(container.textContent).toContain('Event subscriptions coming soon.');
+		expect(queryByLabelText('Forge scope filter')).toBeNull();
+		expect(queryByLabelText('Event subscription pattern')).toBeNull();
 	});
 
 	// ── Editor opening ─────────────────────────────────────────────────────────

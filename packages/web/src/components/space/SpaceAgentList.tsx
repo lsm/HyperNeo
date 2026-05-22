@@ -21,9 +21,7 @@ interface AgentCardProps {
 	drifted: boolean;
 	syncing: boolean;
 	managedGoalCount: number;
-	forgeScopeCount: number;
 	reminderCount: number;
-	eventSubscriptionCount: number;
 	onEdit: (agent: SpaceAgent) => void;
 	onDelete: (agent: SpaceAgent) => void;
 	onSync: (agent: SpaceAgent) => void;
@@ -46,9 +44,7 @@ function AgentCard({
 	drifted,
 	syncing,
 	managedGoalCount,
-	forgeScopeCount,
 	reminderCount,
-	eventSubscriptionCount,
 	onEdit,
 	onDelete,
 	onSync,
@@ -101,14 +97,14 @@ function AgentCard({
 								<p class="text-xs font-medium text-purple-100">Long-horizon scope</p>
 								<div class="mt-2 flex flex-wrap gap-1.5">
 									<AgentStat label="managed goals" value={managedGoalCount} />
-									<AgentStat label="Forge scopes" value={forgeScopeCount} />
+									<AgentStat label="Forge scopes" value="Coming soon" />
 								</div>
 							</div>
 							<div>
 								<p class="text-xs font-medium text-purple-100">Automation</p>
 								<div class="mt-2 flex flex-wrap gap-1.5">
 									<AgentStat label="reminders" value={reminderCount} />
-									<AgentStat label="event subscriptions" value={eventSubscriptionCount} />
+									<AgentStat label="event subscriptions" value="Coming soon" />
 								</div>
 							</div>
 						</div>
@@ -196,8 +192,6 @@ export function SpaceAgentList() {
 	const [deletingAgent, setDeletingAgent] = useState<SpaceAgent | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState(false);
-	const [forgeScopeFilter, setForgeScopeFilter] = useState('episodes, lessons, proposals');
-	const [eventTopicPattern, setEventTopicPattern] = useState('github/*/*/pull_request/*');
 
 	const [driftedAgentIds, setDriftedAgentIds] = useState<Set<string>>(new Set());
 	const [syncingAgentId, setSyncingAgentId] = useState<string | null>(null);
@@ -294,13 +288,8 @@ export function SpaceAgentList() {
 	const coordinator = agents.find(isCoordinatorAgent);
 	const otherAgents = agents.filter((agent) => agent.id !== coordinator?.id);
 	const visibleAgents = coordinator ? [coordinator, ...otherAgents] : agents;
-	const activeGoals = goals.filter((goal) => goal.status !== 'archived');
+	const activeGoals = goals.filter((goal) => goal.status === 'active');
 	const activeSchedules = schedules.filter((schedule) => schedule.status === 'active');
-	const forgeScopeCount = forgeScopeFilter
-		.split(',')
-		.map((scope) => scope.trim())
-		.filter(Boolean).length;
-	const eventSubscriptionCount = eventTopicPattern.trim() ? 1 : 0;
 
 	if (loading) {
 		return (
@@ -322,8 +311,8 @@ export function SpaceAgentList() {
 							Agents · {agents.length} configured
 						</p>
 						<p class="mt-1 text-xs text-gray-500">
-							Coordinator is the default long-horizon Space agent. Create specialists for coding,
-							review, research, and QA.
+							Coordinator is the default long-horizon Agent for this Space. Create specialists for
+							coding, review, research, and QA.
 						</p>
 					</div>
 				</div>
@@ -362,28 +351,22 @@ export function SpaceAgentList() {
 									Open Forge
 								</a>
 							</div>
-							<input
-								value={forgeScopeFilter}
-								onInput={(event) => setForgeScopeFilter((event.target as HTMLInputElement).value)}
-								class="mt-2 w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
-								aria-label="Forge scope filter"
-							/>
+							<div class="mt-2 rounded border border-white/10 bg-dark-800 px-2 py-1.5 text-xs text-gray-500">
+								Per-Agent Forge scope policy coming soon.
+							</div>
 							<p class="mt-1 text-xs text-gray-500">
-								Basic scope list until per-agent Forge policy lands.
+								Open Forge to review current evidence, lessons, and proposals.
 							</p>
 						</div>
 						<div class="rounded-lg border border-white/10 bg-white/[0.025] p-3">
 							<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
 								Reminders and events
 							</p>
-							<input
-								value={eventTopicPattern}
-								onInput={(event) => setEventTopicPattern((event.target as HTMLInputElement).value)}
-								class="mt-2 w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
-								aria-label="Event subscription pattern"
-							/>
+							<div class="mt-2 rounded border border-white/10 bg-dark-800 px-2 py-1.5 text-xs text-gray-500">
+								Event subscriptions coming soon.
+							</div>
 							<p class="mt-1 text-xs text-gray-500">
-								{activeSchedules.length} active reminders · {eventSubscriptionCount} event pattern
+								{activeSchedules.length} active reminders · event subscriptions not yet configured
 							</p>
 						</div>
 					</div>
@@ -410,9 +393,7 @@ export function SpaceAgentList() {
 									drifted={driftedAgentIds.has(agent.id)}
 									syncing={syncingAgentId === agent.id}
 									managedGoalCount={activeGoals.length}
-									forgeScopeCount={forgeScopeCount}
 									reminderCount={activeSchedules.length}
-									eventSubscriptionCount={eventSubscriptionCount}
 									onEdit={handleEdit}
 									onDelete={handleDeleteClick}
 									onSync={handleSync}

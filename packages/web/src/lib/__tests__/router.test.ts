@@ -109,7 +109,7 @@ describe('router', () => {
 		expect(getSpaceIdFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
 		expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
 		expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
-		expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agent`);
+		expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agents`);
 		expect(createSpaceSessionPath(SPACE_ID, SESSION_ID)).toBe(
 			`/space/${SPACE_ID}/session/${SESSION_ID}`
 		);
