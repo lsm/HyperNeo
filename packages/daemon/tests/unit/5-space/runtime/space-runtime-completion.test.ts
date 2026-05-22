@@ -299,7 +299,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let artifactRepo: WorkflowRunArtifactRepository;
 	let taskRepo: SpaceTaskRepository;
-	let artifactRepo: WorkflowRunArtifactRepository;
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
@@ -344,7 +343,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		artifactRepo = new WorkflowRunArtifactRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
-		artifactRepo = new WorkflowRunArtifactRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
