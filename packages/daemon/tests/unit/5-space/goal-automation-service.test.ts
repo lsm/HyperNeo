@@ -134,6 +134,76 @@ describe('GoalAutomationService', () => {
 		});
 	});
 
+	it('counts all due task evidence when threshold exceeds episode evidence cap', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Large batch', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Large batch',
+			objective: 'Process larger task batches',
+			policy: { automation: { completedTaskThreshold: 13 } },
+		});
+		let lastTaskId = '';
+		for (let i = 1; i <= 13; i++) {
+			const task = taskRepo.createTask({ spaceId, title: `Task ${i}`, goalId: goal.id });
+			taskRepo.updateTask(task.id, { status: 'done' });
+			evolutionRepo.createEvidence({
+				scopeId: scope.id,
+				kind: 'task_result',
+				sourceId: task.id,
+				summary: `Task ${i} result`,
+				createdAt: i,
+			});
+			lastTaskId = task.id;
+		}
+
+		const result = service.onTaskCompleted(lastTaskId);
+
+		expect(result).toEqual({ enqueued: true, reason: 'queued', count: 13 });
+		expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+			1
+		);
+	});
+
+	it('reads completed-task policy from the task scope', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Scoped policy', type: 'recurring' });
+		evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Unrelated scope',
+			objective: 'Should not control the task',
+			policy: { automation: { completedTaskThreshold: 99 } },
+		});
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Task scope',
+			objective: 'Should control the task',
+			policy: { automation: { completedTaskThreshold: 1 } },
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Scoped task',
+			goalId: goal.id,
+			evolutionScopeId: scope.id,
+		});
+		taskRepo.updateTask(task.id, { status: 'done' });
+		evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'task_result',
+			sourceId: task.id,
+			summary: 'Scoped result',
+			createdAt: 10,
+		});
+
+		const result = service.onTaskCompleted(task.id);
+
+		expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
+	});
+
 	it('uses cursor state to avoid duplicate threshold retrospectives', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Avoid duplicates', type: 'recurring' });
 		const scope = evolutionRepo.createScope({
@@ -252,6 +322,88 @@ describe('GoalAutomationService', () => {
 
 		expect(duplicate).toEqual({ enqueued: false, reason: 'not_applicable' });
 	});
+
+	it('skips self-nag when no new evidence exists after the cursor', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Periodic check', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Periodic check',
+			objective: 'Check only when new evidence exists',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			sourceId: null,
+			summary: 'Old evidence',
+			createdAt: 20,
+		});
+		cursorRepo.upsert({
+			spaceId,
+			goalId: goal.id,
+			scopeId: scope.id,
+			triggerKind: 'self_nag',
+			triggerKey: 'schedule-1',
+			lastEvidenceCreatedAt: 20,
+			lastTaskCompletedAt: null,
+			lastExternalEventId: null,
+			lastEpisodeId: null,
+			lastFiredAt: Date.now(),
+			metadata: {},
+		});
+
+		const result = service.onSelfNag(goal.id, 'schedule-1');
+
+		expect(result).toEqual({ enqueued: false, reason: 'not_applicable', count: 0 });
+		expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+			0
+		);
+	});
+
+	it('tracks automation cursors per scope', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Scoped cursors', type: 'recurring' });
+		const firstScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'First scope',
+			objective: 'First',
+		});
+		const secondScope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Second scope',
+			objective: 'Second',
+		});
+
+		cursorRepo.upsert({
+			spaceId,
+			goalId: goal.id,
+			scopeId: firstScope.id,
+			triggerKind: 'external_event',
+			triggerKey: 'event:*:topic',
+			lastExternalEventId: 'event-1',
+		});
+		cursorRepo.upsert({
+			spaceId,
+			goalId: goal.id,
+			scopeId: secondScope.id,
+			triggerKind: 'external_event',
+			triggerKey: 'event:*:topic',
+			lastExternalEventId: 'event-2',
+		});
+
+		expect(
+			cursorRepo.get(goal.id, firstScope.id, 'external_event', 'event:*:topic')?.lastExternalEventId
+		).toBe('event-1');
+		expect(
+			cursorRepo.get(goal.id, secondScope.id, 'external_event', 'event:*:topic')
+				?.lastExternalEventId
+		).toBe('event-2');
+	});
 });
 
 describe('handleGoalAutomationExecute', () => {
@@ -367,7 +519,7 @@ describe('handleGoalAutomationExecute', () => {
 		expect(reviewTask?.description).toContain(evidence.id);
 		expect(published).toHaveLength(1);
 		expect(published[0].event).toBe('space.task.created');
-		const cursor = cursorRepo.get(goal.id, 'completed_task_threshold', 'threshold:1');
+		const cursor = cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1');
 		expect(cursor).toMatchObject({
 			goalId: goal.id,
 			scopeId: scope.id,
@@ -408,6 +560,7 @@ describe('handleGoalAutomationExecute', () => {
 						externalUrl: 'https://example.test/pr/2',
 						payload: { action: 'closed' },
 						occurredAt: 50,
+						ingestedAt: 60,
 					},
 				},
 				result: null,
@@ -452,7 +605,7 @@ describe('handleGoalAutomationExecute', () => {
 			kind: 'manual_note',
 			sourceId: 'event-2',
 			summary: 'External event: PR merged',
-			createdAt: 50,
+			createdAt: 60,
 		});
 		expect(eventEvidence.metadata).toMatchObject({
 			autoCaptured: true,
@@ -460,7 +613,77 @@ describe('handleGoalAutomationExecute', () => {
 			source: 'github',
 			topic: 'pull_request/closed',
 		});
-		const cursor = cursorRepo.get(goal.id, 'external_event', 'event:*:pull_request/*');
+		const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:pull_request/*');
 		expect(cursor?.lastExternalEventId).toBe('event-2');
+	});
+
+	it('deduplicates external event evidence across retries', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Retry external events', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Retry external events',
+			objective: 'Avoid duplicate event evidence',
+			policy: { automation: { eventSubscriptions: [{ topic: 'pull_request/*' }] } },
+		});
+		const job = {
+			id: 'job-retry',
+			queue: GOAL_AUTOMATION_EXECUTE,
+			status: 'processing',
+			payload: {
+				goalId: goal.id,
+				scopeId: scope.id,
+				triggerKind: 'external_event',
+				triggerKey: 'event:*:pull_request/*',
+				reason: 'external_event',
+				externalEventId: 'event-retry',
+				externalEvent: {
+					source: 'github',
+					topic: 'pull_request/closed',
+					summary: 'PR merged after retry',
+					payload: { action: 'closed' },
+					occurredAt: 50,
+					ingestedAt: 80,
+				},
+			},
+			result: null,
+			error: null,
+			priority: 0,
+			maxRetries: 2,
+			retryCount: 0,
+			runAt: Date.now(),
+			createdAt: Date.now(),
+			startedAt: Date.now(),
+			completedAt: null,
+		} satisfies Job;
+		const deps = {
+			goalRepo,
+			taskRepo,
+			evolutionRepo,
+			cursorRepo,
+			episodeService: {
+				createFromEvidence: async ({ evidenceIds }) => ({
+					episode: evolutionRepo.createEpisode({
+						scopeId: scope.id,
+						title: 'Retry retrospective',
+						evidenceIds,
+						outcomeSummary: 'Event outcome',
+						findings: [],
+					}),
+					proposals: [],
+					lessons: [],
+				}),
+			},
+		};
+
+		await handleGoalAutomationExecute(job, deps);
+		await handleGoalAutomationExecute(job, deps);
+
+		const eventEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.filter((item) => item.sourceId === 'event-retry');
+		expect(eventEvidence).toHaveLength(1);
+		expect(eventEvidence[0].createdAt).toBe(80);
 	});
 });

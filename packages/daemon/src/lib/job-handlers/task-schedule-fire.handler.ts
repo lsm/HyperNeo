@@ -190,6 +190,7 @@ export async function handleTaskScheduleFire(
 
 	if (schedule.createdByAgent === 'goal-automation-service' && schedule.goalId) {
 		return fireGoalAutomationSchedule({
+			db,
 			job,
 			schedule,
 			scheduleRepo,
@@ -370,6 +371,7 @@ export async function handleTaskScheduleFire(
 }
 
 function fireGoalAutomationSchedule(params: {
+	db: BunDatabase;
 	job: Job;
 	schedule: TaskSchedule;
 	scheduleRepo: TaskScheduleRepository;
@@ -378,37 +380,47 @@ function fireGoalAutomationSchedule(params: {
 	eventHub?: TaskScheduleFireHandlerDeps['eventHub'];
 	now: number;
 }): TaskScheduleFireResult {
-	const { job, schedule, scheduleRepo, jobQueue, goalAutomationService, eventHub, now } = params;
+	const { db, job, schedule, scheduleRepo, jobQueue, goalAutomationService, eventHub, now } =
+		params;
 	let computedNextRunAt: number | null = null;
-	let pendingJobId: string | null = null;
-	let nextStatus: 'active' | 'completed' = 'completed';
-	if (schedule.triggerType === 'cron' && schedule.cronExpression) {
-		computedNextRunAt = getNextRunAt(schedule.cronExpression, schedule.timezone, now);
-		if (computedNextRunAt !== null) {
-			const nextJob = jobQueue.enqueue({
-				queue: TASK_SCHEDULE_FIRE,
-				payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
-				runAt: computedNextRunAt,
+	try {
+		computedNextRunAt = db.transaction(() => {
+			let nextRunAt: number | null = null;
+			let pendingJobId: string | null = null;
+			let nextStatus: 'active' | 'completed' = 'completed';
+			if (schedule.triggerType === 'cron' && schedule.cronExpression) {
+				nextRunAt = getNextRunAt(schedule.cronExpression, schedule.timezone, now);
+				if (nextRunAt !== null) {
+					const nextJob = jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
+						runAt: nextRunAt,
+					});
+					pendingJobId = nextJob.id;
+					nextStatus = 'active';
+				}
+			}
+			const applied = scheduleRepo.updateAfterFireIfPending(schedule.id, job.id, {
+				lastCreatedTaskId: schedule.lastCreatedTaskId,
+				lastRunAt: now,
+				nextRunAt,
+				status: nextStatus,
+				pendingJobId,
 			});
-			pendingJobId = nextJob.id;
-			nextStatus = 'active';
+			if (!applied) throw new ScheduleSupersededError(schedule.id, job.id);
+			return nextRunAt;
+		})();
+	} catch (err) {
+		if (err instanceof ScheduleSupersededError) {
+			return {
+				scheduleId: schedule.id,
+				taskId: null,
+				skipped: true,
+				skipReason: 'job_superseded',
+				nextRunAt: null,
+			};
 		}
-	}
-	const applied = scheduleRepo.updateAfterFireIfPending(schedule.id, job.id, {
-		lastCreatedTaskId: schedule.lastCreatedTaskId,
-		lastRunAt: now,
-		nextRunAt: computedNextRunAt,
-		status: nextStatus,
-		pendingJobId,
-	});
-	if (!applied) {
-		return {
-			scheduleId: schedule.id,
-			taskId: null,
-			skipped: true,
-			skipReason: 'job_superseded',
-			nextRunAt: null,
-		};
+		throw err;
 	}
 	goalAutomationService?.onSelfNag(schedule.goalId as string, schedule.id);
 	const emittedSchedule = scheduleRepo.getById(schedule.id);

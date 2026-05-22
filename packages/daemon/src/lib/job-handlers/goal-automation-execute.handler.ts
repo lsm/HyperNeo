@@ -9,7 +9,7 @@ import type { EvolutionEpisodeService } from '../space/evolution-episode-service
 import {
 	maxCompletedTaskTimestamp,
 	maxEvidenceTimestamp,
-	readAutomationPolicyForGoal,
+	readAutomationPolicyForScope,
 	readCompletedTaskThreshold,
 	selectEvidenceAfterCursor,
 } from '../space/goals/goal-automation-service';
@@ -24,6 +24,7 @@ export interface GoalAutomationExternalEventSnapshot {
 	externalUrl?: string;
 	payload: Record<string, unknown>;
 	occurredAt: number;
+	ingestedAt: number;
 }
 
 export interface GoalAutomationExecutePayload extends Record<string, unknown> {
@@ -78,42 +79,29 @@ export async function handleGoalAutomationExecute(
 		return skipped(payload, 'missing_scope');
 	}
 	if (payload.externalEvent) {
-		deps.evolutionRepo.createEvidence({
-			scopeId: scope.id,
-			kind: 'manual_note',
-			sourceId: payload.externalEventId ?? null,
-			summary: `External event: ${payload.externalEvent.summary}`,
-			metadata: {
-				autoCaptured: true,
-				triggerKind: payload.triggerKind,
-				source: payload.externalEvent.source,
-				topic: payload.externalEvent.topic,
-				externalUrl: payload.externalEvent.externalUrl ?? null,
-				payload: payload.externalEvent.payload,
-			},
-			createdAt: payload.externalEvent.occurredAt,
-		});
+		ensureExternalEventEvidence(deps, payload, scope.id);
 	}
-	const cursor = deps.cursorRepo.get(goal.id, payload.triggerKind, payload.triggerKey);
-	const policy = readAutomationPolicyForGoal(deps.evolutionRepo, goal);
+	const cursor = deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
+	const policy = readAutomationPolicyForScope(scope);
 	const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
-	const evidence = selectEvidenceAfterCursor(
+	const dueEvidence = selectEvidenceAfterCursor(
 		deps.evolutionRepo.listEvidence(scope.id),
 		cursor?.lastEvidenceCreatedAt ?? null,
-		maxEvidence
+		Number.POSITIVE_INFINITY
 	);
+	const evidence = dueEvidence.slice(0, maxEvidence);
 	if (evidence.length === 0) {
 		return skipped(payload, 'no_evidence');
 	}
 	if (payload.triggerKind === 'completed_task_threshold') {
 		const threshold = readCompletedTaskThreshold(policy);
 		const completedTaskIds = new Set(
-			evidence
+			dueEvidence
 				.filter((item) => item.kind === 'task_result' && item.sourceId !== null)
 				.map((item) => item.sourceId as string)
 		);
 		if (!threshold || completedTaskIds.size < threshold) {
-			return skipped(payload, 'below_threshold', evidence.length);
+			return skipped(payload, 'below_threshold', dueEvidence.length);
 		}
 	}
 
@@ -122,8 +110,18 @@ export async function handleGoalAutomationExecute(
 		evidenceIds: evidence.map((item) => item.id),
 		confirmLowConfidence: true,
 	});
-	const reviewTask = createReviewTask(deps, goal.id, scope.id, episodeResult.episode.id, evidence);
-	advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
+	const writeResult = runWriteTransaction(deps, () => {
+		const reviewTask = createReviewTask(
+			deps,
+			goal.id,
+			scope.id,
+			episodeResult.episode.id,
+			evidence
+		);
+		advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
+		return reviewTask;
+	});
+	const reviewTask = writeResult;
 	emitTaskCreated(deps, reviewTask);
 	return {
 		goalId: goal.id,
@@ -133,6 +131,45 @@ export async function handleGoalAutomationExecute(
 		evidenceCount: evidence.length,
 		skipped: false,
 	};
+}
+
+function ensureExternalEventEvidence(
+	deps: GoalAutomationExecuteDeps,
+	payload: GoalAutomationExecutePayload,
+	scopeId: string
+): EvidenceRef | null {
+	if (!payload.externalEvent || !payload.externalEventId) return null;
+	const existing = deps.evolutionRepo
+		.listEvidence(scopeId)
+		.find(
+			(item) =>
+				item.kind === 'manual_note' &&
+				item.sourceId === payload.externalEventId &&
+				item.metadata.autoCaptured === true &&
+				item.metadata.triggerKind === payload.triggerKind
+		);
+	if (existing) return existing;
+	return runWriteTransaction(deps, () =>
+		deps.evolutionRepo.createEvidence({
+			scopeId,
+			kind: 'manual_note',
+			sourceId: payload.externalEventId as string,
+			summary: `External event: ${payload.externalEvent?.summary}`,
+			metadata: {
+				autoCaptured: true,
+				triggerKind: payload.triggerKind,
+				source: payload.externalEvent?.source,
+				topic: payload.externalEvent?.topic,
+				externalUrl: payload.externalEvent?.externalUrl ?? null,
+				payload: payload.externalEvent?.payload ?? {},
+			},
+			createdAt: payload.externalEvent?.ingestedAt ?? Date.now(),
+		})
+	);
+}
+
+function runWriteTransaction<T>(deps: GoalAutomationExecuteDeps, fn: () => T): T {
+	return deps.db ? deps.db.transaction(fn)() : fn();
 }
 
 function createReviewTask(
@@ -242,6 +279,7 @@ function normalizeExternalEvent(value: unknown): GoalAutomationExternalEventSnap
 				? (record.payload as Record<string, unknown>)
 				: {},
 		occurredAt: typeof record.occurredAt === 'number' ? record.occurredAt : Date.now(),
+		ingestedAt: typeof record.ingestedAt === 'number' ? record.ingestedAt : Date.now(),
 	};
 }
 

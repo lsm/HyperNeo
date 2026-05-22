@@ -47,16 +47,22 @@ export class GoalAutomationService {
 		if (!isActiveGoal(goal) || goal.spaceId !== task.spaceId) {
 			return { enqueued: false, reason: 'disabled' };
 		}
-		const policy = readAutomationPolicyForGoal(this.deps.evolutionRepo, goal);
-		const threshold = readCompletedTaskThreshold(policy);
-		if (threshold === null) return { enqueued: false, reason: 'disabled' };
 		const scope = this.deps.evolutionScopeService.resolveScopeForTask({ taskId });
 		if (!scope) return { enqueued: false, reason: 'missing_scope' };
+		const policy = readAutomationPolicyForScope(scope);
+		const threshold = readCompletedTaskThreshold(policy);
+		if (threshold === null) return { enqueued: false, reason: 'disabled' };
 		const triggerKey = completedTaskTriggerKey(threshold);
-		const cursor = this.deps.cursorRepo.get(goal.id, 'completed_task_threshold', triggerKey);
+		const cursor = this.deps.cursorRepo.get(
+			goal.id,
+			scope.id,
+			'completed_task_threshold',
+			triggerKey
+		);
 		const dueEvidence = selectEvidenceAfterCursor(
 			this.deps.evolutionRepo.listEvidence(scope.id),
-			cursor?.lastEvidenceCreatedAt ?? null
+			cursor?.lastEvidenceCreatedAt ?? null,
+			Number.POSITIVE_INFINITY
 		).filter((item) => item.kind === 'task_result' && item.sourceId !== null);
 		const completedTaskIds = new Set(dueEvidence.map((item) => item.sourceId as string));
 		if (completedTaskIds.size < threshold) {
@@ -76,10 +82,17 @@ export class GoalAutomationService {
 	onSelfNag(goalId: string, scheduleId: string): GoalAutomationEnqueueResult {
 		const goal = this.deps.goalRepo.getById(goalId);
 		if (!isActiveGoal(goal)) return { enqueued: false, reason: 'disabled' };
-		const policy = readAutomationPolicyForGoal(this.deps.evolutionRepo, goal);
-		if (!policy.selfNagCronExpression) return { enqueued: false, reason: 'disabled' };
 		const scope = resolveScopeForGoal(this.deps.evolutionRepo, goal);
 		if (!scope) return { enqueued: false, reason: 'missing_scope' };
+		const policy = readAutomationPolicyForScope(scope);
+		if (!policy.selfNagCronExpression) return { enqueued: false, reason: 'disabled' };
+		const cursor = this.deps.cursorRepo.get(goal.id, scope.id, 'self_nag', scheduleId);
+		const evidence = selectEvidenceAfterCursor(
+			this.deps.evolutionRepo.listEvidence(scope.id),
+			cursor?.lastEvidenceCreatedAt ?? null,
+			Number.POSITIVE_INFINITY
+		);
+		if (evidence.length === 0) return { enqueued: false, reason: 'not_applicable', count: 0 };
 		this.enqueue({
 			goalId: goal.id,
 			scopeId: scope.id,
@@ -95,37 +108,43 @@ export class GoalAutomationService {
 		const goals = this.deps.goalRepo.list({ spaceId: event.spaceId, status: 'active' });
 		const results: GoalAutomationEnqueueResult[] = [];
 		for (const goal of goals) {
-			const policy = readAutomationPolicyForGoal(this.deps.evolutionRepo, goal);
-			const subscription = findMatchingSubscription(policy.eventSubscriptions, event);
-			if (!subscription) continue;
-			const scope = resolveScopeForGoal(this.deps.evolutionRepo, goal);
-			if (!scope) {
+			const scopes = this.deps.evolutionRepo.listScopes({
+				spaceId: goal.spaceId,
+				spaceGoalId: goal.id,
+			});
+			if (scopes.length === 0) {
 				results.push({ enqueued: false, reason: 'missing_scope' });
 				continue;
 			}
-			const triggerKey = externalEventTriggerKey(subscription);
-			const cursor = this.deps.cursorRepo.get(goal.id, 'external_event', triggerKey);
-			if (cursor?.lastExternalEventId === event.eventId) {
-				results.push({ enqueued: false, reason: 'not_applicable' });
-				continue;
+			for (const scope of scopes) {
+				const policy = readAutomationPolicyForScope(scope);
+				const subscription = findMatchingSubscription(policy.eventSubscriptions, event);
+				if (!subscription) continue;
+				const triggerKey = externalEventTriggerKey(subscription);
+				const cursor = this.deps.cursorRepo.get(goal.id, scope.id, 'external_event', triggerKey);
+				if (cursor?.lastExternalEventId === event.eventId) {
+					results.push({ enqueued: false, reason: 'not_applicable' });
+					continue;
+				}
+				this.enqueue({
+					goalId: goal.id,
+					scopeId: scope.id,
+					triggerKind: 'external_event',
+					triggerKey,
+					reason: 'external_event',
+					externalEventId: event.eventId,
+					externalEvent: {
+						source: event.source,
+						topic: event.topic,
+						summary: event.summary,
+						externalUrl: event.externalUrl,
+						payload: event.payload,
+						occurredAt: event.occurredAt,
+						ingestedAt: event.ingestedAt,
+					},
+				});
+				results.push({ enqueued: true, reason: 'queued' });
 			}
-			this.enqueue({
-				goalId: goal.id,
-				scopeId: scope.id,
-				triggerKind: 'external_event',
-				triggerKey,
-				reason: 'external_event',
-				externalEventId: event.eventId,
-				externalEvent: {
-					source: event.source,
-					topic: event.topic,
-					summary: event.summary,
-					externalUrl: event.externalUrl,
-					payload: event.payload,
-					occurredAt: event.occurredAt,
-				},
-			});
-			results.push({ enqueued: true, reason: 'queued' });
 		}
 		return results;
 	}
@@ -141,11 +160,9 @@ export class GoalAutomationService {
 	}
 }
 
-export function readAutomationPolicyForGoal(
-	evolutionRepo: Pick<EvolutionRepository, 'listScopes'>,
-	goal: SpaceGoal
+export function readAutomationPolicyForScope(
+	scope: EvolutionScope | null | undefined
 ): GoalForgeAutomationPolicy {
-	const scope = resolveScopeForGoal(evolutionRepo, goal);
 	return normalizePolicy(scope?.policy.automation);
 }
 
@@ -257,6 +274,7 @@ function filterMatches(
 function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
 	return {
 		goalId: payload.goalId,
+		scopeId: payload.scopeId,
 		triggerKind: payload.triggerKind,
 		triggerKey: payload.triggerKey,
 		externalEventId: payload.externalEventId ?? null,

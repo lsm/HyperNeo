@@ -10029,6 +10029,26 @@ export function runMigration135(db: BunDatabase): void {
  */
 export function runMigration139(db: BunDatabase): void {
 	createEvolutionTables(db);
+	if (tableExists(db, 'goal_automation_cursors')) {
+		const createSql = tableCreateSql(db, 'goal_automation_cursors') ?? '';
+		if (createSql.includes('UNIQUE(goal_id, trigger_kind, trigger_key)')) {
+			db.exec(`ALTER TABLE goal_automation_cursors RENAME TO goal_automation_cursors_old`);
+			createEvolutionTables(db);
+			db.exec(`
+				INSERT OR IGNORE INTO goal_automation_cursors (
+					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
+					last_evidence_created_at, last_task_completed_at, last_external_event_id,
+					last_episode_id, last_fired_at, metadata_json, created_at, updated_at
+				)
+				SELECT
+					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
+					last_evidence_created_at, last_task_completed_at, last_external_event_id,
+					last_episode_id, last_fired_at, metadata_json, created_at, updated_at
+				FROM goal_automation_cursors_old
+			`);
+			db.exec(`DROP TABLE goal_automation_cursors_old`);
+		}
+	}
 	if (tableExists(db, 'space_tasks') && !tableHasColumn(db, 'space_tasks', 'evolution_scope_id')) {
 		db.exec(`ALTER TABLE space_tasks ADD COLUMN evolution_scope_id TEXT DEFAULT NULL`);
 	}

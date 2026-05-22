@@ -39,20 +39,21 @@ export class GoalAutomationCursorRepository {
 
 	get(
 		goalId: string,
+		scopeId: string,
 		triggerKind: GoalForgeAutomationTriggerKind,
 		triggerKey: string
 	): GoalAutomationCursor | null {
 		const row = this.db
 			.prepare(
 				`SELECT * FROM goal_automation_cursors
-				 WHERE goal_id = ? AND trigger_kind = ? AND trigger_key = ?`
+				 WHERE goal_id = ? AND scope_id = ? AND trigger_kind = ? AND trigger_key = ?`
 			)
-			.get(goalId, triggerKind, triggerKey) as Record<string, unknown> | undefined;
+			.get(goalId, scopeId, triggerKind, triggerKey) as Record<string, unknown> | undefined;
 		return row ? rowToCursor(row) : null;
 	}
 
 	upsert(params: UpsertGoalAutomationCursorParams): GoalAutomationCursor {
-		const existing = this.get(params.goalId, params.triggerKind, params.triggerKey);
+		const existing = this.get(params.goalId, params.scopeId, params.triggerKind, params.triggerKey);
 		if (!existing) return this.create(params);
 		const sets: string[] = [];
 		const values: SQLiteValue[] = [];
@@ -79,7 +80,12 @@ export class GoalAutomationCursorRepository {
 		this.db
 			.prepare(`UPDATE goal_automation_cursors SET ${sets.join(', ')} WHERE id = ?`)
 			.run(...values);
-		return this.get(params.goalId, params.triggerKind, params.triggerKey) as GoalAutomationCursor;
+		return this.get(
+			params.goalId,
+			params.scopeId,
+			params.triggerKind,
+			params.triggerKey
+		) as GoalAutomationCursor;
 	}
 
 	private create(params: UpsertGoalAutomationCursorParams): GoalAutomationCursor {
@@ -109,7 +115,12 @@ export class GoalAutomationCursorRepository {
 				now,
 				now
 			);
-		return this.get(params.goalId, params.triggerKind, params.triggerKey) as GoalAutomationCursor;
+		return this.get(
+			params.goalId,
+			params.scopeId,
+			params.triggerKind,
+			params.triggerKey
+		) as GoalAutomationCursor;
 	}
 }
 

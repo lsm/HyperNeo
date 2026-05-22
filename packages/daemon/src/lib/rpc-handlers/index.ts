@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { EvolutionScope, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -64,7 +64,7 @@ import { createConversationFrictionEvidenceHandler } from '../job-handlers/conve
 import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler';
 import {
 	GoalAutomationService,
-	readAutomationPolicyForGoal,
+	readAutomationPolicyForScope,
 } from '../space/goals/goal-automation-service';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
 import {
@@ -126,36 +126,61 @@ import {
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
 
+function syncGoalAutomationSelfNagScheduleForScope(params: {
+	goalRepo: SpaceGoalRepository;
+	scheduleService: ScheduleService;
+	scope: EvolutionScope;
+}): void {
+	const { goalRepo, scheduleService, scope } = params;
+	if (!scope.spaceGoalId) return;
+	const goal = goalRepo.getById(scope.spaceGoalId);
+	if (!goal || goal.status !== 'active') return;
+	const policy = readAutomationPolicyForScope(scope);
+	if (!policy.selfNagCronExpression) return;
+	const existing = scheduleService
+		.listSchedules(goal.spaceId)
+		.find(
+			(schedule) =>
+				schedule.goalId === goal.id && schedule.createdByAgent === 'goal-automation-service'
+		);
+	if (existing) {
+		if (existing.status !== 'active') return;
+		scheduleService.updateSchedule(existing.id, {
+			title: `Forge self-nag: ${goal.title}`,
+			description: `Run Forge automation for goal: ${goal.title}`,
+			priority: goal.priority,
+			labels: ['forge', 'automation', `goal:${goal.id}`],
+			cronExpression: policy.selfNagCronExpression,
+			timezone: policy.selfNagTimezone ?? 'UTC',
+		});
+		return;
+	}
+	scheduleService.createGoalSchedule({
+		spaceId: goal.spaceId,
+		goalId: goal.id,
+		title: `Forge self-nag: ${goal.title}`,
+		description: `Run Forge automation for goal: ${goal.title}`,
+		priority: goal.priority,
+		labels: ['forge', 'automation', `goal:${goal.id}`],
+		triggerType: 'cron',
+		cronExpression: policy.selfNagCronExpression,
+		timezone: policy.selfNagTimezone ?? 'UTC',
+		createdByAgent: 'goal-automation-service',
+	});
+}
+
 function createGoalAutomationSelfNagSchedules(
 	goalRepo: SpaceGoalRepository,
 	scheduleService: ScheduleService,
 	evolutionRepo: EvolutionRepository
 ): void {
 	for (const goal of goalRepo.listAllActive()) {
-		const policy = readAutomationPolicyForGoal(evolutionRepo, goal);
-		if (!policy.selfNagCronExpression) continue;
-		const existing = scheduleService
-			.listSchedules(goal.spaceId, 'active')
-			.find(
-				(schedule) =>
-					schedule.goalId === goal.id && schedule.createdByAgent === 'goal-automation-service'
-			);
-		if (existing) continue;
-		try {
-			scheduleService.createGoalSchedule({
-				spaceId: goal.spaceId,
-				goalId: goal.id,
-				title: `Forge self-nag: ${goal.title}`,
-				description: `Run Forge automation for goal: ${goal.title}`,
-				priority: goal.priority,
-				labels: ['forge', 'automation', `goal:${goal.id}`],
-				triggerType: 'cron',
-				cronExpression: policy.selfNagCronExpression,
-				timezone: policy.selfNagTimezone ?? 'UTC',
-				createdByAgent: 'goal-automation-service',
-			});
-		} catch (err) {
-			log.warn('could not create Forge self-nag schedule', err);
+		for (const scope of evolutionRepo.listScopes({ spaceId: goal.spaceId, spaceGoalId: goal.id })) {
+			try {
+				syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+			} catch (err) {
+				log.warn('could not create Forge self-nag schedule', err);
+			}
 		}
 	}
 }
@@ -568,7 +593,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			},
 		})
 	);
-	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
+	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService, {
+		onScopeSaved: (scope) => {
+			try {
+				syncGoalAutomationSelfNagScheduleForScope({
+					goalRepo: spaceGoalRepo,
+					scheduleService,
+					scope,
+				});
+			} catch (err) {
+				log.warn('could not sync Forge self-nag schedule', err);
+			}
+		},
+	});
 
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),

@@ -162,7 +162,7 @@ export function createEvolutionTables(db: BunDatabase): void {
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			UNIQUE(goal_id, trigger_kind, trigger_key),
+			UNIQUE(goal_id, scope_id, trigger_kind, trigger_key),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
 			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
 			FOREIGN KEY (scope_id) REFERENCES evolution_scopes(id) ON DELETE CASCADE,

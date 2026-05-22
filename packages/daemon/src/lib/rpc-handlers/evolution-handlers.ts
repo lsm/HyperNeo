@@ -1,4 +1,5 @@
 import type {
+	EvolutionScope,
 	EvolutionEpisodeCreateFromEvidenceRequest,
 	EvolutionEpisodeCreateRequest,
 	EvolutionEpisodeCreateResponse,
@@ -54,17 +55,24 @@ interface RecordPayload {
 	[key: string]: unknown;
 }
 
+export interface EvolutionHandlerHooks {
+	onScopeSaved?: (scope: EvolutionScope) => void;
+}
+
 export function setupEvolutionHandlers(
 	messageHub: MessageHub,
 	service: EvolutionScopeService,
-	episodeService?: EvolutionEpisodeService
+	episodeService?: EvolutionEpisodeService,
+	hooks: EvolutionHandlerHooks = {}
 ): void {
 	messageHub.onRequest<EvolutionScopeCreateRequest, EvolutionScopeCreateResponse>(
 		'evolution.scope.create',
 		async (data) => {
 			const payload = readRecord(data);
 			const params = readRecord(payload.params) as unknown as EvolutionScopeCreateRequest['params'];
-			return { scope: service.createScope(params) };
+			const scope = service.createScope(params);
+			hooks.onScopeSaved?.(scope);
+			return { scope };
 		}
 	);
 
@@ -72,7 +80,9 @@ export function setupEvolutionHandlers(
 		'evolution.scope.createFromGoal',
 		async (data) => {
 			const payload = readRecord(data) as unknown as CreateScopeFromGoalParams;
-			return { scope: service.createScopeFromGoal(payload) };
+			const scope = service.createScopeFromGoal(payload);
+			hooks.onScopeSaved?.(scope);
+			return { scope };
 		}
 	);
 
@@ -95,7 +105,9 @@ export function setupEvolutionHandlers(
 			const payload = readRecord(data);
 			const id = readRequiredString(payload, 'id');
 			const params = readRecord(payload.params) as EvolutionScopeUpdateRequest['params'];
-			return { scope: service.updateScope(id, params) };
+			const scope = service.updateScope(id, params);
+			if (scope) hooks.onScopeSaved?.(scope);
+			return { scope };
 		}
 	);
 
