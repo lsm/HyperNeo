@@ -1,7 +1,11 @@
 import type { SpaceGoal, SpaceGoalStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
+import { useState } from 'preact/hooks';
+import { navigateToSpaceTask } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
+import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
+import { SpaceGoalDialog } from './SpaceGoalDialog';
 
 interface GoalDetailPanelProps {
 	spaceId: string;
@@ -58,6 +62,8 @@ function formatDate(ts: number | null): string {
 }
 
 export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
+	const [editing, setEditing] = useState(false);
+	const [actionLoading, setActionLoading] = useState(false);
 	const goal =
 		spaceStore.spaceId.value === spaceId
 			? (spaceStore.goals.value.find((item) => item.id === goalId) ?? null)
@@ -79,11 +85,40 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
 		)
 		.sort((a, b) => b.updatedAt - a.updatedAt);
 
+	const runAction = async (action: 'pause' | 'resume' | 'archive' | 'trigger') => {
+		setActionLoading(true);
+		try {
+			if (action === 'pause') await spaceStore.pauseGoal(goal.id);
+			else if (action === 'resume') await spaceStore.resumeGoal(goal.id);
+			else if (action === 'archive') await spaceStore.archiveGoal(goal.id);
+			else {
+				const result = await spaceStore.createImmediateGoalTask(goal.id);
+				if (result.queued) toast.success('Next goal task queued');
+				else toast.success('Goal task created');
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Goal action failed');
+		} finally {
+			setActionLoading(false);
+		}
+	};
+
 	return (
 		<div class="flex h-full min-w-0 flex-col overflow-hidden">
 			<div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
 				<div class="pr-12">
-					<h2 class="truncate text-base font-semibold leading-6 text-gray-100">{goal.title}</h2>
+					<div class="flex items-start justify-between gap-3">
+						<h2 class="min-w-0 flex-1 truncate text-base font-semibold leading-6 text-gray-100">
+							{goal.title}
+						</h2>
+						<button
+							type="button"
+							onClick={() => setEditing(true)}
+							class="rounded-lg border border-dark-600 px-3 py-1.5 text-xs font-medium text-gray-300 hover:bg-dark-800"
+						>
+							Edit
+						</button>
+					</div>
 					<div class="mt-2 flex flex-wrap items-center gap-2">
 						<GoalPanelBadge class={STATUS_CLASSES[goal.status]}>
 							{goal.status.replace(/_/g, ' ')}
@@ -101,6 +136,47 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
 
 			<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 				<div class="space-y-5">
+					<section class="flex flex-wrap gap-2">
+						{goal.status === 'active' && (
+							<button
+								type="button"
+								disabled={actionLoading}
+								onClick={() => void runAction('pause')}
+								class="rounded-lg border border-amber-800/40 bg-amber-950/20 px-3 py-1.5 text-xs font-medium text-amber-300 disabled:opacity-50"
+							>
+								Pause
+							</button>
+						)}
+						{goal.status === 'paused' && (
+							<button
+								type="button"
+								disabled={actionLoading}
+								onClick={() => void runAction('resume')}
+								class="rounded-lg border border-green-800/40 bg-green-950/20 px-3 py-1.5 text-xs font-medium text-green-300 disabled:opacity-50"
+							>
+								Resume
+							</button>
+						)}
+						<button
+							type="button"
+							disabled={actionLoading || goal.status !== 'active'}
+							onClick={() => void runAction('trigger')}
+							class="rounded-lg border border-blue-800/40 bg-blue-950/20 px-3 py-1.5 text-xs font-medium text-blue-300 disabled:opacity-50"
+						>
+							Create task now
+						</button>
+						{goal.status !== 'archived' && (
+							<button
+								type="button"
+								disabled={actionLoading}
+								onClick={() => void runAction('archive')}
+								class="rounded-lg border border-red-800/40 bg-red-950/20 px-3 py-1.5 text-xs font-medium text-red-300 disabled:opacity-50"
+							>
+								Archive
+							</button>
+						)}
+					</section>
+
 					<section>
 						<h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Summary</h3>
 						<p class="mt-2 text-sm leading-6 text-gray-300">
@@ -154,18 +230,28 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
 								<p class="text-sm text-gray-500">No linked tasks yet.</p>
 							) : (
 								linkedTasks.slice(0, 8).map((task) => (
-									<div
+									<button
 										key={task.id}
-										class="rounded-md border border-dark-700 bg-dark-900/40 px-3 py-2"
+										type="button"
+										onClick={() => navigateToSpaceTask(spaceId, task.id)}
+										class="w-full rounded-md border border-dark-700 bg-dark-900/40 px-3 py-2 text-left hover:border-dark-600 hover:bg-dark-800/60"
 									>
 										<div class="truncate text-sm text-gray-200">{task.title}</div>
 										<div class="mt-1 font-mono text-[11px] text-gray-500">#{task.taskNumber}</div>
-									</div>
+									</button>
 								))
 							)}
 						</div>
 					</section>
 				</div>
+				<SpaceGoalDialog
+					isOpen={editing}
+					goal={goal}
+					onClose={() => setEditing(false)}
+					onSaved={(saved) => {
+						spaceStore.upsertGoal(saved);
+					}}
+				/>
 			</div>
 		</div>
 	);
