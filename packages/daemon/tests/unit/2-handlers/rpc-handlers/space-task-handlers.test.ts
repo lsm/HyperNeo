@@ -12,7 +12,7 @@
  */
 
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, Space, SpaceTask } from '@neokai/shared';
+import type { MessageHub, Space, SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type {
 	DaemonInternalEventMap,
 	InternalEventBus,
@@ -21,6 +21,7 @@ import type { SpaceTaskManagerFactory } from '../../../../src/lib/rpc-handlers/s
 import { setupSpaceTaskHandlers } from '../../../../src/lib/rpc-handlers/space-task-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
+import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -43,18 +44,53 @@ const mockSpace: Space = {
 	updatedAt: NOW,
 };
 
-const mockTask: SpaceTask = {
-	id: 'task-1',
+const mockTask: SpaceTask = makeTask();
+
+const mockWorkflow: SpaceWorkflow = {
+	id: 'workflow-1',
 	spaceId: 'space-1',
-	taskNumber: 1,
-	title: 'Test Task',
-	description: 'A task description',
-	status: 'open',
-	priority: 'normal',
-	dependsOn: [],
+	name: 'Coding Workflow',
+	nodes: [
+		{
+			id: 'node-1',
+			name: 'Coding',
+			agents: [{ agentId: 'agent-coder', name: 'coder' }],
+		},
+	],
+	startNodeId: 'node-1',
+	tags: [],
+	completionAutonomyLevel: 3,
 	createdAt: NOW,
 	updatedAt: NOW,
 };
+
+function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+	return {
+		id: 'task-1',
+		spaceId: 'space-1',
+		taskNumber: 1,
+		title: 'Test Task',
+		description: 'A task description',
+		status: 'open',
+		priority: 'normal',
+		labels: [],
+		dependsOn: [],
+		result: null,
+		createdAt: NOW,
+		updatedAt: NOW,
+		startedAt: null,
+		completedAt: null,
+		archivedAt: null,
+		blockReason: null,
+		approvalSource: null,
+		approvalReason: null,
+		approvedAt: null,
+		pendingCheckpointType: null,
+		reportedStatus: null,
+		reportedSummary: null,
+		...overrides,
+	};
+}
 
 // ─── Mock helpers ────────────────────────────────────────────────────────────
 
@@ -99,6 +135,14 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
 	} as unknown as SpaceManager;
 }
 
+function createMockWorkflowManager(
+	workflow: SpaceWorkflow | null = mockWorkflow
+): SpaceWorkflowManager {
+	return {
+		getWorkflow: mock(() => workflow),
+	} as unknown as SpaceWorkflowManager;
+}
+
 function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskManager {
 	return {
 		createTask: mock(async () => task!),
@@ -109,7 +153,10 @@ function createMockTaskManager(task: SpaceTask | null = mockTask): SpaceTaskMana
 			total: task ? 1 : 0,
 		})),
 		setTaskStatus: mock(async () => ({ ...task!, status: 'in_progress' as const })),
-		updateTask: mock(async () => ({ ...task!, title: 'Updated' })),
+		updateTask: mock(async (_taskId: string, params: Partial<SpaceTask>) => ({
+			...task!,
+			...params,
+		})),
 		updateTaskProgress: mock(async () => ({ ...task!, progress: 50 })),
 		publishTask: mock(async () => ({ ...task!, status: 'open' as const })),
 		// Unified entry point used by both `spaceTask.submitForReview` (UI) and
@@ -134,22 +181,32 @@ describe('space-task-handlers', () => {
 	let handlers: Map<string, RequestHandler>;
 	let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 	let spaceManager: SpaceManager;
+	let workflowManager: SpaceWorkflowManager;
 	let taskManager: SpaceTaskManager;
 	let taskManagerFactory: SpaceTaskManagerFactory;
 
 	function setup(
 		space: Space | null = mockSpace,
 		task: SpaceTask | null = mockTask,
-		runtime?: SpaceRuntimeService
+		runtime?: SpaceRuntimeService,
+		workflow: SpaceWorkflow | null = mockWorkflow
 	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
 		internalEventBus = createMockInternalEventBus();
 		spaceManager = createMockSpaceManager(space);
+		workflowManager = createMockWorkflowManager(workflow);
 		taskManager = createMockTaskManager(task);
 		taskManagerFactory = mock((_spaceId: string) => taskManager);
-		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, internalEventBus, runtime);
+		setupSpaceTaskHandlers(
+			hub,
+			spaceManager,
+			workflowManager,
+			taskManagerFactory,
+			internalEventBus,
+			runtime
+		);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -799,6 +856,78 @@ describe('space-task-handlers', () => {
 				approvalReason: undefined,
 				approvalSource: undefined,
 			});
+		});
+
+		it('persists validated per-task workflow model overrides', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' } },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
+		it('clears empty workflow model overrides', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				workflowModelOverrides: { 'node-1:coder': '' },
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ workflowModelOverrides: null },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
+		it('rejects workflow model overrides after task start', async () => {
+			setup(
+				mockSpace,
+				makeTask({ preferredWorkflowId: 'workflow-1', startedAt: NOW, workflowRunId: 'run-1' })
+			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Workflow model overrides are locked after the task starts');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('rejects workflow model overrides without selected workflow', async () => {
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Select a workflow before setting model overrides');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('rejects workflow model overrides for unknown node-agent targets', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: { 'node-2:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Invalid workflow model override target: node-2:coder');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
 		});
 
 		it('applies non-status fields (e.g. taskAgentSessionId) after status transition', async () => {

@@ -663,6 +663,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 143: Expand Forge evidence kinds for trace-derived process evidence.
 	runMigration143(db);
+
+	// Migration 144: Add per-task workflow model overrides.
+	runMigration144(db);
 }
 
 /**
@@ -9492,6 +9495,13 @@ export function runMigration142(db: BunDatabase): void {
 
 export function runMigration143(db: BunDatabase): void {
 	widenEvolutionEvidenceKinds(db);
+}
+
+export function runMigration144(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	if (!tableHasColumn(db, 'space_tasks', 'workflow_model_overrides')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN workflow_model_overrides TEXT`);
+	}
 }
 
 function widenEvolutionEvidenceKinds(db: BunDatabase): void {

@@ -10,6 +10,7 @@
 
 import {
 	isWorkflowRecoveryTransition,
+	resolveNodeAgents,
 	type CreateSpaceTaskParams,
 	type MessageHub,
 	type PaginatedSpaceTaskResult,
@@ -29,10 +30,52 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceGoalService } from '../space/goals/goal-service';
 
 const log = new Logger('space-task-handlers');
+
+async function validateWorkflowModelOverrides(
+	task: SpaceTask,
+	workflowManager: SpaceWorkflowManager,
+	overrides: Record<string, string> | null | undefined
+): Promise<Record<string, string> | null | undefined> {
+	if (overrides === undefined) return undefined;
+	if (overrides === null) return null;
+	if (task.workflowRunId || task.startedAt) {
+		throw new Error('Workflow model overrides are locked after the task starts');
+	}
+	const clean = Object.fromEntries(
+		Object.entries(overrides).filter((entry): entry is [string, string] => {
+			const [key, value] = entry;
+			return key.trim().length > 0 && value.trim().length > 0;
+		})
+	);
+	const workflowId = task.preferredWorkflowId;
+	if (!workflowId) {
+		if (Object.keys(clean).length > 0) {
+			throw new Error('Select a workflow before setting model overrides');
+		}
+		return null;
+	}
+	const workflow = workflowManager.getWorkflow(workflowId);
+	if (!workflow || workflow.spaceId !== task.spaceId) {
+		throw new Error(`Workflow not found: ${workflowId}`);
+	}
+	const validKeys = new Set<string>();
+	for (const node of workflow.nodes) {
+		for (const agent of resolveNodeAgents(node)) {
+			validKeys.add(`${node.id}:${agent.name}`);
+		}
+	}
+	for (const key of Object.keys(clean)) {
+		if (!validKeys.has(key)) {
+			throw new Error(`Invalid workflow model override target: ${key}`);
+		}
+	}
+	return Object.keys(clean).length > 0 ? clean : null;
+}
 
 /**
  * Factory that creates a SpaceTaskManager bound to a specific spaceId.
@@ -43,6 +86,7 @@ export type SpaceTaskManagerFactory = (spaceId: string) => SpaceTaskManager;
 export function setupSpaceTaskHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
+	workflowManager: SpaceWorkflowManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceRuntimeService?: SpaceRuntimeService,
@@ -241,6 +285,18 @@ export function setupSpaceTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(spaceId);
+		const currentTaskForOverrides = await taskManager.getTask(taskId);
+		if (!currentTaskForOverrides) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+		const validatedWorkflowModelOverrides = await validateWorkflowModelOverrides(
+			currentTaskForOverrides,
+			workflowManager,
+			updateParams.workflowModelOverrides
+		);
+		if (validatedWorkflowModelOverrides !== undefined) {
+			updateParams.workflowModelOverrides = validatedWorkflowModelOverrides;
+		}
 
 		let task: SpaceTask;
 		let emitTaskUpdated = true;

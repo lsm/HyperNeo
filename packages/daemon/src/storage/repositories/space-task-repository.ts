@@ -417,6 +417,12 @@ export class SpaceTaskRepository {
 			fields.push('evolution_scope_id = ?');
 			values.push(params.evolutionScopeId ?? null);
 		}
+		if (params.workflowModelOverrides !== undefined) {
+			fields.push('workflow_model_overrides = ?');
+			values.push(
+				params.workflowModelOverrides ? JSON.stringify(params.workflowModelOverrides) : null
+			);
+		}
 		if (params.createdByTaskId !== undefined) {
 			fields.push('created_by_task_id = ?');
 			values.push(params.createdByTaskId ?? null);
@@ -682,6 +688,20 @@ export class SpaceTaskRepository {
 	 * Convert a database row to a SpaceTask object
 	 */
 	private rowToSpaceTask(row: Record<string, unknown>): SpaceTask {
+		const rawWorkflowModelOverrides = row.workflow_model_overrides as string | null | undefined;
+		let workflowModelOverrides: Record<string, string> | undefined;
+		if (rawWorkflowModelOverrides) {
+			try {
+				const parsed = JSON.parse(rawWorkflowModelOverrides) as Record<string, unknown>;
+				workflowModelOverrides = Object.fromEntries(
+					Object.entries(parsed).filter(
+						(entry): entry is [string, string] => typeof entry[1] === 'string'
+					)
+				);
+			} catch {
+				workflowModelOverrides = undefined;
+			}
+		}
 		return {
 			id: row.id as string,
 			spaceId: row.space_id as string,
@@ -699,6 +719,7 @@ export class SpaceTaskRepository {
 			createdByTaskScheduleId: (row.created_by_task_schedule_id as string | null) ?? undefined,
 			goalId: (row.goal_id as string | null) ?? undefined,
 			evolutionScopeId: (row.evolution_scope_id as string | null) ?? undefined,
+			workflowModelOverrides,
 			result: (row.result as string | null) ?? null,
 			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
