@@ -27,10 +27,11 @@ import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type { McpServerConfig, Session, Space } from '@neokai/shared';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -793,6 +794,26 @@ describe('SpaceRuntimeService', () => {
 			};
 		}
 
+		function insertSession(db: BunDatabase, session: Session): void {
+			db.prepare(
+				`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+						is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id,
+						sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, null, null, null, null, null, null, null, null, null, ?, ?)`
+			).run(
+				session.id,
+				session.title,
+				session.workspacePath,
+				session.createdAt,
+				session.lastActiveAt,
+				session.status,
+				JSON.stringify(session.config),
+				JSON.stringify(session.metadata),
+				session.type ?? 'worker',
+				session.context ? JSON.stringify(session.context) : null
+			);
+		}
+
 		function makeMemberSession(overrides: Partial<Session> = {}): Session {
 			return {
 				id: 'worker-session-1',
@@ -975,6 +996,73 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
+		test('session repository includes persisted Space sessions only when requested', () => {
+			const db = new BunDatabase(':memory:');
+			createTables(db);
+			try {
+				const repo = new SessionRepository(db);
+				const memberSession = makeMemberSession({ id: 'member-1' });
+				const longTermSession = makeMemberSession({
+					id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+					metadata: {
+						promptProvenance: {
+							source: 'test',
+							hash: 'hash',
+							agentId: 'agent-1',
+							agentName: 'Long Term',
+						},
+					},
+				});
+				const nonSpaceSession = makeMemberSession({ id: 'plain-worker', context: undefined });
+				insertSession(db, memberSession);
+				insertSession(db, longTermSession);
+				insertSession(db, nonSpaceSession);
+
+				expect(repo.listSessions({ includeArchived: false }).map((session) => session.id)).toEqual([
+					'plain-worker',
+				]);
+				expect(
+					repo
+						.listSessions({ includeArchived: false, includeSpaceSessions: true })
+						.map((session) => session.id)
+						.sort()
+				).toEqual([longTermSession.id, memberSession.id, 'plain-worker'].sort());
+			} finally {
+				db.close();
+			}
+		});
+
+		test('start() requests persisted Space sessions during daemon-restart reattach sweep', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const longTermSession = makeMemberSession({
+				id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+				metadata: {
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: 'agent-1',
+						agentName: 'Long Term',
+					},
+				},
+			});
+			const svc = new SpaceRuntimeService(
+				buildMemberConfig({ sessionManager, listSessionsResult: [longTermSession] })
+			);
+
+			svc.start();
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			expect(sessionManager.listSessions).toHaveBeenCalledWith({
+				includeArchived: false,
+				includeSpaceSessions: true,
+			});
+			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(1);
+			expect(agent.getSessionData().config.mcpServers).toHaveProperty('space-agent-tools');
+
+			await svc.stop();
+		});
+
 		test('start() derives long-term agent names from repository when metadata lacks agentName', async () => {
 			const agent = makeMemberAgentSession();
 			const sessionManager = makeSessionManager(agent);
@@ -1048,6 +1136,96 @@ describe('SpaceRuntimeService', () => {
 
 			// Self-heal should re-call attachSpaceToolsToMemberSession, which calls merge again
 			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+		});
+
+		test('long-term agent reattach preserves existing runtime MCP servers and avoids duplicate server names', async () => {
+			const preservedServer = { type: 'sdk', name: 'external-runtime' } as McpServerConfig;
+			const agent = makeMemberAgentSession({
+				id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+				config: {
+					tools: {},
+					mcpServers: {
+						'external-runtime': preservedServer,
+					},
+				},
+				metadata: {
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: 'agent-1',
+						agentName: 'Long Term',
+					},
+				},
+			});
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await (
+				svc as unknown as {
+					attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+				}
+			).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+			await (
+				svc as unknown as {
+					attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+				}
+			).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+
+			expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+			const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
+			expect(serverNames.sort()).toEqual(['external-runtime', 'space-agent-tools']);
+			expect(agent.getSessionData().config.mcpServers?.['external-runtime']).toBe(preservedServer);
+		});
+
+		test('long-term agent deleted sessions release db-query runtime server handles', async () => {
+			const sessionId = longTermAgentSessionId(mockSpace.id, 'agent-1');
+			const agent = makeMemberAgentSession({
+				id: sessionId,
+				metadata: {
+					promptProvenance: {
+						source: 'test',
+						hash: 'hash',
+						agentId: 'agent-1',
+						agentName: 'Long Term',
+					},
+				},
+			});
+			const sessionManager = makeSessionManager(agent);
+			const dir = join(
+				process.cwd(),
+				'tmp',
+				'test-long-term-agent-tools',
+				`db-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			mkdirSync(dir, { recursive: true });
+			const dbPath = join(dir, 'test.db');
+			const tmpDb = new BunDatabase(dbPath);
+			tmpDb.close();
+
+			try {
+				const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager, dbPath }));
+				await (
+					svc as unknown as {
+						attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+					}
+				).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+				const dbQueryServers = (
+					svc as unknown as { longTermAgentDbQueryServers: Map<string, { close: () => void }> }
+				).longTermAgentDbQueryServers;
+				const server = dbQueryServers.get(sessionId);
+				expect(server).toBeDefined();
+				const closeMock = mock(() => {});
+				dbQueryServers.set(sessionId, { close: closeMock });
+
+				(
+					svc as unknown as { releaseLongTermAgentDbQuery(sessionId: string): void }
+				).releaseLongTermAgentDbQuery(sessionId);
+
+				expect(closeMock).toHaveBeenCalledTimes(1);
+				expect(dbQueryServers.has(sessionId)).toBe(false);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
 		});
 	});
 

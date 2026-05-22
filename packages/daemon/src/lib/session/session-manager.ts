@@ -523,7 +523,11 @@ export class SessionManager {
 		await this.messagePersistence.persist(data);
 	}
 
-	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+	listSessions(options?: {
+		status?: string;
+		includeArchived?: boolean;
+		includeSpaceSessions?: boolean;
+	}): Session[] {
 		return this.db.listSessions(options);
 	}
 
