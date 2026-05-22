@@ -1491,6 +1491,64 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(taskAfter?.reportedSummary).toBe('Implemented artifact summary propagation');
 		});
 
+		test('updated result artifact summary wins over newer-created stale artifact', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Updated Artifact Result Completion ${Date.now()}`,
+				description: '',
+				nodes: [{ id: 'updated-artifact-end', name: 'End', agentId: AGENT_A }],
+				startNodeId: 'updated-artifact-end',
+				endNodeId: 'updated-artifact-end',
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			artifactRepo.upsert({
+				id: 'artifact-reused-result',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Initial reused-key summary' },
+			});
+			artifactRepo.upsert({
+				id: 'artifact-newer-stale-result',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'later-created-stale',
+				data: { summary: 'Stale summary from later-created row' },
+			});
+			const staleArtifact = artifactRepo.listByRun(run.id, {
+				artifactType: 'result',
+			})[1];
+			artifactRepo.upsert({
+				id: 'artifact-reused-result-updated',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Updated reused-key summary' },
+			});
+			if (staleArtifact) {
+				db.prepare(`UPDATE workflow_run_artifacts SET updated_at = ? WHERE id = ?`).run(
+					staleArtifact.updatedAt - 1,
+					staleArtifact.id
+				);
+			}
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress', reportedStatus: 'done' });
+			seedNodeExec(db, run.id, 'updated-artifact-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const taskAfter = taskRepo.getTask(tasks[0].id);
+			expect(taskAfter?.result).toBe('Updated reused-key summary');
+			expect(taskAfter?.reportedSummary).toBe('Updated reused-key summary');
+		});
+
 		test('null task result is filled from result artifact summary', async () => {
 			const rt = makeRuntimeWithTam();
 
@@ -1676,6 +1734,38 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Strict one-task-per-run repair archives duplicate helper/orchestration tasks.
 			const orchTaskAfter = taskRepo.getTask(orchTask.id);
 			expect(orchTaskAfter?.status).toBe('archived');
+		});
+
+		test('canonical task result wins over duplicate sibling result during terminal reconcile', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'canonical-sibling-node', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Canonical Run');
+			const duplicateTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Duplicate stale result',
+				description: 'Older duplicate task from previous cycle',
+				workflowRunId: run.id,
+				status: 'done',
+				result: 'Stale sibling result',
+			});
+
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'done',
+				result: 'Canonical final result',
+			});
+			seedNodeExec(db, run.id, 'canonical-sibling-node', 'agent', 'idle');
+
+			await rt.executeTick();
+
+			const canonicalAfter = taskRepo.getTask(tasks[0].id);
+			const duplicateAfter = taskRepo.getTask(duplicateTask.id);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(canonicalAfter?.result).toBe('Canonical final result');
+			expect(duplicateAfter?.status).toBe('archived');
 		});
 
 		test('open orchestration task is skipped on run completion (no throw)', async () => {

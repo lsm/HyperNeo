@@ -2259,9 +2259,10 @@ export class SpaceRuntime {
 				.find((task) => !!task.result)?.result;
 			const reportedSummary = canonicalTask.reportedSummary ?? null;
 			const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
-			const freshSummary = summaryFromArtifact ?? summaryFromWorkflow ?? summaryFromSibling ?? null;
-			const nextResult = freshSummary ?? existingResult ?? reportedSummary ?? null;
-			const nextReportedSummary = freshSummary ?? reportedSummary ?? null;
+			const freshSummary = summaryFromArtifact ?? summaryFromWorkflow ?? null;
+			const nextResult =
+				freshSummary ?? existingResult ?? reportedSummary ?? summaryFromSibling ?? null;
+			const nextReportedSummary = freshSummary ?? reportedSummary ?? summaryFromSibling ?? null;
 
 			// Skip tasks already at a terminal or paused state — matches the
 			// active-tick guard (`taskAlreadyResolved`) at processRunTick.
@@ -5287,11 +5288,16 @@ export class SpaceRuntime {
 
 		try {
 			const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'result' });
-			for (let i = artifacts.length - 1; i >= 0; i--) {
-				const summary = artifacts[i]?.data.summary;
-				if (typeof summary === 'string' && summary.trim()) return summary;
-			}
-			return undefined;
+			const artifact = artifacts
+				.map((item, index) => ({ item, index }))
+				.filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+				.toSorted(
+					(a, b) =>
+						b.item.updatedAt - a.item.updatedAt ||
+						b.item.createdAt - a.item.createdAt ||
+						b.index - a.index
+				)[0]?.item;
+			return typeof artifact?.data.summary === 'string' ? artifact.data.summary : undefined;
 		} catch (err) {
 			log.warn(
 				`SpaceRuntime.resolvePrimaryResultArtifactSummary: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
