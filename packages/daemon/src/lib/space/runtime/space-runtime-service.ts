@@ -1188,7 +1188,10 @@ export class SpaceRuntimeService {
 		if (!sessionManager) return;
 
 		try {
-			const all = sessionManager.listSessions({ includeArchived: false });
+			const all = sessionManager.listSessions({
+				includeArchived: false,
+				includeSpaceSessions: true,
+			});
 			for (const session of all) {
 				const policy = this.resolveMcpSessionPolicy(session);
 				if (policy.owner !== 'space-runtime') continue;
