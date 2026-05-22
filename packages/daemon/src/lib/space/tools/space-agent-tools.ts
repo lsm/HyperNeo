@@ -576,9 +576,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					error: `Agent template not found: ${args.template_name}`,
 				});
 			}
+			const name = args.name ?? template.name;
+			if (name.trim() === '') {
+				return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+			}
 			const result = await spaceAgentManager.create({
 				spaceId,
-				name: args.name ?? template.name,
+				name,
 				description: template.description,
 				model: args.model,
 				provider: args.provider,

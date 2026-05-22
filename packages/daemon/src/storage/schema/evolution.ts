@@ -146,7 +146,7 @@ export function createEvolutionTables(db: BunDatabase): void {
 }
 
 function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
-	if (!hasColumn(db, 'space_agents', 'status')) {
+	if (hasTable(db, 'space_agents') && !hasColumn(db, 'space_agents', 'status')) {
 		db.exec(
 			`ALTER TABLE space_agents ADD COLUMN status TEXT NOT NULL DEFAULT 'active' ` +
 				`CHECK(status IN ('active', 'paused', 'archived'))`
@@ -219,6 +219,12 @@ function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
 			`ON space_agent_event_subscriptions(space_id, topic_pattern)`
 	);
+}
+
+function hasTable(db: BunDatabase, tableName: string): boolean {
+	return !!db
+		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+		.get(tableName);
 }
 
 function hasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {

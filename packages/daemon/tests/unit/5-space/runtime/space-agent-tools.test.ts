@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -295,6 +295,14 @@ function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpSer
 	return Object.keys(instance._registeredTools);
 }
 
+describe('schema evolution setup', () => {
+	test('createTables works before space_agents exists', () => {
+		const db = new BunDatabase(':memory:');
+		expect(() => createTables(db)).not.toThrow();
+		db.close();
+	});
+});
+
 describe('createSpaceAgentMcpServer — tool registration', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
@@ -452,6 +460,17 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 		);
 		expect(templated.success).toBe(true);
 		expect(templated.agent.templateName).toBe('Reviewer');
+
+		const blankTemplateName = JSON.parse(
+			(
+				await handlers.create_agent_from_template({
+					template_name: 'Reviewer',
+					name: '  ',
+				})
+			).content[0].text
+		);
+		expect(blankTemplateName.success).toBe(false);
+		expect(blankTemplateName.error).toBe('Agent name cannot be empty');
 
 		const listed = JSON.parse((await handlers.list_agents({ status: 'archived' })).content[0].text);
 		expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
