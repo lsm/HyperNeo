@@ -9,6 +9,7 @@
 - [Client State And Read Models Design](./client-state-and-read-models.md)
 - [Shared Package Boundaries Design](./shared-package-boundaries.md)
 - [Storage Unit Of Work And Outbox Design](./storage-unit-of-work-and-outbox.md)
+- [Agent Runtime And Provider Compatibility Design](./agent-runtime-and-provider-compatibility.md)
 
 ---
 
@@ -20,6 +21,7 @@ This document is the capstone map for the architecture cleanup. It does not intr
 - `MessageHub` as a compatibility transport during migration.
 - `StorageUnitOfWork` plus outbox/inbox as the durable write boundary.
 - Space runtime decomposition as the workflow orchestration boundary.
+- Agent Runtime and provider compatibility as independent execution/model axes.
 - Client stores as read-model caches, not command owners.
 - Shared package subpaths as the contract and type boundaries.
 - Forge as a first-class Space domain slice.
@@ -30,7 +32,7 @@ The diagrams are target architecture diagrams. They are intentionally not a grap
 
 ## 2. Architecture In One Sentence
 
-NeoKai is a local-first agent runtime where every cross-boundary interaction is a typed command, query, or event on `MessageFabric`, every durable mutation commits through one SQLite-backed unit of work with outbox/inbox semantics, and every client or worker observes the system through read models and fabric events instead of direct service coupling.
+NeoKai is a local-first agent runtime where every cross-boundary interaction is a typed command, query, or event on `MessageFabric`, every durable mutation commits through one SQLite-backed unit of work with outbox/inbox semantics, agent execution is mediated by runtime/provider compatibility boundaries, and every client or worker observes the system through read models and fabric events instead of direct service coupling.
 
 ---
 
@@ -61,9 +63,9 @@ flowchart LR
     Contracts["Contract Registry<br/>schemas, auth policy, durability"]
     Space["Space Domain<br/>runtime, tasks, goals, schedules"]
     Forge["Forge Domain<br/>evidence, episodes, lessons, proposals"]
-    Sessions["Agent Session Domain<br/>SDK sessions, messages, lifecycle"]
+    Sessions["Agent Runtime Domain<br/>sessions, messages, lifecycle"]
     Tools["MCP And Tool Runtime<br/>skills, permissions, server attachment"]
-    Providers["AI Provider Boundary<br/>models, credentials, runtime config"]
+    Providers["Provider And Bridge Boundary<br/>models, credentials, model IO"]
     ExternalEvents["External Event Intake<br/>GitHub and future sources"]
   end
 
@@ -139,9 +141,9 @@ flowchart TB
   subgraph Domains["Domain Modules"]
     SpaceDomain["Space Domain"]
     ForgeDomain["Forge Domain"]
-    SessionDomain["Agent Session Domain"]
+    SessionDomain["Agent Runtime Domain"]
     ToolDomain["MCP And Skills Domain"]
-    ProviderDomain["AI Provider Domain"]
+    ProviderDomain["Provider And Bridge Domain"]
     ExternalDomain["External Event Domain"]
   end
 
@@ -340,10 +342,11 @@ flowchart TB
   Gates["GateOrchestrator"]
   Completion["CompletionCoordinator"]
   Recovery["RuntimeRecoverySupervisor"]
-  AgentGateway["AgentSessionGateway"]
-  SessionDomain["Agent Session Domain"]
-  SDK["Agent SDK Session"]
-  Provider["AI Provider"]
+  AgentGateway["AgentSessionGateway<br/>runtime-neutral port"]
+  SessionDomain["Agent Runtime Domain"]
+  RuntimeGateway["AgentRuntimeGateway"]
+  RuntimeAdapter["AgentRuntimeAdapter<br/>Claude today, others later"]
+  Provider["Provider Bridge<br/>model IO compatibility"]
   MCP["Runtime MCP Servers<br/>Space, node, Forge tools"]
   UOW["StorageUnitOfWork"]
   Outbox["Runtime Events Outbox"]
@@ -363,10 +366,11 @@ flowchart TB
   Recovery --> Nodes
 
   Nodes --> AgentGateway
-  AgentGateway --> SessionDomain
-  SessionDomain --> SDK
-  SDK --> Provider
-  SDK --> MCP
+  AgentGateway --> RuntimeGateway
+  RuntimeGateway --> SessionDomain
+  SessionDomain --> RuntimeAdapter
+  RuntimeAdapter --> Provider
+  RuntimeAdapter --> MCP
   MCP --> Fabric
 
   Coordinator --> UOW
