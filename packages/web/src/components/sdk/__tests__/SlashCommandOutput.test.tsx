@@ -163,30 +163,28 @@ Line 3</local-command-stdout>`;
 	});
 
 	describe('Markdown Rendering', () => {
-		it('should render markdown content', () => {
+		it('should pass markdown content to MarkdownRenderer', () => {
 			const content =
 				'<local-command-stdout># Heading\n\nSome **bold** text.</local-command-stdout>';
-			const { container } = render(<SlashCommandOutput content={content} />);
+			const { getByTestId } = render(<SlashCommandOutput content={content} />);
 
-			// MarkdownRenderer should process the content
-			expect(container.textContent).toContain('Heading');
-			expect(container.textContent).toContain('bold');
+			const markdownRenderer = getByTestId('markdown-renderer');
+			expect(markdownRenderer.textContent).toBe('# Heading\n\nSome **bold** text.');
+			expect(markdownRenderer.className).toContain('text-sm');
 		});
 
-		it('should render code blocks in output', () => {
+		it('should pass code blocks to MarkdownRenderer unchanged', () => {
 			const content = '<local-command-stdout>```\ncode here\n```</local-command-stdout>';
-			const { container } = render(<SlashCommandOutput content={content} />);
+			const { getByTestId } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('code here');
+			expect(getByTestId('markdown-renderer').textContent).toBe('```\ncode here\n```');
 		});
 
-		it('should render lists', () => {
+		it('should pass lists to MarkdownRenderer unchanged', () => {
 			const content = '<local-command-stdout>- Item 1\n- Item 2\n- Item 3</local-command-stdout>';
-			const { container } = render(<SlashCommandOutput content={content} />);
+			const { getByTestId } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Item 1');
-			expect(container.textContent).toContain('Item 2');
-			expect(container.textContent).toContain('Item 3');
+			expect(getByTestId('markdown-renderer').textContent).toBe('- Item 1\n- Item 2\n- Item 3');
 		});
 	});
 
