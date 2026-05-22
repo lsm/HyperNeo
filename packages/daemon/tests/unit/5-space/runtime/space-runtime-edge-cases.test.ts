@@ -559,7 +559,9 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(cancelledExecution.status).toBe('cancelled');
 			expect(cancelledExecution.agentSessionId).toBeNull();
 			const clearedTask = taskRepo.getTask(task.id)!;
-			expect(clearedTask.workflowRunId).toBeUndefined();
+			expect(blocked?.workflowRunId).toBe(run.id);
+			expect(blocked?.taskAgentSessionId).toBeUndefined();
+			expect(clearedTask.workflowRunId).toBe(run.id);
 			expect(clearedTask.taskAgentSessionId).toBeUndefined();
 			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 			expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);

@@ -25,18 +25,13 @@ const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
 	'cancelled',
 	'archived',
 ]);
-
-function arraysEqual(a: string[], b: string[]): boolean {
-	if (a.length !== b.length) return false;
-	const setA = new Set(a);
-	return b.every((item) => setA.has(item));
-}
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceGoalService } from '../space/goals/goal-service';
+import { arraysEqual } from '../utils/array-utils';
 
 const log = new Logger('space-task-handlers');
 
@@ -411,19 +406,27 @@ export function setupSpaceTaskHandlers(
 			if (!currentTask) {
 				throw new Error(`Task not found: ${taskId}`);
 			}
-			const dependencyAddedToActiveWorkflow =
+			let dependencyCheckResult: SpaceTask | null = null;
+			let runtimeForDependencyBlock: SpaceRuntimeService | null = null;
+			let dependencyAddedToActiveWorkflow = false;
+			if (
 				spaceRuntimeService &&
 				updateParams.dependsOn !== undefined &&
 				currentTask.status === 'in_progress' &&
 				currentTask.workflowRunId &&
-				!arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn) &&
-				!(await taskManager.areDependenciesMet({
-					...currentTask,
-					dependsOn: updateParams.dependsOn,
-				}));
+				!arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn)
+			) {
+				dependencyCheckResult = await taskManager.updateTask(taskId, updateParams, {
+					onCascadedTasks: emitCascadedTasks,
+				});
+				dependencyAddedToActiveWorkflow =
+					dependencyCheckResult.status === 'blocked' &&
+					dependencyCheckResult.blockReason === 'dependency_added';
+				runtimeForDependencyBlock = spaceRuntimeService;
+			}
 
-			if (dependencyAddedToActiveWorkflow) {
-				task = await spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, {
+			if (dependencyAddedToActiveWorkflow && runtimeForDependencyBlock) {
+				task = await runtimeForDependencyBlock.stopWorkflowBackedTask(spaceId, taskId, {
 					...updateParams,
 					status: 'blocked',
 					blockReason: 'dependency_added',
@@ -431,6 +434,8 @@ export function setupSpaceTaskHandlers(
 					completedAt: null,
 				});
 				emitTaskUpdated = false;
+			} else if (dependencyCheckResult) {
+				task = dependencyCheckResult;
 			} else {
 				task = await taskManager.updateTask(taskId, updateParams, {
 					onCascadedTasks: emitCascadedTasks,

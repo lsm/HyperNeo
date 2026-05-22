@@ -761,6 +761,102 @@ describe('space-task-handlers', () => {
 			});
 		});
 
+		it('routes unmet dependency updates for workflow-backed in-progress tasks through runtime', async () => {
+			const activeTask = {
+				...mockTask,
+				status: 'in_progress' as const,
+				workflowRunId: 'run-1',
+				dependsOn: ['dep-done'],
+			};
+			const runtime = {
+				stopWorkflowBackedTask: mock(async () => ({
+					...activeTask,
+					dependsOn: ['dep-open'],
+					status: 'blocked' as const,
+					blockReason: 'dependency_added' as const,
+				})),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, activeTask, runtime);
+			(taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+				...activeTask,
+				dependsOn: ['dep-open'],
+				status: 'blocked' as const,
+				blockReason: 'dependency_added' as const,
+			});
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				dependsOn: ['dep-open'],
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ dependsOn: ['dep-open'] },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+			expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', {
+				dependsOn: ['dep-open'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+			});
+			expect((result as SpaceTask).status).toBe('blocked');
+		});
+
+		it('keeps met dependency updates on normal updateTask path', async () => {
+			const activeTask = {
+				...mockTask,
+				status: 'in_progress' as const,
+				workflowRunId: 'run-1',
+				dependsOn: ['dep-old'],
+			};
+			const runtime = {
+				stopWorkflowBackedTask: mock(async () => activeTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, activeTask, runtime);
+			(taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+				...activeTask,
+				dependsOn: ['dep-done'],
+				status: 'in_progress' as const,
+			});
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				dependsOn: ['dep-done'],
+			});
+
+			expect(runtime.stopWorkflowBackedTask).not.toHaveBeenCalled();
+			expect(taskManager.updateTask).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps non-workflow dependency updates on normal updateTask path', async () => {
+			const activeTask = {
+				...mockTask,
+				status: 'in_progress' as const,
+				dependsOn: ['dep-old'],
+			};
+			const runtime = {
+				stopWorkflowBackedTask: mock(async () => activeTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, activeTask, runtime);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				dependsOn: ['dep-open'],
+			});
+
+			expect(runtime.stopWorkflowBackedTask).not.toHaveBeenCalled();
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ dependsOn: ['dep-open'] },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
 		it('publishes space.task.updated for cascaded dependency changes', async () => {
 			const cascadedTask = {
 				...mockTask,

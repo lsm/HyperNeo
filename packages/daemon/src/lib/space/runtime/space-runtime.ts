@@ -2092,8 +2092,8 @@ export class SpaceRuntime {
 		spaceId: string,
 		task: SpaceTask,
 		reason: string
-	): Promise<void> {
-		if (!task.workflowRunId) return;
+	): Promise<SpaceTask> {
+		if (!task.workflowRunId) return task;
 
 		const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
 		if (run && canTransitionRunStatus(run.status, 'blocked')) {
@@ -2120,13 +2120,13 @@ export class SpaceRuntime {
 		}
 		const cleared = this.config.taskRepo.updateTask(task.id, {
 			taskAgentSessionId: null,
-			workflowRunId: null,
 		});
 		if (cleared) {
 			await this.safeOnTaskUpdated(spaceId, cleared);
 		}
 		this.clearRunInterests(task.workflowRunId);
 		this.clearAgentStuckStateForRun(task.workflowRunId);
+		return cleared ?? task;
 	}
 
 	async blockWorkflowBackedTask(
@@ -2143,7 +2143,7 @@ export class SpaceRuntime {
 		params: UpdateSpaceTaskParams,
 		opts?: { archiveSource?: 'user' | 'system_reconcile' }
 	): Promise<SpaceTask | null> {
-		const updated = this.config.taskRepo.updateTask(taskId, params);
+		let updated = this.config.taskRepo.updateTask(taskId, params);
 		if (updated) {
 			await this.safeOnTaskUpdated(spaceId, updated, opts);
 
@@ -2156,7 +2156,7 @@ export class SpaceRuntime {
 			if (params.status === 'blocked') {
 				const reason = params.result ?? updated.result ?? 'Task blocked';
 				if (params.blockReason === 'dependency_added') {
-					await this.stopBlockedWorkflowTask(spaceId, updated, reason);
+					updated = await this.stopBlockedWorkflowTask(spaceId, updated, reason);
 					await this.safeNotify({
 						kind: 'task_blocked',
 						spaceId,
