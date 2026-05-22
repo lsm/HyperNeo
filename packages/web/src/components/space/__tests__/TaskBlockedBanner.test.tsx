@@ -97,6 +97,8 @@ describe('TaskBlockedBanner', () => {
 		// attribute instead of the legacy hand-rolled class string.
 		expect(banner.getAttribute('data-tone')).toBe('amber');
 		expect(banner.textContent).toContain('Blocked');
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 	});
 
 	it('renders a minimal "reply via composer" hint for human_input_requested', () => {
@@ -111,6 +113,8 @@ describe('TaskBlockedBanner', () => {
 		const banner = getByTestId('task-blocked-banner');
 		expect(banner.getAttribute('data-reason')).toBe('human_input_requested');
 		expect(banner.textContent).toContain('composer');
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 		// Deliberately not rendering task.result inside the banner.
 		expect(banner.textContent).not.toContain('What color scheme');
 	});
@@ -133,7 +137,7 @@ describe('TaskBlockedBanner', () => {
 		expect(banner.textContent).toContain('Gate Pending Approval');
 	});
 
-	it('renders execution_failed banner with Resume button', () => {
+	it('renders execution_failed banner with Reopen and Cancel buttons', () => {
 		const task = makeTask({
 			blockReason: 'execution_failed',
 			result: 'Process exited with code 1',
@@ -142,18 +146,20 @@ describe('TaskBlockedBanner', () => {
 		const banner = getByTestId('task-blocked-banner');
 		expect(banner.getAttribute('data-tone')).toBe('red');
 		expect(banner.textContent).toContain('Execution Failed');
-		expect(getByTestId('task-resume-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 	});
 
-	it('renders agent_crashed banner with Resume button', () => {
+	it('renders agent_crashed banner with Reopen and Cancel buttons', () => {
 		const task = makeTask({ blockReason: 'agent_crashed' });
 		const { getByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
 		const banner = getByTestId('task-blocked-banner');
 		expect(banner.textContent).toContain('Agent Crashed');
-		expect(getByTestId('task-resume-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 	});
 
-	it('renders dependency_failed banner without action buttons', () => {
+	it('renders dependency_failed banner with Reopen and Cancel buttons', () => {
 		const task = makeTask({ blockReason: 'dependency_failed' });
 		const { getByTestId, queryByTestId } = render(
 			<TaskBlockedBanner task={task} spaceId="space-1" />
@@ -161,27 +167,29 @@ describe('TaskBlockedBanner', () => {
 		const banner = getByTestId('task-blocked-banner');
 		expect(banner.getAttribute('data-tone')).toBe('gray');
 		expect(banner.textContent).toContain('Blocked by Dependency');
-		expect(queryByTestId('task-resume-btn')).toBeNull();
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 		expect(queryByTestId('gate-review-btn')).toBeNull();
 	});
 
-	it('renders workflow_invalid banner without action buttons', () => {
+	it('renders workflow_invalid banner with Reopen and Cancel buttons', () => {
 		const task = makeTask({ blockReason: 'workflow_invalid' });
-		const { getByTestId, queryByTestId } = render(
-			<TaskBlockedBanner task={task} spaceId="space-1" />
-		);
+		const { getByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
 		expect(getByTestId('task-blocked-banner').textContent).toContain('Invalid Workflow');
-		expect(queryByTestId('task-resume-btn')).toBeNull();
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 	});
 
-	it('Resume button calls onStatusTransition with in_progress', () => {
+	it('Reopen and Cancel buttons call onStatusTransition', () => {
 		const onTransition = vi.fn();
 		const task = makeTask({ blockReason: 'execution_failed' });
 		const { getByTestId } = render(
 			<TaskBlockedBanner task={task} spaceId="space-1" onStatusTransition={onTransition} />
 		);
-		fireEvent.click(getByTestId('task-resume-btn'));
+		fireEvent.click(getByTestId('task-blocked-reopen-btn'));
 		expect(onTransition).toHaveBeenCalledWith('in_progress');
+		fireEvent.click(getByTestId('task-blocked-cancel-btn'));
+		expect(onTransition).toHaveBeenCalledWith('cancelled');
 	});
 
 	it('gate Review & Approve opens GateArtifactsView', async () => {
@@ -242,7 +250,7 @@ describe('TaskBlockedBanner', () => {
 		expect(queryByTestId('task-blocked-message')).toBeNull();
 	});
 
-	it('shows Resume fallback when gate_rejected but no pending gate found', async () => {
+	it('shows Reopen and Cancel when gate_rejected but no pending gate found', async () => {
 		mockListGateData.mockResolvedValue([]);
 		const task = makeTask({
 			blockReason: 'gate_rejected',
@@ -255,10 +263,11 @@ describe('TaskBlockedBanner', () => {
 		await waitFor(() => {
 			expect(queryByTestId('gate-review-btn')).toBeNull();
 		});
-		expect(getByTestId('gate-resume-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 	});
 
-	it('shows Resume immediately when gate_rejected with no workflowRunId', () => {
+	it('shows Reopen and Cancel immediately when gate_rejected with no workflowRunId', () => {
 		const task = makeTask({
 			blockReason: 'gate_rejected',
 			workflowRunId: null,
@@ -266,22 +275,25 @@ describe('TaskBlockedBanner', () => {
 		const { getByTestId, queryByTestId } = render(
 			<TaskBlockedBanner task={task} spaceId="space-1" />
 		);
-		// No fetch attempted, no loading, so Resume fallback renders immediately
-		expect(getByTestId('gate-resume-btn')).toBeTruthy();
+		// No fetch attempted, no loading, so blocked actions render immediately.
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 		expect(queryByTestId('gate-review-btn')).toBeNull();
 		expect(mockListGateData).not.toHaveBeenCalled();
 	});
 
-	it('does not flash Resume button while gate data is loading', () => {
+	it('does not flash Review & Approve while gate data is loading', () => {
 		// Never resolve — simulates in-flight fetch
 		mockListGateData.mockReturnValue(new Promise(() => {}));
 		const task = makeTask({
 			blockReason: 'gate_rejected',
 			workflowRunId: 'run-1',
 		});
-		const { queryByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
-		// Neither button should show while loading
-		expect(queryByTestId('gate-resume-btn')).toBeNull();
+		const { getByTestId, queryByTestId } = render(
+			<TaskBlockedBanner task={task} spaceId="space-1" />
+		);
+		expect(getByTestId('task-blocked-reopen-btn')).toBeTruthy();
+		expect(getByTestId('task-blocked-cancel-btn')).toBeTruthy();
 		expect(queryByTestId('gate-review-btn')).toBeNull();
 	});
 

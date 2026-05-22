@@ -10,6 +10,8 @@ import { cn } from '../lib/utils.ts';
 interface SectionSwitcherProps {
 	onClose?: () => void;
 	variant?: 'default' | 'titlebar';
+	showDivider?: boolean;
+	compact?: boolean;
 }
 
 const SECTIONS = [
@@ -17,7 +19,12 @@ const SECTIONS = [
 	{ id: 'spaces', label: 'Spaces', onClick: navigateToSpaces },
 ] as const;
 
-export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitcherProps) {
+export function SectionSwitcher({
+	onClose,
+	variant = 'default',
+	showDivider = true,
+	compact = false,
+}: SectionSwitcherProps) {
 	const navSection = navSectionSignal.value;
 	const isTitlebar = variant === 'titlebar';
 	const openQuickOpen = () => {
@@ -32,14 +39,14 @@ export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitche
 				'flex items-center gap-2',
 				isTitlebar
 					? 'min-w-0 flex-1'
-					: `h-[52px] px-3 border-b ${borderColors.ui.default} md:h-[52px]`
+					: cn('h-[52px] px-3 md:h-[52px]', showDivider && `border-b ${borderColors.ui.default}`)
 			)}
 			data-tauri-drag-region={isTitlebar ? true : undefined}
 		>
 			<div
 				class={cn(
 					'grid w-[136px] grid-cols-2 flex-none rounded-full bg-dark-900/70 p-0.5',
-					isTitlebar ? 'h-6 bg-dark-950/70' : 'h-7'
+					isTitlebar || compact ? 'h-6 bg-dark-950/70' : 'h-7'
 				)}
 				role="tablist"
 			>
@@ -73,6 +80,7 @@ export function SectionSwitcher({ onClose, variant = 'default' }: SectionSwitche
 				onClick={openQuickOpen}
 				class={cn(
 					'ml-auto flex h-8 w-8 flex-none items-center justify-center rounded-full text-gray-400 transition-colors',
+					compact && 'h-7 w-7',
 					'hover:bg-white/5 hover:text-gray-100'
 				)}
 				title="Quick Open"

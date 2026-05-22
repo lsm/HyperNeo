@@ -14,7 +14,7 @@ export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> 
 	// the PostApprovalRouter is unable to advance a task automatically.
 	approved: ['done', 'in_progress', 'archived'],
 	done: ['in_progress', 'archived'],
-	blocked: ['open', 'in_progress', 'review', 'archived'],
+	blocked: ['open', 'in_progress', 'review', 'cancelled', 'archived'],
 	cancelled: ['open', 'in_progress', 'done', 'archived'],
 	archived: [],
 };
@@ -50,6 +50,7 @@ export const TRANSITION_LABELS: Record<string, string> = {
 	'blocked->open': 'Reopen',
 	'blocked->in_progress': 'Resume',
 	'blocked->review': 'Submit for Review',
+	'blocked->cancelled': 'Cancel',
 	'blocked->archived': 'Archive',
 	'cancelled->open': 'Reopen',
 	'cancelled->in_progress': 'Resume',

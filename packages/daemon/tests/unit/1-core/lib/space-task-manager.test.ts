@@ -577,11 +577,12 @@ describe('SpaceTaskManager', () => {
 			]);
 		});
 
-		it('blocked allows restart, review, and archival', () => {
+		it('blocked allows restart, review, cancellation, and archival', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual([
 				'open',
 				'in_progress',
 				'review',
+				'cancelled',
 				'archived',
 			]);
 		});

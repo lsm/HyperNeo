@@ -1785,6 +1785,13 @@ class SpaceStore {
 		});
 	}
 
+	async cancelWorkflowRun(runId: string): Promise<void> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('spaceWorkflowRun.cancel', { id: runId });
+	}
+
 	/**
 	 * Publish a draft task — transition from `draft` to `open`.
 	 * Only draft tasks can be published. After publishing, the orchestrator

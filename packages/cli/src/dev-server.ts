@@ -5,7 +5,6 @@ import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { networkInterfaces } from 'node:os';
 import { createLogger } from '@neokai/shared';
 import {
 	findAvailablePort,
@@ -18,26 +17,64 @@ import { ensureBuiltinSkills } from './skill-utils';
 
 const log = createLogger('kai:cli:dev-server');
 
-/**
- * Find the LAN IP address (prefers en0).
- */
-function getLanIp(): string | undefined {
-	const nets = networkInterfaces();
-	for (const name of ['en0', 'en1', 'eth0', 'Ethernet']) {
-		const net = nets[name];
-		if (!net) continue;
-		for (const info of net) {
-			if (info.family === 'IPv4' && !info.internal) return info.address;
-		}
-	}
-	// Fallback: any non-internal IPv4
-	for (const entries of Object.values(nets)) {
-		for (const info of entries ?? []) {
-			if (info.family === 'IPv4' && !info.internal) return info.address;
-		}
-	}
-	return undefined;
+const VITE_CLIENT_SCRIPT_RE =
+	/<script\b(?=[^>]*\btype=(["'])module\1)(?=[^>]*\bsrc=(["'])\/@vite\/client\2)[^>]*>\s*<\/script>\s*/i;
+
+function stripViteClientScript(html: string): string {
+	return html.replace(VITE_CLIENT_SCRIPT_RE, '');
 }
+
+function responseHeadersWithoutContentLength(headers: Headers): Headers {
+	const nextHeaders = new Headers(headers);
+	nextHeaders.delete('content-length');
+	return nextHeaders;
+}
+
+const VITE_CLIENT_SHIM = [
+	"import '/@vite/env';",
+	'const hotData = new Map();',
+	'const styleElements = new Map();',
+	'export function createHotContext(ownerPath) {',
+	'  const data = hotData.get(ownerPath) ?? {};',
+	'  hotData.set(ownerPath, data);',
+	'  return {',
+	'    data,',
+	'    accept() {},',
+	'    acceptExports() {},',
+	'    dispose() {},',
+	'    prune() {},',
+	'    decline() {},',
+	'    invalidate() {},',
+	'    on() {},',
+	'    off() {},',
+	'    send() {},',
+	'  };',
+	'}',
+	'export function updateStyle(id, content) {',
+	'  let style = styleElements.get(id);',
+	'  if (!style) {',
+	'    style = document.querySelector(`style[data-vite-dev-id="${id}"]`);',
+	'  }',
+	'  if (!style) {',
+	"    style = document.createElement('style');",
+	"    style.setAttribute('type', 'text/css');",
+	"    style.setAttribute('data-vite-dev-id', id);",
+	'    document.head.appendChild(style);',
+	'  }',
+	'  style.textContent = content;',
+	'  styleElements.set(id, style);',
+	'}',
+	'export function removeStyle(id) {',
+	'  styleElements.get(id)?.remove();',
+	'  styleElements.delete(id);',
+	'}',
+	'export function injectQuery(url, queryToInject) {',
+	"  if (url[0] !== '.' && url[0] !== '/') return url;",
+	"  const pathname = url.replace(/[?#].*$/, '');",
+	"  const { search, hash } = new URL(url, 'http://vite.dev');",
+	"  return `${pathname}${search ? `${search}&${queryToInject.slice(1)}` : queryToInject}${hash || ''}`;",
+	'}',
+].join('\n');
 
 export async function startDevServer(config: Config) {
 	log.info('🔧 Starting unified development server...');
@@ -135,10 +172,6 @@ export async function startDevServer(config: Config) {
 	const vitePort = await findAvailablePort();
 	log.info(`   Found available Vite port: ${vitePort}`);
 
-	// Detect LAN IP so Vite generates correct HMR URLs for remote access
-	const lanIp = getLanIp();
-	const hmrHost = lanIp ?? 'localhost';
-
 	vite = await createViteServer({
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
@@ -146,11 +179,11 @@ export async function startDevServer(config: Config) {
 			host: '0.0.0.0',
 			port: vitePort,
 			strictPort: false,
-			hmr: {
-				host: hmrHost,
-				port: vitePort,
-				path: '/__vite_hmr',
-			},
+			// The unified dev server is often stopped while the browser stays open.
+			// Vite's HMR client aggressively reconnects after shutdown, which can
+			// create thousands of failed localhost requests. Keep Vite's dev
+			// transforms, but require a manual browser refresh for UI changes.
+			hmr: false,
 		},
 	});
 	await vite.listen();
@@ -174,23 +207,6 @@ export async function startDevServer(config: Config) {
 				return createCorsPreflightResponse();
 			}
 
-			// HMR WebSocket — bridge to internal Vite server
-			if (url.pathname === '/__vite_hmr' || url.pathname.startsWith('/__vite_hmr/')) {
-				const isUpgrade = req.headers.get('upgrade')?.toLowerCase() === 'websocket';
-				if (isUpgrade) {
-					const viteWsUrl = `ws://localhost:${vitePort}${url.pathname}${url.search}`;
-					const upstream = new WebSocket(viteWsUrl);
-
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					const upgraded = (server as any).upgrade(req, {
-						data: { type: 'hmr', upstream },
-					});
-					if (upgraded) return;
-					upstream.close();
-				}
-				return new Response('HMR WebSocket upgrade failed', { status: 500 });
-			}
-
 			// WebSocket upgrade at /ws (daemon WebSocket)
 			if (isWebSocketPath(url.pathname)) {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -209,6 +225,15 @@ export async function startDevServer(config: Config) {
 
 			// Proxy all other requests to Vite dev server
 			try {
+				if (url.pathname === '/@vite/client') {
+					return new Response(VITE_CLIENT_SHIM, {
+						headers: {
+							'content-type': 'text/javascript',
+							'cache-control': 'no-cache',
+						},
+					});
+				}
+
 				const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
 
 				// Forward request with original headers
@@ -225,6 +250,15 @@ export async function startDevServer(config: Config) {
 				}
 
 				const viteResponse = await fetch(viteUrl, fetchOptions);
+				const contentType = viteResponse.headers.get('content-type') ?? '';
+
+				if (contentType.includes('text/html')) {
+					const html = await viteResponse.text();
+					return new Response(stripViteClientScript(html), {
+						status: viteResponse.status,
+						headers: responseHeadersWithoutContentLength(viteResponse.headers),
+					});
+				}
 
 				// Create response with Vite's response
 				return new Response(viteResponse.body, {
@@ -238,33 +272,14 @@ export async function startDevServer(config: Config) {
 		},
 
 		websocket: {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- combined handler for daemon + HMR WS
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bun's WebSocket data is shaped by upgrade()
 			open(ws: any) {
-				if (ws.data.type === 'hmr') {
-					const upstream = ws.data.upstream as WebSocket;
-					upstream.onmessage = (e) => ws.send(e.data as string);
-					upstream.onclose = () => ws.close();
-					upstream.onerror = () => ws.close();
-					return;
-				}
 				wsHandlers.open(ws);
 			},
 			message(ws: any, msg: string | Buffer) {
-				if (ws.data.type === 'hmr') {
-					const upstream = ws.data.upstream as WebSocket;
-					if (upstream.readyState === WebSocket.OPEN) {
-						upstream.send(msg as string);
-					}
-					return;
-				}
 				wsHandlers.message(ws, msg);
 			},
 			close(ws: any) {
-				if (ws.data.type === 'hmr') {
-					const upstream = ws.data.upstream as WebSocket;
-					upstream.close();
-					return;
-				}
 				wsHandlers.close(ws);
 			},
 		},
@@ -277,6 +292,6 @@ export async function startDevServer(config: Config) {
 
 	console.log(`\n✨ Unified development server running!`);
 	printServerUrls(config.port, config.host);
-	console.log(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied via /__vite_hmr)`);
+	console.log(`   🔄 Vite dev transforms enabled; refresh the browser after UI changes`);
 	console.log(`\n📝 Press Ctrl+C to stop\n`);
 }

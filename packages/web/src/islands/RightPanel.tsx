@@ -2,20 +2,32 @@ import { useEffect, useState } from 'preact/hooks';
 import type { Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_LOBBY_FEATURES, DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { GitPanel } from '../components/GitPanel.tsx';
+import { GoalDetailPanel } from '../components/space/GoalDetailPanel.tsx';
+import { ScopeDetailPanel } from '../components/space/ScopeDetailPanel.tsx';
+import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { sessionStore } from '../lib/session-store.ts';
-import { type RightPanelTarget, rightPanelTargetSignal } from '../lib/signals.ts';
+import {
+	currentSpaceGoalIdSignal,
+	currentSpaceIdSignal,
+	currentSpaceScopeIdSignal,
+	currentSpaceTaskIdSignal,
+	currentSpaceViewModeSignal,
+	navSectionSignal,
+	type RightPanelTarget,
+	rightPanelTargetSignal,
+} from '../lib/signals.ts';
 import { cn } from '../lib/utils.ts';
 
 const TRANSITION_MS = 200;
-const DEFAULT_PANEL_WIDTH = 320;
+const DEFAULT_PANEL_WIDTH = 440;
 const MIN_PANEL_WIDTH = 280;
-const MAX_PANEL_WIDTH = 640;
+const MAX_PANEL_WIDTH = 820;
 const PANEL_WIDTH_STORAGE_KEY = 'neokai_right_panel_width';
 
 function getMaxPanelWidth(): number {
 	if (typeof window === 'undefined') return MAX_PANEL_WIDTH;
-	return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, Math.floor(window.innerWidth * 0.45)));
+	return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, Math.floor(window.innerWidth * 0.6)));
 }
 
 function clampPanelWidth(width: number): number {
@@ -65,33 +77,92 @@ function sessionFeatures(session: Session | null, sessionId: string): SessionFea
 	return DEFAULT_WORKER_FEATURES;
 }
 
-export function RightPanelToggle() {
+/**
+ * Resolve the right-panel target for the current view context, or null when no
+ * panel applies. Sessions expose Git status; the Space Goals/Forge views expose
+ * the selected goal/scope.
+ */
+function useToggleTarget(): RightPanelTarget | null {
 	const activeSessionId = sessionStore.activeSessionId.value;
 	const session = sessionStore.sessionInfo.value;
 	const activeSession = session?.id === activeSessionId ? session : null;
-	const target = rightPanelTargetSignal.value;
 	const worktreeEnabled = activeSessionId
 		? sessionFeatures(activeSession, activeSessionId).worktree
 		: false;
-	const rightPanelOpen = target !== null;
 
+	const inSpace = navSectionSignal.value === 'spaces' && currentSpaceIdSignal.value !== null;
+	const spaceId = currentSpaceIdSignal.value;
+	const viewMode = currentSpaceViewModeSignal.value;
+	const goalId = currentSpaceGoalIdSignal.value;
+	const scopeId = currentSpaceScopeIdSignal.value;
+	const taskId = currentSpaceTaskIdSignal.value;
+
+	if (activeSessionId && worktreeEnabled) {
+		return { type: 'git', sessionId: activeSessionId };
+	}
+	if (inSpace && spaceId && taskId) {
+		return { type: 'task', spaceId, taskId, tab: 'artifacts' };
+	}
+	if (inSpace && spaceId && viewMode === 'goals' && goalId) {
+		return { type: 'goal', spaceId, goalId };
+	}
+	if (inSpace && spaceId && viewMode === 'forge' && scopeId) {
+		return { type: 'scope', spaceId, scopeId };
+	}
+	return null;
+}
+
+/** True when `target` still belongs to the current view context. */
+function targetMatchesContext(target: RightPanelTarget, toggleTarget: RightPanelTarget | null) {
+	if (!toggleTarget) return false;
+	if (target.type !== toggleTarget.type) return false;
+	// Git follows the active session; if that changed, the panel should re-point.
+	if (target.type === 'git') {
+		return toggleTarget.type === 'git' && target.sessionId === toggleTarget.sessionId;
+	}
+	if (target.type === 'goal') {
+		return (
+			toggleTarget.type === 'goal' &&
+			target.spaceId === toggleTarget.spaceId &&
+			target.goalId === toggleTarget.goalId
+		);
+	}
+	if (target.type === 'task') {
+		return (
+			toggleTarget.type === 'task' &&
+			target.spaceId === toggleTarget.spaceId &&
+			target.taskId === toggleTarget.taskId
+		);
+	}
+	return (
+		toggleTarget.type === 'scope' &&
+		target.spaceId === toggleTarget.spaceId &&
+		target.scopeId === toggleTarget.scopeId
+	);
+}
+
+export function RightPanelToggle() {
+	const target = rightPanelTargetSignal.value;
+	const toggleTarget = useToggleTarget();
+	const rightPanelOpen = target !== null && targetMatchesContext(target, toggleTarget);
+
+	// Drop a panel whose context has gone away (view switch, session change) so a
+	// goal panel never lingers over the Tasks view, etc.
 	useEffect(() => {
 		if (!target) return;
-		if (!activeSessionId || !worktreeEnabled) {
+		if (!toggleTarget) {
 			rightPanelTargetSignal.value = null;
 			return;
 		}
-		if (target.type === 'git' && target.sessionId !== activeSessionId) {
-			rightPanelTargetSignal.value = { type: 'git', sessionId: activeSessionId };
+		if (!targetMatchesContext(target, toggleTarget)) {
+			rightPanelTargetSignal.value = toggleTarget.type === target.type ? toggleTarget : null;
 		}
-	}, [activeSessionId, target, worktreeEnabled]);
+	}, [target, toggleTarget]);
 
-	if (!activeSessionId || !worktreeEnabled) return null;
+	if (!toggleTarget) return null;
 
 	const handleToggle = () => {
-		rightPanelTargetSignal.value = rightPanelOpen
-			? null
-			: { type: 'git', sessionId: activeSessionId };
+		rightPanelTargetSignal.value = rightPanelOpen ? null : toggleTarget;
 	};
 
 	return (
@@ -220,7 +291,7 @@ export function RightPanel() {
 					'fixed right-0 top-0 z-30 h-safe-screen overflow-hidden bg-transparent lg:relative lg:top-auto lg:z-auto lg:h-full lg:flex-shrink-0 lg:bg-app-content',
 					!resizing && 'transition-[width] duration-200 ease-out'
 				)}
-				style={{ width: open ? panelWidthValue : '0px' }}
+				style={{ width: open && renderedTarget ? panelWidthValue : '0px' }}
 			>
 				<div
 					class={cn(
@@ -244,6 +315,19 @@ export function RightPanel() {
 						<div class="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-white/20 group-focus-visible:bg-white/30" />
 					</div>
 					{renderedTarget?.type === 'git' && <GitPanel sessionId={renderedTarget.sessionId} />}
+					{renderedTarget?.type === 'goal' && (
+						<GoalDetailPanel spaceId={renderedTarget.spaceId} goalId={renderedTarget.goalId} />
+					)}
+					{renderedTarget?.type === 'scope' && (
+						<ScopeDetailPanel spaceId={renderedTarget.spaceId} scopeId={renderedTarget.scopeId} />
+					)}
+					{renderedTarget?.type === 'task' && (
+						<TaskAuxiliaryPanel
+							spaceId={renderedTarget.spaceId}
+							taskId={renderedTarget.taskId}
+							tab={renderedTarget.tab}
+						/>
+					)}
 				</div>
 			</div>
 		</>

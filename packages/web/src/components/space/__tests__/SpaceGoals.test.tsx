@@ -39,6 +39,7 @@ vi.mock('../../../lib/utils', () => ({
 	getRelativeTime: () => '1m ago',
 }));
 
+import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
 import { SpaceGoals } from '../SpaceGoals';
 
@@ -176,12 +177,18 @@ describe('SpaceGoals', () => {
 		mockUpdateGoal.mockImplementation(async (goalId: string, params: Partial<SpaceGoal>) =>
 			makeGoal({ id: goalId, title: params.title ?? 'Updated goal' })
 		);
+		currentSpaceGoalIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
 		vi.clearAllMocks();
 	});
 
-	afterEach(() => cleanup());
+	afterEach(() => {
+		cleanup();
+		currentSpaceGoalIdSignal.value = null;
+		rightPanelTargetSignal.value = null;
+	});
 
-	it('renders goal cards, detail state, linked tasks, and recent events', async () => {
+	it('renders goal cards and seeds the selected goal for the right panel', async () => {
 		const goal = makeGoal();
 		mockGoals.value = [goal];
 		mockTasks.value = [makeTask()];
@@ -189,45 +196,34 @@ describe('SpaceGoals', () => {
 
 		render(<SpaceGoals spaceId="space-1" />);
 
-		expect(await screen.findAllByText('Keep release healthy')).toHaveLength(2);
+		expect(await screen.findByText('Keep release healthy')).toBeTruthy();
 		expect(screen.getByText('45% complete')).toBeTruthy();
-		expect(screen.getAllByText('Builds are green')).toHaveLength(2);
-		expect(screen.getByText('Auto trigger next')).toBeTruthy();
-		expect(screen.getByText('Enabled')).toBeTruthy();
-		expect(screen.getByText('Idle')).toBeTruthy();
-		expect(screen.getByText('open_bugs')).toBeTruthy();
-		expect(screen.getByText('Watch CI')).toBeTruthy();
-		expect(screen.getAllByText('Investigate flaky build')).toHaveLength(2);
-		expect(screen.getByText('Task completed')).toBeTruthy();
+		expect(screen.getByText('Builds are green')).toBeTruthy();
+		expect(screen.getByText('Recurring')).toBeTruthy();
+		await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe(goal.id));
 		expect(mockListGoals).toHaveBeenCalledWith({ includeArchived: false });
-		expect(mockListGoalEvents).toHaveBeenCalledWith(goal.id);
 	});
 
-	it('runs pause, resume, archive, and immediate task actions', async () => {
-		mockGoals.value = [makeGoal({ status: 'active' })];
+	it('writes the current goal selection for the right-panel toggle', async () => {
+		mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
 
-		render(<SpaceGoals spaceId="space-1" />);
+		const { unmount } = render(<SpaceGoals spaceId="space-1" />);
 
-		fireEvent.click(await screen.findByText('Pause'));
-		await waitFor(() => expect(mockPauseGoal).toHaveBeenCalledWith('goal-1'));
+		await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe('goal-1'));
+		fireEvent.click(screen.getByRole('button', { name: /Second goal/ }));
+		expect(currentSpaceGoalIdSignal.value).toBe('goal-2');
 
-		mockGoals.value = [makeGoal({ status: 'paused' })];
-		fireEvent.click(await screen.findByText('Resume'));
-		await waitFor(() => expect(mockResumeGoal).toHaveBeenCalledWith('goal-1'));
+		rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-2' };
+		unmount();
 
-		mockGoals.value = [makeGoal({ status: 'active' })];
-		fireEvent.click(await screen.findByText('Create task now'));
-		await waitFor(() => expect(mockCreateImmediateGoalTask).toHaveBeenCalledWith('goal-1'));
-		expect(mockToastSuccess).toHaveBeenCalledWith('Goal task created');
-
-		fireEvent.click(await screen.findByText('Archive'));
-		await waitFor(() => expect(mockArchiveGoal).toHaveBeenCalledWith('goal-1'));
+		expect(currentSpaceGoalIdSignal.value).toBeNull();
+		expect(rightPanelTargetSignal.value).toBeNull();
 	});
 
 	it('creates a goal from the dialog payload', async () => {
 		render(<SpaceGoals spaceId="space-1" />);
 
-		fireEvent.click(await screen.findByText('Create'));
+		fireEvent.click(await screen.findByText('Create goal'));
 		fireEvent.input(screen.getByPlaceholderText('Keep release train healthy'), {
 			target: { value: 'Ship beta' },
 		});

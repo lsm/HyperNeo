@@ -33,6 +33,43 @@ interface TaskSessionChatComposerProps {
 	) => Promise<boolean>;
 }
 
+export function TaskCanvasToggleButton({
+	active,
+	onClick,
+	class: className,
+}: {
+	active: boolean;
+	onClick: () => void;
+	class?: string;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			class={cn(
+				'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-95',
+				active
+					? 'border-sky-400/40 bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/30'
+					: 'border-dark-600 bg-dark-850/90 text-gray-400 hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-sky-200',
+				className
+			)}
+			data-testid="canvas-toggle"
+			aria-label={active ? 'Hide canvas' : 'Show canvas'}
+			aria-pressed={active}
+			title={active ? 'Hide canvas' : 'Show canvas'}
+		>
+			<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width={2}
+					d="M5.5 5.5h13v13h-13z"
+				/>
+			</svg>
+		</button>
+	);
+}
+
 export function TaskSessionChatComposer({
 	mentionCandidates,
 	targets,
@@ -221,7 +258,7 @@ export function TaskSessionChatComposer({
 					selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'
 				}
 				inputLeadingElement={targetPicker}
-				inputLeadingPaddingClass="pl-12"
+				inputLeadingPaddingClass={targetPicker ? 'pl-12' : undefined}
 				onDraftActiveChange={onDraftActiveChange}
 				errorMessage={errorMessage}
 			/>

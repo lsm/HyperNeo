@@ -25,7 +25,7 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
 		case 'connected':
 			dotColor = 'bg-green-500';
 			statusLabel = 'Connection ready';
-			displayLabel = 'Ready';
+			displayLabel = '';
 			showPulse = true;
 			break;
 		case 'connecting':
@@ -56,6 +56,7 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
 
 	const isConnected = state === 'connected';
 	const canReconnect = state === 'disconnected' || state === 'error' || state === 'failed';
+	const shouldShowLabel = showLabel && displayLabel !== '';
 
 	const handleClick = () => {
 		if (canReconnect) {
@@ -70,10 +71,10 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
 			aria-label={statusLabel}
 			aria-pressed={isConnected}
 			class={`
-				${showLabel ? 'h-9 px-2.5 gap-2' : 'h-9 w-9'}
-				flex items-center justify-center rounded-lg text-sm text-gray-400
-				transition-colors
-				${canReconnect ? 'cursor-pointer hover:bg-dark-800' : 'cursor-default'}
+					${shouldShowLabel ? 'h-9 px-2.5 gap-2' : 'h-9 w-9'}
+					flex items-center justify-center rounded-lg text-sm text-gray-400
+					transition-colors
+					${canReconnect ? 'cursor-pointer hover:bg-dark-800' : 'cursor-default'}
 			`}
 			title={statusLabel}
 		>
@@ -87,7 +88,9 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
 					/>
 				)}
 			</div>
-			{showLabel && <span class="hidden min-w-0 truncate text-xs sm:inline">{displayLabel}</span>}
+			{shouldShowLabel && (
+				<span class="hidden min-w-0 truncate text-xs sm:inline">{displayLabel}</span>
+			)}
 		</button>
 	);
 }

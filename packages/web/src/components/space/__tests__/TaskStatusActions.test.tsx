@@ -39,8 +39,14 @@ describe('VALID_TASK_TRANSITIONS', () => {
 		expect(VALID_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
 	});
 
-	it('blocked can transition to open, in_progress, review, archived', () => {
-		expect(VALID_TASK_TRANSITIONS.blocked).toEqual(['open', 'in_progress', 'review', 'archived']);
+	it('blocked can transition to open, in_progress, review, cancelled, archived', () => {
+		expect(VALID_TASK_TRANSITIONS.blocked).toEqual([
+			'open',
+			'in_progress',
+			'review',
+			'cancelled',
+			'archived',
+		]);
 	});
 
 	it('cancelled can transition to open, in_progress, done, archived', () => {
@@ -89,6 +95,7 @@ describe('getTransitionActions', () => {
 			{ target: 'open', label: 'Reopen' },
 			{ target: 'in_progress', label: 'Resume' },
 			{ target: 'review', label: 'Submit for Review' },
+			{ target: 'cancelled', label: 'Cancel' },
 			{ target: 'archived', label: 'Archive' },
 		]);
 	});

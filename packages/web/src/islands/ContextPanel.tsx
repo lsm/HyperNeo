@@ -371,21 +371,26 @@ export function ContextPanel() {
 					<SectionSwitcher onClose={handlePanelClose} variant="titlebar" />
 				</div>
 				<div class="desktop-standard-switcher">
-					<SectionSwitcher onClose={handlePanelClose} />
+					<SectionSwitcher
+						onClose={handlePanelClose}
+						showDivider={!isSpaceDetail}
+						compact={isSpaceDetail}
+					/>
 				</div>
 
 				{/* Space-detail header — back / name / configure (desktop) */}
 				{isSpaceDetail && (
 					<div
-						class={`hidden md:flex px-4 h-[52px] items-center gap-1 border-b ${borderColors.ui.default}`}
+						class={`hidden h-9 items-center gap-1 border-b px-4 md:flex ${borderColors.ui.default}`}
 					>
 						<button
 							type="button"
 							onClick={() => navigateToSpaces()}
-							class="p-1 hover:bg-white/5 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+							class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
 							title="Back to Spaces"
+							aria-label="Back to Spaces"
 						>
-							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
