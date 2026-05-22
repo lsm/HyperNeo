@@ -32,7 +32,7 @@ function isCoordinatorAgent(agent: SpaceAgent): boolean {
 }
 
 function isConnectionUnavailableError(error: unknown): boolean {
-	return error instanceof Error && error.message === 'Not connected';
+	return error instanceof Error && error.message.startsWith('Not connected');
 }
 
 function AgentStat({ label, value }: { label: string; value: string | number }) {

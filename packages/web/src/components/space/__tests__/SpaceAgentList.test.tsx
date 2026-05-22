@@ -380,9 +380,12 @@ describe('SpaceAgentList', () => {
 		expect(mockListSchedules).toHaveBeenCalledOnce();
 	});
 
-	it('retries loading schedules when the connection recovers', async () => {
+	it.each([
+		'Not connected',
+		'Not connected to transport',
+	])('retries loading schedules when the connection recovers after %s', async (message) => {
 		let reconnect: (() => void) | undefined;
-		mockListSchedules.mockRejectedValueOnce(new Error('Not connected'));
+		mockListSchedules.mockRejectedValueOnce(new Error(message));
 		mockOnceConnected.mockImplementation((callback) => {
 			reconnect = callback;
 			return vi.fn();
