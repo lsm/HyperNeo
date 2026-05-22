@@ -509,6 +509,64 @@ describe('Forge evidence capture on task completion', () => {
 		);
 	});
 
+	it('clears stale trace diagnostics when later completion generates trace evidence', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Retried trace scope',
+			objective: 'Avoid stale trace diagnostics',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Retried trace task',
+			description: 'First clean, then failed trace',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchange(
+			task.id,
+			'session-retry',
+			'tool-test-pass-first',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: '1 pass',
+			}
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'First clean pass' });
+		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.some((item) => item.kind === 'session' && item.metadata.status === 'no_friction')
+		).toBe(true);
+		insertToolExchange(
+			task.id,
+			'session-retry',
+			'tool-test-fail-later',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Error: later retry failed',
+			}
+		);
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		expect(
+			evidence.some(
+				(item) =>
+					item.kind === 'session' &&
+					item.metadata.traceDiagnostic === true &&
+					item.metadata.status !== 'generated'
+			)
+		).toBe(false);
+	});
+
 	it('records a trace diagnostic when completed task trace has no friction', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,

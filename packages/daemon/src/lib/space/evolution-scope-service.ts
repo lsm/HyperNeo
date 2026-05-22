@@ -473,6 +473,8 @@ export class EvolutionScopeService {
 			const result = service.captureForTaskWithDiagnostic({ scopeId, taskId });
 			if (result.evidence.length === 0) {
 				this.createTraceDiagnosticEvidence(scopeId, taskId, result.diagnostic);
+			} else {
+				this.clearTraceDiagnosticEvidence(scopeId, taskId);
 			}
 			return result;
 		} catch (err) {
@@ -496,6 +498,30 @@ export class EvolutionScopeService {
 			metadata: {
 				traceDiagnostic: true,
 				...diagnostic,
+			},
+		});
+	}
+
+	private clearTraceDiagnosticEvidence(scopeId: string, taskId: string): void {
+		const existing = this.deps.evolutionRepo
+			.listEvidence(scopeId)
+			.find(
+				(item) =>
+					item.kind === 'session' &&
+					item.sourceId === taskId &&
+					item.metadata.autoCaptured === true &&
+					item.metadata.traceDiagnostic === true
+			);
+		if (!existing) return;
+		this.deps.evolutionRepo.updateEvidence(existing.id, {
+			summary: 'Trace-derived evidence generated',
+			metadata: {
+				...existing.metadata,
+				traceDiagnostic: true,
+				status: 'generated',
+				message: 'Trace-derived evidence generated',
+				evidenceCount: 0,
+				clearedByTraceEvidence: true,
 			},
 		});
 	}
