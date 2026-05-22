@@ -1479,7 +1479,7 @@ describe('SpaceTaskPane — composer canvas toggle layout', () => {
 		cleanup();
 	});
 
-	it('renders the canvas toggle in the composer instead of the header', () => {
+	it('renders the canvas toggle in the content surface instead of the composer or header', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId, queryByTestId } = render(
@@ -1492,10 +1492,11 @@ describe('SpaceTaskPane — composer canvas toggle layout', () => {
 		expect(toggle.className).toContain('rounded-full');
 
 		const composer = getByTestId('task-session-chat-composer');
-		expect(composer.contains(toggle)).toBe(true);
+		expect(composer.contains(toggle)).toBe(false);
+		expect(getByTestId('task-pane-content').contains(toggle)).toBe(true);
 	});
 
-	it('composer canvas toggle opens canvas and the canvas overlay returns to thread', () => {
+	it('content canvas toggle opens canvas and the canvas overlay returns to thread', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId, queryByTestId } = render(
@@ -1505,7 +1506,7 @@ describe('SpaceTaskPane — composer canvas toggle layout', () => {
 		// Thread view (default)
 		expect(queryByTestId('task-view-toggle')).toBeNull();
 		expect(getByTestId('task-session-chat-composer').contains(getByTestId('canvas-toggle'))).toBe(
-			true
+			false
 		);
 
 		// Canvas view
@@ -1519,7 +1520,7 @@ describe('SpaceTaskPane — composer canvas toggle layout', () => {
 		expect(getByTestId('task-thread-panel')).toBeTruthy();
 	});
 
-	it('composer canvas toggle is interactive', () => {
+	it('content canvas toggle is interactive', () => {
 		mockCurrentSpaceIdSignal.value = 'space-1';
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];

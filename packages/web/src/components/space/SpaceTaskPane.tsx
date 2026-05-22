@@ -967,7 +967,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							class="h-full"
 						/>
 						{canShowCanvasTab && (
-							<div class="pointer-events-none absolute bottom-4 left-4 z-20">
+							<div class="pointer-events-none absolute top-4 right-4 z-20">
 								<TaskCanvasToggleButton
 									active={true}
 									onClick={handleCanvasToggle}
@@ -981,6 +981,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						class="h-full flex flex-col relative"
 						style={`--task-composer-offset: ${taskComposerPaddingPx}px;`}
 					>
+						{canShowCanvasTab && (
+							<div class="pointer-events-none absolute top-4 right-4 z-20">
+								<TaskCanvasToggleButton
+									active={false}
+									onClick={handleCanvasToggle}
+									class="pointer-events-auto shadow-lg shadow-black/30"
+								/>
+							</div>
+						)}
 						<div ref={threadPanelRef} class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
@@ -1033,9 +1042,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								activityMembers={activityMembers}
 								defaultAgentModels={defaultAgentModels}
 								taskId={task.id}
-								canShowCanvasToggle={canShowCanvasTab}
-								canvasActive={activeView === 'canvas'}
-								onCanvasToggle={handleCanvasToggle}
 								onAutoScrollChange={setAutoScrollEnabled}
 								onTargetSelect={(targetId) => {
 									setSelectedTargetId(targetId);
