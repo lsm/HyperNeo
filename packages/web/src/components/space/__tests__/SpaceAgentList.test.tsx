@@ -36,6 +36,7 @@ const {
 	mockCreateAgent,
 	mockUpdateAgent,
 	mockListSchedules,
+	mockOnceConnected,
 	mockNavigateToSpaceGoals,
 	mockNavigateToSpaceForge,
 } = vi.hoisted(() => ({
@@ -43,6 +44,7 @@ const {
 	mockCreateAgent: vi.fn(),
 	mockUpdateAgent: vi.fn(),
 	mockListSchedules: vi.fn(),
+	mockOnceConnected: vi.fn(),
 	mockNavigateToSpaceGoals: vi.fn(),
 	mockNavigateToSpaceForge: vi.fn(),
 }));
@@ -74,6 +76,7 @@ const mockHubRequest = vi.fn();
 vi.mock('../../../lib/connection-manager', () => ({
 	connectionManager: {
 		getHubIfConnected: () => ({ request: mockHubRequest }),
+		onceConnected: mockOnceConnected,
 	},
 }));
 
@@ -270,6 +273,8 @@ describe('SpaceAgentList', () => {
 		mockUpdateAgent.mockReset();
 		mockListSchedules.mockReset();
 		mockListSchedules.mockResolvedValue([]);
+		mockOnceConnected.mockReset();
+		mockOnceConnected.mockReturnValue(() => {});
 		mockNavigateToSpaceGoals.mockReset();
 		mockNavigateToSpaceForge.mockReset();
 		mockHubRequest.mockReset();
@@ -373,6 +378,22 @@ describe('SpaceAgentList', () => {
 	it('loads schedules for reminder totals', () => {
 		render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		expect(mockListSchedules).toHaveBeenCalledOnce();
+	});
+
+	it('retries loading schedules when the connection recovers', async () => {
+		let reconnect: (() => void) | undefined;
+		mockListSchedules.mockRejectedValueOnce(new Error('Not connected'));
+		mockOnceConnected.mockImplementation((callback) => {
+			reconnect = callback;
+			return vi.fn();
+		});
+
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		await waitFor(() => expect(mockOnceConnected).toHaveBeenCalledOnce());
+
+		mockListSchedules.mockResolvedValue([]);
+		reconnect?.();
+		expect(mockListSchedules).toHaveBeenCalledTimes(2);
 	});
 
 	it('uses SPA navigation for goals and Forge links', () => {

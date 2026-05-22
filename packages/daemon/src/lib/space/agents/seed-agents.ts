@@ -283,16 +283,6 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
 	},
 	{
-		name: 'Coordinator',
-		description:
-			'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
-		tools: GENERAL_TOOLS,
-		customPrompt:
-			'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
-			'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
-			'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
-	},
-	{
 		name: 'General',
 		description:
 			'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
@@ -322,6 +312,16 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'You are a research specialist. You investigate topics thoroughly using web search and code ' +
 			'exploration, synthesize findings clearly, and document results in well-structured markdown files.\n\n' +
 			'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.',
+	},
+	{
+		name: 'Coordinator',
+		description:
+			'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
+		tools: GENERAL_TOOLS,
+		customPrompt:
+			'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
+			'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
+			'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
 	},
 	{
 		name: 'Reviewer',

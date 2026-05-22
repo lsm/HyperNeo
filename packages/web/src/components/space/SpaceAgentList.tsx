@@ -203,7 +203,24 @@ export function SpaceAgentList() {
 
 	useEffect(() => {
 		if (!spaceId) return;
-		spaceStore.listSchedules().catch(() => {});
+
+		let cancelled = false;
+		let unsubscribe: (() => void) | null = null;
+		const loadSchedules = () => {
+			if (cancelled) return;
+			spaceStore.listSchedules().catch(() => {
+				if (cancelled) return;
+				unsubscribe?.();
+				unsubscribe = connectionManager.onceConnected(loadSchedules);
+			});
+		};
+
+		loadSchedules();
+
+		return () => {
+			cancelled = true;
+			unsubscribe?.();
+		};
 	}, [spaceId]);
 
 	useEffect(() => {
