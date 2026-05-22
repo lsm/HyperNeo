@@ -43,7 +43,7 @@ const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
 const SPACE_TASKS_TAB_ROUTE_PATTERN =
 	/^\/space\/([a-z0-9-]+)\/tasks\/(action|active|draft|completed|scheduled)$/;
-const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
+const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/(?:agent|agents)$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-fA-F0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
 const SPACE_TASK_VIEW_ROUTE_PATTERN =
@@ -256,7 +256,7 @@ export function createSpaceSessionsPath(spaceId: string): string {
 }
 
 export function createSpaceAgentPath(spaceId: string): string {
-	return `/space/${spaceId}/agent`;
+	return `/space/${spaceId}/agents`;
 }
 
 export function createSettingsPath(section?: SettingsSection): string {

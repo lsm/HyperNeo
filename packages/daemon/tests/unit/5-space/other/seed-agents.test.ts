@@ -1,7 +1,7 @@
 /**
  * seedPresetAgents Unit Tests
  *
- * Verifies that the six preset SpaceAgent records are created with correct
+ * Verifies that the seven preset SpaceAgent records are created with correct
  * defaults (role, tools, description) and that seeding is idempotent (errors
  * on name collision are captured but do not abort remaining seeds).
  */
@@ -38,10 +38,10 @@ describe('seedPresetAgents', () => {
 		setModelsCache(new Map());
 	});
 
-	it('creates exactly six preset agents', async () => {
+	it('creates exactly seven preset agents', async () => {
 		const result = await seedPresetAgents('space-1', manager);
 
-		expect(result.seeded).toHaveLength(6);
+		expect(result.seeded).toHaveLength(7);
 		expect(result.errors).toHaveLength(0);
 	});
 
@@ -49,14 +49,30 @@ describe('seedPresetAgents', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name.toLowerCase()).sort();
-		expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'research', 'reviewer']);
+		expect(names).toEqual([
+			'coder',
+			'coordinator',
+			'general',
+			'planner',
+			'qa',
+			'research',
+			'reviewer',
+		]);
 	});
 
 	it('creates agents with correct names', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const names = seeded.map((a) => a.name).sort();
-		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+		expect(names).toEqual([
+			'Coder',
+			'Coordinator',
+			'General',
+			'Planner',
+			'QA',
+			'Research',
+			'Reviewer',
+		]);
 	});
 
 	it('sets tools on each preset agent', async () => {
@@ -77,6 +93,20 @@ describe('seedPresetAgents', () => {
 		expect(reviewer?.tools).not.toContain('Edit');
 		expect(reviewer?.tools).toContain('Read');
 		expect(reviewer?.tools).toContain('Bash');
+	});
+
+	it('Coordinator is the default long-horizon Space agent', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coordinator = seeded.find((a) => a.name === 'Coordinator');
+
+		expect(coordinator).toBeDefined();
+		expect(coordinator?.description).toContain('Built-in long-horizon Space agent');
+		expect(coordinator?.customPrompt).toContain('long-horizon context');
+		expect(coordinator?.customPrompt).toContain('managed goals');
+		expect(coordinator?.customPrompt).toContain('Forge scopes');
+		expect(coordinator?.tools).toContain('Read');
+		expect(coordinator?.tools).toContain('Write');
+		expect(coordinator?.tools).toContain('Bash');
 	});
 
 	it('coder has full coding toolset and explicit no-merge prompt', async () => {
@@ -123,11 +153,11 @@ describe('seedPresetAgents', () => {
 		// Seed once
 		await seedPresetAgents('space-1', manager);
 
-		// Seed again — all six names are now taken
+		// Seed again — all seven names are now taken
 		const second = await seedPresetAgents('space-1', manager);
 
 		expect(second.seeded).toHaveLength(0);
-		expect(second.errors).toHaveLength(6);
+		expect(second.errors).toHaveLength(7);
 		for (const err of second.errors) {
 			expect(err.error).toMatch(/already exists/i);
 		}
@@ -139,8 +169,8 @@ describe('seedPresetAgents', () => {
 		const r1 = await seedPresetAgents('space-1', manager);
 		const r2 = await seedPresetAgents('space-2', manager);
 
-		expect(r1.seeded).toHaveLength(6);
-		expect(r2.seeded).toHaveLength(6);
+		expect(r1.seeded).toHaveLength(7);
+		expect(r2.seeded).toHaveLength(7);
 		expect(r1.errors).toHaveLength(0);
 		expect(r2.errors).toHaveLength(0);
 
@@ -156,7 +186,7 @@ describe('seedPresetAgents', () => {
 		const result = await seedPresetAgents('space-1', manager);
 
 		// Coder fails, others succeed
-		expect(result.seeded).toHaveLength(5);
+		expect(result.seeded).toHaveLength(6);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].name).toBe('Coder');
 	});
@@ -400,6 +430,12 @@ describe('preset agent exact definitions', () => {
 	// can dispatch the built-in `general-purpose` sub-agent for exploration.
 	const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
 
+	it('Coordinator has exact GENERAL_TOOLS (same as CODER_TOOLS)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coordinator = seeded.find((a) => a.name === 'Coordinator')!;
+		expect(coordinator.tools).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
 	it('Coder has exact CODER_TOOLS (KNOWN_TOOLS minus Task/TaskOutput/TaskStop)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const coder = seeded.find((a) => a.name === 'Coder')!;
@@ -529,6 +565,8 @@ describe('preset agent exact definitions', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		const expected: Record<string, string> = {
+			Coordinator:
+				'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
 			Coder:
 				'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
 			General:
@@ -572,15 +610,20 @@ describe('PRESET_AGENT_TOOLS export', () => {
 	// `general-purpose` sub-agent delegation.
 	const EXPECTED_REVIEWER_TOOLS = [...EXPECTED_READONLY_TOOLS, 'Task', 'TaskOutput', 'TaskStop'];
 
-	it('has entries for all 6 preset roles', () => {
+	it('has entries for all 7 preset roles', () => {
 		expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
 			'coder',
+			'coordinator',
 			'general',
 			'planner',
 			'qa',
 			'research',
 			'reviewer',
 		]);
+	});
+
+	it('coordinator role maps to GENERAL_TOOLS (same as CODER_TOOLS)', () => {
+		expect(PRESET_AGENT_TOOLS.coordinator).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('coder role maps to CODER_TOOLS', () => {
@@ -655,15 +698,23 @@ describe('SUB_SESSION_FEATURES export', () => {
 // ---------------------------------------------------------------------------
 
 describe('getPresetAgentTemplates', () => {
-	it('returns exactly 6 templates', () => {
+	it('returns exactly 7 templates', () => {
 		const templates = getPresetAgentTemplates();
-		expect(templates).toHaveLength(6);
+		expect(templates).toHaveLength(7);
 	});
 
 	it('returns all expected agent names', () => {
 		const templates = getPresetAgentTemplates();
 		const names = templates.map((t) => t.name).sort();
-		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+		expect(names).toEqual([
+			'Coder',
+			'Coordinator',
+			'General',
+			'Planner',
+			'QA',
+			'Research',
+			'Reviewer',
+		]);
 	});
 
 	it('each template has name, description, tools, and customPrompt', () => {

@@ -1,19 +1,20 @@
 /**
  * Space Preset Agent Seeding
  *
- * Seeds the six default SpaceAgent records when a new Space is created.
+ * Seeds the seven default SpaceAgent records when a new Space is created.
  * Preset agents are regular SpaceAgent rows — fully editable by users — that
  * have sensible defaults for tools and model.
  * SpaceRuntime resolves all agents by ID at runtime; there is no special
  * builtin code path.
  *
  * Preset agents seeded per Space:
- *   - Coder    — implementation worker
- *   - General  — general-purpose worker
- *   - Planner  — planning/orchestration worker
- *   - Research — research specialist (investigates topics, writes findings, opens PRs)
- *   - Reviewer — code review specialist
- *   - QA       — quality assurance specialist
+ *   - Coordinator — built-in long-horizon Space agent
+ *   - Coder       — implementation worker
+ *   - General     — general-purpose worker
+ *   - Planner     — planning/orchestration worker
+ *   - Research    — research specialist (investigates topics, writes findings, opens PRs)
+ *   - Reviewer    — code review specialist
+ *   - QA          — quality assurance specialist
  */
 
 import type { SpaceAgent } from '@neokai/shared';
@@ -93,6 +94,7 @@ const QA_TOOLS: string[] = [
  * Tool profiles per preset agent name. Exported for testing and external consumption.
  */
 export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
+	coordinator: GENERAL_TOOLS,
 	coder: CODER_TOOLS,
 	general: GENERAL_TOOLS,
 	planner: PLANNER_TOOLS,
@@ -268,6 +270,16 @@ summary: <1–2 sentence summary of key findings>
 Treat the code as work from a competent but unfamiliar developer — it likely handles the happy path but may miss edge cases and project-specific constraints. Be critical, honest, and actionable; always include file paths and line numbers. Don't nitpick what a linter already covers. Always include the identity block in every PR comment you post.`;
 
 const PRESET_AGENTS: PresetDefinition[] = [
+	{
+		name: 'Coordinator',
+		description:
+			'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
+		tools: GENERAL_TOOLS,
+		customPrompt:
+			'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
+			'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
+			'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
+	},
 	{
 		name: 'Coder',
 		description:

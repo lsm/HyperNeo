@@ -4,7 +4,7 @@
  *
  * Tests:
  * - Loading state
- * - Empty state: "No custom agents yet. Create one to get started."
+ * - Empty state: "No agents yet. Create one to get started."
  * - Agent cards render name, model, description preview
  * - Tool count and preview tags render
  * - Create Agent button opens editor
@@ -25,6 +25,8 @@ import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
+let mockGoals: ReturnType<typeof signal<any[]>>;
+let mockSchedules: ReturnType<typeof signal<any[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockSpaceId: ReturnType<typeof signal<string | null>>;
 let mockSpace: ReturnType<typeof signal<any>>;
@@ -38,6 +40,8 @@ vi.mock('../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			goals: mockGoals,
+			schedules: mockSchedules,
 			loading: mockLoading,
 			spaceId: mockSpaceId,
 			space: mockSpace,
@@ -193,6 +197,8 @@ vi.mock('../../ui/Modal', () => ({
 // Initialize signals before import
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
+mockGoals = signal<any[]>([]);
+mockSchedules = signal<any[]>([]);
 mockLoading = signal(false);
 mockSpaceId = signal<string | null>('space-1');
 mockSpace = signal<any>({ id: 'space-1', defaultModel: undefined, taskAgentConfig: undefined });
@@ -237,6 +243,8 @@ describe('SpaceAgentList', () => {
 		cleanup();
 		mockAgents.value = [];
 		mockWorkflows.value = [];
+		mockGoals.value = [];
+		mockSchedules.value = [];
 		mockLoading.value = false;
 		mockSpaceId.value = 'space-1';
 		mockDeleteAgent.mockReset();
@@ -265,7 +273,7 @@ describe('SpaceAgentList', () => {
 
 	it('renders empty state when no agents exist', () => {
 		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		expect(getByText('No custom agents yet')).toBeTruthy();
+		expect(getByText('No agents yet')).toBeTruthy();
 		expect(getByText('Create one to get started.')).toBeTruthy();
 	});
 
@@ -338,6 +346,30 @@ describe('SpaceAgentList', () => {
 		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		expect(getByText('Agent Alpha')).toBeTruthy();
 		expect(getByText('Agent Beta')).toBeTruthy();
+	});
+
+	it('shows Coordinator as default long-horizon agent with basic scopes', () => {
+		mockAgents.value = [
+			makeAgent({
+				id: 'coordinator-1',
+				name: 'Coordinator',
+				templateName: 'Coordinator',
+				description: 'Built-in long-horizon Space agent.',
+			}),
+			makeAgent({ id: 'coder-1', name: 'Coder' }),
+		];
+		mockGoals.value = [{ id: 'goal-1', status: 'active' }];
+		mockSchedules.value = [{ id: 'schedule-1', status: 'active' }];
+
+		const { container, getByText, getByLabelText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+
+		expect(getByText('Default Coordinator')).toBeTruthy();
+		expect(container.textContent).toContain('managed goals');
+		expect(container.textContent).toContain('Forge scopes');
+		expect(container.textContent).toContain('reminders');
+		expect(container.textContent).toContain('event subscriptions');
+		expect(getByLabelText('Forge scope filter')).toBeTruthy();
+		expect(getByLabelText('Event subscription pattern')).toBeTruthy();
 	});
 
 	// ── Editor opening ─────────────────────────────────────────────────────────

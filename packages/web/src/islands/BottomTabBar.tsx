@@ -135,7 +135,7 @@ const SPACE_BOTTOM_TABS: TabItem[] = [
 	{ id: 'space-overview', label: 'Overview', icon: SpaceOverviewIcon },
 	{ id: 'space-tasks', label: 'Tasks', icon: SpaceTasksIcon },
 	{ id: 'space-sessions', label: 'Sessions', icon: SpaceSessionsIcon },
-	{ id: 'space-agent', label: 'Agent', icon: SpaceChatIcon },
+	{ id: 'space-agent', label: 'Agents', icon: SpaceChatIcon },
 	{ id: 'space-settings', label: 'Settings', icon: SpaceSettingsIcon },
 ];
 

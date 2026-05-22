@@ -1,43 +1,78 @@
 /**
- * SpaceAgentList Component
+ * Agents page for a Space.
  *
- * Displays all agents configured for a Space.
- * - Agent cards: name, model, description preview
- * - "Create Agent" button to open the editor
- * - Empty state: "No custom agents yet. Create one to get started."
- * - Subscribes to spaceAgent.* events via SpaceStore
- * - Delete confirmation with workflow reference blocking:
- *   When an agent is referenced by workflow steps, deletion is blocked
- *   with a clear message. When unreferenced, a standard confirm dialog is shown.
+ * Shows the built-in Coordinator plus editable specialist agents, with basic
+ * long-horizon configuration affordances for managed goals, Forge scopes,
+ * reminders, and event subscriptions.
  */
 
-import { useState, useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
+import type { AgentDriftReport, SpaceAgent } from '@neokai/shared';
+import { connectionManager } from '../../lib/connection-manager';
+import { createSpaceForgePath, createSpaceGoalsPath } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
+import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
-import type { SpaceAgent, AgentDriftReport } from '@neokai/shared';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
-import { connectionManager } from '../../lib/connection-manager';
-import { toast } from '../../lib/toast';
 
 interface AgentCardProps {
 	agent: SpaceAgent;
 	drifted: boolean;
 	syncing: boolean;
+	managedGoalCount: number;
+	forgeScopeCount: number;
+	reminderCount: number;
+	eventSubscriptionCount: number;
 	onEdit: (agent: SpaceAgent) => void;
 	onDelete: (agent: SpaceAgent) => void;
 	onSync: (agent: SpaceAgent) => void;
 }
 
-function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentCardProps) {
+function isCoordinatorAgent(agent: SpaceAgent): boolean {
+	return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
+}
+
+function AgentStat({ label, value }: { label: string; value: string | number }) {
+	return (
+		<span class="rounded border border-white/10 bg-white/[0.025] px-2 py-1 text-xs text-gray-400">
+			<span class="text-gray-200">{value}</span> {label}
+		</span>
+	);
+}
+
+function AgentCard({
+	agent,
+	drifted,
+	syncing,
+	managedGoalCount,
+	forgeScopeCount,
+	reminderCount,
+	eventSubscriptionCount,
+	onEdit,
+	onDelete,
+	onSync,
+}: AgentCardProps) {
 	const toolCount = agent.tools?.length ?? 0;
+	const isCoordinator = isCoordinatorAgent(agent);
 
 	return (
-		<div class="group border-b border-white/10 py-3 last:border-b-0">
+		<div
+			class={`group rounded-lg border px-3 py-3 ${
+				isCoordinator
+					? 'border-purple-400/30 bg-purple-500/[0.06]'
+					: 'border-white/10 bg-white/[0.025]'
+			}`}
+		>
 			<div class="flex items-start justify-between gap-4">
 				<div class="min-w-0 flex-1">
-					<div class="flex min-w-0 items-center gap-2">
+					<div class="flex min-w-0 flex-wrap items-center gap-2">
 						<span class="truncate text-sm font-medium text-gray-100">{agent.name}</span>
+						{isCoordinator && (
+							<span class="rounded bg-purple-500/15 px-1.5 py-0.5 text-xs font-medium text-purple-200">
+								Default Coordinator
+							</span>
+						)}
 						{drifted && (
 							<span
 								class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
@@ -60,6 +95,24 @@ function AgentCard({ agent, drifted, syncing, onEdit, onDelete, onSync }: AgentC
 							</span>
 						))}
 					</div>
+					{isCoordinator && (
+						<div class="mt-3 grid gap-2 rounded-lg border border-purple-400/15 bg-black/10 p-3 sm:grid-cols-2">
+							<div>
+								<p class="text-xs font-medium text-purple-100">Long-horizon scope</p>
+								<div class="mt-2 flex flex-wrap gap-1.5">
+									<AgentStat label="managed goals" value={managedGoalCount} />
+									<AgentStat label="Forge scopes" value={forgeScopeCount} />
+								</div>
+							</div>
+							<div>
+								<p class="text-xs font-medium text-purple-100">Automation</p>
+								<div class="mt-2 flex flex-wrap gap-1.5">
+									<AgentStat label="reminders" value={reminderCount} />
+									<AgentStat label="event subscriptions" value={eventSubscriptionCount} />
+								</div>
+							</div>
+						</div>
+					)}
 				</div>
 				<div class="flex flex-shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
 					{drifted && (
@@ -134,23 +187,21 @@ export function SpaceAgentList() {
 	const agents = spaceStore.agents.value;
 	const loading = spaceStore.loading.value;
 	const spaceId = spaceStore.spaceId.value;
+	const goals = spaceStore.goals.value;
+	const schedules = spaceStore.schedules.value;
+	const workflows = spaceStore.workflows.value;
 
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editingAgent, setEditingAgent] = useState<SpaceAgent | null>(null);
 	const [deletingAgent, setDeletingAgent] = useState<SpaceAgent | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState(false);
+	const [forgeScopeFilter, setForgeScopeFilter] = useState('episodes, lessons, proposals');
+	const [eventTopicPattern, setEventTopicPattern] = useState('github/*/*/pull_request/*');
 
-	// Drift detection: set of agent IDs that have drifted from their preset.
-	// Empty until the first successful drift report fetch — agents not in the
-	// set render without the badge or sync button (the safe default when the
-	// daemon hasn't responded yet).
 	const [driftedAgentIds, setDriftedAgentIds] = useState<Set<string>>(new Set());
 	const [syncingAgentId, setSyncingAgentId] = useState<string | null>(null);
 
-	// Re-fetch drift report whenever the agent set changes. We watch a
-	// concatenated key of (id, updatedAt) so the effect fires for adds,
-	// removes, and edits — but not for unrelated re-renders.
 	const driftKey = agents
 		.map((a) => `${a.id}:${a.updatedAt}`)
 		.sort()
@@ -172,15 +223,11 @@ export function SpaceAgentList() {
 				}
 				setDriftedAgentIds(ids);
 			})
-			.catch(() => {
-				// Drift detection is best-effort — silently swallow errors so
-				// list rendering never depends on the report succeeding.
-			});
+			.catch(() => {});
 
 		return () => {
 			cancelled = true;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
 	}, [spaceId, driftKey]);
 
 	const handleSync = async (agent: SpaceAgent) => {
@@ -196,9 +243,6 @@ export function SpaceAgentList() {
 				spaceId,
 				agentId: agent.id,
 			});
-			// Clear drift state for this agent eagerly so the badge disappears
-			// before the next refresh cycle. The spaceAgent.updated event will
-			// re-trigger the effect and reconcile authoritatively.
 			setDriftedAgentIds((prev) => {
 				const next = new Set(prev);
 				next.delete(agent.id);
@@ -246,10 +290,17 @@ export function SpaceAgentList() {
 		}
 	};
 
-	// Workflow reference check removed: SpaceWorkflowSummary no longer includes
-	// node/agent details. The daemon still blocks deletion of in-use agents.
-
 	const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
+	const coordinator = agents.find(isCoordinatorAgent);
+	const otherAgents = agents.filter((agent) => agent.id !== coordinator?.id);
+	const visibleAgents = coordinator ? [coordinator, ...otherAgents] : agents;
+	const activeGoals = goals.filter((goal) => goal.status !== 'archived');
+	const activeSchedules = schedules.filter((schedule) => schedule.status === 'active');
+	const forgeScopeCount = forgeScopeFilter
+		.split(',')
+		.map((scope) => scope.trim())
+		.filter(Boolean).length;
+	const eventSubscriptionCount = eventTopicPattern.trim() ? 1 : 0;
 
 	if (loading) {
 		return (
@@ -263,15 +314,16 @@ export function SpaceAgentList() {
 
 	return (
 		<div class="flex h-full min-h-0 flex-col">
-			<div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
+			<div class="mb-3 flex flex-shrink-0 flex-col gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3 lg:flex-row lg:items-start lg:justify-between">
 				<div class="flex min-w-0 items-start gap-3">
-					<div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-blue-400/70" />
+					<div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-purple-400/70" />
 					<div class="min-w-0">
 						<p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-							{agents.length} configured {agents.length === 1 ? 'agent' : 'agents'}
+							Agents · {agents.length} configured
 						</p>
 						<p class="mt-1 text-xs text-gray-500">
-							Reusable workers and reviewers available to this space.
+							Coordinator is the default long-horizon Space agent. Create specialists for coding,
+							review, research, and QA.
 						</p>
 					</div>
 				</div>
@@ -280,39 +332,107 @@ export function SpaceAgentList() {
 				</Button>
 			</div>
 
-			{/* Agent list or empty state */}
-			{agents.length === 0 ? (
-				<div class="flex flex-1 flex-col items-center justify-center py-12 text-center">
-					<div class="w-10 h-10 rounded-full bg-dark-800 flex items-center justify-center mb-3">
-						<AgentIcon />
-					</div>
-					<p class="text-sm text-gray-400 font-medium">No custom agents yet</p>
-					<p class="text-xs text-gray-600 mt-1">Create one to get started.</p>
-					<div class="mt-4">
-						<Button size="sm" variant="secondary" onClick={handleCreate}>
-							Create Agent
-						</Button>
-					</div>
-				</div>
-			) : (
-				<div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
-					<div class="min-h-[calc(100%+1px)]">
-						{agents.map((agent) => (
-							<AgentCard
-								key={agent.id}
-								agent={agent}
-								drifted={driftedAgentIds.has(agent.id)}
-								syncing={syncingAgentId === agent.id}
-								onEdit={handleEdit}
-								onDelete={handleDeleteClick}
-								onSync={handleSync}
+			<div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
+				<div class="min-h-[calc(100%+1px)] space-y-3 pb-4">
+					<div class="grid gap-3 lg:grid-cols-3">
+						<div class="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+							<div class="flex items-center justify-between gap-2">
+								<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+									Managed goals
+								</p>
+								<a
+									class="text-xs text-blue-300 hover:text-blue-200"
+									href={spaceId ? createSpaceGoalsPath(spaceId) : '#'}
+								>
+									View
+								</a>
+							</div>
+							<p class="mt-2 text-2xl font-semibold text-gray-100">{activeGoals.length}</p>
+							<p class="mt-1 text-xs text-gray-500">Active goals Coordinator can track.</p>
+						</div>
+						<div class="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+							<div class="flex items-center justify-between gap-2">
+								<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+									Forge scopes
+								</p>
+								<a
+									class="text-xs text-blue-300 hover:text-blue-200"
+									href={spaceId ? createSpaceForgePath(spaceId) : '#'}
+								>
+									Open Forge
+								</a>
+							</div>
+							<input
+								value={forgeScopeFilter}
+								onInput={(event) => setForgeScopeFilter((event.target as HTMLInputElement).value)}
+								class="mt-2 w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+								aria-label="Forge scope filter"
 							/>
-						))}
+							<p class="mt-1 text-xs text-gray-500">
+								Basic scope list until per-agent Forge policy lands.
+							</p>
+						</div>
+						<div class="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+							<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+								Reminders and events
+							</p>
+							<input
+								value={eventTopicPattern}
+								onInput={(event) => setEventTopicPattern((event.target as HTMLInputElement).value)}
+								class="mt-2 w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+								aria-label="Event subscription pattern"
+							/>
+							<p class="mt-1 text-xs text-gray-500">
+								{activeSchedules.length} active reminders · {eventSubscriptionCount} event pattern
+							</p>
+						</div>
+					</div>
+
+					{visibleAgents.length === 0 ? (
+						<div class="flex flex-col items-center justify-center py-12 text-center">
+							<div class="w-10 h-10 rounded-full bg-dark-800 flex items-center justify-center mb-3">
+								<AgentIcon />
+							</div>
+							<p class="text-sm text-gray-400 font-medium">No agents yet</p>
+							<p class="text-xs text-gray-600 mt-1">Create one to get started.</p>
+							<div class="mt-4">
+								<Button size="sm" variant="secondary" onClick={handleCreate}>
+									Create Agent
+								</Button>
+							</div>
+						</div>
+					) : (
+						<div class="space-y-2">
+							{visibleAgents.map((agent) => (
+								<AgentCard
+									key={agent.id}
+									agent={agent}
+									drifted={driftedAgentIds.has(agent.id)}
+									syncing={syncingAgentId === agent.id}
+									managedGoalCount={activeGoals.length}
+									forgeScopeCount={forgeScopeCount}
+									reminderCount={activeSchedules.length}
+									eventSubscriptionCount={eventSubscriptionCount}
+									onEdit={handleEdit}
+									onDelete={handleDeleteClick}
+									onSync={handleSync}
+								/>
+							))}
+						</div>
+					)}
+
+					<div class="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+						<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+							Workflow usage
+						</p>
+						<p class="mt-1 text-xs text-gray-500">
+							{workflows.length} workflows can reference these agents. Edit workflows to assign
+							specialists.
+						</p>
 					</div>
 				</div>
-			)}
+			</div>
 
-			{/* Editor Modal */}
 			{editorOpen && (
 				<SpaceAgentEditor
 					agent={editingAgent}
@@ -322,8 +442,6 @@ export function SpaceAgentList() {
 				/>
 			)}
 
-			{/* Standard delete confirmation */}
-			{/* Standard delete confirmation: agent is not referenced by any workflow */}
 			{deletingAgent && (
 				<ConfirmModal
 					isOpen
