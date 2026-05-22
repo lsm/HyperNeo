@@ -209,6 +209,21 @@ describe('SDKMessageRepository', () => {
 		});
 	});
 
+	describe('getRenderableTextMessages', () => {
+		it('continues past empty renderable rows until the text limit is reached', async () => {
+			repository.saveSDKMessage('session-1', createUserMessage('Older text'));
+			repository.saveSDKMessage('session-1', {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tool-1', name: 'Read' }] },
+			} as unknown as SDKMessage);
+			repository.saveSDKMessage('session-1', createAssistantMessage('Newest text'));
+
+			const messages = repository.getRenderableTextMessages('session-1', 2);
+
+			expect(messages.map((message) => message.text)).toEqual(['Older text', 'Newest text']);
+		});
+	});
+
 	describe('getSDKMessages', () => {
 		it('should return messages in chronological order', async () => {
 			repository.saveSDKMessage('session-1', createUserMessage('First'));

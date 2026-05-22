@@ -54,10 +54,9 @@ function extractTools(session: Session): string[] | undefined {
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {
-	const configSources = session.config.settingSources;
-	if (configSources?.length) return configSources;
+	if (session.config.settingSources !== undefined) return session.config.settingSources;
 	const toolSources = session.config.tools?.settingSources;
-	return toolSources?.length ? toolSources : undefined;
+	return toolSources !== undefined ? toolSources : undefined;
 }
 
 function buildPromotionDraft(session: Session, db: Database): SpaceAgentPromotionDraft {

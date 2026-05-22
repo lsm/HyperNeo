@@ -436,28 +436,30 @@ export class SDKMessageRepository {
 				   AND is_renderable = 1
 				   AND message_type IN ('user', 'assistant')
 				   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-				 ORDER BY timestamp DESC, rowid DESC
-				 LIMIT ?`
+				 ORDER BY timestamp DESC, rowid DESC`
 			)
-			.all(sessionId, limit) as Array<{
+			.all(sessionId) as Array<{
 			id: string;
 			message_type: string;
 			sdk_message: string;
 			timestamp: string;
 		}>;
 
-		return rows
-			.reverse()
-			.map((row) => {
-				const message = JSON.parse(row.sdk_message) as SDKMessage;
-				return {
-					id: row.id,
-					type: row.message_type,
-					text: this.extractVisibleText(message as unknown as Record<string, unknown>),
-					timestamp: new Date(row.timestamp).getTime(),
-				};
-			})
-			.filter((row) => row.text.length > 0);
+		const messages: Array<{ id: string; type: string; text: string; timestamp: number }> = [];
+		for (const row of rows) {
+			const message = JSON.parse(row.sdk_message) as SDKMessage;
+			const text = this.extractVisibleText(message as unknown as Record<string, unknown>);
+			if (text.length === 0) continue;
+			messages.push({
+				id: row.id,
+				type: row.message_type,
+				text,
+				timestamp: new Date(row.timestamp).getTime(),
+			});
+			if (messages.length >= limit) break;
+		}
+
+		return messages.reverse();
 	}
 
 	/**

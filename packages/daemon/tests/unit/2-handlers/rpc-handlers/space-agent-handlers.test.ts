@@ -283,6 +283,29 @@ describe('Space Agent RPC Handlers', () => {
 			expect(result.draft.customPrompt).toContain('Assistant: I will monitor CI.');
 		});
 
+		it('preserves explicit empty setting sources in the draft', async () => {
+			insertSession(db, {
+				id: 'session-empty-settings',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					settingSources: [],
+					tools: { settingSources: ['user'] },
+				},
+			});
+
+			const result = await call<{ draft: { settingSources?: string[] } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-empty-settings' }
+			);
+
+			expect(result.draft.settingSources).toEqual([]);
+		});
+
 		it('rejects drafts for sessions outside the requested space', async () => {
 			insertSession(db, {
 				id: 'session-2',
