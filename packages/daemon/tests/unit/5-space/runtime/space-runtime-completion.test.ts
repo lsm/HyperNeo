@@ -1465,6 +1465,14 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			artifactRepo.upsert({
+				id: 'artifact-result-summary-old',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'old-cycle',
+				data: { summary: 'Stale requested changes summary' },
+			});
+			artifactRepo.upsert({
 				id: 'artifact-result-summary',
 				runId: run.id,
 				nodeId: 'End',

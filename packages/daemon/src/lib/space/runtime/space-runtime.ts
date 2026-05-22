@@ -5292,10 +5292,12 @@ export class SpaceRuntime {
 		if (!this.config.artifactRepo) return undefined;
 
 		try {
-			const artifact = this.config.artifactRepo
-				.listByRun(runId, { artifactType: 'result' })
-				.find((item) => typeof item.data.summary === 'string' && item.data.summary.trim());
-			return typeof artifact?.data.summary === 'string' ? artifact.data.summary : undefined;
+			const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'result' });
+			for (let i = artifacts.length - 1; i >= 0; i--) {
+				const summary = artifacts[i]?.data.summary;
+				if (typeof summary === 'string' && summary.trim()) return summary;
+			}
+			return undefined;
 		} catch (err) {
 			log.warn(
 				`SpaceRuntime.resolvePrimaryResultArtifactSummary: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
