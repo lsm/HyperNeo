@@ -4,7 +4,7 @@
 **Status:** Draft Design
 **Related:**
 
-- [Target Architecture Overview](./target-architecture-overview.md)
+- [Target Architecture Overview](./README.md)
 - [Unified Message Fabric Architecture Design](./unified-message-fabric-design.md)
 - [Space Runtime Decomposition Design](./space-runtime-decomposition.md)
 - [Storage Unit Of Work And Outbox Design](./storage-unit-of-work-and-outbox.md)
