@@ -34,6 +34,7 @@ import {
 	getBuiltInGateScript,
 	getBuiltInWorkflows,
 	PLAN_AND_DECOMPOSE_WORKFLOW,
+	validateWorkflowTemplateGateWriters,
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
 	seedBuiltInWorkflows,
@@ -1288,6 +1289,30 @@ describe('getBuiltInWorkflows()', () => {
 				}
 			}
 		}
+	});
+
+	test('all gate fields have valid non-empty writer roles', () => {
+		for (const wf of getBuiltInWorkflows()) {
+			expect(validateWorkflowTemplateGateWriters(wf)).toEqual([]);
+		}
+	});
+
+	test('gate writer validation rejects empty writer arrays', () => {
+		const workflow = structuredClone(CODING_WORKFLOW);
+		workflow.gates![0].fields![0].writers = [];
+
+		expect(validateWorkflowTemplateGateWriters(workflow)).toEqual([
+			`${workflow.name}.gates.code-ready-gate.fields.pr_url.writers: must contain at least one writer role`,
+		]);
+	});
+
+	test('gate writer validation rejects unknown writer roles', () => {
+		const workflow = structuredClone(CODING_WORKFLOW);
+		workflow.gates![0].fields![0].writers = ['Unknown Role'];
+
+		expect(validateWorkflowTemplateGateWriters(workflow)).toEqual([
+			`${workflow.name}.gates.code-ready-gate.fields.pr_url.writers: unknown writer role "Unknown Role"`,
+		]);
 	});
 });
 
