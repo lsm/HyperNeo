@@ -2,6 +2,25 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.30.0] - 2026-05-22
+
+Forge evidence reliability, mobile Goal/Forge navigation, and workflow result propagation. 4 commits since v0.29.0.
+
+### Added
+
+- **Forge evidence preflight**: Score task results, workflow artifacts, metric snapshots, concrete outcomes, and manual-note-only risk before episode judging
+- **Forge trace evidence**: Capture trace-derived task evidence from persisted SDK message/tool spans with friction clustering
+
+### Changed
+
+- Goal and Forge views now use mobile-friendly navigation and list-or-detail panes on small screens
+- Workflow completion now propagates result artifact summaries into task results and reported summaries
+
+### Fixed
+
+- Preserve existing task results while filling missing workflow outcome fields
+- Improve Forge evidence capture coverage for completed scoped tasks
+
 ## [0.29.0] - 2026-05-21
 
 Forge self-evolution system, actor messaging UI, and memory consolidation. 20 commits since v0.28.0.
