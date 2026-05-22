@@ -3,6 +3,7 @@ import type {
 	CreateEvolutionEpisodeParams,
 	CreateEvolutionLessonParams,
 	CreateTaskProposalParams,
+	EvidenceQualityPreflight,
 	EvidenceRef,
 	EvolutionEpisode,
 	EvolutionFinding,
@@ -22,6 +23,7 @@ import type {
 	UpdateEvolutionLessonParams,
 	UpdateTaskProposalParams,
 } from '@neokai/shared';
+import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -58,12 +60,14 @@ export interface CreateEpisodeFromEvidenceParams {
 	scopeId: string;
 	evidenceIds: string[];
 	timeWindow?: CreateEvolutionEpisodeParams['timeWindow'];
+	confirmLowConfidence?: boolean;
 }
 
 export interface CreateEpisodeFromEvidenceResult {
 	episode: EvolutionEpisode;
 	lessons: EvolutionLesson[];
 	proposals: TaskProposal[];
+	preflight: EvidenceQualityPreflight;
 }
 
 export interface EpisodeReviewBundle {
@@ -120,6 +124,7 @@ export interface EpisodeJudgePromptInput {
 	tasks: EpisodeTaskContext[];
 	workflowRuns: EpisodeWorkflowRunContext[];
 	timeWindow: CreateEvolutionEpisodeParams['timeWindow'];
+	preflight: EvidenceQualityPreflight;
 }
 
 export interface EpisodeTaskContext {
@@ -149,6 +154,9 @@ export class EvolutionEpisodeService {
 		params: CreateEpisodeFromEvidenceParams
 	): Promise<CreateEpisodeFromEvidenceResult> {
 		const input = this.buildEpisodeInput(params);
+		if (input.preflight.requiresConfirmation && !params.confirmLowConfidence) {
+			throw new Error('Low-confidence evidence requires explicit confirmation');
+		}
 		const judged = this.deps.judgeEpisode
 			? await this.deps.judgeEpisode(input)
 			: await judgeEpisodeWithModel(input, this.deps.spaceRepo);
@@ -177,7 +185,7 @@ export class EvolutionEpisodeService {
 				evidenceEpisodeIds: [episode.id],
 			})
 		);
-		return { episode, lessons, proposals };
+		return { episode, lessons, proposals, preflight: input.preflight };
 	}
 
 	buildEpisodeInput(params: CreateEpisodeFromEvidenceParams): EpisodeJudgePromptInput {
@@ -192,13 +200,28 @@ export class EvolutionEpisodeService {
 		}
 		const tasks = this.collectTasks(scope, evidence);
 		const workflowRuns = this.collectWorkflowRuns(scope, evidence);
+		const metricSnapshots = this.deps.evolutionRepo.listMetricSnapshots(scope.id);
 		return {
 			scope,
 			evidence,
-			metricSnapshots: this.deps.evolutionRepo.listMetricSnapshots(scope.id),
+			metricSnapshots,
 			tasks,
 			workflowRuns,
 			timeWindow: params.timeWindow ?? deriveTimeWindow(evidence),
+			preflight: scoreEvolutionEvidenceQuality({
+				evidence,
+				tasks: tasks.map(({ task }) => task),
+				workflowRuns: workflowRuns.map(({ run, tasks: runTasks, artifacts }) => ({
+					run,
+					tasks: runTasks,
+					artifacts: artifacts.map((artifact) => ({
+						type: artifact.artifactType,
+						key: artifact.artifactKey,
+						data: artifact.data,
+					})),
+				})),
+				metricSnapshotCount: metricSnapshots.length,
+			}),
 		};
 	}
 
@@ -439,6 +462,11 @@ ${JSON.stringify({ id: input.scope.id, name: input.scope.name, objective: input.
 
 Time window:
 ${JSON.stringify(input.timeWindow)}
+
+Evidence quality preflight:
+${JSON.stringify(input.preflight, null, 2)}
+
+Use this evidence quality context to calibrate finding and lesson confidence. If preflight level is low, avoid high-confidence findings unless directly supported by concrete task, artifact, metric, CI, QA, PR, merge, or error data.
 
 Selected evidence:
 ${JSON.stringify(

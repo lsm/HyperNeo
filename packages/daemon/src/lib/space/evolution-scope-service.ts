@@ -11,6 +11,8 @@ import type {
 	SpaceTask,
 	SpaceWorkflowRun,
 	UpdateEvolutionScopeParams,
+	EvolutionEvidenceListResponse,
+	EvolutionPreflightTaskSummary,
 } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
@@ -21,6 +23,20 @@ import type {
 	WorkflowRunArtifactRecord,
 	WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository';
+
+const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
+const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
+
+function summarizeArtifactData(data: Record<string, unknown>): string {
+	const text = stringifyArtifactField(data);
+	return text.length > MAX_PREFLIGHT_ARTIFACT_TEXT
+		? `${text.slice(0, MAX_PREFLIGHT_ARTIFACT_TEXT)}…`
+		: text;
+}
+
+function stringifyArtifactField(value: unknown): string {
+	return typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+}
 
 export interface EvolutionScopeServiceDeps {
 	evolutionRepo: EvolutionRepository;
@@ -309,9 +325,66 @@ export class EvolutionScopeService {
 		return { snapshot, evidence };
 	}
 
-	listEvidence(scopeId: string): EvidenceRef[] {
-		this.requireScope(scopeId);
-		return this.deps.evolutionRepo.listEvidence(scopeId);
+	listEvidence(scopeId: string, includePreflightContext = false): EvolutionEvidenceListResponse {
+		const scope = this.requireScope(scopeId);
+		const evidence = this.deps.evolutionRepo.listEvidence(scopeId);
+		return includePreflightContext
+			? {
+					evidence,
+					preflightContext: this.buildPreflightContext(scope, evidence),
+				}
+			: { evidence };
+	}
+
+	private buildPreflightContext(
+		scope: EvolutionScope,
+		evidence: EvidenceRef[]
+	): NonNullable<EvolutionEvidenceListResponse['preflightContext']> {
+		const tasks = evidence.flatMap((item) => {
+			if (item.kind !== 'task' && item.kind !== 'task_result') return [];
+			if (!item.sourceId) return [];
+			const task = this.deps.taskRepo.getTask(item.sourceId);
+			if (!task || task.spaceId !== scope.spaceId) return [];
+			return [{ evidenceId: item.id, task: summarizeTaskForPreflight(task) }];
+		});
+		const evidenceIdsByRunId = new Map<string, string[]>();
+		for (const item of evidence) {
+			if (item.kind !== 'workflow_run' && item.kind !== 'artifact' && item.kind !== 'error') {
+				continue;
+			}
+			if (!item.sourceId) continue;
+			const current = evidenceIdsByRunId.get(item.sourceId) ?? [];
+			current.push(item.id);
+			evidenceIdsByRunId.set(item.sourceId, current);
+		}
+		const workflowRuns = Array.from(evidenceIdsByRunId.entries()).flatMap(
+			([runId, evidenceIds]) => {
+				const run = this.deps.workflowRunRepo.getRun(runId);
+				if (!run || run.spaceId !== scope.spaceId) return [];
+				return [
+					{
+						evidenceIds,
+						run,
+						tasks: this.deps.taskRepo
+							.listByWorkflowRunIncludingArchived(run.id)
+							.map(summarizeTaskForPreflight),
+						artifacts: (this.deps.artifactRepo?.listByRun(run.id) ?? [])
+							.slice(0, MAX_PREFLIGHT_ARTIFACTS_PER_RUN)
+							.map((artifact) => ({
+								id: artifact.id,
+								runId: artifact.runId,
+								nodeId: artifact.nodeId,
+								artifactType: artifact.artifactType,
+								artifactKey: artifact.artifactKey,
+								data: { summary: summarizeArtifactData(artifact.data) },
+								createdAt: artifact.createdAt,
+								updatedAt: artifact.updatedAt,
+							})),
+					},
+				];
+			}
+		);
+		return { tasks, workflowRuns };
 	}
 
 	listMetricSnapshots(scopeId: string): MetricSnapshot[] {
@@ -416,6 +489,16 @@ export class EvolutionScopeService {
 function buildTaskResultEvidenceSummary(task: SpaceTask): string {
 	const outcome = task.result ?? task.reportedSummary ?? 'completed without task.result';
 	return `Task #${task.taskNumber} done: ${task.title} — ${truncateText(outcome, 180)}`;
+}
+
+function summarizeTaskForPreflight(task: SpaceTask): EvolutionPreflightTaskSummary {
+	return {
+		title: task.title,
+		status: task.status,
+		reportedStatus: task.reportedStatus ?? null,
+		reportedSummary: task.reportedSummary ?? null,
+		result: task.result ?? null,
+	};
 }
 
 function selectWorkflowEvidenceKind(

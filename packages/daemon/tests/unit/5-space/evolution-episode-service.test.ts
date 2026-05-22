@@ -237,6 +237,219 @@ describe('EvolutionEpisodeService', () => {
 		).resolves.toEqual({ provider: 'openrouter', modelId: 'shared-model' });
 	});
 
+	it('warns and blocks manual-note-only evidence without explicit confirmation', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Thin evidence',
+			objective: 'Avoid generic findings',
+		});
+		const note = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Operator thinks the work went well',
+		});
+		let judgeCalled = false;
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			judgeEpisode: async () => {
+				judgeCalled = true;
+				return { title: 'Should not run', outcomeSummary: 'Nope', findings: [] };
+			},
+		});
+		const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [note.id] });
+		const prompt = buildEpisodeJudgePrompt(input);
+
+		expect(input.preflight.level).toBe('low');
+		expect(input.preflight.requiresConfirmation).toBe(true);
+		expect(input.preflight.warnings).toContain(
+			'Only manual notes selected; findings will be low confidence without task results or artifacts.'
+		);
+		expect(input.preflight.warnings).toContain('No task evidence selected.');
+		expect(prompt).toContain('Evidence quality preflight');
+		expect(prompt).toContain('low');
+		await expect(
+			service.createFromEvidence({ scopeId: scope.id, evidenceIds: [note.id] })
+		).rejects.toThrow('Low-confidence evidence requires explicit confirmation');
+		expect(judgeCalled).toBe(false);
+	});
+
+	it('passes task plus workflow artifact evidence through preflight', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Artifact-backed evidence',
+			objective: 'Trust concrete outcomes',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Ship Forge preflight',
+			description: 'Add preflight',
+			evolutionScopeId: scope.id,
+		});
+		taskRepo.updateTask(task.id, {
+			status: 'done',
+			result: 'PR merged after CI and QA passed',
+			reportedSummary: 'Completed with artifact-backed validation',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Code workflow' });
+		const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Forge run' });
+		artifactRepo.upsert({
+			id: 'artifact-quality',
+			runId: run.id,
+			nodeId: 'qa',
+			artifactType: 'result',
+			artifactKey: 'qa',
+			data: { summary: 'QA passed, CI green, PR https://github.com/lsm/neokai/pull/1 merged' },
+		});
+		const taskEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'task',
+			sourceId: task.id,
+			summary: 'Task linked to completed work',
+		});
+		const workflowTask = taskRepo.createTask({
+			spaceId,
+			title: 'Supervised completion gate',
+			description: 'Report completion before human approval',
+			workflowRunId: run.id,
+		});
+		taskRepo.updateTask(workflowTask.id, {
+			reportedStatus: 'done',
+			reportedSummary: 'Ready for review after validation',
+		});
+		const artifactEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'artifact',
+			sourceId: run.id,
+			summary: 'Workflow artifact captured QA and merge outcome',
+		});
+		const errorEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'error',
+			sourceId: run.id,
+			summary: 'Workflow run had retryable error',
+		});
+		const scopeService = new EvolutionScopeService({
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+		const listedWithoutContext = scopeService.listEvidence(scope.id);
+		expect(listedWithoutContext.preflightContext).toBeUndefined();
+
+		const listed = scopeService.listEvidence(scope.id, true);
+		const taskContext = listed.preflightContext?.tasks[0]?.task;
+		const runContext = listed.preflightContext?.workflowRuns[0];
+		expect(taskContext).toEqual({
+			title: 'Ship Forge preflight',
+			status: 'done',
+			reportedStatus: null,
+			reportedSummary: 'Completed with artifact-backed validation',
+			result: 'PR merged after CI and QA passed',
+		});
+		expect('description' in (taskContext ?? {})).toBe(false);
+		expect('metadata' in (taskContext ?? {})).toBe(false);
+		const largePayload = 'x'.repeat(1000);
+		artifactRepo.upsert({
+			id: 'artifact-large',
+			runId: run.id,
+			nodeId: 'logs',
+			artifactType: 'log',
+			artifactKey: 'large',
+			data: {
+				summary: 'Generic artifact',
+				result: 'CI passed and PR merged',
+				details: 'Tool-specific field says QA passed after merge validation',
+				message: largePayload,
+			},
+		});
+		for (let index = 0; index < 8; index++) {
+			artifactRepo.upsert({
+				id: `artifact-extra-${index}`,
+				runId: run.id,
+				nodeId: 'extra',
+				artifactType: 'result',
+				artifactKey: `extra-${index}`,
+				data: { summary: 'later artifact outside preflight window' },
+			});
+		}
+		const listedWithArtifacts = scopeService.listEvidence(scope.id, true);
+		const cappedRunContext = listedWithArtifacts.preflightContext?.workflowRuns[0];
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const input = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [taskEvidence.id, artifactEvidence.id],
+		});
+
+		expect(input.preflight.level).toBe('high');
+		expect(input.preflight.requiresConfirmation).toBe(false);
+		expect(input.preflight.counts.taskResults).toBe(1);
+		expect(input.preflight.counts.workflowArtifacts).toBe(1);
+		expect(input.preflight.counts.outcomes).toBeGreaterThanOrEqual(3);
+		expect(runContext?.evidenceIds).toContain(artifactEvidence.id);
+		expect(runContext?.evidenceIds).toContain(errorEvidence.id);
+		expect(cappedRunContext?.artifacts).toHaveLength(8);
+		expect(cappedRunContext?.artifacts[0]?.data.summary).toContain('QA passed');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain('Generic artifact');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain('CI passed and PR merged');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain(
+			'Tool-specific field says QA passed after merge validation'
+		);
+		expect(cappedRunContext?.artifacts[1]?.data.summary.length).toBeLessThanOrEqual(501);
+		expect(cappedRunContext?.artifacts.some((artifact) => 'large' in artifact.data)).toBe(false);
+	});
+
+	it('metric snapshot improves evidence readiness', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Metrics evidence',
+			objective: 'Use measurements',
+		});
+		const note = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Manual note says review completed',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+		const before = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [note.id],
+		}).preflight;
+		evolutionRepo.createMetricSnapshot({
+			scopeId: scope.id,
+			values: { comments: 2 },
+			source: 'manual',
+			note: 'Review comments decreased',
+		});
+		const after = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [note.id],
+		}).preflight;
+
+		expect(after.score).toBeGreaterThan(before.score);
+		expect(after.counts.metricSnapshots).toBe(1);
+		expect(after.warnings).not.toContain('No metric snapshot context selected.');
+	});
+
 	it('builds episode input with task results, workflow artifacts, metrics, and notes', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,
@@ -947,48 +1160,62 @@ describe('EvolutionEpisodeService', () => {
 			kind: 'manual_note',
 			summary: 'Manual observation',
 		});
+		let judgePreflight: unknown;
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
 			workflowRunRepo,
 			artifactRepo,
-			judgeEpisode: async () => ({
-				title: 'Manual episode',
-				outcomeSummary: 'Observation summarized',
-				findings: [
-					{
-						domain: 'neokai_product',
-						kind: 'friction',
-						impact: 'high',
-						confidence: 0.9,
-						evidence: [evidence.id],
-						proposedAction: 'Reduce UI friction',
-					},
-				],
-				candidateLessons: [
-					{
-						appliesTo: ['ui'],
-						rule: 'Surface next step',
-						why: 'User got stuck',
-						confidence: 0.7,
-					},
-				],
-				proposals: [
-					{
-						title: 'Improve review UI',
-						description: 'Add clearer actions',
-						reason: 'Reduce friction',
-						priority: 'high',
-					},
-				],
-			}),
+			judgeEpisode: async (input) => {
+				judgePreflight = input.preflight;
+				return {
+					title: 'Manual episode',
+					outcomeSummary: 'Observation summarized',
+					findings: [
+						{
+							domain: 'neokai_product',
+							kind: 'friction',
+							impact: 'high',
+							confidence: 0.9,
+							evidence: [evidence.id],
+							proposedAction: 'Reduce UI friction',
+						},
+					],
+					candidateLessons: [
+						{
+							appliesTo: ['ui'],
+							rule: 'Surface next step',
+							why: 'User got stuck',
+							confidence: 0.7,
+						},
+					],
+					proposals: [
+						{
+							title: 'Improve review UI',
+							description: 'Add clearer actions',
+							reason: 'Reduce friction',
+							priority: 'high',
+						},
+					],
+				};
+			},
 		});
 
 		const result = await service.createFromEvidence({
 			scopeId: scope.id,
 			evidenceIds: [evidence.id],
+			confirmLowConfidence: true,
 		});
 
+		expect(judgePreflight).toMatchObject({
+			level: 'low',
+			requiresConfirmation: true,
+			warnings: expect.arrayContaining([
+				'Only manual notes selected; findings will be low confidence without task results or artifacts.',
+			]),
+		});
+		expect(result.preflight).toBe(judgePreflight);
+		expect(result.preflight.score).toBeGreaterThanOrEqual(0);
 		expect(result.episode).toMatchObject({
 			status: 'draft',
 			title: 'Manual episode',

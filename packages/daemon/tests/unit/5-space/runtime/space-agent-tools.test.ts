@@ -564,6 +564,7 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 				await handlers.create_forge_episode({
 					scope_id: scope.id,
 					evidence_ids: [note.id, snapshot.evidence.id],
+					confirm_low_confidence: true,
 				})
 			).content[0].text
 		);
@@ -740,6 +741,7 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 				await handlers.create_forge_episode({
 					scope_id: scope.id,
 					evidence_ids: [evidence.id],
+					confirm_low_confidence: true,
 				})
 			).content[0].text
 		).episode;
@@ -796,6 +798,7 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 				await handlers.create_forge_episode({
 					scope_id: scope.id,
 					evidence_ids: [evidence.id],
+					confirm_low_confidence: true,
 				})
 			).content[0].text
 		);
@@ -954,6 +957,7 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 				await handlers.create_forge_episode({
 					scope_id: scopeB.id,
 					evidence_ids: [evidenceB.id],
+					confirm_low_confidence: true,
 				})
 			).content[0].text
 		).episode;
@@ -997,6 +1001,7 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 				await handlers.create_forge_episode({
 					scope_id: scope.id,
 					evidence_ids: [evidence.id],
+					confirm_low_confidence: true,
 				})
 			).content[0].text
 		);

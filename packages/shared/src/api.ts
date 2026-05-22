@@ -39,6 +39,7 @@ import type {
 	CreateEvolutionScopeParams,
 	CreateMetricSnapshotParams,
 	CreateTaskProposalParams,
+	EvidenceQualityPreflight,
 	EvidenceRef,
 	EvolutionEpisode,
 	EvolutionLesson,
@@ -51,7 +52,12 @@ import type {
 	UpdateEvolutionScopeParams,
 	UpdateTaskProposalParams,
 } from './types/evolution.ts';
-import type { SpaceGoal, SpaceTask, UpdateSpaceGoalParams } from './types/space.ts';
+import type {
+	SpaceGoal,
+	SpaceTask,
+	SpaceWorkflowRun,
+	UpdateSpaceGoalParams,
+} from './types/space.ts';
 
 // Request types
 export interface CreateSessionRequest {
@@ -644,10 +650,44 @@ export interface EvolutionEvidenceCreateResponse {
 
 export interface EvolutionEvidenceListRequest {
 	scopeId: string;
+	includePreflightContext?: boolean;
+}
+
+export interface EvolutionPreflightTaskSummary {
+	title: string;
+	status: string;
+	reportedStatus: string | null;
+	reportedSummary: string | null;
+	result: string | null;
+}
+
+export interface EvolutionPreflightTaskContext {
+	evidenceId: string;
+	task: EvolutionPreflightTaskSummary;
+}
+
+export interface EvolutionPreflightWorkflowRunContext {
+	evidenceIds: string[];
+	run: SpaceWorkflowRun;
+	tasks: EvolutionPreflightTaskSummary[];
+	artifacts: Array<{
+		id: string;
+		runId: string;
+		nodeId: string;
+		artifactType: string;
+		artifactKey: string;
+		data: { summary: string };
+		createdAt: number;
+		updatedAt: number;
+	}>;
 }
 
 export interface EvolutionEvidenceListResponse {
 	evidence: EvidenceRef[];
+	preflightContext?: {
+		tasks: EvolutionPreflightTaskContext[];
+		workflowRuns: EvolutionPreflightWorkflowRunContext[];
+	};
 }
 
 export interface EvolutionEpisodeCreateRequest {
@@ -658,12 +698,14 @@ export interface EvolutionEpisodeCreateFromEvidenceRequest {
 	scopeId: string;
 	evidenceIds: string[];
 	timeWindow?: EvolutionEpisode['timeWindow'];
+	confirmLowConfidence?: boolean;
 }
 
 export interface EvolutionEpisodeCreateResponse {
 	episode: EvolutionEpisode;
 	lessons?: EvolutionLesson[];
 	proposals?: TaskProposal[];
+	preflight?: EvidenceQualityPreflight;
 }
 
 export interface EvolutionEpisodeReviewBundleResponse {

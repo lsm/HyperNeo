@@ -64,9 +64,9 @@ describe('evolution RPC handlers', () => {
 					calls.push(['addMetricSnapshotEvidence', params]);
 					return { snapshot: { id: 'snapshot-1' }, evidence: { id: 'evidence-snapshot' } };
 				},
-				listEvidence: (scopeId: string) => {
-					calls.push(['listEvidence', scopeId]);
-					return [{ id: 'evidence-listed' }];
+				listEvidence: (scopeId: string, includePreflightContext?: boolean) => {
+					calls.push(['listEvidence', { scopeId, includePreflightContext }]);
+					return { evidence: [{ id: 'evidence-listed' }] };
 				},
 				listTimeline: (scopeId: string) => {
 					calls.push(['listTimeline', scopeId]);
@@ -117,7 +117,9 @@ describe('evolution RPC handlers', () => {
 		});
 		expect(
 			await handlers.get('evolution.evidence.attachWorkflowRun')?.({ workflowRunId: 'run-1' })
-		).toEqual({ evidence: { id: 'evidence-run' } });
+		).toEqual({
+			evidence: { id: 'evidence-run' },
+		});
 		expect(
 			await handlers.get('evolution.evidence.addManualNote')?.({
 				scopeId: 'scope-1',
@@ -132,6 +134,14 @@ describe('evolution RPC handlers', () => {
 			})
 		).toEqual({ snapshot: { id: 'snapshot-1' }, evidence: { id: 'evidence-snapshot' } });
 		expect(await handlers.get('evolution.evidence.list')?.({ scopeId: 'scope-1' })).toEqual({
+			evidence: [{ id: 'evidence-listed' }],
+		});
+		expect(
+			await handlers.get('evolution.evidence.list')?.({
+				scopeId: 'scope-1',
+				includePreflightContext: true,
+			})
+		).toEqual({
 			evidence: [{ id: 'evidence-listed' }],
 		});
 		expect(await handlers.get('evolution.timeline.list')?.({ scopeId: 'scope-1' })).toEqual({
@@ -149,10 +159,20 @@ describe('evolution RPC handlers', () => {
 		});
 		expect(
 			await handlers.get('evolution.task.lessons.select')?.({ taskId: 'task-1', limit: 3 })
-		).toEqual({ lessons: [{ id: 'lesson-selected' }] });
+		).toEqual({
+			lessons: [{ id: 'lesson-selected' }],
+		});
 
 		expect(calls).toContainEqual(['createScopeFromGoal', { spaceGoalId: 'goal-1' }]);
 		expect(calls).toContainEqual(['updateScope', { id: 'scope-1', params: { name: 'New' } }]);
+		expect(calls).toContainEqual([
+			'listEvidence',
+			{ scopeId: 'scope-1', includePreflightContext: false },
+		]);
+		expect(calls).toContainEqual([
+			'listEvidence',
+			{ scopeId: 'scope-1', includePreflightContext: true },
+		]);
 		expect(calls).toContainEqual(['listMetricSnapshots', 'scope-1']);
 		expect(calls).toContainEqual(['selectActiveLessonsForTask', { taskId: 'task-1', limit: 3 }]);
 	});

@@ -1,4 +1,5 @@
 import type {
+	EvidenceQualityPreflight,
 	EvolutionEpisode,
 	EvolutionEpisodeCreateResponse,
 	EvolutionEpisodeReviewBundleResponse,
@@ -24,6 +25,7 @@ import type {
 	TaskProposal,
 	TaskProposalStatus,
 } from '@neokai/shared';
+import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { ComponentChild } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from '../../hooks/useMessageHub';
@@ -128,6 +130,36 @@ function nextStepsFromText(value: string): string[] {
 		.split('\n')
 		.map((step) => step.trim())
 		.filter(Boolean);
+}
+
+function buildEvidenceQualityPreflight(
+	evidence: EvidenceRef[],
+	selectedEvidenceIds: string[],
+	metricSnapshots: MetricSnapshot[] = [],
+	preflightContext?: EvolutionEvidenceListResponse['preflightContext']
+): EvidenceQualityPreflight | null {
+	if (selectedEvidenceIds.length === 0) return null;
+	const selected = evidence.filter((item) => selectedEvidenceIds.includes(item.id));
+	if (selected.length === 0) return null;
+	const selectedIds = new Set(selected.map((item) => item.id));
+	return scoreEvolutionEvidenceQuality({
+		evidence: selected,
+		tasks: (preflightContext?.tasks ?? [])
+			.filter((item) => selectedIds.has(item.evidenceId))
+			.map(({ task }) => task),
+		workflowRuns: (preflightContext?.workflowRuns ?? [])
+			.filter((item) => item.evidenceIds.some((id) => selectedIds.has(id)))
+			.map(({ run, tasks, artifacts }) => ({
+				run,
+				tasks,
+				artifacts: artifacts.map((artifact) => ({
+					type: artifact.artifactType,
+					key: artifact.artifactKey,
+					data: artifact.data,
+				})),
+			})),
+		metricSnapshotCount: metricSnapshots.length,
+	});
 }
 
 function getGoal(scope: EvolutionScope | null, goals: SpaceGoal[]): SpaceGoal | null {
@@ -553,7 +585,11 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
 	const [proposals, setProposals] = useState<TaskProposal[]>([]);
 	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+	const [preflightContext, setPreflightContext] =
+		useState<EvolutionEvidenceListResponse['preflightContext']>();
+	const [metricSnapshots, setMetricSnapshots] = useState<MetricSnapshot[]>([]);
 	const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
+	const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -571,17 +607,27 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		setLoading(true);
 		setError(null);
 		try {
-			const [reviewResponse, evidenceResponse] = await Promise.all([
+			const metricSnapshotsPromise = request<EvolutionMetricSnapshotListResponse>(
+				'evolution.metricSnapshot.list',
+				{ scopeId: scope.id }
+			).catch(() => ({ snapshots: [] }));
+			const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
 				request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
 					scopeId: scope.id,
 				}),
-				request<EvolutionEvidenceListResponse>('evolution.evidence.list', { scopeId: scope.id }),
+				request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
+					scopeId: scope.id,
+					includePreflightContext: true,
+				}),
+				metricSnapshotsPromise,
 			]);
 			if (requestVersion.current !== version) return;
 			setEpisodes(reviewResponse.episodes ?? []);
 			setLessons(reviewResponse.lessons ?? []);
 			setProposals(reviewResponse.proposals ?? []);
 			setEvidence(evidenceResponse.evidence ?? []);
+			setPreflightContext(evidenceResponse.preflightContext);
+			setMetricSnapshots(metricResponse.snapshots ?? []);
 			setSelectedEvidenceIds((current) =>
 				current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
 			);
@@ -623,8 +669,20 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 		!!latestEpisode &&
 		latestEpisode.status !== 'dismissed' &&
 		latestEpisode.rollupAppliedAt === null;
+	const preflight = useMemo(
+		() =>
+			buildEvidenceQualityPreflight(
+				evidence,
+				selectedEvidenceIds,
+				metricSnapshots,
+				preflightContext
+			),
+		[evidence, metricSnapshots, preflightContext, selectedEvidenceIds]
+	);
+	const preflightReady = preflight?.requiresConfirmation ? confirmLowConfidence : true;
 
 	const toggleEvidence = (id: string) => {
+		setConfirmLowConfidence(false);
 		setSelectedEvidenceIds((current) =>
 			current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
 		);
@@ -643,6 +701,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 				{
 					scopeId: scope.id,
 					evidenceIds: selectedEvidenceIds,
+					confirmLowConfidence: confirmLowConfidence || undefined,
 				},
 				{ timeout: EPISODE_JUDGE_TIMEOUT_MS }
 			);
@@ -650,6 +709,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 			setLessons((current) => [...(response.lessons ?? []), ...current]);
 			setProposals((current) => [...(response.proposals ?? []), ...current]);
 			setSelectedEvidenceIds([]);
+			setConfirmLowConfidence(false);
 			toast.success(`Episode "${response.episode.title}" drafted`);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create episode');
@@ -789,7 +849,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						type="button"
 						size="sm"
 						onClick={handleCreateEpisode}
-						disabled={submitting || selectedEvidenceIds.length === 0}
+						disabled={submitting || selectedEvidenceIds.length === 0 || !preflightReady}
 					>
 						{submitting ? 'Judging…' : 'Create episode'}
 					</Button>
@@ -802,24 +862,70 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 						</p>
 					</div>
 				) : (
-					<div class="grid gap-2 md:grid-cols-2">
-						{evidence.map((item) => (
-							<label
-								key={item.id}
-								class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+					<div class="space-y-3">
+						<div class="grid gap-2 md:grid-cols-2">
+							{evidence.map((item) => (
+								<label
+									key={item.id}
+									class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+								>
+									<input
+										type="checkbox"
+										checked={selectedEvidenceIds.includes(item.id)}
+										onChange={() => toggleEvidence(item.id)}
+										class="mt-1"
+									/>
+									<span>
+										<span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
+										{item.summary}
+									</span>
+								</label>
+							))}
+						</div>
+						{preflight && (
+							<div
+								class={`rounded-lg border px-3 py-2 text-sm ${
+									preflight.level === 'high'
+										? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
+										: preflight.level === 'medium'
+											? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+											: 'border-red-500/30 bg-red-500/10 text-red-100'
+								}`}
 							>
-								<input
-									type="checkbox"
-									checked={selectedEvidenceIds.includes(item.id)}
-									onChange={() => toggleEvidence(item.id)}
-									class="mt-1"
-								/>
-								<span>
-									<span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
-									{item.summary}
-								</span>
-							</label>
-						))}
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<span class="font-medium">Evidence preflight: {preflight.level} confidence</span>
+									<span class="text-xs opacity-80">
+										{preflight.score}/{preflight.maxScore} · {preflight.counts.total} selected
+									</span>
+								</div>
+								{preflight.reasons.length > 0 && (
+									<ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
+										{preflight.reasons.map((reason) => (
+											<li key={reason}>{reason}</li>
+										))}
+									</ul>
+								)}
+								{preflight.warnings.length > 0 && (
+									<ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
+										{preflight.warnings.map((warning) => (
+											<li key={warning}>{warning}</li>
+										))}
+									</ul>
+								)}
+								{preflight.requiresConfirmation && (
+									<label class="mt-3 flex items-center gap-2 text-xs">
+										<input
+											type="checkbox"
+											checked={confirmLowConfidence}
+											onChange={(event) =>
+												setConfirmLowConfidence((event.currentTarget as HTMLInputElement).checked)
+											}
+										/>
+										Generate low-confidence episode anyway
+									</label>
+								)}
+							</div>
+						)}
 					</div>
 				)}
 			</section>
