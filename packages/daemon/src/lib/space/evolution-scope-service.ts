@@ -249,7 +249,13 @@ export class EvolutionScopeService {
 			},
 		});
 		try {
-			this.deps.traceEvidenceService?.captureForTask({ scopeId: scope.id, taskId: task.id });
+			const traceResult = this.deps.traceEvidenceService?.captureForTaskWithDiagnostic({
+				scopeId: scope.id,
+				taskId: task.id,
+			});
+			if (traceResult && traceResult.evidence.length > 0) {
+				this.clearTraceDiagnosticEvidence(scope.id, task.id, traceResult.diagnostic);
+			}
 		} catch (err) {
 			this.createTraceDiagnosticEvidence(scope.id, task.id, traceCaptureErrorDiagnostic(err));
 			log.warn('Trace evidence capture failed; keeping primary task evidence:', err);
@@ -476,7 +482,7 @@ export class EvolutionScopeService {
 			if (result.evidence.length === 0) {
 				this.createTraceDiagnosticEvidence(scopeId, taskId, result.diagnostic);
 			} else {
-				this.clearTraceDiagnosticEvidence(scopeId, taskId);
+				this.clearTraceDiagnosticEvidence(scopeId, taskId, result.diagnostic);
 			}
 			return result;
 		} catch (err) {
@@ -504,7 +510,11 @@ export class EvolutionScopeService {
 		});
 	}
 
-	private clearTraceDiagnosticEvidence(scopeId: string, taskId: string): void {
+	private clearTraceDiagnosticEvidence(
+		scopeId: string,
+		taskId: string,
+		diagnostic: TraceEvidenceDiagnostic
+	): void {
 		const existing = this.deps.evolutionRepo
 			.listEvidence(scopeId)
 			.find(
@@ -516,14 +526,11 @@ export class EvolutionScopeService {
 			);
 		if (!existing) return;
 		this.deps.evolutionRepo.updateEvidence(existing.id, {
-			summary: 'Trace-derived evidence generated',
+			summary: diagnostic.message,
 			metadata: {
-				...existing.metadata,
 				traceDiagnostic: true,
-				status: 'generated',
-				message: 'Trace-derived evidence generated',
-				evidenceCount: 0,
 				clearedByTraceEvidence: true,
+				...diagnostic,
 			},
 		});
 	}

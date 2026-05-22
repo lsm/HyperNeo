@@ -49,12 +49,7 @@ describe('Forge evidence capture on task completion', () => {
 			taskRepo,
 		});
 		evolutionScopeService = new EvolutionScopeService({
-			evolutionRepo,
-			spaceRepo,
-			goalRepo,
-			taskRepo,
-			workflowRunRepo,
-			artifactRepo,
+			...createScopeServiceDeps(),
 			traceEvidenceService,
 		});
 	});
@@ -557,14 +552,63 @@ describe('Forge evidence capture on task completion', () => {
 		expect(result.traceDiagnostic?.status).toBe('generated');
 		const evidence = evolutionRepo.listEvidence(scope.id);
 		expect(evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		const diagnostic = evidence.find(
+			(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+		);
+		expect(diagnostic?.metadata.status).toBe('generated');
+		expect(diagnostic?.metadata.failedToolCallCount).toBe(1);
+		expect(diagnostic?.metadata.evidenceCount).toBeGreaterThan(0);
+		expect(diagnostic?.metadata.error).toBeUndefined();
+	});
+
+	it('clears attach-time trace diagnostics when later attachment generates trace evidence', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Attachment retry scope',
+			objective: 'Avoid stale attach diagnostics',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Attach task evidence twice',
+			description: 'First throws, then captures trace evidence',
+			evolutionScopeId: scope.id,
+		});
+		const throwingService = new EvolutionScopeService({
+			...createScopeServiceDeps(),
+			traceEvidenceService: {
+				captureForTaskWithDiagnostic: () => {
+					throw new Error('temporary trace failure');
+				},
+			} as never,
+		});
+		throwingService.attachTaskEvidence({ taskId: task.id });
 		expect(
-			evidence.some(
-				(item) =>
-					item.kind === 'session' &&
-					item.metadata.traceDiagnostic === true &&
-					item.metadata.status !== 'generated'
-			)
-		).toBe(false);
+			evolutionRepo
+				.listEvidence(scope.id)
+				.find((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true)?.metadata
+				.error
+		).toBe('temporary trace failure');
+		insertToolExchange(
+			task.id,
+			'session-attach-retry',
+			'tool-attach-fail',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{ text: 'Error: attach retry failed test' }
+		);
+
+		evolutionScopeService.attachTaskEvidence({ taskId: task.id });
+
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		const diagnostic = evidence.find(
+			(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+		);
+		expect(diagnostic?.metadata.status).toBe('generated');
+		expect(diagnostic?.metadata.error).toBeUndefined();
+		expect(diagnostic?.metadata.evidenceCount).toBeGreaterThan(0);
 	});
 
 	it('captures slow successful tool calls as trace-derived evidence', () => {
@@ -705,6 +749,17 @@ describe('Forge evidence capture on task completion', () => {
 		expect(result.scope?.id).toBe(scope.id);
 		expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(2);
 	});
+
+	function createScopeServiceDeps() {
+		return {
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		};
+	}
 
 	function insertToolExchange(
 		taskId: string,
