@@ -17,6 +17,11 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -294,6 +299,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let artifactRepo: WorkflowRunArtifactRepository;
 	let taskRepo: SpaceTaskRepository;
+	let artifactRepo: WorkflowRunArtifactRepository;
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
@@ -317,6 +323,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
+			artifactRepo,
 			nodeExecutionRepo,
 			artifactRepo,
 			internalEventBus: bus,
@@ -337,6 +344,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		artifactRepo = new WorkflowRunArtifactRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
+		artifactRepo = new WorkflowRunArtifactRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
@@ -361,6 +369,64 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		} catch {
 			/* ignore */
 		}
+	});
+
+	// -------------------------------------------------------------------------
+	// Artifact-backed task result capture
+	// -------------------------------------------------------------------------
+
+	describe('artifact-backed task result capture', () => {
+		test('completion result artifact populates task result, reportedSummary, and Forge task_result evidence', async () => {
+			const SUMMARY = 'Smoke result artifact captured PR-ready outcome';
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-artifact-result', name: 'Coding', agentId: AGENT_A },
+			]);
+			const evolutionRepo = new EvolutionRepository(db);
+			const scope = evolutionRepo.createScope({
+				spaceId: SPACE_ID,
+				kind: 'custom',
+				name: 'Forge self-validation smoke',
+				objective:
+					'Validate result artifact auto-capture after PR #1991; a task cannot validate a fix that only runs after merge/restart, so this follow-up task guards future regressions.',
+			});
+			const evolutionScopeService = new EvolutionScopeService({
+				evolutionRepo,
+				spaceRepo: new SpaceRepository(db),
+				goalRepo: new SpaceGoalRepository(db),
+				taskRepo,
+				workflowRunRepo,
+				artifactRepo,
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Result smoke run');
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { evolutionScopeId: scope.id, status: 'done' });
+			artifactRepo.upsert({
+				id: 'artifact-task-result-smoke',
+				runId: run.id,
+				nodeId: 'node-artifact-result',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: SUMMARY, pr_url: 'https://github.com/neokai/neokai/pull/1991' },
+			});
+			seedNodeExec(db, run.id, 'node-artifact-result', 'agent', 'idle');
+
+			await rt.executeTick();
+
+			const completedTask = taskRepo.getTask(task.id)!;
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(completedTask.result).toBe(SUMMARY);
+			expect(completedTask.reportedSummary).toBe(SUMMARY);
+			const evidence = evolutionScopeService.captureCompletedTaskEvidence({
+				taskId: task.id,
+			}).evidence;
+			const taskEvidence = evidence.find((item) => item.kind === 'task_result');
+			expect(taskEvidence?.summary).toContain(SUMMARY);
+			expect(taskEvidence?.summary).not.toContain('completed without task.result');
+			expect(taskEvidence?.metadata.result).toBe(SUMMARY);
+			expect(taskEvidence?.metadata.reportedSummary).toBe(SUMMARY);
+		});
 	});
 
 	// -------------------------------------------------------------------------
