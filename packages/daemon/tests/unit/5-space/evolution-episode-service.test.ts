@@ -928,6 +928,81 @@ describe('EvolutionEpisodeService', () => {
 		);
 	});
 
+	it('rejects proposal-to-task dependencies missing from the scope space', () => {
+		const otherSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/other-space',
+			slug: 'other-space',
+			name: 'Other Space',
+		}).id;
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Dependency scope',
+			objective: 'Validate dependency space',
+		});
+		const proposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Dependent task',
+			description: 'Should reject cross-space deps',
+			reason: 'Avoid invalid dependency graph',
+		});
+		const otherSpaceTask = taskRepo.createTask({
+			spaceId: otherSpaceId,
+			title: 'Other space task',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		expect(() =>
+			service.createTaskFromProposal(proposal.id, { dependsOn: [otherSpaceTask.id] })
+		).toThrow(`Dependency task not found in space: ${otherSpaceTask.id}`);
+	});
+
+	it('rejects self-dependency and cycles during proposal-to-task creation', () => {
+		const taskId = 'proposal-cycle-task';
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Dependency scope',
+			objective: 'Validate dependency graph',
+		});
+		const selfProposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Self-dependent task',
+			description: 'Should reject self dependency',
+			reason: 'Avoid impossible dependency ordering',
+		});
+		const cycleProposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Cycle task',
+			description: 'Should reject bad graph',
+			reason: 'Avoid impossible dependency ordering',
+		});
+		const upstream = taskRepo.createTask({
+			spaceId,
+			title: 'Upstream task',
+			dependsOn: [taskId],
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			taskIdFactory: () => taskId,
+		});
+
+		expect(() => service.createTaskFromProposal(selfProposal.id, { dependsOn: [taskId] })).toThrow(
+			'A task cannot depend on itself'
+		);
+		expect(() =>
+			service.createTaskFromProposal(cycleProposal.id, { dependsOn: [upstream.id] })
+		).toThrow('Adding these dependencies would create a circular dependency');
+	});
+
 	it('rejects invalid rollup writeback requests', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Recurring review goal', type: 'recurring' });
 		const oneShotGoal = goalRepo.create({ spaceId, title: 'One-shot goal', type: 'one_shot' });

@@ -109,7 +109,7 @@ export class SpaceTaskRepository {
 	 * Create a new space task
 	 */
 	createTask(params: InternalCreateSpaceTaskParams): SpaceTask {
-		const id = generateUUID();
+		const id = params.id ?? generateUUID();
 		const now = Date.now();
 
 		// Wrap SELECT MAX + INSERT in an explicit transaction to prevent concurrent

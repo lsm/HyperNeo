@@ -764,6 +764,8 @@ export interface CreateSpaceTaskParams {
  * Internal parameters for creating SpaceTask rows with system-owned linkage.
  */
 export interface InternalCreateSpaceTaskParams extends CreateSpaceTaskParams {
+	/** System-provided ID for atomic pre-validation flows; generated when omitted. */
+	id?: string;
 	/** ID of the SpaceGoal this task should be linked to. */
 	goalId?: string | null;
 	/** ID of the EvolutionScope this task explicitly contributes evidence to. */
