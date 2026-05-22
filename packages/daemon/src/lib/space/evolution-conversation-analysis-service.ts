@@ -124,19 +124,23 @@ export class EvolutionConversationAnalysisService {
 				.map((item) => [String(item.metadata.frictionFingerprint ?? ''), item])
 		);
 
-		return patterns.map((pattern) => {
+		return uniquePatternsByFingerprint(patterns).map((pattern) => {
 			const evidenceParams = buildEvidenceParams(scope.id, task, messages, analysis, pattern, {
 				confidenceThreshold,
 			});
 			const fingerprint = String(evidenceParams.metadata?.frictionFingerprint ?? '');
 			const existing = existingByFingerprint.get(fingerprint);
 			if (existing) {
-				return this.deps.evolutionRepo.updateEvidence(existing.id, {
+				const updated = this.deps.evolutionRepo.updateEvidence(existing.id, {
 					summary: evidenceParams.summary,
 					metadata: evidenceParams.metadata,
 				});
+				existingByFingerprint.set(fingerprint, updated);
+				return updated;
 			}
-			return this.deps.evolutionRepo.createEvidence(evidenceParams);
+			const created = this.deps.evolutionRepo.createEvidence(evidenceParams);
+			existingByFingerprint.set(fingerprint, created);
+			return created;
 		});
 	}
 
@@ -353,7 +357,7 @@ function buildEvidenceParams(
 	const involved = messages.filter((message) =>
 		canonicalMessageIds.includes(message.metadata.messageId)
 	);
-	const fingerprint = `conversation_friction:${pattern.kind}:${canonicalMessageIds.join(',')}`;
+	const fingerprint = patternFingerprint(pattern);
 	return {
 		scopeId,
 		kind: 'conversation_friction',
@@ -421,12 +425,29 @@ function filterResolvedPatterns(
 	});
 }
 
+function uniquePatternsByFingerprint(
+	patterns: ConversationFrictionPattern[]
+): ConversationFrictionPattern[] {
+	const seen = new Set<string>();
+	return patterns.filter((pattern) => {
+		const fingerprint = patternFingerprint(pattern);
+		if (seen.has(fingerprint)) return false;
+		seen.add(fingerprint);
+		return true;
+	});
+}
+
+function patternFingerprint(pattern: ConversationFrictionPattern): string {
+	return `conversation_friction:${pattern.kind}:${canonicalizeMessageIds(pattern.involvedMessages).join(',')}`;
+}
+
 function canonicalizeMessageIds(messageIds: string[]): string[] {
 	return unique(messageIds).sort();
 }
 
 function readTextBlock(block: Record<string, unknown>): string | null {
-	const text = typeof block.text === 'string' ? block.text.trim() : '';
+	const textValue = block.type === 'thinking' ? block.thinking : block.text;
+	const text = typeof textValue === 'string' ? textValue.trim() : '';
 	return text.length > 0 ? text : null;
 }
 

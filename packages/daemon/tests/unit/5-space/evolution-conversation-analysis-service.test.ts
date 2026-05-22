@@ -55,7 +55,7 @@ describe('EvolutionConversationAnalysisService', () => {
 				message: {
 					role: 'assistant',
 					content: [
-						{ type: 'thinking', text: 'I may have misunderstood the requirement.' },
+						{ type: 'thinking', thinking: 'I may have misunderstood the requirement.' },
 						{ type: 'text', text: 'Sorry, I will fix the scoped behavior.' },
 					],
 				},
@@ -80,6 +80,9 @@ describe('EvolutionConversationAnalysisService', () => {
 			'assistant-1',
 			'assistant-1',
 		]);
+		expect(messages.find((message) => message.role === 'thinking')?.text).toBe(
+			'I may have misunderstood the requirement.'
+		);
 	});
 
 	it('emits conversation friction evidence above threshold and upserts repeated capture', async () => {
@@ -216,6 +219,53 @@ describe('EvolutionConversationAnalysisService', () => {
 		expect(second[0]?.metadata.frictionFingerprint).toBe(
 			'conversation_friction:human_correction:message-assistant-1,message-human-1'
 		);
+	});
+
+	it('deduplicates duplicate patterns with the same fingerprint in one capture', async () => {
+		const { scope, task } = createScopedTask();
+		insertTextMessage(task.id, 'message-human-1', 'user', 'human', {
+			type: 'user',
+			message: { role: 'user', content: [{ type: 'text', text: 'No, this is wrong.' }] },
+		});
+		insertTextMessage(task.id, 'message-assistant-1', 'assistant', null, {
+			type: 'assistant',
+			message: { role: 'assistant', content: [{ type: 'text', text: 'Sorry, I misunderstood.' }] },
+		});
+		const service = new EvolutionConversationAnalysisService({
+			db: db as never,
+			evolutionRepo,
+			taskRepo,
+			analyzeConversation: async () => ({
+				patterns: [
+					{
+						kind: 'human_correction',
+						confidence: 0.9,
+						summary: 'Human corrected a misunderstanding.',
+						involvedMessages: ['message-human-1', 'message-assistant-1'],
+						severity: 'high',
+					},
+					{
+						kind: 'human_correction',
+						confidence: 0.8,
+						summary: 'Duplicate pattern for same messages.',
+						involvedMessages: ['message-assistant-1', 'message-human-1'],
+						severity: 'medium',
+					},
+				],
+				humanInterventionCount: 1,
+				syntheticInterventionCount: 0,
+				agentUncertaintyCount: 1,
+				overallAssessment: 'Correction needed.',
+			}),
+		});
+
+		const evidence = await service.captureForTask({ scopeId: scope.id, taskId: task.id });
+
+		expect(evidence).toHaveLength(1);
+		expect(
+			evolutionRepo.listEvidence(scope.id).filter((item) => item.kind === 'conversation_friction')
+		).toHaveLength(1);
+		expect(evidence[0]?.summary).toContain('Human corrected a misunderstanding.');
 	});
 
 	it('rejects patterns whose message IDs do not resolve in trace', async () => {
