@@ -20,6 +20,7 @@ import {
 	getSpaceTaskIdFromPath,
 	getSpaceTaskViewFromPath,
 	initializeRouter,
+	navigateBack,
 	navigateToHome,
 	navigateToSession,
 	navigateToSettings,
@@ -49,6 +50,7 @@ import {
 const SESSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 const SPACE_ID = 'demo-space';
 const TASK_ID = 't-42';
+const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
 
 function resetSignals() {
 	currentSessionIdSignal.value = null;
@@ -81,6 +83,7 @@ describe('router', () => {
 		cleanupRouter();
 		resetSignals();
 		setPath('/');
+		window.history.replaceState(null, '', '/');
 		vi.spyOn(window.history, 'pushState');
 		vi.spyOn(window.history, 'replaceState');
 	});
@@ -204,7 +207,11 @@ describe('router', () => {
 		expect(currentSpaceViewModeSignal.value).toBe('tasks');
 		expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
 		expect(window.history.replaceState).toHaveBeenLastCalledWith(
-			{ spaceId: SPACE_ID, path: `/space/${SPACE_ID}/tasks/completed` },
+			{
+				spaceId: SPACE_ID,
+				path: `/space/${SPACE_ID}/tasks/completed`,
+				[IN_APP_HISTORY_DEPTH_KEY]: 0,
+			},
 			'',
 			`/space/${SPACE_ID}/tasks/completed`
 		);
@@ -233,7 +240,7 @@ describe('router', () => {
 		expect(navSectionSignal.value).toBe('settings');
 		expect(settingsSectionSignal.value).toBe('skills');
 		expect(window.history.pushState).toHaveBeenLastCalledWith(
-			{ section: 'skills', path: '/settings?tab=skills' },
+			{ section: 'skills', path: '/settings?tab=skills', [IN_APP_HISTORY_DEPTH_KEY]: 1 },
 			'',
 			'/settings?tab=skills'
 		);
@@ -243,7 +250,7 @@ describe('router', () => {
 
 		expect(settingsSectionSignal.value).toBe('providers');
 		expect(window.history.pushState).toHaveBeenLastCalledWith(
-			{ section: 'providers', path: '/settings?tab=providers' },
+			{ section: 'providers', path: '/settings?tab=providers', [IN_APP_HISTORY_DEPTH_KEY]: 2 },
 			'',
 			'/settings?tab=providers'
 		);
@@ -252,7 +259,7 @@ describe('router', () => {
 	it('navigates session, settings, and home routes', () => {
 		navigateToSession(SESSION_ID);
 		expect(window.history.pushState).toHaveBeenLastCalledWith(
-			{ sessionId: SESSION_ID, path: `/session/${SESSION_ID}` },
+			{ sessionId: SESSION_ID, path: `/session/${SESSION_ID}`, [IN_APP_HISTORY_DEPTH_KEY]: 1 },
 			'',
 			`/session/${SESSION_ID}`
 		);
@@ -267,7 +274,11 @@ describe('router', () => {
 
 		navigateToHome();
 		expect(navSectionSignal.value).toBe('spaces');
-		expect(window.history.pushState).toHaveBeenLastCalledWith({ path: '/spaces' }, '', '/spaces');
+		expect(window.history.pushState).toHaveBeenLastCalledWith(
+			{ path: '/spaces', [IN_APP_HISTORY_DEPTH_KEY]: 3 },
+			'',
+			'/spaces'
+		);
 	});
 
 	it('navigates space routes and clears regular session selection', () => {
@@ -296,7 +307,7 @@ describe('router', () => {
 		expect(currentSpaceSessionIdSignal.value).toBeNull();
 		expect(currentSpaceTaskIdSignal.value).toBeNull();
 		expect(window.history.pushState).toHaveBeenLastCalledWith(
-			{ spaceId: SPACE_ID, path: `/space/${SPACE_ID}/forge` },
+			{ spaceId: SPACE_ID, path: `/space/${SPACE_ID}/forge`, [IN_APP_HISTORY_DEPTH_KEY]: 4 },
 			'',
 			`/space/${SPACE_ID}/forge`
 		);
@@ -324,5 +335,61 @@ describe('router', () => {
 		navigateToSpacesPage();
 		expect(currentSpaceIdSignal.value).toBeNull();
 		expect(navSectionSignal.value).toBe('spaces');
+	});
+
+	describe('navigateBack', () => {
+		it('uses the fallback after popping back to the original deep-linked entry', () => {
+			const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+			const fallback = vi.fn();
+
+			navigateToSpaceTasks(SPACE_ID);
+			finishNavigation();
+			window.history.replaceState(
+				{ path: `/space/${SPACE_ID}/task/${TASK_ID}` },
+				'',
+				`/space/${SPACE_ID}/task/${TASK_ID}`
+			);
+
+			navigateBack(fallback);
+
+			expect(fallback).toHaveBeenCalledTimes(1);
+			expect(back).not.toHaveBeenCalled();
+		});
+
+		it('runs the fallback when no in-app history has been pushed (deep link)', () => {
+			const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+			const fallback = vi.fn();
+
+			navigateBack(fallback);
+
+			expect(fallback).toHaveBeenCalledTimes(1);
+			expect(back).not.toHaveBeenCalled();
+		});
+
+		it('defers to history.back once an in-app navigation has pushed an entry', () => {
+			const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+			const fallback = vi.fn();
+
+			navigateToSpaceTasks(SPACE_ID);
+			finishNavigation();
+
+			navigateBack(fallback);
+
+			expect(back).toHaveBeenCalledTimes(1);
+			expect(fallback).not.toHaveBeenCalled();
+		});
+
+		it('treats replace-only navigations as not going back (no pushed entry)', () => {
+			const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+			const fallback = vi.fn();
+
+			navigateToSpace(SPACE_ID, true);
+			finishNavigation();
+
+			navigateBack(fallback);
+
+			expect(fallback).toHaveBeenCalledTimes(1);
+			expect(back).not.toHaveBeenCalled();
+		});
 	});
 });

@@ -71,6 +71,14 @@ const routerState: RouterState = {
 	isNavigating: false,
 };
 
+const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
+
+function getInAppHistoryDepth(state = window.history.state): number {
+	if (!state || typeof state !== 'object') return 0;
+	const depth = (state as Record<string, unknown>)[IN_APP_HISTORY_DEPTH_KEY];
+	return typeof depth === 'number' && Number.isFinite(depth) ? Math.max(0, depth) : 0;
+}
+
 export function getSessionIdFromPath(path: string): string | null {
 	const match = path.match(SESSION_ROUTE_PATTERN);
 	return match ? match[1] : null;
@@ -257,7 +265,26 @@ export function createSettingsPath(section?: SettingsSection): string {
 
 function pushPath(path: string, state: Record<string, unknown>, replace: boolean): void {
 	const historyMethod = replace ? 'replaceState' : 'pushState';
-	window.history[historyMethod]({ ...state, path }, '', path);
+	const currentDepth = getInAppHistoryDepth();
+	const nextDepth = replace ? currentDepth : currentDepth + 1;
+	window.history[historyMethod](
+		{ ...state, path, [IN_APP_HISTORY_DEPTH_KEY]: nextDepth },
+		'',
+		path
+	);
+}
+
+/**
+ * Return to the previous view. Only use `history.back()` when the current entry
+ * has an in-app predecessor; deep links and entries popped back to depth 0 use a
+ * parent-view fallback so the browser does not leave NeoKai.
+ */
+export function navigateBack(fallback: () => void): void {
+	if (getInAppHistoryDepth() > 0) {
+		window.history.back();
+	} else {
+		fallback();
+	}
 }
 
 function finishNavigation(): void {
