@@ -2102,17 +2102,20 @@ export class SpaceRuntime {
 
 		const now = Date.now();
 		for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
-			if (execution.agentSessionId) {
-				this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+			if (
+				!execution.agentSessionId ||
+				execution.status === 'idle' ||
+				execution.status === 'cancelled'
+			) {
+				continue;
 			}
-			if (execution.status !== 'cancelled') {
-				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'cancelled',
-					agentSessionId: null,
-					result: reason,
-					completedAt: now,
-				});
-			}
+			this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'cancelled',
+				agentSessionId: null,
+				result: reason,
+				completedAt: now,
+			});
 		}
 
 		if (task.taskAgentSessionId) {
@@ -2144,7 +2147,7 @@ export class SpaceRuntime {
 	): Promise<SpaceTask | null> {
 		let updated = this.config.taskRepo.updateTask(taskId, params);
 		if (updated) {
-			await this.safeOnTaskUpdated(spaceId, updated, opts);
+			let emitUpdated = true;
 
 			// Cascade dependent-task state changes based on the parent's terminal status.
 			//   - `blocked` (transient, retryable): only abort `in_progress` dependents.
@@ -2156,6 +2159,7 @@ export class SpaceRuntime {
 				const reason = params.result ?? updated.result ?? 'Task blocked';
 				if (params.blockReason === 'dependency_added') {
 					updated = await this.stopBlockedWorkflowTask(spaceId, updated, reason);
+					emitUpdated = false;
 					await this.safeNotify({
 						kind: 'task_blocked',
 						spaceId,
@@ -2196,6 +2200,9 @@ export class SpaceRuntime {
 						}
 					}
 				}
+			}
+			if (emitUpdated) {
+				await this.safeOnTaskUpdated(spaceId, updated, opts);
 			}
 		}
 		return updated;
