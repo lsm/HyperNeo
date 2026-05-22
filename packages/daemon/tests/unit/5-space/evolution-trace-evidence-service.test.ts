@@ -154,6 +154,152 @@ describe('EvolutionTraceEvidenceService', () => {
 		expect(retryLoop?.metadata.timeBeforeFirstPassingVerificationMs).toBeGreaterThan(0);
 	});
 
+	it('detects retry loops after an initial success', () => {
+		const { scope, task } = createScopedTask('Retries after success');
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-pass-1',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: 'Initial pass',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-fail-1',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Failure after edits',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-fail-2',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Still failing after edits',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-pass-2',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: 'Recovered',
+			}
+		);
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		const retryLoop = listTraceEvidence(scope.id).find((item) => item.kind === 'retry_loop');
+		expect(retryLoop).toBeTruthy();
+		expect(retryLoop?.metadata.retriesBeforeSuccess).toBe(2);
+		expect(retryLoop?.metadata.rawTraceRefs).toMatchObject({
+			toolUseIds: ['check-fail-1', 'check-fail-2', 'check-pass-2'],
+		});
+	});
+
+	it('records every independent retry loop', () => {
+		const { scope, task } = createScopedTask('Multiple retry loops');
+		insertToolExchange(task.id, 'session-1', 'test-fail-1', 'Bash', { command: 'bun test' }, true, {
+			text: 'Tests failed once',
+		});
+		insertToolExchange(task.id, 'session-1', 'test-fail-2', 'Bash', { command: 'bun test' }, true, {
+			text: 'Tests failed twice',
+		});
+		insertToolExchange(task.id, 'session-1', 'test-pass', 'Bash', { command: 'bun test' }, false, {
+			text: 'Tests passed',
+		});
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-fail-1',
+			'Bash',
+			{ command: 'bun run check' },
+			true,
+			{
+				text: 'Check failed once',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-fail-2',
+			'Bash',
+			{ command: 'bun run check' },
+			true,
+			{
+				text: 'Check failed twice',
+			}
+		);
+		insertToolExchange(
+			task.id,
+			'session-1',
+			'check-pass',
+			'Bash',
+			{ command: 'bun run check' },
+			false,
+			{
+				text: 'Check passed',
+			}
+		);
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		const retryLoops = listTraceEvidence(scope.id).filter((item) => item.kind === 'retry_loop');
+		expect(retryLoops).toHaveLength(2);
+		expect(retryLoops.map((item) => item.metadata.retryKey).sort()).toEqual([
+			'session-1:Bash:bun run check',
+			'session-1:Bash:bun test',
+		]);
+	});
+
+	it('does not build retry loops from orphan tool results', () => {
+		const { scope, task } = createScopedTask('Orphan tool results');
+		insertToolResultOnly(task.id, 'session-1', 'missing-1', true, 'Orphan failure one');
+		insertToolResultOnly(task.id, 'session-1', 'missing-2', true, 'Orphan failure two');
+		insertToolResultOnly(task.id, 'session-1', 'missing-3', false, 'Orphan success');
+
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		expect(listTraceEvidence(scope.id).some((item) => item.kind === 'retry_loop')).toBe(false);
+	});
+
+	it('refreshes existing trace evidence when counts change', () => {
+		const { scope, task } = createScopedTask('Refresh trace evidence');
+		insertToolExchange(task.id, 'session-1', 'test-1', 'Bash', { command: 'bun test' }, true, {
+			text: 'One test failure',
+		});
+		scopeService.attachTaskEvidence({ taskId: task.id });
+		const initial = listTraceEvidence(scope.id).find((item) => item.kind === 'test_failure');
+		expect(initial?.metadata.testFailureCycles).toBe(1);
+
+		insertToolExchange(task.id, 'session-1', 'test-2', 'Bash', { command: 'bun test' }, true, {
+			text: 'Second test failure',
+		});
+		scopeService.attachTaskEvidence({ taskId: task.id });
+
+		const testFailures = listTraceEvidence(scope.id).filter((item) => item.kind === 'test_failure');
+		expect(testFailures).toHaveLength(1);
+		expect(testFailures[0]?.id).toBe(initial?.id);
+		expect(testFailures[0]?.metadata.testFailureCycles).toBe(2);
+		expect(testFailures[0]?.metadata.rawTraceRefs).toMatchObject({
+			toolUseIds: ['test-1', 'test-2'],
+		});
+	});
+
 	it('does not merge retry loops across sessions for the same command', () => {
 		const { scope, task } = createScopedTask('Independent retries');
 		insertToolExchange(
@@ -306,6 +452,16 @@ describe('EvolutionTraceEvidenceService', () => {
 				content: [{ type: 'tool_use', id: toolUseId, name: toolName, input }],
 			},
 		});
+		insertToolResultOnly(taskId, sessionId, toolUseId, failed, options.text);
+	}
+
+	function insertToolResultOnly(
+		taskId: string,
+		sessionId: string,
+		toolUseId: string,
+		failed: boolean,
+		text: string
+	) {
 		insertMessage(taskId, sessionId, 'user', {
 			type: 'user',
 			uuid: `${toolUseId}-result`,
@@ -317,7 +473,7 @@ describe('EvolutionTraceEvidenceService', () => {
 						type: 'tool_result',
 						tool_use_id: toolUseId,
 						is_error: failed,
-						content: options.text,
+						content: text,
 					},
 				],
 			},

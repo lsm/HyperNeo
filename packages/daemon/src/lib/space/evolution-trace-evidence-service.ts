@@ -51,6 +51,7 @@ interface ToolUseRecord {
 
 interface ToolResultRecord {
 	toolUseId: string | null;
+	hasToolUse: boolean;
 	toolName: string;
 	commandKey: string;
 	rowId: string;
@@ -95,7 +96,7 @@ export class EvolutionTraceEvidenceService {
 		const analysis = analyzeTrace(rows);
 		if (!hasProcessFriction(analysis)) return [];
 
-		const existingFingerprints = new Set(
+		const existingByFingerprint = new Map(
 			this.deps.evolutionRepo
 				.listEvidence(params.scopeId)
 				.filter(
@@ -104,13 +105,20 @@ export class EvolutionTraceEvidenceService {
 						TRACE_EVIDENCE_KINDS.includes(item.kind) &&
 						item.metadata.traceCaptureVersion === TRACE_CAPTURE_VERSION
 				)
-				.map((item) => String(item.metadata.traceFingerprint ?? ''))
+				.map((item) => [String(item.metadata.traceFingerprint ?? ''), item])
 		);
 
-		const evidenceParams = buildEvidenceParams(params.scopeId, task, analysis).filter(
-			(item) => !existingFingerprints.has(String(item.metadata?.traceFingerprint ?? ''))
-		);
-		return evidenceParams.map((item) => this.deps.evolutionRepo.createEvidence(item));
+		return buildEvidenceParams(params.scopeId, task, analysis).map((item) => {
+			const fingerprint = String(item.metadata?.traceFingerprint ?? '');
+			const existing = existingByFingerprint.get(fingerprint);
+			if (existing) {
+				return this.deps.evolutionRepo.updateEvidence(existing.id, {
+					summary: item.summary,
+					metadata: item.metadata,
+				});
+			}
+			return this.deps.evolutionRepo.createEvidence(item);
+		});
 	}
 
 	private loadTraceRows(taskId: string): TraceRow[] {
@@ -186,6 +194,7 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
 
 			const toolUseId = typeof record.tool_use_id === 'string' ? record.tool_use_id : null;
 			const toolUse = toolUseId ? toolUsesById.get(toolUseId) : undefined;
+			const hasToolUse = toolUse !== undefined;
 			const toolName = toolUse?.name ?? 'unknown';
 			const text = extractToolResultText(record);
 			const failed = record.is_error === true || /^(error|failed):/i.test(text.trim());
@@ -196,6 +205,7 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
 			const fingerprint = normalizeErrorFingerprint(text || `${toolName} failed`);
 			toolResults.push({
 				toolUseId,
+				hasToolUse,
 				toolName,
 				commandKey,
 				rowId: row.id,
@@ -217,17 +227,12 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
 		.filter(([, results]) => results.length > 1)
 		.map(([fingerprint, results]) => ({ fingerprint, count: results.length, results }));
 
-	const retryLoops = Array.from(groupBy(toolResults, retryKey).entries()).flatMap(
-		([key, results]) => {
-			const firstSuccessIndex = results.findIndex((result) => !result.failed);
-			if (firstSuccessIndex < 0) return [];
-			const failuresBeforeSuccess = results
-				.slice(0, firstSuccessIndex)
-				.filter((result) => result.failed);
-			if (failuresBeforeSuccess.length < 2) return [];
-			return [{ key, failuresBeforeSuccess, success: results[firstSuccessIndex] }];
-		}
-	);
+	const retryLoops = Array.from(
+		groupBy(
+			toolResults.filter((result) => result.hasToolUse),
+			retryKey
+		).entries()
+	).flatMap(([key, results]) => detectRetryLoops(key, results));
 
 	const verificationSuccesses = toolResults.filter(
 		(result) => !result.failed && (result.category === 'test' || result.category === 'verification')
@@ -276,8 +281,7 @@ function buildEvidenceParams(
 		});
 	}
 
-	if (analysis.retryLoops.length > 0) {
-		const loop = analysis.retryLoops[0];
+	for (const loop of analysis.retryLoops) {
 		params.push({
 			scopeId,
 			kind: 'retry_loop',
@@ -285,7 +289,7 @@ function buildEvidenceParams(
 			summary: `Retry loop before success: ${loop.key} failed ${loop.failuresBeforeSuccess.length} times`,
 			metadata: {
 				...base,
-				traceFingerprint: `retry_loop:${loop.key}`,
+				traceFingerprint: `retry_loop:${loop.key}:${loop.success.toolUseId ?? loop.success.rowId}`,
 				retryKey: loop.key,
 				retriesBeforeSuccess: loop.failuresBeforeSuccess.length,
 				timeBeforeFirstPassingVerificationMs: timeBeforeFirstPassingVerification(analysis),
@@ -408,6 +412,25 @@ function classifyResult(
 function retryKey(result: ToolResultRecord): string {
 	const target = result.filePath ?? result.commandKey;
 	return `${result.sessionId}:${result.toolName}:${target}`;
+}
+
+function detectRetryLoops(
+	key: string,
+	results: ToolResultRecord[]
+): Array<TraceAnalysis['retryLoops'][number]> {
+	const loops: Array<TraceAnalysis['retryLoops'][number]> = [];
+	let pendingFailures: ToolResultRecord[] = [];
+	for (const result of results) {
+		if (result.failed) {
+			pendingFailures.push(result);
+			continue;
+		}
+		if (pendingFailures.length >= 2) {
+			loops.push({ key, failuresBeforeSuccess: pendingFailures, success: result });
+		}
+		pendingFailures = [];
+	}
+	return loops;
 }
 
 function normalizeCommand(command: string): string {
