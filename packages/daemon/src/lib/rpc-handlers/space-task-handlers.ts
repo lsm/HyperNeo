@@ -299,6 +299,21 @@ export function setupSpaceTaskHandlers(
 				};
 			}
 
+			if (dependencyCheckResult) {
+				const pointerParams: UpdateSpaceTaskParams = {};
+				if ('taskAgentSessionId' in updateParams) {
+					pointerParams.taskAgentSessionId = updateParams.taskAgentSessionId;
+				}
+				if ('workflowRunId' in updateParams) {
+					pointerParams.workflowRunId = updateParams.workflowRunId;
+				}
+				if (Object.keys(pointerParams).length > 0) {
+					dependencyCheckResult = await taskManager.updateTask(taskId, pointerParams, {
+						onCascadedTasks: emitCascadedTasks,
+					});
+				}
+			}
+
 			return {
 				task:
 					dependencyCheckResult ??
