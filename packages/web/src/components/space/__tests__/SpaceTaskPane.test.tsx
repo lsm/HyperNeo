@@ -108,6 +108,7 @@ let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockCancelWorkflowRun = vi.fn().mockResolvedValue(undefined);
 const mockRecoverWorkflowTask = vi.fn().mockResolvedValue(undefined);
 const mockSubmitForReview = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
@@ -126,6 +127,7 @@ vi.mock('../../../lib/space-store', () => ({
 			nodeExecutions: mockNodeExecutions,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
+			cancelWorkflowRun: mockCancelWorkflowRun,
 			recoverWorkflowTask: mockRecoverWorkflowTask,
 			submitForReview: mockSubmitForReview,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
@@ -308,6 +310,7 @@ describe('SpaceTaskPane', () => {
 		mockTaskActivity.value = new Map();
 		mockNodeExecutions.value = [];
 		mockUpdateTask.mockClear();
+		mockCancelWorkflowRun.mockClear();
 		mockRecoverWorkflowTask.mockClear();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
@@ -1143,6 +1146,26 @@ describe('SpaceTaskPane — activity members actions', () => {
 		await waitFor(() =>
 			expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
 		);
+	});
+
+	it('cancels blocked workflow tasks with a task status transition', async () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'blocked',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', status: 'in_progress' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByTestId('task-blocked-cancel-btn'));
+
+		await waitFor(() =>
+			expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'cancelled' })
+		);
+		expect(mockCancelWorkflowRun).not.toHaveBeenCalled();
 	});
 
 	it('uses workflow recovery action and label for workflow-backed terminal tasks', async () => {

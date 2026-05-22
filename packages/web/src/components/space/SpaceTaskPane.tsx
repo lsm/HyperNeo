@@ -678,7 +678,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			if (task.status === 'draft' && newStatus === 'open') {
 				await spaceStore.publishTask(task.id);
 			} else if (task.workflowRunId && newStatus === 'cancelled') {
-				await spaceStore.cancelWorkflowRun(task.workflowRunId);
+				if (task.status === 'blocked') {
+					await spaceStore.updateTask(task.id, { status: newStatus });
+				} else {
+					await spaceStore.cancelWorkflowRun(task.workflowRunId);
+				}
 			} else if (task.workflowRunId && isWorkflowRecoveryTransition(task.status, newStatus)) {
 				await spaceStore.recoverWorkflowTask(task.id, newStatus);
 			} else {
