@@ -231,5 +231,14 @@ describe('Migration 142: Forge MVP evidence backfill', () => {
 				)
 				.run('manual-retry-loop', SCOPE_ID, 'retry_loop', 'Retry loop', 'task-425', '{}', 200)
 		).not.toThrow();
+		expect(() =>
+			db
+				.prepare(
+					`INSERT INTO evolution_evidence (
+						id, scope_id, kind, summary, source_id, metadata_json, created_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('manual-slow-tool', SCOPE_ID, 'slow_tool_call', 'Slow tool', 'task-425', '{}', 201)
+		).not.toThrow();
 	});
 });

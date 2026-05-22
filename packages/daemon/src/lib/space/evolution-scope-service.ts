@@ -130,6 +130,7 @@ function traceCaptureUnavailableDiagnostic(): TraceEvidenceDiagnostic {
 		messageCount: 0,
 		toolCallCount: 0,
 		failedToolCallCount: 0,
+		slowToolCallCount: 0,
 		evidenceCount: 0,
 	};
 }
@@ -141,6 +142,7 @@ function traceCaptureErrorDiagnostic(err: unknown): TraceEvidenceDiagnostic {
 		messageCount: 0,
 		toolCallCount: 0,
 		failedToolCallCount: 0,
+		slowToolCallCount: 0,
 		evidenceCount: 0,
 		error: err instanceof Error ? err.message : String(err),
 	};

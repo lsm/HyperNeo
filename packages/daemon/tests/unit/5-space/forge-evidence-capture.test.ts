@@ -567,6 +567,45 @@ describe('Forge evidence capture on task completion', () => {
 		).toBe(false);
 	});
 
+	it('captures slow successful tool calls as trace-derived evidence', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Slow tool scope',
+			objective: 'Capture slow successful operations',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Slow successful tool call',
+			description: 'Slow Bash call should count as friction',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchangeAt(
+			task.id,
+			'session-slow',
+			'tool-slow-1',
+			'Bash',
+			{ command: 'bun run check' },
+			false,
+			{ text: 'Checks passed' },
+			1_700_000_000_000,
+			1_700_000_045_000
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Slow check passed' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		expect(result.traceDiagnostic?.slowToolCallCount).toBe(1);
+		const slowEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.find((item) => item.kind === 'slow_tool_call');
+		expect(slowEvidence?.metadata.slowToolCallCount).toBe(1);
+		expect(
+			(slowEvidence?.metadata.slowToolCalls as Array<{ durationMs: number }>)[0]?.durationMs
+		).toBe(45_000);
+	});
+
 	it('records a trace diagnostic when completed task trace has no friction', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,
@@ -676,38 +715,75 @@ describe('Forge evidence capture on task completion', () => {
 		failed: boolean,
 		options: { text: string }
 	) {
-		insertMessage(taskId, sessionId, 'assistant', {
-			type: 'assistant',
-			uuid: `${toolUseId}-assistant`,
-			session_id: sessionId,
-			message: {
-				role: 'assistant',
-				content: [{ type: 'tool_use', id: toolUseId, name: toolName, input }],
-			},
-		});
-		insertMessage(taskId, sessionId, 'user', {
-			type: 'user',
-			uuid: `${toolUseId}-result`,
-			session_id: sessionId,
-			message: {
-				role: 'user',
-				content: [
-					{
-						type: 'tool_result',
-						tool_use_id: toolUseId,
-						is_error: failed,
-						content: options.text,
-					},
-				],
-			},
-		});
+		insertToolExchangeAt(
+			taskId,
+			sessionId,
+			toolUseId,
+			toolName,
+			input,
+			failed,
+			options,
+			nextMessageTime(),
+			nextMessageTime()
+		);
 	}
 
-	function insertMessage(
+	function insertToolExchangeAt(
+		taskId: string,
+		sessionId: string,
+		toolUseId: string,
+		toolName: string,
+		input: Record<string, unknown>,
+		failed: boolean,
+		options: { text: string },
+		toolUseTimestamp: number,
+		toolResultTimestamp: number
+	) {
+		insertMessageAt(
+			taskId,
+			sessionId,
+			'assistant',
+			{
+				type: 'assistant',
+				uuid: `${toolUseId}-assistant`,
+				session_id: sessionId,
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: toolUseId, name: toolName, input }],
+				},
+			},
+			toolUseTimestamp
+		);
+		insertMessageAt(
+			taskId,
+			sessionId,
+			'user',
+			{
+				type: 'user',
+				uuid: `${toolUseId}-result`,
+				session_id: sessionId,
+				message: {
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: toolUseId,
+							is_error: failed,
+							content: options.text,
+						},
+					],
+				},
+			},
+			toolResultTimestamp
+		);
+	}
+
+	function insertMessageAt(
 		taskId: string,
 		sessionId: string,
 		messageType: string,
-		message: Record<string, unknown>
+		message: Record<string, unknown>,
+		timestamp: number
 	) {
 		const count = db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as {
 			count: number;
@@ -723,8 +799,15 @@ describe('Forge evidence capture on task completion', () => {
 			sessionId,
 			messageType,
 			JSON.stringify(message),
-			new Date(1_700_000_000_000 + sequence * 1000).toISOString(),
+			new Date(timestamp).toISOString(),
 			taskId
 		);
+	}
+
+	function nextMessageTime(): number {
+		const count = db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as {
+			count: number;
+		};
+		return 1_700_000_000_000 + (count.count + 1) * 1000;
 	}
 });
