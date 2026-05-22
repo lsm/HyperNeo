@@ -93,6 +93,7 @@ function validateGateFieldWriters(
 		return;
 	}
 
+	// Built-in templates require automated writers; [] remains valid only for custom external-only gates.
 	if (field.writers.length === 0) {
 		errors.push(`${loc}: must contain at least one writer role`);
 		return;
