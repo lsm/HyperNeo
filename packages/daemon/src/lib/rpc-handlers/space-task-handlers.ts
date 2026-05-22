@@ -297,10 +297,16 @@ export function setupSpaceTaskHandlers(
 			updateParams.status !== currentTaskForOverrides.status
 				? { ...currentTaskForOverrides, status: updateParams.status, startedAt: Date.now() }
 				: currentTaskForOverrides;
+		const workflowSelectionChanged =
+			Object.hasOwn(updateParams, 'preferredWorkflowId') &&
+			updateParams.preferredWorkflowId !== currentTaskForOverrides.preferredWorkflowId;
+		const requestedWorkflowModelOverrides = workflowSelectionChanged
+			? (updateParams.workflowModelOverrides ?? null)
+			: updateParams.workflowModelOverrides;
 		const validatedWorkflowModelOverrides = await validateWorkflowModelOverrides(
 			taskForOverrideValidation,
 			workflowManager,
-			updateParams.workflowModelOverrides,
+			requestedWorkflowModelOverrides,
 			nextWorkflowId
 		);
 		if (validatedWorkflowModelOverrides !== undefined) {

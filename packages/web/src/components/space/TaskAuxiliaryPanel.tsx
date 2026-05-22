@@ -320,7 +320,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 
 	useEffect(() => {
 		pendingOverridesRef.current = task?.workflowModelOverrides ?? null;
-	}, [task?.workflowModelOverrides]);
+	}, [task?.id, task?.workflowModelOverrides]);
 
 	useEffect(() => {
 		if (!task?.evolutionScopeId) {

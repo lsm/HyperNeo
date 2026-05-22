@@ -355,6 +355,33 @@ describe('TaskAuxiliaryPanel', () => {
 		);
 	});
 
+	it('resets pending model overrides when task changes', async () => {
+		const { getByTestId, rerender } = render(
+			<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
+		);
+
+		const coderSelect = await waitFor(() => getByTestId('task-agent-model-node-1-coder'));
+		fireEvent.change(coderSelect, { target: { value: 'claude-opus-4-5' } });
+
+		mockTasks.value = [
+			makeTask({
+				id: 'task-2',
+				taskNumber: 43,
+				title: 'Second task',
+				preferredWorkflowId: 'workflow-1',
+			}),
+		];
+		rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-2" tab="agents" />);
+		const reviewerSelect = await waitFor(() => getByTestId('task-agent-model-node-1-reviewer'));
+		fireEvent.change(reviewerSelect, { target: { value: 'claude-opus-4-5' } });
+
+		await waitFor(() =>
+			expect(mockUpdateTask).toHaveBeenLastCalledWith('task-2', {
+				workflowModelOverrides: { 'node-1:reviewer': 'claude-opus-4-5' },
+			})
+		);
+	});
+
 	it('locks model display after node execution starts', async () => {
 		mockTasks.value = [
 			makeTask({

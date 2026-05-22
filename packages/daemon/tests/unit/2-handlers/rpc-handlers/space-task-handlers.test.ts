@@ -994,6 +994,50 @@ describe('space-task-handlers', () => {
 			expect(taskManager.updateTask).not.toHaveBeenCalled();
 		});
 
+		it('clears existing workflow model overrides when workflow selection changes', async () => {
+			setup(
+				mockSpace,
+				makeTask({
+					preferredWorkflowId: 'workflow-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				preferredWorkflowId: 'workflow-2',
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ preferredWorkflowId: 'workflow-2', workflowModelOverrides: null },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
+		it('clears existing workflow model overrides when workflow selection is removed', async () => {
+			setup(
+				mockSpace,
+				makeTask({
+					preferredWorkflowId: 'workflow-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				preferredWorkflowId: null,
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ preferredWorkflowId: null, workflowModelOverrides: null },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
 		it('allows workflow model override updates with non-start status changes', async () => {
 			setup(mockSpace, makeTask({ status: 'draft', preferredWorkflowId: 'workflow-1' }));
 
