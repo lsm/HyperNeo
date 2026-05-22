@@ -23,6 +23,8 @@ import type {
 	WorkflowRunArtifactRecord,
 	WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository';
+import { Logger } from '../logger';
+import type { EvolutionTraceEvidenceService } from './evolution-trace-evidence-service';
 
 const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
@@ -45,6 +47,7 @@ export interface EvolutionScopeServiceDeps {
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo?: WorkflowRunArtifactRepository;
+	traceEvidenceService?: EvolutionTraceEvidenceService;
 }
 
 export interface CreateScopeFromGoalParams {
@@ -113,6 +116,8 @@ export interface ScopeTimeline {
 	evidence: EvidenceRef[];
 	metricSnapshots: MetricSnapshot[];
 }
+
+const log = new Logger('evolution-scope-service');
 
 export class EvolutionScopeService {
 	constructor(private deps: EvolutionScopeServiceDeps) {}
@@ -201,7 +206,7 @@ export class EvolutionScopeService {
 			: this.requireScopeForTask(task.id, task.evolutionScopeId ?? null, task.goalId ?? null);
 		if (scope.spaceId !== task.spaceId)
 			throw new Error('Task and scope must belong to the same space');
-		return this.createEvidence({
+		const evidence = this.createEvidence({
 			scopeId: scope.id,
 			kind: 'task',
 			sourceId: task.id,
@@ -214,6 +219,12 @@ export class EvolutionScopeService {
 				...params.metadata,
 			},
 		});
+		try {
+			this.deps.traceEvidenceService?.captureForTask({ scopeId: scope.id, taskId: task.id });
+		} catch (err) {
+			log.warn('Trace evidence capture failed; keeping primary task evidence:', err);
+		}
+		return evidence;
 	}
 
 	attachWorkflowRunEvidence(params: AttachWorkflowRunEvidenceParams): EvidenceRef {

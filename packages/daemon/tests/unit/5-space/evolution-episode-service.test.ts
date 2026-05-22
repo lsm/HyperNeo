@@ -538,6 +538,48 @@ describe('EvolutionEpisodeService', () => {
 		expect(prompt).toContain('claude-sonnet-4-6');
 	});
 
+	it('deduplicates task context when task and trace evidence reference the same task', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Trace dedupe',
+			objective: 'Avoid duplicate task prompt context',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Trace task',
+			description: 'Has task and trace evidence',
+			evolutionScopeId: scope.id,
+		});
+		const taskEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'task',
+			sourceId: task.id,
+			summary: 'Task evidence',
+		});
+		const retryEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'retry_loop',
+			sourceId: task.id,
+			summary: 'Retry loop evidence',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		const input = service.buildEpisodeInput({
+			scopeId: scope.id,
+			evidenceIds: [taskEvidence.id, retryEvidence.id],
+		});
+
+		expect(input.evidence).toHaveLength(2);
+		expect(input.tasks).toHaveLength(1);
+		expect(input.tasks[0]?.task.id).toBe(task.id);
+	});
+
 	it('resolves judge model from scope policy before Space default', async () => {
 		const scopedInput = {
 			scope: evolutionRepo.createScope({

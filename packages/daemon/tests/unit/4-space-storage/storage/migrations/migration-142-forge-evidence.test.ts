@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigration142 } from '../../../../../src/storage/schema/index.ts';
+import { runMigration142, runMigration143 } from '../../../../../src/storage/schema/index.ts';
 
 const SCOPE_ID = 'b2ff245a-98ef-4429-954a-3e7b96366cfa';
 const GOAL_ID = '10612c8d-e412-4169-8429-b48fa4d3e234';
@@ -214,5 +214,22 @@ describe('Migration 142: Forge MVP evidence backfill', () => {
 			.prepare(`SELECT COUNT(*) count FROM evolution_evidence WHERE id LIKE 'forge-mvp-425-%'`)
 			.get() as { count: number };
 		expect(rows.count).toBe(3);
+	});
+
+	test('runs on legacy space_tasks schemas without space_id and widens trace evidence kinds', () => {
+		seedForgeMvpTask(db);
+
+		runMigration142(db);
+		runMigration143(db);
+
+		expect(() =>
+			db
+				.prepare(
+					`INSERT INTO evolution_evidence (
+						id, scope_id, kind, summary, source_id, metadata_json, created_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run('manual-retry-loop', SCOPE_ID, 'retry_loop', 'Retry loop', 'task-425', '{}', 200)
+		).not.toThrow();
 	});
 });

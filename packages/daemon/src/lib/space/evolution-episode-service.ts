@@ -371,14 +371,25 @@ export class EvolutionEpisodeService {
 	}
 
 	private collectTasks(scope: EvolutionScope, evidence: EvidenceRef[]): EpisodeTaskContext[] {
+		const seenTaskIds = new Set<string>();
 		return evidence.flatMap((item) => {
-			if (item.kind !== 'task' && item.kind !== 'task_result') return [];
-			if (!item.sourceId) return [];
+			if (
+				item.kind !== 'task' &&
+				item.kind !== 'task_result' &&
+				item.kind !== 'error_cluster' &&
+				item.kind !== 'retry_loop' &&
+				item.kind !== 'tool_failure' &&
+				item.kind !== 'test_failure' &&
+				item.kind !== 'permission_block'
+			)
+				return [];
+			if (!item.sourceId || seenTaskIds.has(item.sourceId)) return [];
 			const task = this.deps.taskRepo.getTask(item.sourceId);
 			if (!task) return [];
 			if (task.spaceId !== scope.spaceId) {
 				throw new Error(`Task and scope must belong to the same space: ${task.id}`);
 			}
+			seenTaskIds.add(task.id);
 			return [{ evidenceId: item.id, task }];
 		});
 	}

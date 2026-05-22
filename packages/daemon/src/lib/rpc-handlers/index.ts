@@ -101,6 +101,7 @@ import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { setupEvolutionHandlers } from './evolution-handlers';
 import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
+import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
@@ -385,6 +386,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	});
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
+	const evolutionTraceEvidenceService = new EvolutionTraceEvidenceService({
+		db: deps.db.getDatabase(),
+		evolutionRepo: deps.db.evolution,
+		taskRepo: spaceTaskRepo,
+	});
 	const evolutionScopeService = new EvolutionScopeService({
 		evolutionRepo: deps.db.evolution,
 		spaceRepo,
@@ -392,6 +398,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskRepo: spaceTaskRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		artifactRepo,
+		traceEvidenceService: evolutionTraceEvidenceService,
 	});
 
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());

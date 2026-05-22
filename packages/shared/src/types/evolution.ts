@@ -9,7 +9,12 @@ export type EvidenceKind =
 	| 'metric_snapshot'
 	| 'task_result'
 	| 'artifact'
-	| 'error';
+	| 'error'
+	| 'error_cluster'
+	| 'retry_loop'
+	| 'tool_failure'
+	| 'test_failure'
+	| 'permission_block';
 export type EvolutionEpisodeStatus = 'draft' | 'accepted' | 'dismissed';
 export type EvolutionLessonStatus = 'candidate' | 'active' | 'dismissed';
 export type TaskProposalStatus = 'proposed' | 'accepted' | 'dismissed' | 'created';
