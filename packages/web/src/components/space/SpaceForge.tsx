@@ -32,6 +32,7 @@ import { useMessageHub } from '../../hooks/useMessageHub';
 import { currentSpaceScopeIdSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
+import { cn, getRelativeTime } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import {
@@ -47,6 +48,7 @@ type ReviewAction =
 	| { kind: 'proposal'; id: string; status: TaskProposalStatus };
 
 const SCOPE_KINDS: EvolutionScopeKind[] = ['mission', 'project', 'campaign', 'workflow', 'custom'];
+const SCOPE_TABS: ScopeTab[] = ['overview', 'evidence', 'metrics', 'lessons', 'episodes'];
 const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 'maintain'];
 const EPISODE_JUDGE_TIMEOUT_MS = 120000;
 
@@ -94,6 +96,14 @@ function formatDate(value: number): string {
 
 function formatKind(kind: string): string {
 	return kind.replace(/_/g, ' ');
+}
+
+function formatScopeCount(count: number): string {
+	return `${count} ${count === 1 ? 'scope' : 'scopes'}`;
+}
+
+function formatDefinitionCount(count: number): string {
+	return `${count} ${count === 1 ? 'definition' : 'definitions'}`;
 }
 
 function parseMetricValue(value: string): string | number | boolean | null {
@@ -441,19 +451,21 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 
 function GoalSummary({ goal }: { goal: SpaceGoal }) {
 	return (
-		<div class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+		<div class="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
 			<div class="mb-3 flex items-center justify-between gap-3">
 				<div>
-					<p class="text-xs uppercase tracking-wide text-blue-300">Linked recurring goal</p>
-					<h3 class="text-sm font-medium text-gray-100">{goal.title}</h3>
+					<p class="text-[11px] font-semibold uppercase tracking-wide text-blue-300">
+						Linked recurring goal
+					</p>
+					<h3 class="mt-1 text-sm font-medium text-gray-100">{goal.title}</h3>
 				</div>
 				<span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
 					{goal.progress}%
 				</span>
 			</div>
-			<div class="mb-3 h-1.5 rounded-full bg-dark-800">
+			<div class="mb-3 h-1.5 overflow-hidden rounded-full bg-dark-800">
 				<div
-					class="h-full rounded-full bg-blue-400"
+					class="h-full rounded-full bg-blue-400 transition-[width]"
 					style={{ width: `${Math.max(0, Math.min(100, goal.progress))}%` }}
 				/>
 			</div>
@@ -1627,8 +1639,12 @@ export function ScopeDetail({
 
 	return (
 		<div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-			<div class="border-b border-white/10 p-5">
-				<div class="mb-2 flex flex-wrap items-center gap-2">
+			<div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
+				{/* pr-12 keeps badges clear of the floating right-panel toggle. */}
+				<div class="pr-12">
+					<h2 class="truncate text-base font-semibold leading-6 text-gray-100">{scope.name}</h2>
+				</div>
+				<div class="mt-2 flex flex-wrap items-center gap-2 pr-12">
 					<span class="rounded-full bg-cyan-500/10 px-2 py-1 text-xs text-cyan-300">
 						{formatKind(scope.kind)}
 					</span>
@@ -1638,44 +1654,57 @@ export function ScopeDetail({
 						</span>
 					)}
 				</div>
-				<h2 class="text-lg font-semibold text-gray-100">{scope.name}</h2>
-				<p class="mt-1 text-sm text-gray-400">{scope.objective}</p>
+				<div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10" />
 			</div>
-			<div class="flex gap-2 border-b border-white/10 px-5 py-3">
-				{(['overview', 'evidence', 'metrics', 'lessons', 'episodes'] as const).map((item) => (
-					<button
-						key={item}
-						type="button"
-						onClick={() => setTab(item)}
-						class={`rounded-lg px-3 py-1.5 text-sm capitalize transition-colors ${tab === item ? 'bg-white/10 text-gray-100' : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'}`}
-					>
-						{item}
-					</button>
-				))}
+			<div class="px-3 pb-3 pt-3">
+				<div class="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1">
+					{SCOPE_TABS.map((item) => (
+						<button
+							key={item}
+							type="button"
+							onClick={() => setTab(item)}
+							class={cn(
+								'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium capitalize transition-colors',
+								tab === item
+									? 'bg-dark-700 text-gray-100 shadow-sm'
+									: 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+							)}
+						>
+							{item}
+						</button>
+					))}
+				</div>
 			</div>
 			<div class="flex-1 overflow-y-auto p-5">
 				{tab === 'overview' && (
 					<div class="space-y-4">
+						{scope.objective && (
+							<p class="px-1 text-sm leading-5 text-gray-400">{scope.objective}</p>
+						)}
 						{goal ? (
 							<GoalSummary goal={goal} />
 						) : (
-							<div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
+							<div class="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
 								No recurring goal linked.
 							</div>
 						)}
 						<div class="grid gap-3 md:grid-cols-2">
-							<div class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-								<p class="text-xs uppercase tracking-wide text-gray-500">Created</p>
-								<p class="mt-1 text-sm text-gray-200">{formatDate(scope.createdAt)}</p>
+							<div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+								<p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+									Created
+								</p>
+								<p class="mt-1 text-sm text-gray-200">{getRelativeTime(scope.createdAt)}</p>
 							</div>
-							<div class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-								<p class="text-xs uppercase tracking-wide text-gray-500">Metrics</p>
+							<div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+								<p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+									Metrics
+								</p>
 								<p class="mt-1 text-sm text-gray-200">
-									{scope.metricDefinitions.length} definitions
+									{formatDefinitionCount(scope.metricDefinitions.length)}
 								</p>
 							</div>
 						</div>
-						<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+						<section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
 							<div class="mb-3">
 								<h3 class="text-sm font-medium text-gray-100">Episode judge model</h3>
 								<p class="mt-1 text-xs text-gray-500">
@@ -1726,7 +1755,6 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 		const version = ++requestVersion.current;
 		const mutationVersion = localMutationVersion.current;
 		setScopes([]);
-		currentSpaceScopeIdSignal.value = null;
 		setLoading(true);
 		setError(null);
 		try {
@@ -1751,7 +1779,6 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 				return;
 			}
 			setScopes(nextScopes);
-			currentSpaceScopeIdSignal.value = nextScopes[0]?.id ?? null;
 		} catch (err) {
 			if (requestVersion.current === version) {
 				setError(err instanceof Error ? err.message : 'Failed to load scopes');
@@ -1765,109 +1792,119 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 
 	useEffect(() => {
 		loadScopes().catch(() => undefined);
-		return () => {
-			currentSpaceScopeIdSignal.value = null;
-			if (rightPanelTargetSignal.value?.type === 'scope') {
-				rightPanelTargetSignal.value = null;
-			}
-		};
 	}, [loadScopes]);
 
-	const selectedScope = useMemo(
-		() => scopes.find((scope) => scope.id === selectedScopeId) ?? scopes[0] ?? null,
-		[scopes, selectedScopeId]
-	);
+	// Clear selection + any open scope panel when leaving this space's Forge view.
+	useEffect(() => {
+		return () => {
+			currentSpaceScopeIdSignal.value = null;
+			if (rightPanelTargetSignal.value?.type === 'scope') rightPanelTargetSignal.value = null;
+		};
+	}, [spaceId]);
+
+	// Keep a valid default selection so the right-panel toggle always has a target.
+	useEffect(() => {
+		if (selectedScopeId && scopes.some((scope) => scope.id === selectedScopeId)) return;
+		currentSpaceScopeIdSignal.value = scopes[0]?.id ?? null;
+	}, [scopes, selectedScopeId]);
+
+	const openScope = (scopeId: string) => {
+		currentSpaceScopeIdSignal.value = scopeId;
+		rightPanelTargetSignal.value = { type: 'scope', spaceId, scopeId };
+	};
 
 	const handleCreated = (scope: EvolutionScope) => {
 		localMutationVersion.current += 1;
 		setScopes((current) => [scope, ...current]);
-		currentSpaceScopeIdSignal.value = scope.id;
-	};
-
-	const handleScopeSelected = (scopeId: string) => {
-		localMutationVersion.current += 1;
-		currentSpaceScopeIdSignal.value = scopeId;
-	};
-
-	const handleScopeUpdated = (scope: EvolutionScope) => {
-		localMutationVersion.current += 1;
-		setScopes((current) => current.map((item) => (item.id === scope.id ? scope : item)));
+		openScope(scope.id);
 	};
 
 	return (
-		<div class="flex h-full min-h-0 overflow-hidden">
-			<aside class="flex w-80 flex-shrink-0 flex-col border-r border-white/10 bg-app-sidebar/40">
-				<div class="border-b border-white/10 p-4">
-					<div class="mb-3 flex items-center justify-between gap-3">
-						<div>
-							<h2 class="text-sm font-semibold text-gray-100">Scopes</h2>
-							<p class="text-xs text-gray-500">Evidence-backed improvement areas</p>
-						</div>
-						<Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-							New
-						</Button>
-					</div>
-					{error && (
-						<div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
-							{error}
-						</div>
-					)}
+		<div class="flex h-full min-h-0 flex-col overflow-hidden">
+			<div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
+				<div>
+					<h2 class="text-sm font-semibold text-gray-100">Forge scopes</h2>
+					<p class="text-xs text-gray-500">
+						{formatScopeCount(scopes.length)} collecting evidence, metrics, and lessons
+					</p>
 				</div>
-				<div class="flex-1 overflow-y-auto p-2">
-					{loading ? (
-						<p class="p-3 text-sm text-gray-500">Loading scopes…</p>
-					) : scopes.length === 0 ? (
-						<div class="rounded-xl border border-dashed border-white/10 p-4 text-center">
-							<p class="text-sm text-gray-400">No Forge scopes yet.</p>
-							<p class="mt-1 text-xs text-gray-600">
-								Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
-								tasks.
-							</p>
-							<Button type="button" size="sm" class="mt-3" onClick={() => setCreateOpen(true)}>
-								Create scope
-							</Button>
-						</div>
-					) : (
-						<div class="space-y-2">
-							{scopes.map((scope) => {
-								const goal = getGoal(scope, goals);
-								const selected = selectedScope?.id === scope.id;
-								return (
-									<button
-										key={scope.id}
-										type="button"
-										onClick={() => handleScopeSelected(scope.id)}
-										class={`w-full rounded-xl border p-3 text-left transition-colors ${selected ? 'border-cyan-500/40 bg-cyan-500/10' : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]'}`}
-									>
-										<div class="mb-1 flex items-center justify-between gap-2">
-											<span class="truncate text-sm font-medium text-gray-100">{scope.name}</span>
-											<span class="text-xs text-gray-500">{formatKind(scope.kind)}</span>
-										</div>
-										<p class="line-clamp-2 text-xs text-gray-500">{scope.objective}</p>
-										{goal && <p class="mt-2 truncate text-xs text-blue-300">Goal: {goal.title}</p>}
-									</button>
-								);
-							})}
-						</div>
-					)}
-				</div>
-			</aside>
+			</div>
 
-			{selectedScope ? (
-				<ScopeDetail scope={selectedScope} goals={goals} onScopeUpdated={handleScopeUpdated} />
-			) : (
-				<div class="flex flex-1 items-center justify-center p-8 text-center">
-					<div>
-						<h2 class="text-lg font-medium text-gray-200">Create first Forge scope</h2>
-						<p class="mt-2 text-sm text-gray-500">
-							Scopes collect evidence, metrics, accepted lessons, and goal-linked follow-up tasks.
+			<div class="flex-1 overflow-y-auto p-4">
+				<div class="mb-4 flex">
+					<Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
+						Create scope
+					</Button>
+				</div>
+				{error && (
+					<div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
+						{error}
+					</div>
+				)}
+				{scopes.length === 0 && loading ? (
+					<p class="text-sm text-gray-500">Loading scopes...</p>
+				) : scopes.length === 0 ? (
+					<div class="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
+						<p class="text-sm text-gray-400">No Forge scopes yet.</p>
+						<p class="mt-1 text-xs text-gray-600">
+							Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
+							tasks.
 						</p>
-						<Button type="button" class="mt-4" onClick={() => setCreateOpen(true)}>
+						<Button type="button" size="sm" class="mt-3" onClick={() => setCreateOpen(true)}>
 							Create scope
 						</Button>
 					</div>
-				</div>
-			)}
+				) : (
+					<div class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(20rem,1fr))]">
+						{scopes.map((scope) => {
+							const goal = getGoal(scope, goals);
+							const selected = selectedScopeId === scope.id;
+							return (
+								<button
+									key={scope.id}
+									type="button"
+									onClick={() => openScope(scope.id)}
+									class={cn(
+										'group flex min-h-[9.5rem] w-full flex-col rounded-lg border p-4 text-left transition-colors',
+										selected
+											? 'border-cyan-500/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgb(6_182_212_/_0.08)]'
+											: 'border-dark-700 bg-dark-900/60 hover:border-dark-600 hover:bg-dark-850/80'
+									)}
+								>
+									<div class="min-w-0">
+										<h3 class="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">
+											{scope.name}
+										</h3>
+										<div class="mt-2 flex flex-wrap items-center gap-2">
+											<span class="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-300">
+												{formatKind(scope.kind)}
+											</span>
+											<span class="rounded-full border border-dark-600 px-2 py-0.5 text-[11px] text-gray-400">
+												{formatDefinitionCount(scope.metricDefinitions.length)}
+											</span>
+										</div>
+									</div>
+									<p class="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-gray-400">
+										{scope.objective || 'No objective recorded yet'}
+									</p>
+									<div class="mt-auto grid grid-cols-2 gap-3 pt-4 text-xs">
+										<div class="min-w-0">
+											<span class="block text-gray-600">Goal</span>
+											<span class="truncate text-blue-300">
+												{goal ? `Goal: ${goal.title}` : 'No linked goal'}
+											</span>
+										</div>
+										<div>
+											<span class="block text-gray-600">Updated</span>
+											<span class="text-gray-300">{getRelativeTime(scope.updatedAt)}</span>
+										</div>
+									</div>
+								</button>
+							);
+						})}
+					</div>
+				)}
+			</div>
 
 			<ScopeCreateDialog
 				isOpen={createOpen}

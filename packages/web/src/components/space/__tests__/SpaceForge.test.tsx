@@ -967,7 +967,7 @@ describe('SpaceForge', () => {
 	it('creates scope with linked recurring goal and metrics', async () => {
 		render(<SpaceForge spaceId="space-1" />);
 
-		fireEvent.click(await screen.findByRole('button', { name: 'New' }));
+		fireEvent.click(await screen.findByRole('button', { name: 'Create scope' }));
 		fireEvent.input(screen.getByPlaceholderText('Improve code review loop'), {
 			target: { value: 'New scope' },
 		});
@@ -983,7 +983,7 @@ describe('SpaceForge', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Add metric' }));
 		fireEvent.input(screen.getByPlaceholderText('key'), { target: { value: 'quality' } });
 		fireEvent.input(screen.getByPlaceholderText('Label'), { target: { value: 'Review quality' } });
-		fireEvent.click(screen.getByRole('button', { name: 'Create scope' }));
+		fireEvent.click(screen.getAllByRole('button', { name: 'Create scope' }).at(-1)!);
 
 		await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Scope "New scope" created'));
 		expect(mockRequest).toHaveBeenCalledWith('evolution.scope.create', {
@@ -1075,7 +1075,7 @@ describe('SpaceForge', () => {
 		});
 
 		render(<SpaceForge spaceId="space-1" />);
-		fireEvent.click(await screen.findByRole('button', { name: 'New' }));
+		fireEvent.click(await screen.findByRole('button', { name: 'Create scope' }));
 		fireEvent.input(screen.getByPlaceholderText('Improve code review loop'), {
 			target: { value: 'New scope' },
 		});

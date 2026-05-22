@@ -250,7 +250,7 @@ describe('SpaceGoals', () => {
 	it('creates a goal from the dialog payload', async () => {
 		render(<SpaceGoals spaceId="space-1" />);
 
-		fireEvent.click(await screen.findByText('Create'));
+		fireEvent.click(await screen.findByText('Create goal'));
 		fireEvent.input(screen.getByPlaceholderText('Keep release train healthy'), {
 			target: { value: 'Ship beta' },
 		});
