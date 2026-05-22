@@ -10,6 +10,7 @@ import type { SpaceRepository } from '../../storage/repositories/space-repositor
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { getAvailableModels } from '../model-service';
+import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { inferProviderForModel } from '../providers/registry';
 
@@ -26,6 +27,7 @@ const PATTERN_KINDS = [
 	'synthetic_interruption',
 ] as const;
 const SEVERITIES = ['low', 'medium', 'high'] as const;
+const log = new Logger('EvolutionConversationAnalysisService');
 
 export type TraceMessageRole = 'human' | 'synthetic_user' | 'assistant' | 'thinking';
 export type ConversationFrictionKind = (typeof PATTERN_KINDS)[number];
@@ -107,9 +109,7 @@ export class EvolutionConversationAnalysisService {
 			params.confidenceThreshold ?? readConfidenceThreshold(scope)
 		);
 		const analysis = await this.analyze({ scope, task, messages, confidenceThreshold });
-		const patterns = analysis.patterns.filter(
-			(pattern) => pattern.confidence >= confidenceThreshold && pattern.involvedMessages.length > 0
-		);
+		const patterns = filterResolvedPatterns(analysis.patterns, messages, confidenceThreshold);
 		if (patterns.length === 0) return [];
 
 		const existingByFingerprint = new Map(
@@ -147,7 +147,7 @@ export class EvolutionConversationAnalysisService {
 				 FROM (
 					 SELECT id, session_id, message_type, sdk_message, timestamp, origin
 					 FROM sdk_messages
-					 WHERE task_id = ?
+					 WHERE task_id = ? AND send_status IN ('consumed', 'failed')
 					 ORDER BY timestamp DESC, id DESC
 					 LIMIT ?
 				 ) recent_trace_rows
@@ -161,6 +161,12 @@ export class EvolutionConversationAnalysisService {
 			timestamp: string;
 			origin: string | null;
 		}>;
+		if (rows.length === MAX_ROWS) {
+			log.info('Conversation friction trace rows reached MAX_ROWS; context may be truncated', {
+				taskId,
+				maxRows: MAX_ROWS,
+			});
+		}
 		return rows.map((row) => ({
 			id: row.id,
 			sessionId: row.session_id,
@@ -343,10 +349,11 @@ function buildEvidenceParams(
 	pattern: ConversationFrictionPattern,
 	options: { confidenceThreshold: number }
 ): CreateEvidenceRefParams {
+	const canonicalMessageIds = canonicalizeMessageIds(pattern.involvedMessages);
 	const involved = messages.filter((message) =>
-		pattern.involvedMessages.includes(message.metadata.messageId)
+		canonicalMessageIds.includes(message.metadata.messageId)
 	);
-	const fingerprint = `conversation_friction:${pattern.kind}:${pattern.involvedMessages.join(',')}`;
+	const fingerprint = `conversation_friction:${pattern.kind}:${canonicalMessageIds.join(',')}`;
 	return {
 		scopeId,
 		kind: 'conversation_friction',
@@ -359,12 +366,12 @@ function buildEvidenceParams(
 			taskId: task.id,
 			workflowRunId: task.workflowRunId ?? null,
 			confidenceThreshold: options.confidenceThreshold,
-			pattern,
+			pattern: { ...pattern, involvedMessages: canonicalMessageIds },
 			humanInterventionCount: analysis.humanInterventionCount,
 			syntheticInterventionCount: analysis.syntheticInterventionCount,
 			agentUncertaintyCount: analysis.agentUncertaintyCount,
 			overallAssessment: analysis.overallAssessment,
-			rawTraceRefs: rawRefs(involved.length > 0 ? involved : messages, messages),
+			rawTraceRefs: rawRefs(involved, messages),
 		},
 	};
 }
@@ -394,8 +401,28 @@ function classifyBlock(
 	if (block.type !== 'text') return null;
 	if (row.messageType === 'assistant') return 'assistant';
 	if (row.messageType !== 'user') return null;
-	if (message.isSynthetic === true || row.origin !== 'human') return 'synthetic_user';
+	if (message.isSynthetic === true || row.origin === 'system') return 'synthetic_user';
 	return 'human';
+}
+
+function filterResolvedPatterns(
+	patterns: ConversationFrictionPattern[],
+	messages: TraceMessage[],
+	confidenceThreshold: number
+): ConversationFrictionPattern[] {
+	const messageIds = new Set(messages.map((message) => message.metadata.messageId));
+	return patterns.filter((pattern) => {
+		const involvedMessageIds = canonicalizeMessageIds(pattern.involvedMessages);
+		return (
+			pattern.confidence >= confidenceThreshold &&
+			involvedMessageIds.length > 0 &&
+			involvedMessageIds.every((messageId) => messageIds.has(messageId))
+		);
+	});
+}
+
+function canonicalizeMessageIds(messageIds: string[]): string[] {
+	return unique(messageIds).sort();
 }
 
 function readTextBlock(block: Record<string, unknown>): string | null {
@@ -419,7 +446,15 @@ function parseJsonRecord(value: string): Record<string, unknown> | null {
 function normalizeAnalysis(value: unknown): ConversationFrictionAnalysis {
 	const record = requireRecord(value, 'conversation friction analysis');
 	return {
-		patterns: Array.isArray(record.patterns) ? record.patterns.map(normalizePattern) : [],
+		patterns: Array.isArray(record.patterns)
+			? record.patterns.flatMap((pattern) => {
+					try {
+						return [normalizePattern(pattern)];
+					} catch {
+						return [];
+					}
+				})
+			: [],
 		humanInterventionCount: readCount(record.humanInterventionCount),
 		syntheticInterventionCount: readCount(record.syntheticInterventionCount),
 		agentUncertaintyCount: readCount(record.agentUncertaintyCount),
