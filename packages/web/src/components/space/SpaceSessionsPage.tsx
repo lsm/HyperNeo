@@ -310,6 +310,7 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 			</div>
 			{promotionDraft && (
 				<SpaceAgentEditor
+					key={promotionDraft.sourceSessionId}
 					agent={null}
 					promotionDraft={promotionDraft}
 					existingAgentNames={existingAgentNames}

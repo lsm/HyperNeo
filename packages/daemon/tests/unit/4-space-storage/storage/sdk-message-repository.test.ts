@@ -222,6 +222,22 @@ describe('SDKMessageRepository', () => {
 
 			expect(messages.map((message) => message.text)).toEqual(['Older text', 'Newest text']);
 		});
+		it('caps scanned renderable rows while collecting text messages', () => {
+			repository.saveSDKMessage('session-1', createUserMessage('Too old text'));
+			for (let i = 0; i < 250; i++) {
+				repository.saveSDKMessage('session-1', {
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: `tool-${i}`, name: 'Read' }],
+					},
+				} as unknown as SDKMessage);
+			}
+
+			const messages = repository.getRenderableTextMessages('session-1', 1);
+
+			expect(messages).toEqual([]);
+		});
 	});
 
 	describe('getSDKMessages', () => {

@@ -276,7 +276,7 @@ describe('Space Agent RPC Handlers', () => {
 			});
 
 			expect(result.draft.name).toBe('Release captain');
-			expect(result.draft.tools).toEqual(['Read', 'Grep']);
+			expect(result.draft.tools).toBeUndefined();
 			expect(result.draft.customPrompt).toContain('## Responsibility');
 			expect(result.draft.customPrompt).toContain('## Event Subscriptions');
 			expect(result.draft.customPrompt).toContain('User: Track release blockers.');
@@ -304,6 +304,54 @@ describe('Space Agent RPC Handlers', () => {
 			);
 
 			expect(result.draft.settingSources).toEqual([]);
+		});
+
+		it('preserves explicit sdk tool presets in the draft', async () => {
+			insertSession(db, {
+				id: 'session-read-only-tools',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					sdkToolsPreset: ['Read', 'Grep'],
+					allowedTools: ['Bash'],
+				},
+			});
+
+			const result = await call<{ draft: { tools?: string[] } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-read-only-tools' }
+			);
+
+			expect(result.draft.tools).toEqual(['Read', 'Grep']);
+		});
+
+		it('keeps the newest standing context when truncating long drafts', async () => {
+			insertSession(db, {
+				id: 'session-long-context',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+			});
+			insertMessage(db, 'session-long-context', 'msg-1', {
+				type: 'user',
+				message: { role: 'user', content: [{ type: 'text', text: 'old '.repeat(3000) }] },
+			} as SDKMessage);
+			insertMessage(db, 'session-long-context', 'msg-2', {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'newest marker' }] },
+			} as SDKMessage);
+
+			const result = await call<{ draft: { customPrompt: string } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-long-context' }
+			);
+
+			expect(result.draft.customPrompt).toContain('…');
+			expect(result.draft.customPrompt).toContain('Assistant: newest marker');
 		});
 
 		it('rejects drafts for sessions outside the requested space', async () => {

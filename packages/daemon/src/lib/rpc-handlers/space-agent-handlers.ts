@@ -38,6 +38,11 @@ function clampText(value: string, limit: number): string {
 	return `${value.slice(0, limit - 1).trimEnd()}…`;
 }
 
+function clampTextEnd(value: string, limit: number): string {
+	if (value.length <= limit) return value;
+	return `…${value.slice(value.length - limit + 1).trimStart()}`;
+}
+
 function deriveAgentName(session: Session): string {
 	const base = (session.title || 'Promoted Agent')
 		.replace(/^space chat:?\s*/i, '')
@@ -47,10 +52,13 @@ function deriveAgentName(session: Session): string {
 }
 
 function extractTools(session: Session): string[] | undefined {
-	const allowedTools = session.config.allowedTools ?? [];
 	const known = new Set<string>(KNOWN_TOOLS);
-	const tools = allowedTools.filter((tool) => known.has(tool));
-	return tools.length > 0 ? [...new Set(tools)] : undefined;
+	const preset = session.config.sdkToolsPreset;
+	if (Array.isArray(preset)) {
+		const tools = preset.filter((tool) => known.has(tool));
+		return [...new Set(tools)];
+	}
+	return undefined;
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {
@@ -69,7 +77,7 @@ function buildPromotionDraft(session: Session, db: Database): SpaceAgentPromotio
 				})
 				.join('\n\n---\n\n')
 		: 'No renderable chat messages were available. Fill in standing context manually before creating this agent.';
-	const standingContext = clampText(context, PROMOTION_CONTEXT_CHAR_LIMIT);
+	const standingContext = clampTextEnd(context, PROMOTION_CONTEXT_CHAR_LIMIT);
 	const name = deriveAgentName(session);
 	const responsibility = `Continue the durable role that emerged in "${session.title || session.id}".`;
 	const standingInstructions =
