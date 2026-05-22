@@ -328,8 +328,7 @@ export class EvolutionEpisodeService {
 			const reason = params.reason?.trim() || existing.reason;
 			const priority = params.priority ?? existing.priority;
 			if (!title.trim()) throw new Error('title is required');
-			const task = this.deps.taskRepo.createTask({
-				id: taskId,
+			const task = this.deps.taskRepo.createTaskWithId(taskId, {
 				spaceId: scope.spaceId,
 				title,
 				description: buildProposalTaskDescription(description, reason, existing.evidenceEpisodeIds),

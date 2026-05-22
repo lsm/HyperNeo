@@ -73,11 +73,12 @@ export function setupSpaceTaskHandlers(
 		const {
 			spaceId,
 			draft,
+			id: _id,
 			goalId: _goalId,
 			createdBy: _cb,
 			createdBySession: _cbs,
 			...rest
-		} = params;
+		} = params as typeof params & { id?: unknown };
 
 		// The draft flag is an alias for status: 'draft'. Reject contradictory
 		// input instead of silently allowing status to override draft: true.

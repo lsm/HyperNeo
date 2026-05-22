@@ -186,6 +186,19 @@ describe('space-task-handlers', () => {
 			).resolves.toBeDefined();
 		});
 
+		it('strips untrusted task id from create requests', async () => {
+			await call('spaceTask.create', {
+				spaceId: 'space-1',
+				id: 'client-controlled-id',
+				title: 'Do work',
+				description: 'description',
+			});
+
+			expect(taskManager.createTask).toHaveBeenCalledWith(
+				expect.not.objectContaining({ id: 'client-controlled-id' })
+			);
+		});
+
 		it('throws when spaceId is missing', async () => {
 			await expect(call('spaceTask.create', { title: 'T', description: 'D' })).rejects.toThrow(
 				'spaceId is required'
