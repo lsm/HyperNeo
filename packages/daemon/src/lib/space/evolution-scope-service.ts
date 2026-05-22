@@ -24,7 +24,10 @@ import type {
 	WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../logger';
-import type { EvolutionTraceEvidenceService } from './evolution-trace-evidence-service';
+import type {
+	EvolutionTraceEvidenceService,
+	TraceEvidenceDiagnostic,
+} from './evolution-trace-evidence-service';
 
 const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
@@ -109,6 +112,7 @@ export interface CaptureCompletedTaskEvidenceParams {
 export interface CaptureCompletedTaskEvidenceResult {
 	scope: EvolutionScope | null;
 	evidence: EvidenceRef[];
+	traceDiagnostic?: TraceEvidenceDiagnostic;
 }
 
 export interface ScopeTimeline {
@@ -118,6 +122,29 @@ export interface ScopeTimeline {
 }
 
 const log = new Logger('evolution-scope-service');
+
+function traceCaptureUnavailableDiagnostic(): TraceEvidenceDiagnostic {
+	return {
+		status: 'no_trace_rows',
+		message: 'No trace evidence generated: trace capture service is not configured',
+		messageCount: 0,
+		toolCallCount: 0,
+		failedToolCallCount: 0,
+		evidenceCount: 0,
+	};
+}
+
+function traceCaptureErrorDiagnostic(err: unknown): TraceEvidenceDiagnostic {
+	return {
+		status: 'error',
+		message: 'Trace evidence capture failed',
+		messageCount: 0,
+		toolCallCount: 0,
+		failedToolCallCount: 0,
+		evidenceCount: 0,
+		error: err instanceof Error ? err.message : String(err),
+	};
+}
 
 export class EvolutionScopeService {
 	constructor(private deps: EvolutionScopeServiceDeps) {}
@@ -222,6 +249,7 @@ export class EvolutionScopeService {
 		try {
 			this.deps.traceEvidenceService?.captureForTask({ scopeId: scope.id, taskId: task.id });
 		} catch (err) {
+			this.createTraceDiagnosticEvidence(scope.id, task.id, traceCaptureErrorDiagnostic(err));
 			log.warn('Trace evidence capture failed; keeping primary task evidence:', err);
 		}
 		return evidence;
@@ -300,7 +328,10 @@ export class EvolutionScopeService {
 			}
 		}
 
-		return { scope, evidence };
+		const traceResult = this.captureTraceEvidenceForCompletedTask(scope.id, task.id);
+		evidence.push(...traceResult.evidence);
+
+		return { scope, evidence, traceDiagnostic: traceResult.diagnostic };
 	}
 
 	addManualNoteEvidence(params: AddManualNoteEvidenceParams): EvidenceRef {
@@ -430,6 +461,43 @@ export class EvolutionScopeService {
 		const goal = this.requireGoal(goalId);
 		if (goal.spaceId !== spaceId) throw new Error(`SpaceGoal not found in space: ${goalId}`);
 		return goal;
+	}
+
+	private captureTraceEvidenceForCompletedTask(
+		scopeId: string,
+		taskId: string
+	): { evidence: EvidenceRef[]; diagnostic: TraceEvidenceDiagnostic } {
+		const service = this.deps.traceEvidenceService;
+		if (!service) return { evidence: [], diagnostic: traceCaptureUnavailableDiagnostic() };
+		try {
+			const result = service.captureForTaskWithDiagnostic({ scopeId, taskId });
+			if (result.evidence.length === 0) {
+				this.createTraceDiagnosticEvidence(scopeId, taskId, result.diagnostic);
+			}
+			return result;
+		} catch (err) {
+			const diagnostic = traceCaptureErrorDiagnostic(err);
+			this.createTraceDiagnosticEvidence(scopeId, taskId, diagnostic);
+			log.warn('Trace evidence capture failed; keeping primary completion evidence:', err);
+			return { evidence: [], diagnostic };
+		}
+	}
+
+	private createTraceDiagnosticEvidence(
+		scopeId: string,
+		taskId: string,
+		diagnostic: TraceEvidenceDiagnostic
+	): EvidenceRef {
+		return this.createAutoEvidenceOnce({
+			scopeId,
+			kind: 'session',
+			sourceId: taskId,
+			summary: diagnostic.message,
+			metadata: {
+				traceDiagnostic: true,
+				...diagnostic,
+			},
+		});
 	}
 
 	private createAutoEvidenceOnce(params: CreateEvidenceRefParams): EvidenceRef {

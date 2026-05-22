@@ -30,6 +30,21 @@ export interface CaptureTraceEvidenceForTaskParams {
 	taskId: string;
 }
 
+export interface TraceEvidenceDiagnostic {
+	status: 'generated' | 'no_trace_rows' | 'no_friction' | 'error';
+	message: string;
+	messageCount: number;
+	toolCallCount: number;
+	failedToolCallCount: number;
+	evidenceCount: number;
+	error?: string;
+}
+
+export interface CaptureTraceEvidenceForTaskResult {
+	evidence: EvidenceRef[];
+	diagnostic: TraceEvidenceDiagnostic;
+}
+
 interface TraceRow {
 	id: string;
 	sessionId: string;
@@ -88,13 +103,29 @@ export class EvolutionTraceEvidenceService {
 	constructor(private deps: EvolutionTraceEvidenceServiceDeps) {}
 
 	captureForTask(params: CaptureTraceEvidenceForTaskParams): EvidenceRef[] {
+		return this.captureForTaskWithDiagnostic(params).evidence;
+	}
+
+	captureForTaskWithDiagnostic(
+		params: CaptureTraceEvidenceForTaskParams
+	): CaptureTraceEvidenceForTaskResult {
 		const task = this.deps.taskRepo.getTask(params.taskId);
 		if (!task) throw new Error(`Task not found: ${params.taskId}`);
 		const rows = this.loadTraceRows(task.id);
-		if (rows.length === 0) return [];
+		if (rows.length === 0) {
+			return {
+				evidence: [],
+				diagnostic: buildTraceDiagnostic('no_trace_rows', rows.length),
+			};
+		}
 
 		const analysis = analyzeTrace(rows);
-		if (!hasProcessFriction(analysis)) return [];
+		if (!hasProcessFriction(analysis)) {
+			return {
+				evidence: [],
+				diagnostic: buildTraceDiagnostic('no_friction', rows.length, analysis),
+			};
+		}
 
 		const existingByFingerprint = new Map(
 			this.deps.evolutionRepo
@@ -108,7 +139,7 @@ export class EvolutionTraceEvidenceService {
 				.map((item) => [String(item.metadata.traceFingerprint ?? ''), item])
 		);
 
-		return buildEvidenceParams(params.scopeId, task, analysis).map((item) => {
+		const evidence = buildEvidenceParams(params.scopeId, task, analysis).map((item) => {
 			const fingerprint = String(item.metadata?.traceFingerprint ?? '');
 			const existing = existingByFingerprint.get(fingerprint);
 			if (existing) {
@@ -119,6 +150,10 @@ export class EvolutionTraceEvidenceService {
 			}
 			return this.deps.evolutionRepo.createEvidence(item);
 		});
+		return {
+			evidence,
+			diagnostic: buildTraceDiagnostic('generated', rows.length, analysis, evidence.length),
+		};
 	}
 
 	private loadTraceRows(taskId: string): TraceRow[] {
@@ -377,6 +412,32 @@ function hasProcessFriction(analysis: TraceAnalysis): boolean {
 		analysis.retryLoops.length > 0 ||
 		analysis.permissionBlocks.length > 0
 	);
+}
+
+function buildTraceDiagnostic(
+	status: TraceEvidenceDiagnostic['status'],
+	messageCount: number,
+	analysis?: TraceAnalysis,
+	evidenceCount = 0
+): TraceEvidenceDiagnostic {
+	return {
+		status,
+		message: traceDiagnosticMessage(status),
+		messageCount,
+		toolCallCount: analysis?.toolCallCount ?? 0,
+		failedToolCallCount: analysis?.failedToolCallCount ?? 0,
+		evidenceCount,
+	};
+}
+
+function traceDiagnosticMessage(status: TraceEvidenceDiagnostic['status']): string {
+	if (status === 'generated') return 'Trace-derived evidence generated';
+	if (status === 'no_trace_rows')
+		return 'No trace evidence generated: no SDK messages found for task';
+	if (status === 'no_friction') {
+		return 'No trace evidence generated: task trace had no meaningful failures, retries, or permission blocks';
+	}
+	return 'Trace evidence capture failed';
 }
 
 function rawRefs(results: ToolResultRecord[], analysis: TraceAnalysis): Record<string, unknown> {

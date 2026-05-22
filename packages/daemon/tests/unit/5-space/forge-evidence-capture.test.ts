@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
@@ -42,6 +43,11 @@ describe('Forge evidence capture on task completion', () => {
 			slug: 'forge-evidence-capture',
 			name: 'Forge Evidence Capture',
 		}).id;
+		const traceEvidenceService = new EvolutionTraceEvidenceService({
+			db: db as never,
+			evolutionRepo,
+			taskRepo,
+		});
 		evolutionScopeService = new EvolutionScopeService({
 			evolutionRepo,
 			spaceRepo,
@@ -49,6 +55,7 @@ describe('Forge evidence capture on task completion', () => {
 			taskRepo,
 			workflowRunRepo,
 			artifactRepo,
+			traceEvidenceService,
 		});
 	});
 
@@ -85,7 +92,12 @@ describe('Forge evidence capture on task completion', () => {
 		await manager.setTaskStatus(task.id, 'done', { result: 'PR ready and tests pass' });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
-		expect(evidence.map((item) => item.kind).sort()).toEqual(['artifact', 'task_result']);
+		expect(evidence.map((item) => item.kind).sort()).toEqual([
+			'artifact',
+			'session',
+			'task_result',
+		]);
+		expect(evidence.find((item) => item.kind === 'session')?.metadata.traceDiagnostic).toBe(true);
 		expect(evidence.find((item) => item.kind === 'task_result')?.summary).toContain(
 			'PR ready and tests pass'
 		);
@@ -172,6 +184,7 @@ describe('Forge evidence capture on task completion', () => {
 		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		expect(result.evidence).toHaveLength(2);
+		expect(result.traceDiagnostic?.status).toBe('no_trace_rows');
 		const taskEvidence = result.evidence.find((item) => item.kind === 'task_result');
 		expect(taskEvidence?.summary).toContain('completed without task.result');
 		const artifactEvidence = result.evidence.find((item) => item.kind === 'artifact');
@@ -200,8 +213,8 @@ describe('Forge evidence capture on task completion', () => {
 		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
-		expect(evidence).toHaveLength(1);
-		expect(evidence[0]?.kind).toBe('task_result');
+		expect(evidence).toHaveLength(2);
+		expect(evidence.map((item) => item.kind).sort()).toEqual(['session', 'task_result']);
 	});
 
 	it('keeps manual workflow_run evidence and adds artifact evidence for the same run', () => {
@@ -240,6 +253,7 @@ describe('Forge evidence capture on task completion', () => {
 		const evidence = evolutionRepo.listEvidence(scope.id);
 		expect(evidence.map((item) => item.kind).sort()).toEqual([
 			'artifact',
+			'session',
 			'task_result',
 			'workflow_run',
 		]);
@@ -278,6 +292,9 @@ describe('Forge evidence capture on task completion', () => {
 		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.find((item) => item.kind === 'session')?.summary).toContain(
+			'No trace evidence generated'
+		);
 		const runEvidence = evidence.filter((item) => item.kind === 'workflow_run');
 		expect(runEvidence).toHaveLength(2);
 		expect(evolutionRepo.getEvidence(manual.id)?.summary).toBe('Manual reviewer context');
@@ -416,10 +433,11 @@ describe('Forge evidence capture on task completion', () => {
 		const second = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
-		expect(evidence).toHaveLength(1);
+		expect(evidence).toHaveLength(2);
 		expect(second.evidence[0]?.id).toBe(first.evidence[0]?.id);
-		expect(evidence[0]?.summary).toContain('Second result');
-		expect(evidence[0]?.metadata.result).toBe('Second result');
+		const taskEvidence = evidence.find((item) => item.kind === 'task_result');
+		expect(taskEvidence?.summary).toContain('Second result');
+		expect(taskEvidence?.metadata.result).toBe('Second result');
 	});
 
 	it('creates error evidence for failed workflow runs', () => {
@@ -453,6 +471,79 @@ describe('Forge evidence capture on task completion', () => {
 		const errorEvidence = result.evidence.find((item) => item.kind === 'error');
 		expect(errorEvidence?.summary).toContain('agentCrash');
 		expect(errorEvidence?.metadata.failureReason).toBe('agentCrash');
+	});
+
+	it('captures trace-derived evidence for completed scoped task failures', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Trace task scope',
+			objective: 'Capture process friction',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Finish with failed test first',
+			description: 'Synthetic failed test trace',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchange(
+			task.id,
+			'session-trace',
+			'tool-test-1',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Error: expected true to be false',
+			}
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Fixed after failed test' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		expect(result.traceDiagnostic?.failedToolCallCount).toBe(1);
+		expect(result.evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		expect(evolutionRepo.listEvidence(scope.id).some((item) => item.kind === 'test_failure')).toBe(
+			true
+		);
+	});
+
+	it('records a trace diagnostic when completed task trace has no friction', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Clean trace scope',
+			objective: 'Explain missing trace evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Clean trace task',
+			description: 'No friction trace',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchange(
+			task.id,
+			'session-clean',
+			'tool-test-pass',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: '1 pass',
+			}
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Clean pass' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('no_friction');
+		const diagnostic = evolutionRepo
+			.listEvidence(scope.id)
+			.find((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true);
+		expect(diagnostic?.summary).toContain('No trace evidence generated');
+		expect(diagnostic?.metadata.toolCallCount).toBe(1);
+		expect(diagnostic?.metadata.failedToolCallCount).toBe(0);
 	});
 
 	it('does not create Forge evidence for non-done tasks', () => {
@@ -515,6 +606,67 @@ describe('Forge evidence capture on task completion', () => {
 		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		expect(result.scope?.id).toBe(scope.id);
-		expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(1);
+		expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(2);
 	});
+
+	function insertToolExchange(
+		taskId: string,
+		sessionId: string,
+		toolUseId: string,
+		toolName: string,
+		input: Record<string, unknown>,
+		failed: boolean,
+		options: { text: string }
+	) {
+		insertMessage(taskId, sessionId, 'assistant', {
+			type: 'assistant',
+			uuid: `${toolUseId}-assistant`,
+			session_id: sessionId,
+			message: {
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: toolUseId, name: toolName, input }],
+			},
+		});
+		insertMessage(taskId, sessionId, 'user', {
+			type: 'user',
+			uuid: `${toolUseId}-result`,
+			session_id: sessionId,
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: toolUseId,
+						is_error: failed,
+						content: options.text,
+					},
+				],
+			},
+		});
+	}
+
+	function insertMessage(
+		taskId: string,
+		sessionId: string,
+		messageType: string,
+		message: Record<string, unknown>
+	) {
+		const count = db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as {
+			count: number;
+		};
+		const sequence = count.count + 1;
+		db.prepare(
+			`INSERT INTO sdk_messages (
+				id, session_id, message_type, sdk_message, timestamp, send_status,
+				is_renderable, is_terminal, task_id
+			) VALUES (?, ?, ?, ?, ?, 'consumed', 1, 0, ?)`
+		).run(
+			`message-${sequence}`,
+			sessionId,
+			messageType,
+			JSON.stringify(message),
+			new Date(1_700_000_000_000 + sequence * 1000).toISOString(),
+			taskId
+		);
+	}
 });
