@@ -142,7 +142,39 @@ export function createEvolutionTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_evolution_metric_snapshots_scope_captured ON evolution_metric_snapshots(scope_id, captured_at DESC)`
 	);
 
+<<<<<<< HEAD
 	createSpaceAgentLongHorizonTables(db);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS goal_automation_cursors (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			goal_id TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			trigger_kind TEXT NOT NULL
+				CHECK(trigger_kind IN ('completed_task_threshold', 'self_nag', 'external_event')),
+			trigger_key TEXT NOT NULL,
+			last_evidence_created_at INTEGER,
+			last_task_completed_at INTEGER,
+			last_external_event_id TEXT,
+			last_episode_id TEXT,
+			last_fired_at INTEGER,
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(goal_id, trigger_kind, trigger_key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+			FOREIGN KEY (scope_id) REFERENCES evolution_scopes(id) ON DELETE CASCADE,
+			FOREIGN KEY (last_episode_id) REFERENCES evolution_episodes(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_goal_automation_cursors_scope ON goal_automation_cursors(scope_id, updated_at DESC)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_goal_automation_cursors_external_event ON goal_automation_cursors(last_external_event_id)`
+	);
 }
 
 function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
@@ -219,6 +251,7 @@ function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
 			`ON space_agent_event_subscriptions(space_id, topic_pattern)`
 	);
+}
 }
 
 function hasTable(db: BunDatabase, tableName: string): boolean {

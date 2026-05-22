@@ -61,8 +61,14 @@ import { GateOpenStateRepository } from '../../storage/repositories/gate-open-st
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
+import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler';
+import {
+	GoalAutomationService,
+	readAutomationPolicyForGoal,
+} from '../space/goals/goal-automation-service';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
 import {
+	GOAL_AUTOMATION_EXECUTE,
 	SPACE_CONVERSATION_FRICTION_ANALYZE,
 	SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
 	SPACE_WORKFLOW_RUN_SYNC_COMMITS,
@@ -80,6 +86,7 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -118,6 +125,40 @@ import {
 	type ExternalEventExtensionManager,
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
+
+function createGoalAutomationSelfNagSchedules(
+	goalRepo: SpaceGoalRepository,
+	scheduleService: ScheduleService,
+	evolutionRepo: EvolutionRepository
+): void {
+	for (const goal of goalRepo.listAllActive()) {
+		const policy = readAutomationPolicyForGoal(evolutionRepo, goal);
+		if (!policy.selfNagCronExpression) continue;
+		const existing = scheduleService
+			.listSchedules(goal.spaceId, 'active')
+			.find(
+				(schedule) =>
+					schedule.goalId === goal.id && schedule.createdByAgent === 'goal-automation-service'
+			);
+		if (existing) continue;
+		try {
+			scheduleService.createGoalSchedule({
+				spaceId: goal.spaceId,
+				goalId: goal.id,
+				title: `Forge self-nag: ${goal.title}`,
+				description: `Run Forge automation for goal: ${goal.title}`,
+				priority: goal.priority,
+				labels: ['forge', 'automation', `goal:${goal.id}`],
+				triggerType: 'cron',
+				cronExpression: policy.selfNagCronExpression,
+				timezone: policy.selfNagTimezone ?? 'UTC',
+				createdByAgent: 'goal-automation-service',
+			});
+		} catch (err) {
+			log.warn('could not create Forge self-nag schedule', err);
+		}
+	}
+}
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -249,6 +290,7 @@ export interface RPCHandlerSetupResult {
 	taskAgentManager: TaskAgentManager;
 	spaceWorktreeManager: SpaceWorktreeManager;
 	spaceGoalService: SpaceGoalService;
+	goalAutomationService: GoalAutomationService;
 }
 
 /**
@@ -402,6 +444,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		traceEvidenceService: evolutionTraceEvidenceService,
 		jobQueue: deps.jobQueue,
 	});
+	const goalAutomationService = new GoalAutomationService({
+		goalRepo: spaceGoalRepo,
+		taskRepo: spaceTaskRepo,
+		evolutionRepo: deps.db.evolution,
+		cursorRepo: deps.db.goalAutomationCursors,
+		jobQueue: deps.jobQueue,
+		evolutionScopeService,
+	});
+	spaceGoalService.setGoalAutomationService(goalAutomationService);
+	createGoalAutomationSelfNagSchedules(spaceGoalRepo, scheduleService, deps.db.evolution);
+	deps.internalEventBus.subscribe(
+		'externalEvent.published',
+		(event) => {
+			goalAutomationService.onExternalEventPublished(event);
+		},
+		{ subscriberName: 'goal-automation-service' }
+	);
 
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
@@ -496,6 +555,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
 		},
 	});
+	deps.jobProcessor.register(GOAL_AUTOMATION_EXECUTE, async (job) =>
+		handleGoalAutomationExecute(job, {
+			db: deps.db.getDatabase(),
+			goalRepo: spaceGoalRepo,
+			taskRepo: spaceTaskRepo,
+			evolutionRepo: deps.db.evolution,
+			cursorRepo: deps.db.goalAutomationCursors,
+			episodeService: evolutionEpisodeService,
+			taskCreatedEventHub: {
+				publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+			},
+		})
+	);
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
 
 	const spaceRuntimeService = new SpaceRuntimeService({
@@ -794,5 +866,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskAgentManager,
 		spaceWorktreeManager,
 		spaceGoalService,
+		goalAutomationService,
 	};
 }

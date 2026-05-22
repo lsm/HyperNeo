@@ -17,6 +17,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import type { TaskSchedule } from '@neokai/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants';
 import { Logger } from '../logger';
 import { getNextRunAt } from '../space/schedule/cron-utils';
@@ -25,6 +26,7 @@ import type { JobQueueRepository, Job } from '../../storage/repositories/job-que
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceGoalService } from '../space/goals/goal-service';
+import type { GoalAutomationService } from '../space/goals/goal-automation-service';
 
 const log = new Logger('task-schedule-fire-handler');
 
@@ -61,6 +63,7 @@ export interface TaskScheduleFireHandlerDeps {
 	spaceRepo: SpaceRepository;
 	taskRepo: SpaceTaskRepository;
 	goalService?: SpaceGoalService;
+	goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
 	/**
 	 * Optional event emitter for broadcasting schedule/task changes.
 	 * When provided, the handler emits `space.task.created` and
@@ -78,7 +81,16 @@ export async function handleTaskScheduleFire(
 	deps: TaskScheduleFireHandlerDeps
 ): Promise<TaskScheduleFireResult> {
 	const { scheduleId } = job.payload as TaskScheduleFirePayload;
-	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, goalService, eventHub } = deps;
+	const {
+		db,
+		scheduleRepo,
+		jobQueue,
+		spaceRepo,
+		taskRepo,
+		goalService,
+		goalAutomationService,
+		eventHub,
+	} = deps;
 
 	const schedule = scheduleRepo.getById(scheduleId);
 
@@ -175,6 +187,18 @@ export async function handleTaskScheduleFire(
 	}
 
 	const now = Date.now();
+
+	if (schedule.createdByAgent === 'goal-automation-service' && schedule.goalId) {
+		return fireGoalAutomationSchedule({
+			job,
+			schedule,
+			scheduleRepo,
+			jobQueue,
+			goalAutomationService,
+			eventHub,
+			now,
+		});
+	}
 
 	// Atomically create the task, compute the next fire, enqueue it, and update
 	// the schedule's bookkeeping fields. SpaceTaskRepository.createTask already
@@ -343,4 +367,62 @@ export async function handleTaskScheduleFire(
 	}
 
 	return { scheduleId, taskId, skipped: false, nextRunAt };
+}
+
+function fireGoalAutomationSchedule(params: {
+	job: Job;
+	schedule: TaskSchedule;
+	scheduleRepo: TaskScheduleRepository;
+	jobQueue: JobQueueRepository;
+	goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
+	eventHub?: TaskScheduleFireHandlerDeps['eventHub'];
+	now: number;
+}): TaskScheduleFireResult {
+	const { job, schedule, scheduleRepo, jobQueue, goalAutomationService, eventHub, now } = params;
+	let computedNextRunAt: number | null = null;
+	let pendingJobId: string | null = null;
+	let nextStatus: 'active' | 'completed' = 'completed';
+	if (schedule.triggerType === 'cron' && schedule.cronExpression) {
+		computedNextRunAt = getNextRunAt(schedule.cronExpression, schedule.timezone, now);
+		if (computedNextRunAt !== null) {
+			const nextJob = jobQueue.enqueue({
+				queue: TASK_SCHEDULE_FIRE,
+				payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
+				runAt: computedNextRunAt,
+			});
+			pendingJobId = nextJob.id;
+			nextStatus = 'active';
+		}
+	}
+	const applied = scheduleRepo.updateAfterFireIfPending(schedule.id, job.id, {
+		lastCreatedTaskId: schedule.lastCreatedTaskId,
+		lastRunAt: now,
+		nextRunAt: computedNextRunAt,
+		status: nextStatus,
+		pendingJobId,
+	});
+	if (!applied) {
+		return {
+			scheduleId: schedule.id,
+			taskId: null,
+			skipped: true,
+			skipReason: 'job_superseded',
+			nextRunAt: null,
+		};
+	}
+	goalAutomationService?.onSelfNag(schedule.goalId as string, schedule.id);
+	const emittedSchedule = scheduleRepo.getById(schedule.id);
+	if (eventHub && emittedSchedule) {
+		eventHub
+			.publish('space.schedule.updated', {
+				sessionId: 'global',
+				spaceId: schedule.spaceId,
+				scheduleId: schedule.id,
+				schedule: emittedSchedule,
+			})
+			.catch(() => {
+				// Swallow — event emission is best-effort.
+			});
+	}
+	return { scheduleId: schedule.id, taskId: null, skipped: false, nextRunAt: computedNextRunAt };
 }

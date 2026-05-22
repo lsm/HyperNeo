@@ -109,6 +109,18 @@ export class TaskScheduleRepository {
 		return rows.map((r) => this.rowToSchedule(r));
 	}
 
+	listByGoal(goalId: string, status?: TaskScheduleStatus): TaskSchedule[] {
+		let query = `SELECT * FROM task_schedules WHERE goal_id = ?`;
+		const params: (string | number)[] = [goalId];
+		if (status !== undefined) {
+			query += ` AND status = ?`;
+			params.push(status);
+		}
+		query += ` ORDER BY created_at DESC`;
+		const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSchedule(r));
+	}
+
 	/**
 	 * List active schedules whose nextRunAt <= now AND have no pending job
 	 * linked. Used for startup re-seeding to recover lost jobs.

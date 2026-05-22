@@ -46,6 +46,7 @@ import { WorkspaceHistoryRepository } from './repositories/workspace-history-rep
 import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-transformers';
 import { AgentMemoryRepository } from './repositories/agent-memory-repository';
 import { EvolutionRepository } from './repositories/evolution-repository';
+import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -78,6 +79,8 @@ export { SkillRepository } from './repositories/skill-repository';
 export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 export { AgentMemoryRepository } from './repositories/agent-memory-repository';
 export { EvolutionRepository } from './repositories/evolution-repository';
+export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
+export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository';
 export type {
 	AgentMemoryEntry,
 	AgentMemorySearchResult,
@@ -108,6 +111,7 @@ export class Database {
 	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
 	private agentMemoryRepo!: AgentMemoryRepository;
 	private evolutionRepo!: EvolutionRepository;
+	private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -145,6 +149,7 @@ export class Database {
 			new TransformersAgentMemoryEmbedder()
 		);
 		this.evolutionRepo = new EvolutionRepository(db);
+		this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
 		this.agentMemoryRepo.backfillPendingEmbeddings();
 	}
 
@@ -591,6 +596,10 @@ export class Database {
 
 	get evolution(): EvolutionRepository {
 		return this.evolutionRepo;
+	}
+
+	get goalAutomationCursors(): GoalAutomationCursorRepository {
+		return this.goalAutomationCursorRepo;
 	}
 
 	close(): void {
