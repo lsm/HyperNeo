@@ -2124,7 +2124,6 @@ export class SpaceRuntime {
 		if (cleared) {
 			await this.safeOnTaskUpdated(spaceId, cleared);
 		}
-		this.clearRunInterests(task.workflowRunId);
 		this.clearAgentStuckStateForRun(task.workflowRunId);
 		return cleared ?? task;
 	}

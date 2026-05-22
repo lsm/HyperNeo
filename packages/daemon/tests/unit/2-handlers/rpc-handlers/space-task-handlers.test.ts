@@ -140,7 +140,8 @@ describe('space-task-handlers', () => {
 	function setup(
 		space: Space | null = mockSpace,
 		task: SpaceTask | null = mockTask,
-		runtime?: SpaceRuntimeService
+		runtime?: SpaceRuntimeService,
+		goalService?: { handleTaskTerminal: (taskId: string) => void }
 	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
@@ -149,7 +150,14 @@ describe('space-task-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		taskManager = createMockTaskManager(task);
 		taskManagerFactory = mock((_spaceId: string) => taskManager);
-		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, internalEventBus, runtime);
+		setupSpaceTaskHandlers(
+			hub,
+			spaceManager,
+			taskManagerFactory,
+			internalEventBus,
+			runtime,
+			goalService
+		);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -803,6 +811,42 @@ describe('space-task-handlers', () => {
 				completedAt: null,
 			});
 			expect((result as SpaceTask).status).toBe('blocked');
+		});
+
+		it('does not double-run goal terminal handling after runtime dependency block', async () => {
+			const activeTask = {
+				...mockTask,
+				status: 'in_progress' as const,
+				workflowRunId: 'run-1',
+				dependsOn: ['dep-done'],
+			};
+			const runtime = {
+				stopWorkflowBackedTask: mock(async () => ({
+					...activeTask,
+					dependsOn: ['dep-open'],
+					status: 'blocked' as const,
+					blockReason: 'dependency_added' as const,
+				})),
+			} as unknown as SpaceRuntimeService;
+			const goalService = {
+				handleTaskTerminal: mock(() => {}),
+			};
+			setup(mockSpace, activeTask, runtime, goalService);
+			(taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+				...activeTask,
+				dependsOn: ['dep-open'],
+				status: 'blocked' as const,
+				blockReason: 'dependency_added' as const,
+			});
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				dependsOn: ['dep-open'],
+			});
+
+			expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledTimes(1);
+			expect(goalService.handleTaskTerminal).not.toHaveBeenCalled();
 		});
 
 		it('keeps met dependency updates on normal updateTask path', async () => {

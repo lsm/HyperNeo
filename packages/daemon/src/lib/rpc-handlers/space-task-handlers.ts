@@ -246,6 +246,7 @@ export function setupSpaceTaskHandlers(
 
 		let task: SpaceTask;
 		let emitTaskUpdated = true;
+		let handleGoalTerminal = true;
 		const emitCascadedTasks = async (cascadedTasks: SpaceTask[]) => {
 			if (!emitTaskUpdated) return;
 			for (const cascadedTask of cascadedTasks) {
@@ -434,6 +435,7 @@ export function setupSpaceTaskHandlers(
 					completedAt: null,
 				});
 				emitTaskUpdated = false;
+				handleGoalTerminal = false;
 			} else if (dependencyCheckResult) {
 				task = dependencyCheckResult;
 			} else {
@@ -444,7 +446,7 @@ export function setupSpaceTaskHandlers(
 		}
 
 		// Best-effort goal terminal handling — must not abort the RPC response.
-		if (spaceGoalService && TERMINAL_TASK_STATUSES.has(task.status)) {
+		if (handleGoalTerminal && spaceGoalService && TERMINAL_TASK_STATUSES.has(task.status)) {
 			try {
 				spaceGoalService.handleTaskTerminal(task.id);
 			} catch (err) {
