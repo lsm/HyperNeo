@@ -2145,6 +2145,7 @@ export class SpaceRuntime {
 		params: UpdateSpaceTaskParams,
 		opts?: { archiveSource?: 'user' | 'system_reconcile' }
 	): Promise<SpaceTask | null> {
+		const previous = this.config.taskRepo.getTask(taskId);
 		let updated = this.config.taskRepo.updateTask(taskId, params);
 		if (updated) {
 			let emitUpdated = true;
@@ -2158,7 +2159,14 @@ export class SpaceRuntime {
 			if (params.status === 'blocked') {
 				const reason = params.result ?? updated.result ?? 'Task blocked';
 				if (params.blockReason === 'dependency_added') {
-					updated = await this.stopBlockedWorkflowTask(spaceId, updated, reason);
+					updated = await this.stopBlockedWorkflowTask(
+						spaceId,
+						{
+							...updated,
+							taskAgentSessionId: previous?.taskAgentSessionId ?? updated.taskAgentSessionId,
+						},
+						reason
+					);
 					emitUpdated = false;
 					await this.safeNotify({
 						kind: 'task_blocked',

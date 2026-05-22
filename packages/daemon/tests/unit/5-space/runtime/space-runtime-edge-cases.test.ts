@@ -576,6 +576,33 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);
 		});
 
+		test('cancels original task session when block payload overwrites taskAgentSessionId', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-session-overwrite', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { taskAgentSessionId: 'original-task-session' });
+
+			const blocked = await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+				dependsOn: ['missing-dep'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+				taskAgentSessionId: 'payload-task-session',
+			});
+
+			expect(blocked?.status).toBe('blocked');
+			expect(blocked?.taskAgentSessionId).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(tam.cancelledSessions).toContain('original-task-session');
+			expect(tam.cancelledSessions).not.toContain('payload-task-session');
+			expect(taskRepo.getTask(task.id)?.taskAgentSessionId).toBeUndefined();
+		});
+
 		test('preserves completed executions and emits only post-cleanup task update', async () => {
 			const tam = new MockTaskAgentManager();
 			const updates = new TaskUpdateCollector();
