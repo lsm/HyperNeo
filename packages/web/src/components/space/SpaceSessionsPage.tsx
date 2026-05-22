@@ -10,9 +10,12 @@
  */
 
 import { useMemo, useState } from 'preact/hooks';
+import type { SpaceAgentPromotionDraft } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
 import { getRelativeTime } from '../../lib/utils';
+import { toast } from '../../lib/toast';
+import { SpaceAgentEditor } from './SpaceAgentEditor';
 
 type Session = { id: string; title: string; status: string; lastActiveAt: number };
 
@@ -55,12 +58,14 @@ function PaginatedSessionGroup({
 	variant,
 	sessions,
 	spaceId,
+	onPromote,
 }: {
 	title: string;
 	count: number;
 	variant: 'green' | 'yellow' | 'gray';
 	sessions: Session[];
 	spaceId: string;
+	onPromote: (session: Session) => void;
 }) {
 	const [page, setPage] = useState(0);
 	const totalPages = Math.ceil(sessions.length / ACTIVE_PAGE_SIZE);
@@ -88,7 +93,7 @@ function PaginatedSessionGroup({
 			</div>
 			<div class="divide-y divide-dark-700">
 				{displayed.map((session) => (
-					<SessionItem key={session.id} session={session} spaceId={spaceId} />
+					<SessionItem key={session.id} session={session} spaceId={spaceId} onPromote={onPromote} />
 				))}
 			</div>
 			{totalPages > 1 && (
@@ -123,6 +128,7 @@ function SessionGroup({
 	sessions,
 	spaceId,
 	hardLimit,
+	onPromote,
 }: {
 	title: string;
 	count: number;
@@ -130,6 +136,7 @@ function SessionGroup({
 	sessions: Session[];
 	spaceId: string;
 	hardLimit?: number;
+	onPromote: (session: Session) => void;
 }) {
 	const displayed = hardLimit ? sessions.slice(0, hardLimit) : sessions;
 	const hidden = hardLimit ? Math.max(0, sessions.length - hardLimit) : 0;
@@ -156,7 +163,7 @@ function SessionGroup({
 			</div>
 			<div class="divide-y divide-dark-700">
 				{displayed.map((session) => (
-					<SessionItem key={session.id} session={session} spaceId={spaceId} />
+					<SessionItem key={session.id} session={session} spaceId={spaceId} onPromote={onPromote} />
 				))}
 				{hidden > 0 && (
 					<div class="px-4 py-2 text-xs text-gray-600 text-center">+{hidden} more not shown</div>
@@ -166,7 +173,15 @@ function SessionGroup({
 	);
 }
 
-function SessionItem({ session, spaceId }: { session: Session; spaceId: string }) {
+function SessionItem({
+	session,
+	spaceId,
+	onPromote,
+}: {
+	session: Session;
+	spaceId: string;
+	onPromote: (session: Session) => void;
+}) {
 	const borderColor = STATUS_BORDER[session.status] ?? 'border-l-transparent';
 
 	return (
@@ -186,7 +201,17 @@ function SessionItem({ session, spaceId }: { session: Session; spaceId: string }
 						)}
 					</div>
 				</div>
-				<div class="ml-4 flex items-center flex-shrink-0">
+				<div class="ml-4 flex flex-shrink-0 items-center gap-2">
+					<button
+						type="button"
+						onClick={(event) => {
+							event.stopPropagation();
+							onPromote(session);
+						}}
+						class="rounded-md border border-blue-500/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
+					>
+						Promote
+					</button>
 					<span class="text-xs text-gray-600">&rarr;</span>
 				</div>
 			</div>
@@ -200,6 +225,8 @@ interface SpaceSessionsPageProps {
 
 export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 	const storeSessions = spaceStore.sessions.value;
+	const agents = spaceStore.agents.value;
+	const [promotionDraft, setPromotionDraft] = useState<SpaceAgentPromotionDraft | null>(null);
 
 	const sessions = useMemo(() => {
 		const isSystemSpaceSession = (sessionId: string): boolean =>
@@ -210,6 +237,19 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 			.filter((s) => !isSystemSpaceSession(s.id))
 			.sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
 	}, [storeSessions, spaceId]);
+
+	const existingAgentNames = agents.map((agent) => agent.name);
+
+	const handlePromote = async (session: Session) => {
+		try {
+			const draft = await spaceStore.getAgentPromotionDraft(session.id);
+			setPromotionDraft(draft);
+		} catch (err) {
+			toast.error(
+				`Failed to generate promotion draft: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	};
 
 	if (sessions.length === 0) {
 		return (
@@ -234,36 +274,49 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 	}
 
 	return (
-		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
-			<div class="min-h-[calc(100%+1px)] space-y-4">
-				{SESSION_GROUPS.map((group) => {
-					const groupSessions = sessions.filter((s) => group.statuses.includes(s.status));
-					if (groupSessions.length === 0) return null;
-					if (group.paginated) {
+		<>
+			<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] space-y-4">
+					{SESSION_GROUPS.map((group) => {
+						const groupSessions = sessions.filter((s) => group.statuses.includes(s.status));
+						if (groupSessions.length === 0) return null;
+						if (group.paginated) {
+							return (
+								<PaginatedSessionGroup
+									key={group.title}
+									title={group.title}
+									count={groupSessions.length}
+									variant={group.variant}
+									sessions={groupSessions}
+									spaceId={spaceId}
+									onPromote={handlePromote}
+								/>
+							);
+						}
 						return (
-							<PaginatedSessionGroup
+							<SessionGroup
 								key={group.title}
 								title={group.title}
 								count={groupSessions.length}
 								variant={group.variant}
 								sessions={groupSessions}
 								spaceId={spaceId}
+								hardLimit={group.hardLimit}
+								onPromote={handlePromote}
 							/>
 						);
-					}
-					return (
-						<SessionGroup
-							key={group.title}
-							title={group.title}
-							count={groupSessions.length}
-							variant={group.variant}
-							sessions={groupSessions}
-							spaceId={spaceId}
-							hardLimit={group.hardLimit}
-						/>
-					);
-				})}
+					})}
+				</div>
 			</div>
-		</div>
+			{promotionDraft && (
+				<SpaceAgentEditor
+					agent={null}
+					promotionDraft={promotionDraft}
+					existingAgentNames={existingAgentNames}
+					onSave={() => setPromotionDraft(null)}
+					onCancel={() => setPromotionDraft(null)}
+				/>
+			)}
+		</>
 	);
 }

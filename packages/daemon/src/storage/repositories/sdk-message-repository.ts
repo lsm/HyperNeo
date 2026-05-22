@@ -424,6 +424,42 @@ export class SDKMessageRepository {
 		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
 	}
 
+	getRenderableTextMessages(
+		sessionId: string,
+		limit = 20
+	): Array<{ id: string; type: string; text: string; timestamp: number }> {
+		const rows = this.db
+			.prepare(
+				`SELECT id, message_type, sdk_message, timestamp FROM sdk_messages
+				 WHERE session_id = ?
+				   AND parent_tool_use_id IS NULL
+				   AND is_renderable = 1
+				   AND message_type IN ('user', 'assistant')
+				   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+				 ORDER BY timestamp DESC, rowid DESC
+				 LIMIT ?`
+			)
+			.all(sessionId, limit) as Array<{
+			id: string;
+			message_type: string;
+			sdk_message: string;
+			timestamp: string;
+		}>;
+
+		return rows
+			.reverse()
+			.map((row) => {
+				const message = JSON.parse(row.sdk_message) as SDKMessage;
+				return {
+					id: row.id,
+					type: row.message_type,
+					text: this.extractVisibleText(message as unknown as Record<string, unknown>),
+					timestamp: new Date(row.timestamp).getTime(),
+				};
+			})
+			.filter((row) => row.text.length > 0);
+	}
+
 	/**
 	 * Internal implementation for getSDKMessages
 	 * @private
@@ -1118,6 +1154,10 @@ export class SDKMessageRepository {
 	}
 
 	private extractAssistantText(msg: Record<string, unknown>): string {
+		return this.extractVisibleText(msg);
+	}
+
+	private extractVisibleText(msg: Record<string, unknown>): string {
 		const parts: string[] = [];
 		const message = msg.message as Record<string, unknown> | undefined;
 		const content = message?.content;

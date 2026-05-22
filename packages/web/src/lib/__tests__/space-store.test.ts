@@ -251,6 +251,18 @@ function makeMockHub() {
 			if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
 			// spaceAgent handlers return wrapped { agent }
 			if (method === 'spaceAgent.create') return { agent: makeAgent('new-agent') };
+			if (method === 'spaceAgent.getPromotionDraft') {
+				return {
+					draft: {
+						sourceSessionId: params?.sessionId,
+						sourceSessionTitle: 'Session title',
+						name: 'Promoted Agent',
+						customPrompt: 'Generated profile',
+						profile: {},
+					},
+				};
+			}
+			if (method === 'spaceAgent.promoteSession') return { agent: makeAgent('promoted-agent') };
 			if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
 			// spaceWorkflow handlers return wrapped { workflow }
 			if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
@@ -1254,6 +1266,32 @@ describe('SpaceStore — CRUD methods', () => {
 		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.create', {
 			spaceId: 'space-1',
 			name: 'Coder',
+		});
+	});
+
+	it('getAgentPromotionDraft calls spaceAgent.getPromotionDraft RPC', async () => {
+		await spaceStore.selectSpace('space-1');
+		const draft = await spaceStore.getAgentPromotionDraft('session-1');
+
+		expect(draft.name).toBe('Promoted Agent');
+		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.getPromotionDraft', {
+			spaceId: 'space-1',
+			sessionId: 'session-1',
+		});
+	});
+
+	it('promoteSessionToAgent calls spaceAgent.promoteSession RPC', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.promoteSessionToAgent('session-1', {
+			name: 'Promoted Agent',
+			customPrompt: 'Reviewed profile',
+		});
+
+		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.promoteSession', {
+			spaceId: 'space-1',
+			sessionId: 'session-1',
+			name: 'Promoted Agent',
+			customPrompt: 'Reviewed profile',
 		});
 	});
 

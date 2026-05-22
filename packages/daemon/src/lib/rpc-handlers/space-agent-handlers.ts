@@ -12,7 +12,16 @@
  * - spaceAgent.syncFromTemplate - Reset a preset-tracked agent to the current preset definition
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type {
+	MessageHub,
+	Session,
+	SettingSource,
+	SpaceAgent,
+	SpaceAgentPromotionDraft,
+	ThinkingLevel,
+} from '@neokai/shared';
+import { KNOWN_TOOLS } from '@neokai/shared';
+import type { Database } from '../../storage';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -21,11 +30,108 @@ import { Logger } from '../logger';
 
 const log = new Logger('space-agent-handlers');
 
+const PROMOTION_MESSAGE_LIMIT = 24;
+const PROMOTION_CONTEXT_CHAR_LIMIT = 6000;
+
+function clampText(value: string, limit: number): string {
+	if (value.length <= limit) return value;
+	return `${value.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function deriveAgentName(session: Session): string {
+	const base = (session.title || 'Promoted Agent')
+		.replace(/^space chat:?\s*/i, '')
+		.replace(/[^\p{L}\p{N}\s_-]/gu, '')
+		.trim();
+	return clampText(base || 'Promoted Agent', 64);
+}
+
+function extractTools(session: Session): string[] | undefined {
+	const allowedTools = session.config.allowedTools ?? [];
+	const known = new Set<string>(KNOWN_TOOLS);
+	const tools = allowedTools.filter((tool) => known.has(tool));
+	return tools.length > 0 ? [...new Set(tools)] : undefined;
+}
+
+function extractSettingSources(session: Session): SettingSource[] | undefined {
+	const configSources = session.config.settingSources;
+	if (configSources?.length) return configSources;
+	const toolSources = session.config.tools?.settingSources;
+	return toolSources?.length ? toolSources : undefined;
+}
+
+function buildPromotionDraft(session: Session, db: Database): SpaceAgentPromotionDraft {
+	const messages = db.getRenderableTextMessages(session.id, PROMOTION_MESSAGE_LIMIT);
+	const context = messages.length
+		? messages
+				.map((message) => {
+					const speaker = message.type === 'assistant' ? 'Assistant' : 'User';
+					return `${speaker}: ${message.text}`;
+				})
+				.join('\n\n---\n\n')
+		: 'No renderable chat messages were available. Fill in standing context manually before creating this agent.';
+	const standingContext = clampText(context, PROMOTION_CONTEXT_CHAR_LIMIT);
+	const name = deriveAgentName(session);
+	const responsibility = `Continue the durable role that emerged in "${session.title || session.id}".`;
+	const standingInstructions =
+		'Use the standing context below as background, not as a transcript to replay. Keep future work goal-oriented, cite uncertainty, and ask for human input before high-impact actions.';
+	const autonomy =
+		'Supervised by default: propose actions and wait for explicit approval before destructive, external, or irreversible changes.';
+	const managedGoals =
+		'Review and narrow this list to the goals this long-horizon agent should own.';
+	const managedScopes =
+		'Review and narrow this list to repositories, files, systems, or product areas this agent may manage.';
+	const reminders =
+		'Periodically summarize progress, blockers, decisions, and needed human follow-up.';
+	const eventSubscriptions =
+		'Review and list events this agent should react to, such as task changes, PR reviews, CI failures, mentions, or scheduled check-ins.';
+	const customPrompt = `## Responsibility\n${responsibility}\n\n## Standing Instructions\n${standingInstructions}\n\n## Autonomy\n${autonomy}\n\n## Managed Goals\n${managedGoals}\n\n## Managed Scopes\n${managedScopes}\n\n## Reminders\n${reminders}\n\n## Event Subscriptions\n${eventSubscriptions}\n\n## Standing Context From Promoted Session\n${standingContext}`;
+
+	return {
+		sourceSessionId: session.id,
+		sourceSessionTitle: session.title || session.id,
+		name,
+		description: responsibility,
+		model: session.config.model,
+		thinkingLevel: session.config.thinkingLevel as ThinkingLevel | undefined,
+		provider: session.config.provider,
+		customPrompt,
+		tools: extractTools(session),
+		settingSources: extractSettingSources(session),
+		profile: {
+			responsibility,
+			standingInstructions,
+			autonomy,
+			managedGoals,
+			managedScopes,
+			reminders,
+			eventSubscriptions,
+			standingContext,
+		},
+	};
+}
+
+async function publishAgentCreated(
+	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
+	agent: SpaceAgent
+): Promise<void> {
+	await internalEventBus
+		.publish('spaceAgent.created', {
+			sessionId: `space:${agent.spaceId}`,
+			spaceId: agent.spaceId,
+			agent,
+		})
+		.catch((err) => {
+			log.warn('Failed to emit spaceAgent.created:', err);
+		});
+}
+
 export function setupSpaceAgentHandlers(
 	messageHub: MessageHub,
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceAgentManager: SpaceAgentManager,
-	spaceManager: SpaceManager
+	spaceManager: SpaceManager,
+	db: Database
 ): void {
 	// spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
 	messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
@@ -70,16 +176,71 @@ export function setupSpaceAgentHandlers(
 
 		if (!result.ok) throw new Error(result.error);
 
-		internalEventBus
-			.publish('spaceAgent.created', {
-				sessionId: `space:${result.value.spaceId}`,
-				spaceId: result.value.spaceId,
-				agent: result.value,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit spaceAgent.created:', err);
-			});
+		await publishAgentCreated(internalEventBus, result.value);
 
+		return { agent: result.value };
+	});
+
+	messageHub.onRequest('spaceAgent.getPromotionDraft', async (data) => {
+		const params = data as { spaceId: string; sessionId: string };
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.sessionId) throw new Error('sessionId is required');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
+		const session = db.getSession(params.sessionId);
+		if (!session) throw new Error(`Session not found: ${params.sessionId}`);
+		if (session.context?.spaceId !== params.spaceId) {
+			throw new Error(`Session not found: ${params.sessionId}`);
+		}
+		if (session.type === 'space_task_agent') {
+			throw new Error('Task agent sessions cannot be promoted');
+		}
+
+		return { draft: buildPromotionDraft(session, db) };
+	});
+
+	messageHub.onRequest('spaceAgent.promoteSession', async (data) => {
+		const params = data as {
+			spaceId: string;
+			sessionId: string;
+			name: string;
+			description?: string;
+			model?: string;
+			thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+			provider?: string;
+			customPrompt?: string | null;
+			tools?: string[];
+			settingSources?: import('@neokai/shared').SettingSource[];
+		};
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.sessionId) throw new Error('sessionId is required');
+		if (!params.name) throw new Error('name is required');
+
+		const session = db.getSession(params.sessionId);
+		if (!session) throw new Error(`Session not found: ${params.sessionId}`);
+		if (session.context?.spaceId !== params.spaceId) {
+			throw new Error(`Session not found: ${params.sessionId}`);
+		}
+		if (session.type === 'space_task_agent') {
+			throw new Error('Task agent sessions cannot be promoted');
+		}
+
+		const result = await spaceAgentManager.create({
+			spaceId: params.spaceId,
+			name: params.name,
+			description: params.description,
+			model: params.model,
+			thinkingLevel: params.thinkingLevel,
+			provider: params.provider,
+			customPrompt: params.customPrompt,
+			tools: params.tools,
+			settingSources: params.settingSources,
+		});
+		if (!result.ok) throw new Error(result.error);
+
+		await publishAgentCreated(internalEventBus, result.value);
 		return { agent: result.value };
 	});
 

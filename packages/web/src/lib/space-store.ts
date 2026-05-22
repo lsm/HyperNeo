@@ -36,6 +36,7 @@ import type {
 	RuntimeState,
 	Space,
 	SpaceAgent,
+	SpaceAgentPromotionDraft,
 	SpaceBlockReason,
 	SpaceGoal,
 	SpaceGoalEvent,
@@ -2012,6 +2013,38 @@ class SpaceStore {
 	/**
 	 * Update an agent
 	 */
+	async getAgentPromotionDraft(sessionId: string): Promise<SpaceAgentPromotionDraft> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { draft } = await hub.request<{ draft: SpaceAgentPromotionDraft }>(
+			'spaceAgent.getPromotionDraft',
+			{ spaceId, sessionId }
+		);
+		return draft;
+	}
+
+	async promoteSessionToAgent(
+		sessionId: string,
+		params: Omit<CreateSpaceAgentParams, 'spaceId'>
+	): Promise<SpaceAgent> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { agent } = await hub.request<{ agent: SpaceAgent }>('spaceAgent.promoteSession', {
+			...params,
+			spaceId,
+			sessionId,
+		});
+		return agent;
+	}
+
 	async updateAgent(agentId: string, params: UpdateSpaceAgentParams): Promise<SpaceAgent> {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) throw new Error('No space selected');

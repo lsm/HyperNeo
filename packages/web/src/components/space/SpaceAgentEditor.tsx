@@ -16,7 +16,12 @@
  * Validation: name required + unique, model required, at least one tool selected.
  */
 
-import type { SpaceAgent, ThinkingLevel, SettingSource } from '@neokai/shared';
+import type {
+	SpaceAgent,
+	SpaceAgentPromotionDraft,
+	ThinkingLevel,
+	SettingSource,
+} from '@neokai/shared';
 import { KNOWN_TOOLS, normalizeThinkingLevel } from '@neokai/shared';
 import { useState } from 'preact/hooks';
 import type { SpaceAgentTemplate } from '../../lib/space-store';
@@ -117,6 +122,8 @@ function LineNumberedTextarea({
 export interface SpaceAgentEditorProps {
 	/** Existing agent to edit. Null = create mode. */
 	agent: SpaceAgent | null;
+	/** Draft generated from an ad-hoc Space session. */
+	promotionDraft?: SpaceAgentPromotionDraft | null;
 	/** Names of other agents in this space (for uniqueness validation) */
 	existingAgentNames: string[];
 	/** Called after a successful save */
@@ -127,31 +134,45 @@ export interface SpaceAgentEditorProps {
 
 export function SpaceAgentEditor({
 	agent,
+	promotionDraft,
 	existingAgentNames,
 	onSave,
 	onCancel,
 }: SpaceAgentEditorProps) {
 	const isEdit = agent !== null;
+	const isPromotion = !isEdit && promotionDraft !== null && promotionDraft !== undefined;
 	const builtInTemplates = spaceStore.agentTemplates.value;
 
 	// Form state
-	const [name, setName] = useState(agent?.name ?? '');
-	const [description, setDescription] = useState(agent?.description ?? '');
-	const [model, setModel] = useState(agent?.model ?? '');
-	const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
-		agent?.thinkingLevel ? normalizeThinkingLevel(agent.thinkingLevel) : ''
+	const [name, setName] = useState(agent?.name ?? promotionDraft?.name ?? '');
+	const [description, setDescription] = useState(
+		agent?.description ?? promotionDraft?.description ?? ''
 	);
-	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
-	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
+	const [model, setModel] = useState(agent?.model ?? promotionDraft?.model ?? '');
+	const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
+		agent?.thinkingLevel
+			? normalizeThinkingLevel(agent.thinkingLevel)
+			: promotionDraft?.thinkingLevel
+				? normalizeThinkingLevel(promotionDraft.thinkingLevel)
+				: ''
+	);
+	const [tools, setTools] = useState<string[]>(
+		agent?.tools ?? promotionDraft?.tools ?? [...TOOL_PRESETS['Full Coding']]
+	);
+	const [customPrompt, setCustomPrompt] = useState(
+		agent?.customPrompt ?? promotionDraft?.customPrompt ?? ''
+	);
 	const inheritedSettingSources = spaceStore.space?.value?.settingSources ?? [
 		'user',
 		'project',
 		'local',
 	];
 	const [settingSources, setSettingSources] = useState<SettingSource[]>(
-		agent?.settingSources ?? inheritedSettingSources
+		agent?.settingSources ?? promotionDraft?.settingSources ?? inheritedSettingSources
 	);
-	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
+	const [activePreset, setActivePreset] = useState<string>(() =>
+		detectPreset(agent?.tools ?? promotionDraft?.tools)
+	);
 	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
 
 	// UI state
@@ -239,6 +260,11 @@ export function SpaceAgentEditor({
 					...baseParams,
 					thinkingLevel: thinkingLevel || null,
 				});
+			} else if (promotionDraft) {
+				await spaceStore.promoteSessionToAgent(promotionDraft.sourceSessionId, {
+					...baseParams,
+					thinkingLevel: thinkingLevel || undefined,
+				});
 			} else {
 				await spaceStore.createAgent({
 					...baseParams,
@@ -254,7 +280,11 @@ export function SpaceAgentEditor({
 		}
 	};
 
-	const title = isEdit ? `Edit Agent: ${agent!.name}` : 'Create Agent';
+	const title = isEdit
+		? `Edit Agent: ${agent!.name}`
+		: isPromotion
+			? `Promote Session: ${promotionDraft!.sourceSessionTitle}`
+			: 'Create Agent';
 
 	return (
 		<Modal isOpen onClose={onCancel} title={title} size="lg">
@@ -263,6 +293,16 @@ export function SpaceAgentEditor({
 				{saveError && (
 					<div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 text-red-400 text-sm">
 						{saveError}
+					</div>
+				)}
+
+				{isPromotion && promotionDraft && (
+					<div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
+						<p class="font-medium">Review generated long-horizon profile before creating agent.</p>
+						<p class="mt-1 text-xs text-blue-200/80">
+							Draft uses recent renderable messages from "{promotionDraft.sourceSessionTitle}" as
+							standing context instead of copying raw chat history.
+						</p>
 					</div>
 				)}
 
@@ -520,16 +560,22 @@ export function SpaceAgentEditor({
 				{/* Custom Prompt */}
 				<div>
 					<label class="block text-sm font-medium text-gray-300 mb-2">
-						Custom Prompt
+						{isPromotion ? 'Long-Horizon Profile' : 'Custom Prompt'}
 						<span class="text-gray-500 text-xs ml-2">
 							(optional — appended after NeoKai contract)
 						</span>
 					</label>
+					{isPromotion && (
+						<p class="mb-2 text-xs text-gray-500">
+							Edit responsibility, standing instructions, autonomy, managed goals/scopes, reminders,
+							event subscriptions, and standing context here.
+						</p>
+					)}
 					<LineNumberedTextarea
 						value={customPrompt}
 						onChange={setCustomPrompt}
 						placeholder="Persona, operating procedure, or any additional context for this agent..."
-						rows={8}
+						rows={isPromotion ? 14 : 8}
 					/>
 				</div>
 
@@ -539,7 +585,7 @@ export function SpaceAgentEditor({
 						Cancel
 					</Button>
 					<Button type="submit" loading={saving} fullWidth>
-						{isEdit ? 'Save Changes' : 'Create Agent'}
+						{isEdit ? 'Save Changes' : isPromotion ? 'Create Long-Horizon Agent' : 'Create Agent'}
 					</Button>
 				</div>
 			</form>
