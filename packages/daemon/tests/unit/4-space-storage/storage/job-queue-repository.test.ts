@@ -76,6 +76,41 @@ describe('JobQueueRepository', () => {
 			expect(job.payload).toEqual(payload);
 		});
 
+		it('atomically skips duplicate active jobs by payload fields', () => {
+			const first = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: 'task-1' },
+				matchPayload: { scopeId: 'scope-1', taskId: 'task-1' },
+			});
+			const duplicate = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: 'task-1' },
+				matchPayload: { scopeId: 'scope-1', taskId: 'task-1' },
+			});
+			const nullKey = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: null },
+				matchPayload: { scopeId: 'scope-1', taskId: null },
+			});
+			const nullKeyDuplicate = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: null },
+				matchPayload: { scopeId: 'scope-1', taskId: null },
+			});
+			const other = repository.enqueueUniquePending({
+				queue: 'conversation-friction',
+				payload: { scopeId: 'scope-1', taskId: 'task-2' },
+				matchPayload: { scopeId: 'scope-1', taskId: 'task-2' },
+			});
+
+			expect(first).not.toBeNull();
+			expect(duplicate).toBeNull();
+			expect(nullKey).not.toBeNull();
+			expect(nullKeyDuplicate).toBeNull();
+			expect(other).not.toBeNull();
+			expect(repository.listJobs({ queue: 'conversation-friction', limit: 10 })).toHaveLength(3);
+		});
+
 		it('assigns each job a unique UUID', () => {
 			const job1 = repository.enqueue({ queue: 'test', payload: {} });
 			const job2 = repository.enqueue({ queue: 'test', payload: {} });

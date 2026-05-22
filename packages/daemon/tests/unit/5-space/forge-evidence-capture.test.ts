@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
+import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
@@ -21,12 +23,31 @@ describe('Forge evidence capture on task completion', () => {
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let artifactRepo: WorkflowRunArtifactRepository;
 	let evolutionRepo: EvolutionRepository;
+	let jobQueue: JobQueueRepository;
 	let evolutionScopeService: EvolutionScopeService;
 	let spaceId: string;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
 		createSpaceTables(db);
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER
+			)
+		`);
 		spaceRepo = new SpaceRepository(db as never);
 		goalRepo = new SpaceGoalRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
@@ -37,18 +58,21 @@ describe('Forge evidence capture on task completion', () => {
 		);
 		artifactRepo = new WorkflowRunArtifactRepository(db as never);
 		evolutionRepo = new EvolutionRepository(db as never);
+		jobQueue = new JobQueueRepository(db as never);
 		spaceId = spaceRepo.createSpace({
 			workspacePath: '/workspace/forge-evidence-capture',
 			slug: 'forge-evidence-capture',
 			name: 'Forge Evidence Capture',
 		}).id;
-		evolutionScopeService = new EvolutionScopeService({
+		const traceEvidenceService = new EvolutionTraceEvidenceService({
+			db: db as never,
 			evolutionRepo,
-			spaceRepo,
-			goalRepo,
 			taskRepo,
-			workflowRunRepo,
-			artifactRepo,
+		});
+		evolutionScopeService = new EvolutionScopeService({
+			...createScopeServiceDeps(),
+			traceEvidenceService,
+			jobQueue,
 		});
 	});
 
@@ -85,7 +109,22 @@ describe('Forge evidence capture on task completion', () => {
 		await manager.setTaskStatus(task.id, 'done', { result: 'PR ready and tests pass' });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
-		expect(evidence.map((item) => item.kind).sort()).toEqual(['artifact', 'task_result']);
+		expect(evidence.map((item) => item.kind).sort()).toEqual([
+			'artifact',
+			'session',
+			'task_result',
+		]);
+		expect(
+			(
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count FROM job_queue
+					 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+					)
+					.get(task.id) as { count: number }
+			).count
+		).toBe(1);
+		expect(evidence.find((item) => item.kind === 'session')?.metadata.traceDiagnostic).toBe(true);
 		expect(evidence.find((item) => item.kind === 'task_result')?.summary).toContain(
 			'PR ready and tests pass'
 		);
@@ -172,6 +211,7 @@ describe('Forge evidence capture on task completion', () => {
 		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		expect(result.evidence).toHaveLength(2);
+		expect(result.traceDiagnostic?.status).toBe('no_trace_rows');
 		const taskEvidence = result.evidence.find((item) => item.kind === 'task_result');
 		expect(taskEvidence?.summary).toContain('completed without task.result');
 		const artifactEvidence = result.evidence.find((item) => item.kind === 'artifact');
@@ -200,8 +240,8 @@ describe('Forge evidence capture on task completion', () => {
 		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
-		expect(evidence).toHaveLength(1);
-		expect(evidence[0]?.kind).toBe('task_result');
+		expect(evidence).toHaveLength(2);
+		expect(evidence.map((item) => item.kind).sort()).toEqual(['session', 'task_result']);
 	});
 
 	it('keeps manual workflow_run evidence and adds artifact evidence for the same run', () => {
@@ -240,6 +280,7 @@ describe('Forge evidence capture on task completion', () => {
 		const evidence = evolutionRepo.listEvidence(scope.id);
 		expect(evidence.map((item) => item.kind).sort()).toEqual([
 			'artifact',
+			'session',
 			'task_result',
 			'workflow_run',
 		]);
@@ -278,6 +319,9 @@ describe('Forge evidence capture on task completion', () => {
 		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.find((item) => item.kind === 'session')?.summary).toContain(
+			'No trace evidence generated'
+		);
 		const runEvidence = evidence.filter((item) => item.kind === 'workflow_run');
 		expect(runEvidence).toHaveLength(2);
 		expect(evolutionRepo.getEvidence(manual.id)?.summary).toBe('Manual reviewer context');
@@ -416,10 +460,11 @@ describe('Forge evidence capture on task completion', () => {
 		const second = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		const evidence = evolutionRepo.listEvidence(scope.id);
-		expect(evidence).toHaveLength(1);
+		expect(evidence).toHaveLength(2);
 		expect(second.evidence[0]?.id).toBe(first.evidence[0]?.id);
-		expect(evidence[0]?.summary).toContain('Second result');
-		expect(evidence[0]?.metadata.result).toBe('Second result');
+		const taskEvidence = evidence.find((item) => item.kind === 'task_result');
+		expect(taskEvidence?.summary).toContain('Second result');
+		expect(taskEvidence?.metadata.result).toBe('Second result');
 	});
 
 	it('creates error evidence for failed workflow runs', () => {
@@ -453,6 +498,360 @@ describe('Forge evidence capture on task completion', () => {
 		const errorEvidence = result.evidence.find((item) => item.kind === 'error');
 		expect(errorEvidence?.summary).toContain('agentCrash');
 		expect(errorEvidence?.metadata.failureReason).toBe('agentCrash');
+	});
+
+	it('captures trace-derived evidence for completed scoped task failures', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Trace task scope',
+			objective: 'Capture process friction',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Finish with failed test first',
+			description: 'Synthetic failed test trace',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchange(
+			task.id,
+			'session-trace',
+			'tool-test-1',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Error: expected true to be false',
+			}
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Fixed after failed test' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		expect(result.traceDiagnostic?.failedToolCallCount).toBe(1);
+		expect(result.evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		expect(evolutionRepo.listEvidence(scope.id).some((item) => item.kind === 'test_failure')).toBe(
+			true
+		);
+	});
+
+	it('clears stale trace diagnostics when later completion generates trace evidence', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Retried trace scope',
+			objective: 'Avoid stale trace diagnostics',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Retried trace task',
+			description: 'First clean, then failed trace',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchange(
+			task.id,
+			'session-retry',
+			'tool-test-pass-first',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: '1 pass',
+			}
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'First clean pass' });
+		evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.some((item) => item.kind === 'session' && item.metadata.status === 'no_friction')
+		).toBe(true);
+		insertToolExchange(
+			task.id,
+			'session-retry',
+			'tool-test-fail-later',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{
+				text: 'Error: later retry failed',
+			}
+		);
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		const diagnostic = evidence.find(
+			(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+		);
+		expect(diagnostic?.metadata.autoCaptured).toBe(true);
+		expect(diagnostic?.metadata.status).toBe('generated');
+		expect(diagnostic?.metadata.failedToolCallCount).toBe(1);
+		expect(diagnostic?.metadata.evidenceCount).toBeGreaterThan(0);
+		expect(diagnostic?.metadata.error).toBeUndefined();
+
+		const cleanResult = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(cleanResult.traceDiagnostic?.status).toBe('generated');
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.filter((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true)
+		).toHaveLength(1);
+	});
+
+	it('clears attach-time trace diagnostics when later attachment generates trace evidence', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Attachment retry scope',
+			objective: 'Avoid stale attach diagnostics',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Attach task evidence twice',
+			description: 'First throws, then captures trace evidence',
+			evolutionScopeId: scope.id,
+		});
+		const throwingService = new EvolutionScopeService({
+			...createScopeServiceDeps(),
+			traceEvidenceService: {
+				captureForTaskWithDiagnostic: () => {
+					throw new Error('temporary trace failure');
+				},
+			} as never,
+		});
+		throwingService.attachTaskEvidence({ taskId: task.id });
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.find((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true)?.metadata
+				.error
+		).toBe('temporary trace failure');
+		insertToolExchange(
+			task.id,
+			'session-attach-retry',
+			'tool-attach-fail',
+			'Bash',
+			{ command: 'bun test' },
+			true,
+			{ text: 'Error: attach retry failed test' }
+		);
+
+		evolutionScopeService.attachTaskEvidence({ taskId: task.id });
+
+		const evidence = evolutionRepo.listEvidence(scope.id);
+		expect(evidence.some((item) => item.kind === 'test_failure')).toBe(true);
+		const diagnostic = evidence.find(
+			(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+		);
+		expect(diagnostic?.metadata.autoCaptured).toBe(true);
+		expect(diagnostic?.metadata.status).toBe('generated');
+		expect(diagnostic?.metadata.error).toBeUndefined();
+		expect(diagnostic?.metadata.evidenceCount).toBeGreaterThan(0);
+	});
+
+	it('clears attach-time trace errors when later attachment has no trace friction', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Clean attachment retry scope',
+			objective: 'Clear stale attach errors without generated evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Attach clean task evidence twice',
+			description: 'First throws, then has clean trace',
+			evolutionScopeId: scope.id,
+		});
+		const throwingService = new EvolutionScopeService({
+			...createScopeServiceDeps(),
+			traceEvidenceService: {
+				captureForTaskWithDiagnostic: () => {
+					throw new Error('temporary trace failure');
+				},
+			} as never,
+		});
+		throwingService.attachTaskEvidence({ taskId: task.id });
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.find((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true)?.metadata
+				.error
+		).toBe('temporary trace failure');
+		insertToolExchange(
+			task.id,
+			'session-attach-clean-retry',
+			'tool-attach-clean',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{ text: '1 pass' }
+		);
+
+		evolutionScopeService.attachTaskEvidence({ taskId: task.id });
+
+		const diagnostics = evolutionRepo
+			.listEvidence(scope.id)
+			.filter((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]?.metadata.autoCaptured).toBe(true);
+		expect(diagnostics[0]?.metadata.status).toBe('no_friction');
+		expect(diagnostics[0]?.metadata.error).toBeUndefined();
+	});
+
+	it('does not enqueue duplicate conversation friction analysis beyond the newest 100 jobs', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Large queue scope',
+			objective: 'Avoid duplicate analyzer jobs',
+		});
+		const duplicateTask = taskRepo.createTask({
+			spaceId,
+			title: 'Already queued task',
+			description: 'Existing old job should be found',
+			evolutionScopeId: scope.id,
+		});
+		for (let index = 0; index < 101; index += 1) {
+			jobQueue.enqueue({
+				queue: 'space.conversationFriction.analyze',
+				payload: {
+					scopeId: scope.id,
+					taskId: index === 0 ? duplicateTask.id : `other-task-${index}`,
+				},
+			});
+		}
+		await taskRepo.updateTask(duplicateTask.id, { status: 'in_progress', result: 'Done' });
+		const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+		await manager.setTaskStatus(duplicateTask.id, 'done');
+
+		expect(
+			(
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count FROM job_queue
+						 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+					)
+					.get(duplicateTask.id) as { count: number }
+			).count
+		).toBe(1);
+	});
+
+	it('captures slow successful tool calls as trace-derived evidence', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Slow tool scope',
+			objective: 'Capture slow successful operations',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Slow successful tool call',
+			description: 'Slow Bash call should count as friction',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchangeAt(
+			task.id,
+			'session-slow',
+			'tool-slow-1',
+			'Bash',
+			{ command: 'bun run check' },
+			false,
+			{ text: 'Checks passed' },
+			1_700_000_000_000,
+			1_700_000_045_000
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Slow check passed' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		expect(result.traceDiagnostic?.slowToolCallCount).toBe(1);
+		const slowEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.find((item) => item.kind === 'slow_tool_call');
+		expect(slowEvidence?.metadata.slowToolCallCount).toBe(1);
+		expect(
+			(slowEvidence?.metadata.slowToolCalls as Array<{ durationMs: number }>)[0]?.durationMs
+		).toBe(45_000);
+	});
+
+	it('captures tool failure evidence for slow failed generic commands', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Slow failed tool scope',
+			objective: 'Preserve failure signal for slow failed operations',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Slow failed generic command',
+			description: 'Slow failed Bash call should emit both slow and failure evidence',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchangeAt(
+			task.id,
+			'session-slow-failed',
+			'tool-slow-failed-1',
+			'Bash',
+			{ command: 'curl https://example.invalid' },
+			true,
+			{ text: 'Error: connection timed out' },
+			1_700_000_000_000,
+			1_700_000_045_000
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Recovered after slow failure' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('generated');
+		expect(result.traceDiagnostic?.failedToolCallCount).toBe(1);
+		expect(result.traceDiagnostic?.slowToolCallCount).toBe(1);
+		const evidenceKinds = evolutionRepo.listEvidence(scope.id).map((item) => item.kind);
+		expect(evidenceKinds).toContain('slow_tool_call');
+		expect(evidenceKinds).toContain('tool_failure');
+	});
+
+	it('records a trace diagnostic when completed task trace has no friction', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Clean trace scope',
+			objective: 'Explain missing trace evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Clean trace task',
+			description: 'No friction trace',
+			evolutionScopeId: scope.id,
+		});
+		insertToolExchange(
+			task.id,
+			'session-clean',
+			'tool-test-pass',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{
+				text: '1 pass',
+			}
+		);
+		taskRepo.updateTask(task.id, { status: 'done', result: 'Clean pass' });
+
+		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(result.traceDiagnostic?.status).toBe('no_friction');
+		const diagnostic = evolutionRepo
+			.listEvidence(scope.id)
+			.find((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true);
+		expect(diagnostic?.summary).toContain('No trace evidence generated');
+		expect(diagnostic?.metadata.toolCallCount).toBe(1);
+		expect(diagnostic?.metadata.failedToolCallCount).toBe(0);
 	});
 
 	it('does not create Forge evidence for non-done tasks', () => {
@@ -515,6 +914,122 @@ describe('Forge evidence capture on task completion', () => {
 		const result = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
 		expect(result.scope?.id).toBe(scope.id);
-		expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(1);
+		expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(2);
 	});
+
+	function createScopeServiceDeps() {
+		return {
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		};
+	}
+
+	function insertToolExchange(
+		taskId: string,
+		sessionId: string,
+		toolUseId: string,
+		toolName: string,
+		input: Record<string, unknown>,
+		failed: boolean,
+		options: { text: string }
+	) {
+		insertToolExchangeAt(
+			taskId,
+			sessionId,
+			toolUseId,
+			toolName,
+			input,
+			failed,
+			options,
+			nextMessageTime(),
+			nextMessageTime()
+		);
+	}
+
+	function insertToolExchangeAt(
+		taskId: string,
+		sessionId: string,
+		toolUseId: string,
+		toolName: string,
+		input: Record<string, unknown>,
+		failed: boolean,
+		options: { text: string },
+		toolUseTimestamp: number,
+		toolResultTimestamp: number
+	) {
+		insertMessageAt(
+			taskId,
+			sessionId,
+			'assistant',
+			{
+				type: 'assistant',
+				uuid: `${toolUseId}-assistant`,
+				session_id: sessionId,
+				message: {
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: toolUseId, name: toolName, input }],
+				},
+			},
+			toolUseTimestamp
+		);
+		insertMessageAt(
+			taskId,
+			sessionId,
+			'user',
+			{
+				type: 'user',
+				uuid: `${toolUseId}-result`,
+				session_id: sessionId,
+				message: {
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: toolUseId,
+							is_error: failed,
+							content: options.text,
+						},
+					],
+				},
+			},
+			toolResultTimestamp
+		);
+	}
+
+	function insertMessageAt(
+		taskId: string,
+		sessionId: string,
+		messageType: string,
+		message: Record<string, unknown>,
+		timestamp: number
+	) {
+		const count = db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as {
+			count: number;
+		};
+		const sequence = count.count + 1;
+		db.prepare(
+			`INSERT INTO sdk_messages (
+				id, session_id, message_type, sdk_message, timestamp, send_status,
+				is_renderable, is_terminal, task_id
+			) VALUES (?, ?, ?, ?, ?, 'consumed', 1, 0, ?)`
+		).run(
+			`message-${sequence}`,
+			sessionId,
+			messageType,
+			JSON.stringify(message),
+			new Date(timestamp).toISOString(),
+			taskId
+		);
+	}
+
+	function nextMessageTime(): number {
+		const count = db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as {
+			count: number;
+		};
+		return 1_700_000_000_000 + (count.count + 1) * 1000;
+	}
 });

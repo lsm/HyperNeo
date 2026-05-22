@@ -10,6 +10,7 @@ const TRACE_EVIDENCE_KINDS: EvidenceKind[] = [
 	'tool_failure',
 	'test_failure',
 	'permission_block',
+	'slow_tool_call',
 ];
 const EDIT_TOOL_NAMES = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const VERIFICATION_PATTERN =
@@ -18,6 +19,7 @@ const TEST_PATTERN = /\b(test|vitest|playwright)\b/i;
 const PERMISSION_PATTERN =
 	/(permission denied|operation not permitted|not allowed|requires approval|user denied|blocked by|permission block)/i;
 const MAX_ROWS = 500;
+const SLOW_TOOL_CALL_THRESHOLD_MS = 30_000;
 
 export interface EvolutionTraceEvidenceServiceDeps {
 	db: BunDatabase;
@@ -28,6 +30,22 @@ export interface EvolutionTraceEvidenceServiceDeps {
 export interface CaptureTraceEvidenceForTaskParams {
 	scopeId: string;
 	taskId: string;
+}
+
+export interface TraceEvidenceDiagnostic {
+	status: 'generated' | 'no_trace_rows' | 'no_friction' | 'error';
+	message: string;
+	messageCount: number;
+	toolCallCount: number;
+	failedToolCallCount: number;
+	slowToolCallCount: number;
+	evidenceCount: number;
+	error?: string;
+}
+
+export interface CaptureTraceEvidenceForTaskResult {
+	evidence: EvidenceRef[];
+	diagnostic: TraceEvidenceDiagnostic;
 }
 
 interface TraceRow {
@@ -65,6 +83,16 @@ interface ToolResultRecord {
 	filePath: string | null;
 }
 
+interface SlowToolCallRecord {
+	toolUseId: string;
+	toolName: string;
+	commandKey: string;
+	durationMs: number;
+	filePath: string | null;
+	rowId: string;
+	sessionId: string;
+}
+
 interface TraceAnalysis {
 	rows: TraceRow[];
 	toolUses: ToolUseRecord[];
@@ -74,6 +102,7 @@ interface TraceAnalysis {
 	editFailures: ToolResultRecord[];
 	testFailures: ToolResultRecord[];
 	permissionBlocks: ToolResultRecord[];
+	slowToolCalls: SlowToolCallRecord[];
 	repeatedErrors: Array<{ fingerprint: string; count: number; results: ToolResultRecord[] }>;
 	retryLoops: Array<{
 		key: string;
@@ -88,13 +117,29 @@ export class EvolutionTraceEvidenceService {
 	constructor(private deps: EvolutionTraceEvidenceServiceDeps) {}
 
 	captureForTask(params: CaptureTraceEvidenceForTaskParams): EvidenceRef[] {
+		return this.captureForTaskWithDiagnostic(params).evidence;
+	}
+
+	captureForTaskWithDiagnostic(
+		params: CaptureTraceEvidenceForTaskParams
+	): CaptureTraceEvidenceForTaskResult {
 		const task = this.deps.taskRepo.getTask(params.taskId);
 		if (!task) throw new Error(`Task not found: ${params.taskId}`);
 		const rows = this.loadTraceRows(task.id);
-		if (rows.length === 0) return [];
+		if (rows.length === 0) {
+			return {
+				evidence: [],
+				diagnostic: buildTraceDiagnostic('no_trace_rows', rows.length),
+			};
+		}
 
 		const analysis = analyzeTrace(rows);
-		if (!hasProcessFriction(analysis)) return [];
+		if (!hasProcessFriction(analysis)) {
+			return {
+				evidence: [],
+				diagnostic: buildTraceDiagnostic('no_friction', rows.length, analysis),
+			};
+		}
 
 		const existingByFingerprint = new Map(
 			this.deps.evolutionRepo
@@ -108,7 +153,7 @@ export class EvolutionTraceEvidenceService {
 				.map((item) => [String(item.metadata.traceFingerprint ?? ''), item])
 		);
 
-		return buildEvidenceParams(params.scopeId, task, analysis).map((item) => {
+		const evidence = buildEvidenceParams(params.scopeId, task, analysis).map((item) => {
 			const fingerprint = String(item.metadata?.traceFingerprint ?? '');
 			const existing = existingByFingerprint.get(fingerprint);
 			if (existing) {
@@ -119,6 +164,10 @@ export class EvolutionTraceEvidenceService {
 			}
 			return this.deps.evolutionRepo.createEvidence(item);
 		});
+		return {
+			evidence,
+			diagnostic: buildTraceDiagnostic('generated', rows.length, analysis, evidence.length),
+		};
 	}
 
 	private loadTraceRows(taskId: string): TraceRow[] {
@@ -234,6 +283,25 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
 		).entries()
 	).flatMap(([key, results]) => detectRetryLoops(key, results));
 
+	const slowToolCalls = toolResults.flatMap((result): SlowToolCallRecord[] => {
+		if (!result.toolUseId) return [];
+		const toolUse = toolUsesById.get(result.toolUseId);
+		if (!toolUse) return [];
+		const durationMs = result.timestamp - toolUse.timestamp;
+		if (!Number.isFinite(durationMs) || durationMs < SLOW_TOOL_CALL_THRESHOLD_MS) return [];
+		return [
+			{
+				toolUseId: result.toolUseId,
+				toolName: result.toolName,
+				commandKey: result.commandKey,
+				durationMs,
+				filePath: result.filePath,
+				rowId: result.rowId,
+				sessionId: result.sessionId,
+			},
+		];
+	});
+
 	const verificationSuccesses = toolResults.filter(
 		(result) => !result.failed && (result.category === 'test' || result.category === 'verification')
 	);
@@ -248,6 +316,7 @@ function analyzeTrace(rows: TraceRow[]): TraceAnalysis {
 		editFailures: failedResults.filter((result) => result.category === 'edit'),
 		testFailures: failedResults.filter((result) => result.category === 'test'),
 		permissionBlocks: failedResults.filter((result) => result.category === 'permission'),
+		slowToolCalls,
 		repeatedErrors,
 		retryLoops,
 		fileChurn: Array.from(editCountsByFile.entries())
@@ -330,7 +399,24 @@ function buildEvidenceParams(
 		});
 	}
 
-	if (analysis.failedToolCallCount > 0 && params.length === 0) {
+	if (analysis.slowToolCalls.length > 0) {
+		params.push({
+			scopeId,
+			kind: 'slow_tool_call',
+			sourceId: task.id,
+			summary: `Slow tool calls took over ${SLOW_TOOL_CALL_THRESHOLD_MS / 1000}s ${analysis.slowToolCalls.length} time${plural(analysis.slowToolCalls.length)}`,
+			metadata: {
+				...base,
+				traceFingerprint: 'slow_tool_call',
+				slowToolCallCount: analysis.slowToolCalls.length,
+				slowToolCalls: analysis.slowToolCalls.map(summarizeSlowToolCall),
+				rawTraceRefs: rawRefsForSlowToolCalls(analysis.slowToolCalls, analysis),
+			},
+		});
+	}
+
+	const hasFailureEvidence = params.some((param) => param.kind !== 'slow_tool_call');
+	if (analysis.failedToolCallCount > 0 && !hasFailureEvidence) {
 		params.push({
 			scopeId,
 			kind: 'tool_failure',
@@ -361,6 +447,7 @@ function buildBaseMetadata(task: SpaceTask, analysis: TraceAnalysis): Record<str
 		editFailureCount: analysis.editFailures.length,
 		testFailureCycles: analysis.testFailures.length,
 		permissionBlockCount: analysis.permissionBlocks.length,
+		slowToolCallCount: analysis.slowToolCalls.length,
 		fileChurn: analysis.fileChurn,
 		messageCount: analysis.rows.length,
 		traceSpan: {
@@ -375,8 +462,61 @@ function hasProcessFriction(analysis: TraceAnalysis): boolean {
 		analysis.failedToolCallCount > 0 ||
 		analysis.repeatedErrors.length > 0 ||
 		analysis.retryLoops.length > 0 ||
-		analysis.permissionBlocks.length > 0
+		analysis.permissionBlocks.length > 0 ||
+		analysis.slowToolCalls.length > 0
 	);
+}
+
+function buildTraceDiagnostic(
+	status: TraceEvidenceDiagnostic['status'],
+	messageCount: number,
+	analysis?: TraceAnalysis,
+	evidenceCount = 0
+): TraceEvidenceDiagnostic {
+	return {
+		status,
+		message: traceDiagnosticMessage(status),
+		messageCount,
+		toolCallCount: analysis?.toolCallCount ?? 0,
+		failedToolCallCount: analysis?.failedToolCallCount ?? 0,
+		slowToolCallCount: analysis?.slowToolCalls.length ?? 0,
+		evidenceCount,
+	};
+}
+
+function traceDiagnosticMessage(status: TraceEvidenceDiagnostic['status']): string {
+	if (status === 'generated') return 'Trace-derived evidence generated';
+	if (status === 'no_trace_rows')
+		return 'No trace evidence generated: no SDK messages found for task';
+	if (status === 'no_friction') {
+		return 'No trace evidence generated: task trace had no meaningful failures, retries, permission blocks, or slow operations';
+	}
+	return 'Trace evidence capture failed';
+}
+
+function summarizeSlowToolCall(record: SlowToolCallRecord): Record<string, unknown> {
+	return {
+		toolUseId: record.toolUseId,
+		toolName: record.toolName,
+		commandKey: record.commandKey,
+		durationMs: record.durationMs,
+		filePath: record.filePath,
+	};
+}
+
+function rawRefsForSlowToolCalls(
+	calls: SlowToolCallRecord[],
+	analysis: TraceAnalysis
+): Record<string, unknown> {
+	return {
+		sessionIds: unique(calls.map((call) => call.sessionId)),
+		messageIds: unique(calls.map((call) => call.rowId)),
+		toolUseIds: unique(calls.map((call) => call.toolUseId)),
+		traceSpan: {
+			startMessageId: analysis.rows[0]?.id ?? null,
+			endMessageId: analysis.rows.at(-1)?.id ?? null,
+		},
+	};
 }
 
 function rawRefs(results: ToolResultRecord[], analysis: TraceAnalysis): Record<string, unknown> {

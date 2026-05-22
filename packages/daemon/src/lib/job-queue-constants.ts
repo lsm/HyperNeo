@@ -9,6 +9,7 @@ export const ROOM_TICK = 'room.tick';
 export const JOB_QUEUE_CLEANUP = 'job_queue.cleanup';
 export const SKILL_VALIDATE = 'skill.validate';
 export const MEMORY_CONSOLIDATION = 'memory_consolidation';
+export const SPACE_CONVERSATION_FRICTION_ANALYZE = 'space.conversationFriction.analyze';
 
 // ─── Task schedule ────────────────────────────────────────────────────────────
 export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';

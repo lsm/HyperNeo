@@ -9505,7 +9505,9 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 		sql.includes("'retry_loop'") &&
 		sql.includes("'tool_failure'") &&
 		sql.includes("'test_failure'") &&
-		sql.includes("'permission_block'")
+		sql.includes("'permission_block'") &&
+		sql.includes("'slow_tool_call'") &&
+		sql.includes("'conversation_friction'")
 	) {
 		return;
 	}
@@ -9518,7 +9520,7 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 				id TEXT PRIMARY KEY,
 				scope_id TEXT NOT NULL,
 				kind TEXT NOT NULL
-					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block')),
+					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction')),
 				summary TEXT NOT NULL,
 				source_id TEXT,
 				metadata_json TEXT NOT NULL DEFAULT '{}',
