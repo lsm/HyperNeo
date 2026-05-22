@@ -253,8 +253,12 @@ export class EvolutionScopeService {
 				scopeId: scope.id,
 				taskId: task.id,
 			});
-			if (traceResult && traceResult.evidence.length > 0) {
-				this.clearTraceDiagnosticEvidence(scope.id, task.id, traceResult.diagnostic);
+			if (traceResult) {
+				if (traceResult.evidence.length > 0) {
+					this.clearTraceDiagnosticEvidence(scope.id, task.id, traceResult.diagnostic);
+				} else {
+					this.createTraceDiagnosticEvidence(scope.id, task.id, traceResult.diagnostic);
+				}
 			}
 		} catch (err) {
 			this.createTraceDiagnosticEvidence(scope.id, task.id, traceCaptureErrorDiagnostic(err));
@@ -528,6 +532,7 @@ export class EvolutionScopeService {
 		this.deps.evolutionRepo.updateEvidence(existing.id, {
 			summary: diagnostic.message,
 			metadata: {
+				autoCaptured: true,
 				traceDiagnostic: true,
 				clearedByTraceEvidence: true,
 				...diagnostic,

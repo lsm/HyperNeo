@@ -555,10 +555,20 @@ describe('Forge evidence capture on task completion', () => {
 		const diagnostic = evidence.find(
 			(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
 		);
+		expect(diagnostic?.metadata.autoCaptured).toBe(true);
 		expect(diagnostic?.metadata.status).toBe('generated');
 		expect(diagnostic?.metadata.failedToolCallCount).toBe(1);
 		expect(diagnostic?.metadata.evidenceCount).toBeGreaterThan(0);
 		expect(diagnostic?.metadata.error).toBeUndefined();
+
+		const cleanResult = evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+		expect(cleanResult.traceDiagnostic?.status).toBe('generated');
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.filter((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true)
+		).toHaveLength(1);
 	});
 
 	it('clears attach-time trace diagnostics when later attachment generates trace evidence', () => {
@@ -606,9 +616,59 @@ describe('Forge evidence capture on task completion', () => {
 		const diagnostic = evidence.find(
 			(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
 		);
+		expect(diagnostic?.metadata.autoCaptured).toBe(true);
 		expect(diagnostic?.metadata.status).toBe('generated');
 		expect(diagnostic?.metadata.error).toBeUndefined();
 		expect(diagnostic?.metadata.evidenceCount).toBeGreaterThan(0);
+	});
+
+	it('clears attach-time trace errors when later attachment has no trace friction', () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Clean attachment retry scope',
+			objective: 'Clear stale attach errors without generated evidence',
+		});
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Attach clean task evidence twice',
+			description: 'First throws, then has clean trace',
+			evolutionScopeId: scope.id,
+		});
+		const throwingService = new EvolutionScopeService({
+			...createScopeServiceDeps(),
+			traceEvidenceService: {
+				captureForTaskWithDiagnostic: () => {
+					throw new Error('temporary trace failure');
+				},
+			} as never,
+		});
+		throwingService.attachTaskEvidence({ taskId: task.id });
+		expect(
+			evolutionRepo
+				.listEvidence(scope.id)
+				.find((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true)?.metadata
+				.error
+		).toBe('temporary trace failure');
+		insertToolExchange(
+			task.id,
+			'session-attach-clean-retry',
+			'tool-attach-clean',
+			'Bash',
+			{ command: 'bun test' },
+			false,
+			{ text: '1 pass' }
+		);
+
+		evolutionScopeService.attachTaskEvidence({ taskId: task.id });
+
+		const diagnostics = evolutionRepo
+			.listEvidence(scope.id)
+			.filter((item) => item.kind === 'session' && item.metadata.traceDiagnostic === true);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]?.metadata.autoCaptured).toBe(true);
+		expect(diagnostics[0]?.metadata.status).toBe('no_friction');
+		expect(diagnostics[0]?.metadata.error).toBeUndefined();
 	});
 
 	it('captures slow successful tool calls as trace-derived evidence', () => {
