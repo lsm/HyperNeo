@@ -8,7 +8,7 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import {
 	maxCompletedTaskTimestamp,
-	maxEvidenceTimestamp,
+	maxEvidenceCursor,
 	readAutomationPolicyForScope,
 	readCompletedTaskThreshold,
 	selectEvidenceAfterCursor,
@@ -87,9 +87,11 @@ export async function handleGoalAutomationExecute(
 	const dueEvidence = selectEvidenceAfterCursor(
 		deps.evolutionRepo.listEvidence(scope.id),
 		cursor?.lastEvidenceCreatedAt ?? null,
-		Number.POSITIVE_INFINITY
+		Number.POSITIVE_INFINITY,
+		cursor?.lastEvidenceId ?? null
 	);
-	const evidence = selectEvidenceForTrigger(dueEvidence, payload, maxEvidence);
+	const evidence = dueEvidence.slice(0, maxEvidence);
+	const triggerEvidence = findTriggerEvidence(dueEvidence, payload);
 	if (evidence.length === 0) {
 		return skipped(payload, 'no_evidence');
 	}
@@ -105,9 +107,31 @@ export async function handleGoalAutomationExecute(
 		}
 	}
 
+	const episodeEvidence = triggerEvidence
+		? uniqueEvidence([...evidence, triggerEvidence])
+		: evidence;
+	const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
+	if (existingAutomation) {
+		advanceCursor(
+			deps,
+			payload,
+			evidence,
+			existingAutomation.reviewTask,
+			existingAutomation.episodeId
+		);
+		return {
+			goalId: goal.id,
+			scopeId: scope.id,
+			episodeId: existingAutomation.episodeId,
+			reviewTaskId: existingAutomation.reviewTask.id,
+			evidenceCount: evidence.length,
+			skipped: false,
+		};
+	}
+
 	const episodeResult = await deps.episodeService.createFromEvidence({
 		scopeId: scope.id,
-		evidenceIds: evidence.map((item) => item.id),
+		evidenceIds: episodeEvidence.map((item) => item.id),
 		confirmLowConfidence: true,
 	});
 	const writeResult = runWriteTransaction(deps, () => {
@@ -116,7 +140,8 @@ export async function handleGoalAutomationExecute(
 			goal.id,
 			scope.id,
 			episodeResult.episode.id,
-			evidence
+			episodeEvidence,
+			payload
 		);
 		advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
 		return reviewTask;
@@ -133,18 +158,21 @@ export async function handleGoalAutomationExecute(
 	};
 }
 
-function selectEvidenceForTrigger(
+function findTriggerEvidence(
 	dueEvidence: EvidenceRef[],
-	payload: GoalAutomationExecutePayload,
-	maxEvidence: number
-): EvidenceRef[] {
-	const selected = dueEvidence.slice(0, maxEvidence);
-	if (payload.triggerKind !== 'external_event' || !payload.externalEventId) return selected;
-	if (selected.some((item) => item.sourceId === payload.externalEventId)) return selected;
-	const triggerEvidence = dueEvidence.find((item) => item.sourceId === payload.externalEventId);
-	if (!triggerEvidence) return selected;
-	if (selected.length < maxEvidence) return [...selected, triggerEvidence];
-	return [...selected.slice(0, Math.max(0, maxEvidence - 1)), triggerEvidence];
+	payload: GoalAutomationExecutePayload
+): EvidenceRef | null {
+	if (payload.triggerKind !== 'external_event' || !payload.externalEventId) return null;
+	return dueEvidence.find((item) => item.sourceId === payload.externalEventId) ?? null;
+}
+
+function uniqueEvidence(evidence: EvidenceRef[]): EvidenceRef[] {
+	const seen = new Set<string>();
+	return evidence.filter((item) => {
+		if (seen.has(item.id)) return false;
+		seen.add(item.id);
+		return true;
+	});
 }
 
 function ensureExternalEventEvidence(
@@ -191,7 +219,8 @@ function createReviewTask(
 	goalId: string,
 	scopeId: string,
 	episodeId: string,
-	evidence: EvidenceRef[]
+	evidence: EvidenceRef[],
+	payload: GoalAutomationExecutePayload
 ): SpaceTask {
 	const scope = deps.evolutionRepo.getScope(scopeId);
 	if (!scope) throw new Error(`EvolutionScope not found: ${scopeId}`);
@@ -203,12 +232,39 @@ function createReviewTask(
 		description: [
 			'Forge generated a draft retrospective episode from automation-selected evidence.',
 			`Episode: ${episodeId}`,
+			`Automation trigger: ${automationTriggerToken(payload)}`,
 			`Evidence selected:\n${evidence.map((item) => `- ${item.id}: ${item.summary}`).join('\n')}`,
 			'Review candidate lessons and task proposals before accepting or creating follow-up work.',
 		].join('\n\n'),
 		priority: 'normal',
-		labels: ['forge', 'review', 'automation'],
+		labels: ['forge', 'review', 'automation', automationTriggerToken(payload)],
 	});
+}
+
+function findExistingAutomationReviewTask(
+	deps: GoalAutomationExecuteDeps,
+	scopeId: string,
+	payload: GoalAutomationExecutePayload
+): { reviewTask: SpaceTask; episodeId: string } | null {
+	const scope = deps.evolutionRepo.getScope(scopeId);
+	if (!scope) return null;
+	const token = automationTriggerToken(payload);
+	const task = deps.taskRepo
+		.listBySpace(scope.spaceId, true)
+		.find(
+			(item) =>
+				item.evolutionScopeId === scopeId &&
+				item.labels.includes('automation') &&
+				item.labels.includes(token)
+		);
+	if (!task) return null;
+	const match = task.description.match(/Episode: ([^\n]+)/);
+	const episodeId = match?.[1]?.trim();
+	return episodeId ? { reviewTask: task, episodeId } : null;
+}
+
+function automationTriggerToken(payload: GoalAutomationExecutePayload): string {
+	return `automation:${payload.triggerKind}:${payload.triggerKey}:${payload.externalEventId ?? payload.taskId ?? payload.scheduleId ?? 'run'}`;
 }
 
 function advanceCursor(
@@ -223,13 +279,15 @@ function advanceCursor(
 		const task = deps.taskRepo.getTask(taskId);
 		return task ? [task] : [];
 	});
+	const evidenceCursor = maxEvidenceCursor(evidence);
 	deps.cursorRepo.upsert({
 		spaceId: reviewTask.spaceId,
 		goalId: payload.goalId,
 		scopeId: payload.scopeId,
 		triggerKind: payload.triggerKind,
 		triggerKey: payload.triggerKey,
-		lastEvidenceCreatedAt: maxEvidenceTimestamp(evidence),
+		lastEvidenceCreatedAt: evidenceCursor?.createdAt ?? null,
+		lastEvidenceId: evidenceCursor?.id ?? null,
 		lastTaskCompletedAt: maxCompletedTaskTimestamp(tasks),
 		lastExternalEventId: payload.externalEventId ?? null,
 		lastEpisodeId: episodeId,

@@ -115,6 +115,7 @@ import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
+import { isValidCronExpression } from '../space/schedule/cron-utils';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
@@ -125,6 +126,17 @@ import {
 	type ExternalEventExtensionManager,
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
+
+export function validateGoalAutomationSelfNagPolicy(params: {
+	policy?: EvolutionScope['policy'];
+}): void {
+	const expression = readAutomationPolicyForScope({
+		policy: params.policy,
+	} as EvolutionScope).selfNagCronExpression;
+	if (expression && !isValidCronExpression(expression)) {
+		throw new Error(`Invalid cron expression: ${expression}`);
+	}
+}
 
 export function syncGoalAutomationSelfNagScheduleForScope(params: {
 	goalRepo: SpaceGoalRepository;
@@ -150,7 +162,8 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
 		return;
 	}
 	if (existing) {
-		if (existing.status !== 'active') return;
+		if (existing.status === 'completed') return;
+		if (existing.status === 'paused') scheduleService.resumeSchedule(existing.id);
 		scheduleService.updateSchedule(existing.id, {
 			title: `Forge self-nag: ${goal.title}`,
 			description: `Run Forge automation for goal: ${goal.title}`,
@@ -600,6 +613,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		})
 	);
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService, {
+		beforeScopeSave: (params) => {
+			validateGoalAutomationSelfNagPolicy(params);
+		},
 		onScopeSaved: (scope) => {
 			syncGoalAutomationSelfNagScheduleForScope({
 				goalRepo: spaceGoalRepo,

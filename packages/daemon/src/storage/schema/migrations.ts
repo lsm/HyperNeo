@@ -10030,6 +10030,9 @@ export function runMigration135(db: BunDatabase): void {
 export function runMigration139(db: BunDatabase): void {
 	createEvolutionTables(db);
 	if (tableExists(db, 'goal_automation_cursors')) {
+		if (!tableHasColumn(db, 'goal_automation_cursors', 'last_evidence_id')) {
+			db.exec(`ALTER TABLE goal_automation_cursors ADD COLUMN last_evidence_id TEXT`);
+		}
 		const createSql = tableCreateSql(db, 'goal_automation_cursors') ?? '';
 		if (createSql.includes('UNIQUE(goal_id, trigger_kind, trigger_key)')) {
 			db.exec(`ALTER TABLE goal_automation_cursors RENAME TO goal_automation_cursors_old`);
@@ -10037,13 +10040,15 @@ export function runMigration139(db: BunDatabase): void {
 			db.exec(`
 				INSERT OR IGNORE INTO goal_automation_cursors (
 					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
-					last_evidence_created_at, last_task_completed_at, last_external_event_id,
-					last_episode_id, last_fired_at, metadata_json, created_at, updated_at
+					last_evidence_created_at, last_evidence_id, last_task_completed_at,
+					last_external_event_id, last_episode_id, last_fired_at, metadata_json,
+					created_at, updated_at
 				)
 				SELECT
 					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
-					last_evidence_created_at, last_task_completed_at, last_external_event_id,
-					last_episode_id, last_fired_at, metadata_json, created_at, updated_at
+					last_evidence_created_at, last_evidence_id, last_task_completed_at,
+					last_external_event_id, last_episode_id, last_fired_at, metadata_json,
+					created_at, updated_at
 				FROM goal_automation_cursors_old
 			`);
 			db.exec(`DROP TABLE goal_automation_cursors_old`);

@@ -21,6 +21,24 @@ import { syncGoalAutomationSelfNagScheduleForScope } from '../../../src/lib/rpc-
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 
+function createAutomationJob(payload: Job['payload'], id = 'job-automation'): Job {
+	return {
+		id,
+		queue: GOAL_AUTOMATION_EXECUTE,
+		status: 'processing',
+		payload,
+		result: null,
+		error: null,
+		priority: 0,
+		maxRetries: 2,
+		retryCount: 0,
+		runAt: Date.now(),
+		createdAt: Date.now(),
+		startedAt: Date.now(),
+		completedAt: null,
+	} satisfies Job;
+}
+
 function createJobQueueTable(db: Database): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS job_queue (
@@ -408,6 +426,37 @@ describe('GoalAutomationService', () => {
 		]);
 	});
 
+	it('re-enables paused self-nag schedule when cron policy is restored', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Restore self nag', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Restore cadence',
+			objective: 'Restore',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+		const activeSchedule = scheduleService.listSchedules(spaceId, 'active')[0];
+		scheduleService.pauseSchedule(activeSchedule.id);
+
+		const restoredScope = evolutionRepo.updateScope(scope.id, {
+			policy: { automation: { selfNagCronExpression: '30 * * * *' } },
+		});
+		expect(restoredScope).not.toBeNull();
+		syncGoalAutomationSelfNagScheduleForScope({
+			goalRepo,
+			scheduleService,
+			scope: restoredScope as typeof scope,
+		});
+
+		expect(scheduleService.listSchedules(spaceId, 'paused')).toHaveLength(0);
+		const restoredSchedule = scheduleService.listSchedules(spaceId, 'active')[0];
+		expect(restoredSchedule.id).toBe(activeSchedule.id);
+		expect(restoredSchedule.cronExpression).toBe('30 * * * *');
+		expect(restoredSchedule.pendingJobId).not.toBeNull();
+	});
+
 	it('pauses active self-nag schedule when cron policy is removed', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Disable self nag', type: 'recurring' });
 		const scope = evolutionRepo.createScope({
@@ -451,6 +500,35 @@ describe('GoalAutomationService', () => {
 			syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope })
 		).toThrow(/Invalid cron expression/);
 		expect(scheduleService.listSchedules(spaceId)).toHaveLength(0);
+	});
+
+	it('skips ambiguous completed-task automation when task has no explicit scope', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Ambiguous task scope', type: 'recurring' });
+		evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'First scope',
+			objective: 'First',
+			policy: { automation: { completedTaskThreshold: 1 } },
+		});
+		evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Second scope',
+			objective: 'Second',
+			policy: { automation: { completedTaskThreshold: 1 } },
+		});
+		const task = taskRepo.createTask({ spaceId, title: 'Unscoped task', goalId: goal.id });
+		taskRepo.updateTask(task.id, { status: 'done' });
+
+		const result = service.onTaskCompleted(task.id);
+
+		expect(result).toEqual({ enqueued: false, reason: 'ambiguous_scope' });
+		expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+			0
+		);
 	});
 
 	it('tracks automation cursors per scope', () => {
@@ -605,8 +683,10 @@ describe('handleGoalAutomationExecute', () => {
 			goalId: goal.id,
 			evolutionScopeId: scope.id,
 			title: 'Review Forge retrospective: Review generated lessons',
-			labels: ['forge', 'review', 'automation'],
 		});
+		expect(reviewTask?.labels).toContain('forge');
+		expect(reviewTask?.labels).toContain('review');
+		expect(reviewTask?.labels).toContain('automation');
 		expect(reviewTask?.description).toContain(evidence.id);
 		expect(published).toHaveLength(1);
 		expect(published[0].event).toBe('space.task.created');
@@ -618,6 +698,221 @@ describe('handleGoalAutomationExecute', () => {
 			lastEpisodeId: result.episodeId,
 		});
 		expect(cursor?.metadata.evidenceIds).toEqual([evidence.id]);
+	});
+
+	it('keeps backlog cursor contiguous when capped external event is newer', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Contiguous backlog', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Contiguous backlog',
+			objective: 'Keep cursor contiguous',
+			policy: { automation: { eventSubscriptions: [{ topic: 'pull_request/*' }] } },
+		});
+		for (let i = 1; i <= 12; i++) {
+			evolutionRepo.createEvidence({
+				scopeId: scope.id,
+				kind: 'manual_note',
+				sourceId: `old-${i}`,
+				summary: `Old evidence ${i}`,
+				createdAt: i,
+			});
+		}
+		await handleGoalAutomationExecute(
+			createAutomationJob(
+				{
+					goalId: goal.id,
+					scopeId: scope.id,
+					triggerKind: 'external_event',
+					triggerKey: 'event:*:pull_request/*',
+					reason: 'external_event',
+					externalEventId: 'fresh-event',
+					externalEvent: {
+						source: 'github',
+						topic: 'pull_request/closed',
+						summary: 'Fresh PR merged',
+						payload: { action: 'closed' },
+						occurredAt: 20,
+						ingestedAt: 30,
+					},
+				},
+				'job-contiguous-backlog'
+			),
+			{
+				goalRepo,
+				taskRepo,
+				evolutionRepo,
+				cursorRepo,
+				episodeService: {
+					createFromEvidence: async ({ evidenceIds }) => ({
+						episode: evolutionRepo.createEpisode({
+							scopeId: scope.id,
+							title: 'Contiguous retrospective',
+							evidenceIds,
+							outcomeSummary: 'Contiguous cursor',
+							findings: [],
+						}),
+						proposals: [],
+						lessons: [],
+					}),
+				},
+			}
+		);
+
+		const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:pull_request/*');
+		expect(cursor?.lastEvidenceCreatedAt).toBe(12);
+		expect(cursor?.lastExternalEventId).toBe('fresh-event');
+	});
+
+	it('uses evidence id as cursor tie-breaker for same-timestamp evidence', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Tie cursor', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Tie cursor',
+			objective: 'Keep same timestamp backlog',
+			policy: { automation: { maxEvidencePerEpisode: 1 } },
+		});
+		const first = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			sourceId: 'first',
+			summary: 'First',
+			createdAt: 10,
+		});
+		const second = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			sourceId: 'second',
+			summary: 'Second',
+			createdAt: 10,
+		});
+		const selected: string[][] = [];
+		const deps = {
+			goalRepo,
+			taskRepo,
+			evolutionRepo,
+			cursorRepo,
+			episodeService: {
+				createFromEvidence: async ({ evidenceIds }) => {
+					selected.push(evidenceIds);
+					return {
+						episode: evolutionRepo.createEpisode({
+							scopeId: scope.id,
+							title: 'Tie retrospective',
+							evidenceIds,
+							outcomeSummary: 'Tie cursor',
+							findings: [],
+						}),
+						proposals: [],
+						lessons: [],
+					};
+				},
+			},
+		};
+
+		await handleGoalAutomationExecute(
+			createAutomationJob(
+				{
+					goalId: goal.id,
+					scopeId: scope.id,
+					triggerKind: 'external_event',
+					triggerKey: 'event:*:tie',
+					reason: 'external_event',
+					externalEventId: 'event-tie-1',
+				},
+				'job-tie-1'
+			),
+			deps
+		);
+		await handleGoalAutomationExecute(
+			createAutomationJob(
+				{
+					goalId: goal.id,
+					scopeId: scope.id,
+					triggerKind: 'external_event',
+					triggerKey: 'event:*:tie',
+					reason: 'external_event',
+					externalEventId: 'event-tie-2',
+				},
+				'job-tie-2'
+			),
+			deps
+		);
+
+		const orderedIds = [first.id, second.id].sort();
+		expect(selected).toEqual([[orderedIds[0]], [orderedIds[1]]]);
+		const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:tie');
+		expect(cursor?.lastEvidenceCreatedAt).toBe(10);
+		expect(cursor?.lastEvidenceId).toBe(orderedIds[1]);
+	});
+
+	it('reuses existing automation review task after cursor write retry', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Idempotent episode', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Idempotent episode',
+			objective: 'Avoid duplicate episodes',
+		});
+		evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			sourceId: 'note-1',
+			summary: 'Note 1',
+			createdAt: 10,
+		});
+		const payload = {
+			goalId: goal.id,
+			scopeId: scope.id,
+			triggerKind: 'self_nag' as const,
+			triggerKey: 'schedule-idempotent',
+			reason: 'self_nag' as const,
+			scheduleId: 'schedule-idempotent',
+		};
+		let first = true;
+		const deps = {
+			goalRepo,
+			taskRepo,
+			evolutionRepo,
+			cursorRepo,
+			episodeService: {
+				createFromEvidence: async ({ evidenceIds }) => ({
+					episode: evolutionRepo.createEpisode({
+						scopeId: scope.id,
+						title: 'Idempotent retrospective',
+						evidenceIds,
+						outcomeSummary: 'Idempotent cursor',
+						findings: [],
+					}),
+					proposals: [],
+					lessons: [],
+				}),
+			},
+		};
+		const originalUpsert = cursorRepo.upsert.bind(cursorRepo);
+		cursorRepo.upsert = ((params) => {
+			if (first) {
+				first = false;
+				throw new Error('cursor write failed');
+			}
+			return originalUpsert(params);
+		}) as typeof cursorRepo.upsert;
+
+		await expect(
+			handleGoalAutomationExecute(createAutomationJob(payload, 'job-idempotent-1'), deps)
+		).rejects.toThrow('cursor write failed');
+		const retry = await handleGoalAutomationExecute(
+			createAutomationJob(payload, 'job-idempotent-2'),
+			deps
+		);
+
+		expect(retry.skipped).toBe(false);
+		expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+		expect(taskRepo.listBySpace(spaceId, true)).toHaveLength(1);
 	});
 
 	it('captures external event evidence before generating the episode', async () => {

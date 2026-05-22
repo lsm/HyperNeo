@@ -1,7 +1,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type { GoalForgeAutomationTriggerKind } from '@neokai/shared';
-import type { SQLiteValue } from '../types';
 
 export interface GoalAutomationCursor {
 	id: string;
@@ -11,6 +10,7 @@ export interface GoalAutomationCursor {
 	triggerKind: GoalForgeAutomationTriggerKind;
 	triggerKey: string;
 	lastEvidenceCreatedAt: number | null;
+	lastEvidenceId: string | null;
 	lastTaskCompletedAt: number | null;
 	lastExternalEventId: string | null;
 	lastEpisodeId: string | null;
@@ -27,6 +27,7 @@ export interface UpsertGoalAutomationCursorParams {
 	triggerKind: GoalForgeAutomationTriggerKind;
 	triggerKey: string;
 	lastEvidenceCreatedAt?: number | null;
+	lastEvidenceId?: string | null;
 	lastTaskCompletedAt?: number | null;
 	lastExternalEventId?: string | null;
 	lastEpisodeId?: string | null;
@@ -53,51 +54,27 @@ export class GoalAutomationCursorRepository {
 	}
 
 	upsert(params: UpsertGoalAutomationCursorParams): GoalAutomationCursor {
-		const existing = this.get(params.goalId, params.scopeId, params.triggerKind, params.triggerKey);
-		if (!existing) return this.create(params);
-		const sets: string[] = [];
-		const values: SQLiteValue[] = [];
-		const add = (column: string, value: SQLiteValue) => {
-			sets.push(`${column} = ?`);
-			values.push(value);
-		};
-		add('space_id', params.spaceId);
-		add('scope_id', params.scopeId);
-		if (params.lastEvidenceCreatedAt !== undefined) {
-			add('last_evidence_created_at', params.lastEvidenceCreatedAt);
-		}
-		if (params.lastTaskCompletedAt !== undefined) {
-			add('last_task_completed_at', params.lastTaskCompletedAt);
-		}
-		if (params.lastExternalEventId !== undefined) {
-			add('last_external_event_id', params.lastExternalEventId);
-		}
-		if (params.lastEpisodeId !== undefined) add('last_episode_id', params.lastEpisodeId);
-		if (params.lastFiredAt !== undefined) add('last_fired_at', params.lastFiredAt);
-		if (params.metadata !== undefined) add('metadata_json', JSON.stringify(params.metadata));
-		add('updated_at', Date.now());
-		values.push(existing.id);
-		this.db
-			.prepare(`UPDATE goal_automation_cursors SET ${sets.join(', ')} WHERE id = ?`)
-			.run(...values);
-		return this.get(
-			params.goalId,
-			params.scopeId,
-			params.triggerKind,
-			params.triggerKey
-		) as GoalAutomationCursor;
-	}
-
-	private create(params: UpsertGoalAutomationCursorParams): GoalAutomationCursor {
 		const id = generateUUID();
 		const now = Date.now();
 		this.db
 			.prepare(
 				`INSERT INTO goal_automation_cursors (
 					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
-					last_evidence_created_at, last_task_completed_at, last_external_event_id,
-					last_episode_id, last_fired_at, metadata_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					last_evidence_created_at, last_evidence_id, last_task_completed_at,
+					last_external_event_id, last_episode_id, last_fired_at, metadata_json,
+					created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(goal_id, scope_id, trigger_kind, trigger_key) DO UPDATE SET
+					space_id = excluded.space_id,
+					scope_id = excluded.scope_id,
+					last_evidence_created_at = excluded.last_evidence_created_at,
+					last_evidence_id = excluded.last_evidence_id,
+					last_task_completed_at = excluded.last_task_completed_at,
+					last_external_event_id = excluded.last_external_event_id,
+					last_episode_id = excluded.last_episode_id,
+					last_fired_at = excluded.last_fired_at,
+					metadata_json = excluded.metadata_json,
+					updated_at = excluded.updated_at`
 			)
 			.run(
 				id,
@@ -107,6 +84,7 @@ export class GoalAutomationCursorRepository {
 				params.triggerKind,
 				params.triggerKey,
 				params.lastEvidenceCreatedAt ?? null,
+				params.lastEvidenceId ?? null,
 				params.lastTaskCompletedAt ?? null,
 				params.lastExternalEventId ?? null,
 				params.lastEpisodeId ?? null,
@@ -133,6 +111,7 @@ function rowToCursor(row: Record<string, unknown>): GoalAutomationCursor {
 		triggerKind: row.trigger_kind as GoalForgeAutomationTriggerKind,
 		triggerKey: row.trigger_key as string,
 		lastEvidenceCreatedAt: (row.last_evidence_created_at as number | null) ?? null,
+		lastEvidenceId: (row.last_evidence_id as string | null) ?? null,
 		lastTaskCompletedAt: (row.last_task_completed_at as number | null) ?? null,
 		lastExternalEventId: (row.last_external_event_id as string | null) ?? null,
 		lastEpisodeId: (row.last_episode_id as string | null) ?? null,

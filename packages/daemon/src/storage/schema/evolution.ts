@@ -155,6 +155,7 @@ export function createEvolutionTables(db: BunDatabase): void {
 				CHECK(trigger_kind IN ('completed_task_threshold', 'self_nag', 'external_event')),
 			trigger_key TEXT NOT NULL,
 			last_evidence_created_at INTEGER,
+			last_evidence_id TEXT,
 			last_task_completed_at INTEGER,
 			last_external_event_id TEXT,
 			last_episode_id TEXT,

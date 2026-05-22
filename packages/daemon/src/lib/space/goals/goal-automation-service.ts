@@ -31,7 +31,13 @@ export interface GoalAutomationServiceDeps {
 
 export interface GoalAutomationEnqueueResult {
 	enqueued: boolean;
-	reason: 'below_threshold' | 'missing_scope' | 'disabled' | 'queued' | 'not_applicable';
+	reason:
+		| 'below_threshold'
+		| 'missing_scope'
+		| 'ambiguous_scope'
+		| 'disabled'
+		| 'queued'
+		| 'not_applicable';
 	count?: number;
 }
 
@@ -46,6 +52,13 @@ export class GoalAutomationService {
 		const goal = this.deps.goalRepo.getById(task.goalId);
 		if (!isActiveGoal(goal) || goal.spaceId !== task.spaceId) {
 			return { enqueued: false, reason: 'disabled' };
+		}
+		if (!task.evolutionScopeId) {
+			const scopes = this.deps.evolutionRepo.listScopes({
+				spaceId: task.spaceId,
+				spaceGoalId: goal.id,
+			});
+			if (scopes.length > 1) return { enqueued: false, reason: 'ambiguous_scope' };
 		}
 		const scope = this.deps.evolutionScopeService.resolveScopeForTask({ taskId });
 		if (!scope) return { enqueued: false, reason: 'missing_scope' };
@@ -180,10 +193,18 @@ export function resolveScopeForGoal(
 export function selectEvidenceAfterCursor(
 	evidence: EvidenceRef[],
 	lastEvidenceCreatedAt: number | null,
-	limit = DEFAULT_MAX_EVIDENCE_PER_EPISODE
+	limit = DEFAULT_MAX_EVIDENCE_PER_EPISODE,
+	lastEvidenceId: string | null = null
 ): EvidenceRef[] {
 	return evidence
-		.filter((item) => lastEvidenceCreatedAt === null || item.createdAt > lastEvidenceCreatedAt)
+		.filter(
+			(item) =>
+				lastEvidenceCreatedAt === null ||
+				item.createdAt > lastEvidenceCreatedAt ||
+				(item.createdAt === lastEvidenceCreatedAt &&
+					lastEvidenceId !== null &&
+					item.id > lastEvidenceId)
+		)
 		.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 		.slice(0, limit);
 }
@@ -289,14 +310,22 @@ function isActiveGoal(goal: SpaceGoal | null): goal is SpaceGoal {
 	return !!goal && goal.status === 'active';
 }
 
-export function maxEvidenceTimestamp(evidence: EvidenceRef[]): number | null {
-	if (evidence.length === 0) return null;
-	return Math.max(...evidence.map((item) => item.createdAt));
-}
-
 export function maxCompletedTaskTimestamp(tasks: SpaceTask[]): number | null {
 	const timestamps = tasks.flatMap((task) =>
 		task.completedAt === null || task.completedAt === undefined ? [] : [task.completedAt]
 	);
 	return timestamps.length === 0 ? null : Math.max(...timestamps);
+}
+
+export function maxEvidenceCursor(
+	evidence: EvidenceRef[]
+): { createdAt: number; id: string } | null {
+	if (evidence.length === 0) return null;
+	return evidence.reduce(
+		(max, item) =>
+			item.createdAt > max.createdAt || (item.createdAt === max.createdAt && item.id > max.id)
+				? { createdAt: item.createdAt, id: item.id }
+				: max,
+		{ createdAt: evidence[0].createdAt, id: evidence[0].id }
+	);
 }

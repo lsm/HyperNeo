@@ -56,6 +56,7 @@ describe('Migration 139: Goal automation cursors', () => {
 				`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'goal_automation_cursors'`
 			)
 			.get() as { sql: string };
+		expect(tableSql.sql).toContain('last_evidence_id TEXT');
 		expect(tableSql.sql).toContain('UNIQUE(goal_id, scope_id, trigger_kind, trigger_key)');
 
 		const indexes = db

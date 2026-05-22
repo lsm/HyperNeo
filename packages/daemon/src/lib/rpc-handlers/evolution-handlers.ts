@@ -56,6 +56,9 @@ interface RecordPayload {
 }
 
 export interface EvolutionHandlerHooks {
+	beforeScopeSave?: (
+		params: EvolutionScopeCreateRequest['params'] | EvolutionScopeUpdateRequest['params']
+	) => void;
 	onScopeSaved?: (scope: EvolutionScope) => void;
 }
 
@@ -70,6 +73,7 @@ export function setupEvolutionHandlers(
 		async (data) => {
 			const payload = readRecord(data);
 			const params = readRecord(payload.params) as unknown as EvolutionScopeCreateRequest['params'];
+			hooks.beforeScopeSave?.(params);
 			const scope = service.createScope(params);
 			hooks.onScopeSaved?.(scope);
 			return { scope };
@@ -80,6 +84,7 @@ export function setupEvolutionHandlers(
 		'evolution.scope.createFromGoal',
 		async (data) => {
 			const payload = readRecord(data) as unknown as CreateScopeFromGoalParams;
+			hooks.beforeScopeSave?.({ policy: payload.policy });
 			const scope = service.createScopeFromGoal(payload);
 			hooks.onScopeSaved?.(scope);
 			return { scope };
@@ -105,6 +110,7 @@ export function setupEvolutionHandlers(
 			const payload = readRecord(data);
 			const id = readRequiredString(payload, 'id');
 			const params = readRecord(payload.params) as EvolutionScopeUpdateRequest['params'];
+			hooks.beforeScopeSave?.(params);
 			const scope = service.updateScope(id, params);
 			if (scope) hooks.onScopeSaved?.(scope);
 			return { scope };
