@@ -710,4 +710,3 @@ Migrate one bounded slice, preferably `space.task.*`:
 3. Which schema library should contracts standardize on for runtime validation?
 4. Should AsyncAPI generation be part of the initial registry or a follow-up tool?
 5. What is the exact actor/capability model for local service actors versus user actors?
-

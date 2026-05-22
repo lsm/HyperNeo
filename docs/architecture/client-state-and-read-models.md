@@ -784,4 +784,3 @@ Forge should move early because it is new, self-contained, and currently duplica
 3. Should task group pagination stay local per component or become a shared read model with cached pages?
 4. Which Space sidebar summaries should be materialized server-side instead of projected in the client?
 5. Should operation tracking for accepted commands be a global store or per-domain store concern?
-

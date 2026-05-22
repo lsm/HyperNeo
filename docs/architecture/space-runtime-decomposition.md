@@ -643,4 +643,3 @@ Existing files can move gradually. For example, `ChannelRouter` can first become
 3. Should `WorkflowExecutor` remain as a graph helper, or should its remaining responsibilities move into pure workflow graph utilities?
 4. Which runtime events are required for durable replay in the first MessageFabric implementation?
 5. Should standalone task timeout/block notifications remain runtime work, or move entirely into a projector over task state?
-

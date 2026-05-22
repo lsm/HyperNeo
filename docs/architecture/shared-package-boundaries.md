@@ -612,4 +612,3 @@ This gives immediate value without forcing a full Space type split.
 3. Should old `evolution.*` RPC names remain indefinitely as compatibility aliases for `forge.*` contracts?
 4. How strict should the no-root-import check be for tests during migration?
 5. Should prompt templates move to daemon immediately, or stay under a product-template subpath?
-

@@ -993,4 +993,3 @@ Success criteria:
 3. Which runtime events need strict per-subject ordering in the first implementation?
 4. Should `job_queue` status changes also emit durable fabric events, or remain operational state until there is a UI/debug need?
 5. Should the first materialized read model be Forge scope detail or workflow runtime canvas?
-
