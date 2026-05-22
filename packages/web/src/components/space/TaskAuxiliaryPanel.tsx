@@ -8,7 +8,7 @@ import type {
 	WorkflowNodeAgent,
 } from '@neokai/shared';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
 import {
 	currentSpaceGoalIdSignal,
@@ -285,6 +285,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 	const [scopeName, setScopeName] = useState<string | null>(null);
 	const [savingOverrideKey, setSavingOverrideKey] = useState<string | null>(null);
 	const [overrideError, setOverrideError] = useState<string | null>(null);
+	const pendingOverridesRef = useRef<Record<string, string> | null>(null);
 	const tabs = task ? availableTabs(task) : [];
 	const activeTab = task ? normalizeTab(task, tab) : 'timeline';
 
@@ -316,6 +317,10 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 			cancelled = true;
 		};
 	}, [workflowId]);
+
+	useEffect(() => {
+		pendingOverridesRef.current = task?.workflowModelOverrides ?? null;
+	}, [task?.workflowModelOverrides]);
 
 	useEffect(() => {
 		if (!task?.evolutionScopeId) {
@@ -361,9 +366,10 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 		model: string | undefined
 	) => {
 		const key = overrideKey(nodeId, agentName);
-		const nextOverrides = { ...task.workflowModelOverrides };
+		const nextOverrides = { ...(pendingOverridesRef.current ?? task.workflowModelOverrides) };
 		if (model) nextOverrides[key] = model;
 		else delete nextOverrides[key];
+		pendingOverridesRef.current = nextOverrides;
 		try {
 			setSavingOverrideKey(key);
 			setOverrideError(null);

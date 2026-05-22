@@ -39,20 +39,20 @@ const log = new Logger('space-task-handlers');
 async function validateWorkflowModelOverrides(
 	task: SpaceTask,
 	workflowManager: SpaceWorkflowManager,
-	overrides: Record<string, string> | null | undefined
+	overrides: Record<string, string> | null | undefined,
+	workflowId: string | null | undefined = task.preferredWorkflowId
 ): Promise<Record<string, string> | null | undefined> {
 	if (overrides === undefined) return undefined;
-	if (overrides === null) return null;
 	if (task.workflowRunId || task.startedAt) {
 		throw new Error('Workflow model overrides are locked after the task starts');
 	}
-	const clean = Object.fromEntries(
-		Object.entries(overrides).filter((entry): entry is [string, string] => {
-			const [key, value] = entry;
-			return key.trim().length > 0 && value.trim().length > 0;
-		})
-	);
-	const workflowId = task.preferredWorkflowId;
+	if (overrides === null) return null;
+	const clean: Record<string, string> = {};
+	for (const [key, value] of Object.entries(overrides)) {
+		const cleanKey = key.trim();
+		const cleanValue = value.trim();
+		if (cleanKey && cleanValue) clean[cleanKey] = cleanValue;
+	}
 	if (!workflowId) {
 		if (Object.keys(clean).length > 0) {
 			throw new Error('Select a workflow before setting model overrides');
@@ -289,10 +289,17 @@ export function setupSpaceTaskHandlers(
 		if (!currentTaskForOverrides) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
+		const nextWorkflowId =
+			updateParams.preferredWorkflowId ?? currentTaskForOverrides.preferredWorkflowId;
+		const taskForOverrideValidation =
+			updateParams.status !== undefined && updateParams.status !== currentTaskForOverrides.status
+				? { ...currentTaskForOverrides, status: updateParams.status, startedAt: Date.now() }
+				: currentTaskForOverrides;
 		const validatedWorkflowModelOverrides = await validateWorkflowModelOverrides(
-			currentTaskForOverrides,
+			taskForOverrideValidation,
 			workflowManager,
-			updateParams.workflowModelOverrides
+			updateParams.workflowModelOverrides,
+			nextWorkflowId
 		);
 		if (validatedWorkflowModelOverrides !== undefined) {
 			updateParams.workflowModelOverrides = validatedWorkflowModelOverrides;

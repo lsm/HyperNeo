@@ -890,6 +890,38 @@ describe('space-task-handlers', () => {
 			);
 		});
 
+		it('trims workflow model override keys and values before persisting', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				workflowModelOverrides: { ' node-1:coder ': ' claude-opus-4-5 ' },
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' } },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
+		it('rejects clearing workflow model overrides after task start', async () => {
+			setup(
+				mockSpace,
+				makeTask({ preferredWorkflowId: 'workflow-1', startedAt: NOW, workflowRunId: 'run-1' })
+			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: null,
+				})
+			).rejects.toThrow('Workflow model overrides are locked after the task starts');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
 		it('rejects workflow model overrides after task start', async () => {
 			setup(
 				mockSpace,
@@ -928,6 +960,39 @@ describe('space-task-handlers', () => {
 				})
 			).rejects.toThrow('Invalid workflow model override target: node-2:coder');
 			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('validates workflow model overrides against incoming workflow selection', async () => {
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				preferredWorkflowId: 'workflow-1',
+				workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{
+					preferredWorkflowId: 'workflow-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				},
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
+		it('rejects workflow model override updates combined with task start', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'in_progress',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Workflow model overrides are locked after the task starts');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 		});
 
 		it('applies non-status fields (e.g. taskAgentSessionId) after status transition', async () => {

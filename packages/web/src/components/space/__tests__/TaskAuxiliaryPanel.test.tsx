@@ -196,6 +196,11 @@ function makeWorkflow(): SpaceWorkflow {
 						model: 'claude-sonnet-4-5',
 						customPrompt: { mode: 'append', value: 'Write clean code.' },
 					},
+					{
+						agentId: 'agent-reviewer',
+						name: 'reviewer',
+						model: 'claude-sonnet-4-5',
+					},
 				],
 			},
 		],
@@ -306,13 +311,13 @@ describe('TaskAuxiliaryPanel', () => {
 	});
 
 	it('shows editable model selector before task starts', async () => {
-		const { getByText, getByTestId } = render(
+		const { getAllByText, getByTestId, getByText } = render(
 			<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
 		);
 
 		await waitFor(() => expect(getByText('coder')).toBeTruthy());
 		expect(getByTestId('task-agent-model-node-1-coder')).toBeTruthy();
-		expect(getByText(/Default: claude-sonnet-4-5/)).toBeTruthy();
+		expect(getAllByText(/Default: claude-sonnet-4-5/).length).toBeGreaterThan(0);
 	});
 
 	it('persists model override from agents tab', async () => {
@@ -326,6 +331,26 @@ describe('TaskAuxiliaryPanel', () => {
 		await waitFor(() =>
 			expect(mockUpdateTask).toHaveBeenCalledWith('task-1', {
 				workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+			})
+		);
+	});
+
+	it('preserves rapid model override edits before store refreshes', async () => {
+		const { getByTestId } = render(
+			<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
+		);
+
+		const coderSelect = await waitFor(() => getByTestId('task-agent-model-node-1-coder'));
+		const reviewerSelect = await waitFor(() => getByTestId('task-agent-model-node-1-reviewer'));
+		fireEvent.change(coderSelect, { target: { value: 'claude-opus-4-5' } });
+		fireEvent.change(reviewerSelect, { target: { value: 'claude-opus-4-5' } });
+
+		await waitFor(() =>
+			expect(mockUpdateTask).toHaveBeenLastCalledWith('task-1', {
+				workflowModelOverrides: {
+					'node-1:coder': 'claude-opus-4-5',
+					'node-1:reviewer': 'claude-opus-4-5',
+				},
 			})
 		);
 	});
@@ -401,7 +426,7 @@ describe('TaskAuxiliaryPanel', () => {
 
 		await waitFor(() => expect(getByText('Coding Workflow')).toBeTruthy());
 		expect(getByText('1. Coding')).toBeTruthy();
-		expect(getByText('coder')).toBeTruthy();
+		expect(getByText('coder, reviewer')).toBeTruthy();
 
 		rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="gates" />);
 		expect(getByText('Review Gate')).toBeTruthy();

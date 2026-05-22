@@ -241,16 +241,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const navigationSpaceIdForTask = spaceId ?? currentSpaceIdSignal.value ?? task?.spaceId;
 
 	useEffect(() => {
-		if (!task || !navigationSpaceIdForTask) return;
+		if (!taskId || !navigationSpaceIdForTask) return;
 		const currentTarget = rightPanelTargetSignal.value;
-		if (currentTarget?.type === 'task' && currentTarget.taskId === task.id) return;
+		if (currentTarget?.type === 'task' && currentTarget.taskId === taskId) return;
+		if (currentTarget === null) return;
 		rightPanelTargetSignal.value = {
 			type: 'task',
 			spaceId: navigationSpaceIdForTask,
-			taskId: task.id,
+			taskId,
 			tab: 'details',
 		};
-	}, [navigationSpaceIdForTask, task]);
+	}, [navigationSpaceIdForTask, taskId]);
 
 	if (!taskId) {
 		return (
