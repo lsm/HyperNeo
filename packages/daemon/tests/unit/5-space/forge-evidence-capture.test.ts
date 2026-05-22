@@ -95,6 +95,46 @@ describe('Forge evidence capture on task completion', () => {
 		expect(artifactEvidence?.metadata.artifactCount).toBe(1);
 	});
 
+	it('auto-captured task_result evidence includes summary populated from result artifact', async () => {
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Populated result task',
+			objective: 'Learn from propagated task summaries',
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Coding workflow' });
+		const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Task run' });
+		const task = taskRepo.createTask({
+			spaceId,
+			title: 'Ship propagated summary',
+			description: 'Complete implementation',
+			evolutionScopeId: scope.id,
+			workflowRunId: run.id,
+		});
+		artifactRepo.upsert({
+			id: 'artifact-populated-result',
+			runId: run.id,
+			nodeId: 'Coding',
+			artifactType: 'result',
+			artifactKey: 'final',
+			data: { summary: 'Propagated summary reaches task evidence' },
+		});
+		await taskRepo.updateTask(task.id, {
+			status: 'in_progress',
+			result: 'Propagated summary reaches task evidence',
+			reportedSummary: 'Propagated summary reaches task evidence',
+		});
+		const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+		await manager.setTaskStatus(task.id, 'done');
+
+		const taskEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.find((item) => item.kind === 'task_result');
+		expect(taskEvidence?.summary).toContain('Propagated summary reaches task evidence');
+		expect(taskEvidence?.metadata.reportedSummary).toBe('Propagated summary reaches task evidence');
+	});
+
 	it('captures useful workflow artifact evidence when task result is null', () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,

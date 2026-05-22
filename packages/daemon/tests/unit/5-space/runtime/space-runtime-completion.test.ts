@@ -14,6 +14,7 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
@@ -291,6 +292,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	let db: BunDatabase;
 
 	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let artifactRepo: WorkflowRunArtifactRepository;
 	let taskRepo: SpaceTaskRepository;
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
@@ -316,6 +318,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			workflowRunRepo,
 			taskRepo,
 			nodeExecutionRepo,
+			artifactRepo,
 			internalEventBus: bus,
 			taskAgentManager: new MockTaskAgentManager(nodeExecutionRepo) as unknown as TaskAgentManager,
 			...extraConfig,
@@ -332,6 +335,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 		seedAgentRow(db, AGENT_C, SPACE_ID);
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
+		artifactRepo = new WorkflowRunArtifactRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
@@ -1445,6 +1449,181 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			);
 		});
 
+		test('result artifact summary populates task outcome on run completion', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Artifact Result Completion ${Date.now()}`,
+				description: '',
+				nodes: [{ id: 'artifact-end', name: 'End', agentId: AGENT_A }],
+				startNodeId: 'artifact-end',
+				endNodeId: 'artifact-end',
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			artifactRepo.upsert({
+				id: 'artifact-result-summary-old',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'old-cycle',
+				data: { summary: 'Stale requested changes summary' },
+			});
+			artifactRepo.upsert({
+				id: 'artifact-result-summary',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Implemented artifact summary propagation' },
+			});
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress', reportedStatus: 'done' });
+			seedNodeExec(db, run.id, 'artifact-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const taskAfter = taskRepo.getTask(tasks[0].id);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(taskAfter?.result).toBe('Implemented artifact summary propagation');
+			expect(taskAfter?.reportedSummary).toBe('Implemented artifact summary propagation');
+		});
+
+		test('updated result artifact summary wins over newer-created stale artifact', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Updated Artifact Result Completion ${Date.now()}`,
+				description: '',
+				nodes: [{ id: 'updated-artifact-end', name: 'End', agentId: AGENT_A }],
+				startNodeId: 'updated-artifact-end',
+				endNodeId: 'updated-artifact-end',
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			artifactRepo.upsert({
+				id: 'artifact-reused-result',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Initial reused-key summary' },
+			});
+			artifactRepo.upsert({
+				id: 'artifact-newer-stale-result',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'later-created-stale',
+				data: { summary: 'Stale summary from later-created row' },
+			});
+			const staleArtifact = artifactRepo.listByRun(run.id, {
+				artifactType: 'result',
+			})[1];
+			artifactRepo.upsert({
+				id: 'artifact-reused-result-updated',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Updated reused-key summary' },
+			});
+			if (staleArtifact) {
+				db.prepare(`UPDATE workflow_run_artifacts SET updated_at = ? WHERE id = ?`).run(
+					staleArtifact.updatedAt - 1,
+					staleArtifact.id
+				);
+			}
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress', reportedStatus: 'done' });
+			seedNodeExec(db, run.id, 'updated-artifact-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const taskAfter = taskRepo.getTask(tasks[0].id);
+			expect(taskAfter?.result).toBe('Updated reused-key summary');
+			expect(taskAfter?.reportedSummary).toBe('Updated reused-key summary');
+		});
+
+		test('null task result is filled from result artifact summary', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Null Result Artifact Fill ${Date.now()}`,
+				description: '',
+				nodes: [{ id: 'null-result-end', name: 'End', agentId: AGENT_A }],
+				startNodeId: 'null-result-end',
+				endNodeId: 'null-result-end',
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			artifactRepo.upsert({
+				id: 'artifact-null-result-summary',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Filled null task result' },
+			});
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'in_progress',
+				result: null,
+				reportedStatus: 'done',
+			});
+			seedNodeExec(db, run.id, 'null-result-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const taskAfter = taskRepo.getTask(tasks[0].id);
+			expect(taskAfter?.result).toBe('Filled null task result');
+			expect(taskAfter?.reportedSummary).toBe('Filled null task result');
+		});
+
+		test('fresh result artifact replaces stale task result from prior review cycle', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Preserve Existing Result ${Date.now()}`,
+				description: '',
+				nodes: [{ id: 'preserve-end', name: 'End', agentId: AGENT_A }],
+				startNodeId: 'preserve-end',
+				endNodeId: 'preserve-end',
+				tags: [],
+				completionAutonomyLevel: 3,
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			artifactRepo.upsert({
+				id: 'artifact-preserve-summary',
+				runId: run.id,
+				nodeId: 'End',
+				artifactType: 'result',
+				artifactKey: 'final',
+				data: { summary: 'Fresh artifact summary after retry' },
+			});
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'in_progress',
+				result: 'Stale result from rejected cycle',
+				reportedStatus: 'done',
+				reportedSummary: 'Stale reported summary from rejected cycle',
+			});
+			seedNodeExec(db, run.id, 'preserve-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const taskAfter = taskRepo.getTask(tasks[0].id);
+			expect(taskAfter?.result).toBe('Fresh artifact summary after retry');
+			expect(taskAfter?.reportedSummary).toBe('Fresh artifact summary after retry');
+		});
+
 		test('reportedStatus alone is enough to mark a run for completion resolution', async () => {
 			// Even when task.status has not yet flipped to a terminal state, a
 			// non-null `reportedStatus` signals the runtime to resolve completion
@@ -1555,6 +1734,38 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Strict one-task-per-run repair archives duplicate helper/orchestration tasks.
 			const orchTaskAfter = taskRepo.getTask(orchTask.id);
 			expect(orchTaskAfter?.status).toBe('archived');
+		});
+
+		test('canonical task result wins over duplicate sibling result during terminal reconcile', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'canonical-sibling-node', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Canonical Run');
+			const duplicateTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Duplicate stale result',
+				description: 'Older duplicate task from previous cycle',
+				workflowRunId: run.id,
+				status: 'done',
+				result: 'Stale sibling result',
+			});
+
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'done',
+				result: 'Canonical final result',
+			});
+			seedNodeExec(db, run.id, 'canonical-sibling-node', 'agent', 'idle');
+
+			await rt.executeTick();
+
+			const canonicalAfter = taskRepo.getTask(tasks[0].id);
+			const duplicateAfter = taskRepo.getTask(duplicateTask.id);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(canonicalAfter?.result).toBe('Canonical final result');
+			expect(duplicateAfter?.status).toBe('archived');
 		});
 
 		test('open orchestration task is skipped on run completion (no throw)', async () => {
