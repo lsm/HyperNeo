@@ -33,7 +33,7 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
-import { TaskSessionChatComposer } from './TaskSessionChatComposer';
+import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { getTransitionActions } from './TaskStatusActions';
 import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 
@@ -569,6 +569,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	}, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
+	const handleCanvasToggle = useCallback(() => {
+		if (!canShowCanvasTab) return;
+		if (activeView === 'canvas') {
+			navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
+			return;
+		}
+		spaceStore.ensureNodeExecutions().catch(() => {});
+		navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
+	}, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
+
 	const handleNodeClick = (_nodeId: string, _nodeName: string, _agentSlotNames: string[]) => {
 		// Match against activity member roles (slot names like “reviewer”, “coder”).
 		// m.role is the agent slot name stored in the DB and directly corresponds to _agentSlotNames.
@@ -889,48 +899,18 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								/>
 							)}
 						</div>
-						<div class="mt-2 flex min-w-0 items-center justify-between gap-3">
-							<div class="flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
-								<span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-dark-600 bg-dark-800/60 px-2 font-mono text-[11px] font-medium leading-none text-gray-300 tabular-nums">
-									#{task.taskNumber}
-								</span>
-								{showHeaderStatusBadge && (
-									<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
-										<span data-testid="task-status-label">{activitySummary}</span>
-									</TaskMetaBadge>
-								)}
-								<TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
-									{PRIORITY_LABELS[task.priority]} Priority
+						<div class="mt-2 flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
+							<span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-dark-600 bg-dark-800/60 px-2 font-mono text-[11px] font-medium leading-none text-gray-300 tabular-nums">
+								#{task.taskNumber}
+							</span>
+							{showHeaderStatusBadge && (
+								<TaskMetaBadge class={cn(STATUS_BADGE_CLASSES[task.status])}>
+									<span data-testid="task-status-label">{activitySummary}</span>
 								</TaskMetaBadge>
-							</div>
-							{canShowCanvasTab && (
-								<div
-									class="flex h-7 flex-shrink-0 items-center gap-1 rounded-lg border border-dark-700 bg-dark-900/70 p-1"
-									data-testid="task-view-toggle"
-								>
-									<button
-										type="button"
-										onClick={() => {
-											if (activeView === 'canvas') {
-												navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
-												return;
-											}
-											spaceStore.ensureNodeExecutions().catch(() => {});
-											navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
-										}}
-										class={cn(
-											'rounded-md px-2 py-1 text-[11px] font-medium leading-none transition-colors whitespace-nowrap',
-											activeView === 'canvas'
-												? 'bg-sky-500/15 text-sky-200 shadow-sm ring-1 ring-sky-400/30'
-												: 'text-gray-400 hover:bg-dark-800 hover:text-gray-200'
-										)}
-										data-testid="canvas-toggle"
-										aria-pressed={activeView === 'canvas'}
-									>
-										Canvas
-									</button>
-								</div>
 							)}
+							<TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
+								{PRIORITY_LABELS[task.priority]} Priority
+							</TaskMetaBadge>
 						</div>
 					</div>
 				</div>
@@ -978,7 +958,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 			<div class="flex-1 min-h-0 overflow-hidden relative" data-testid="task-pane-content">
 				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
-					<div class="h-full" data-testid="canvas-view">
+					<div class="relative h-full" data-testid="canvas-view">
 						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
 							runId={task.workflowRunId}
@@ -986,6 +966,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							onNodeClick={handleNodeClick}
 							class="h-full"
 						/>
+						{canShowCanvasTab && (
+							<div class="pointer-events-none absolute bottom-4 left-4 z-20">
+								<TaskCanvasToggleButton
+									active={true}
+									onClick={handleCanvasToggle}
+									class="pointer-events-auto shadow-lg shadow-black/30"
+								/>
+							</div>
+						)}
 					</div>
 				) : (
 					<div
@@ -1044,6 +1033,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								activityMembers={activityMembers}
 								defaultAgentModels={defaultAgentModels}
 								taskId={task.id}
+								canShowCanvasToggle={canShowCanvasTab}
+								canvasActive={activeView === 'canvas'}
+								onCanvasToggle={handleCanvasToggle}
 								onAutoScrollChange={setAutoScrollEnabled}
 								onTargetSelect={(targetId) => {
 									setSelectedTargetId(targetId);

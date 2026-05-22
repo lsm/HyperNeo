@@ -22,7 +22,10 @@ interface TaskSessionChatComposerProps {
 	/** Workflow-defined default model per agent name (agentName -> modelId) */
 	defaultAgentModels?: Map<string, string>;
 	taskId: string;
+	canShowCanvasToggle?: boolean;
+	canvasActive?: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
+	onCanvasToggle?: () => void;
 	onTargetSelect: (targetId: string) => void;
 	onDraftActiveChange?: (hasDraft: boolean) => void;
 	onComposerRef?: Ref<HTMLDivElement>;
@@ -31,6 +34,43 @@ interface TaskSessionChatComposerProps {
 		target: TaskComposerTarget | null,
 		images?: MessageImage[]
 	) => Promise<boolean>;
+}
+
+export function TaskCanvasToggleButton({
+	active,
+	onClick,
+	class: className,
+}: {
+	active: boolean;
+	onClick: () => void;
+	class?: string;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			class={cn(
+				'inline-flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-95',
+				active
+					? 'border-sky-400/40 bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/30'
+					: 'border-dark-600 bg-dark-850/90 text-gray-400 hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-sky-200',
+				className
+			)}
+			data-testid="canvas-toggle"
+			aria-label={active ? 'Hide canvas' : 'Show canvas'}
+			aria-pressed={active}
+			title={active ? 'Hide canvas' : 'Show canvas'}
+		>
+			<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width={1.8}
+					d="M4.75 6.75A2 2 0 016.75 4.75h10.5a2 2 0 012 2v10.5a2 2 0 01-2 2H6.75a2 2 0 01-2-2V6.75zM9 4.75v14.5M4.75 10h14.5M13 10v9.25"
+				/>
+			</svg>
+		</button>
+	);
 }
 
 export function TaskSessionChatComposer({
@@ -45,7 +85,10 @@ export function TaskSessionChatComposer({
 	activityMembers,
 	defaultAgentModels,
 	taskId,
+	canShowCanvasToggle = false,
+	canvasActive = false,
 	onAutoScrollChange,
+	onCanvasToggle,
 	onTargetSelect,
 	onDraftActiveChange,
 	onComposerRef,
@@ -156,6 +199,19 @@ export function TaskSessionChatComposer({
 			</div>
 		) : null;
 
+	const canvasToggle =
+		canShowCanvasToggle && onCanvasToggle ? (
+			<TaskCanvasToggleButton active={canvasActive} onClick={onCanvasToggle} />
+		) : null;
+	const inputLeadingElement =
+		targetPicker || canvasToggle ? (
+			<div class="flex items-center gap-1.5">
+				{targetPicker}
+				{canvasToggle}
+			</div>
+		) : null;
+	const inputLeadingPaddingClass = targetPicker && canvasToggle ? 'pl-[6.25rem]' : 'pl-12';
+
 	return (
 		<div ref={onComposerRef} class="relative z-10" data-testid="task-session-chat-composer">
 			{isNotStarted && (
@@ -220,8 +276,8 @@ export function TaskSessionChatComposer({
 				inputPlaceholder={
 					selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'
 				}
-				inputLeadingElement={targetPicker}
-				inputLeadingPaddingClass="pl-12"
+				inputLeadingElement={inputLeadingElement}
+				inputLeadingPaddingClass={inputLeadingPaddingClass}
 				onDraftActiveChange={onDraftActiveChange}
 				errorMessage={errorMessage}
 			/>

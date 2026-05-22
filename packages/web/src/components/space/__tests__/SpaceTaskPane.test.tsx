@@ -696,7 +696,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(btn.getAttribute('aria-pressed')).toBe('false');
 
 		fireEvent.click(btn);
-		expect(btn.getAttribute('aria-pressed')).toBe('true');
+		expect(getByTestId('canvas-toggle').getAttribute('aria-pressed')).toBe('true');
 	});
 
 	it('canvas node click does not open overlay when no node execution exists (task-agent fallback removed)', () => {
@@ -1459,7 +1459,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
 	});
 });
 
-describe('SpaceTaskPane — header view toggle layout', () => {
+describe('SpaceTaskPane — composer canvas toggle layout', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
@@ -1479,25 +1479,23 @@ describe('SpaceTaskPane — header view toggle layout', () => {
 		cleanup();
 	});
 
-	it('renders the thread/canvas toggle in the header instead of the content area', () => {
+	it('renders the canvas toggle in the composer instead of the header', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId, queryByTestId } = render(
 			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
 		);
 
-		const toggle = getByTestId('task-view-toggle');
+		const toggle = getByTestId('canvas-toggle');
 		expect(queryByTestId('task-view-tab-pill')).toBeNull();
-		expect(toggle.className).toContain('h-7');
-		expect(toggle.className).not.toContain('absolute');
+		expect(queryByTestId('task-view-toggle')).toBeNull();
+		expect(toggle.className).toContain('rounded-full');
 
-		// The toggle belongs to the compact header metadata row, so it should not
-		// sit inside the scrollable content wrapper.
-		const contentWrapper = getByTestId('task-pane-content');
-		expect(contentWrapper.contains(toggle)).toBe(false);
+		const composer = getByTestId('task-session-chat-composer');
+		expect(composer.contains(toggle)).toBe(true);
 	});
 
-	it('header canvas toggle remains visible across thread and canvas views', () => {
+	it('composer canvas toggle opens canvas and the canvas overlay returns to thread', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
 		const { getByTestId, queryByTestId } = render(
@@ -1505,19 +1503,23 @@ describe('SpaceTaskPane — header view toggle layout', () => {
 		);
 
 		// Thread view (default)
-		expect(queryByTestId('task-view-toggle')).toBeTruthy();
+		expect(queryByTestId('task-view-toggle')).toBeNull();
+		expect(getByTestId('task-session-chat-composer').contains(getByTestId('canvas-toggle'))).toBe(
+			true
+		);
 
 		// Canvas view
 		fireEvent.click(getByTestId('canvas-toggle'));
-		expect(queryByTestId('task-view-toggle')).toBeTruthy();
+		expect(queryByTestId('task-view-toggle')).toBeNull();
 		expect(getByTestId('canvas-view')).toBeTruthy();
+		expect(queryByTestId('task-session-chat-composer')).toBeNull();
 
 		fireEvent.click(getByTestId('canvas-toggle'));
-		expect(queryByTestId('task-view-toggle')).toBeTruthy();
+		expect(queryByTestId('task-view-toggle')).toBeNull();
 		expect(getByTestId('task-thread-panel')).toBeTruthy();
 	});
 
-	it('header toggle buttons are interactive', () => {
+	it('composer canvas toggle is interactive', () => {
 		mockCurrentSpaceIdSignal.value = 'space-1';
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1', taskAgentSessionId: 'session-abc' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
