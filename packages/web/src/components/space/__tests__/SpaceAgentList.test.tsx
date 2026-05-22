@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
@@ -31,9 +31,26 @@ let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockSpaceId: ReturnType<typeof signal<string | null>>;
 let mockSpace: ReturnType<typeof signal<any>>;
 
-const mockDeleteAgent = vi.fn();
-const mockCreateAgent = vi.fn();
-const mockUpdateAgent = vi.fn();
+const {
+	mockDeleteAgent,
+	mockCreateAgent,
+	mockUpdateAgent,
+	mockListSchedules,
+	mockNavigateToSpaceGoals,
+	mockNavigateToSpaceForge,
+} = vi.hoisted(() => ({
+	mockDeleteAgent: vi.fn(),
+	mockCreateAgent: vi.fn(),
+	mockUpdateAgent: vi.fn(),
+	mockListSchedules: vi.fn(),
+	mockNavigateToSpaceGoals: vi.fn(),
+	mockNavigateToSpaceForge: vi.fn(),
+}));
+
+vi.mock('../../../lib/router', () => ({
+	navigateToSpaceGoals: mockNavigateToSpaceGoals,
+	navigateToSpaceForge: mockNavigateToSpaceForge,
+}));
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -48,6 +65,7 @@ vi.mock('../../../lib/space-store', () => ({
 			deleteAgent: mockDeleteAgent,
 			createAgent: mockCreateAgent,
 			updateAgent: mockUpdateAgent,
+			listSchedules: mockListSchedules,
 		};
 	},
 }));
@@ -250,6 +268,10 @@ describe('SpaceAgentList', () => {
 		mockDeleteAgent.mockReset();
 		mockCreateAgent.mockReset();
 		mockUpdateAgent.mockReset();
+		mockListSchedules.mockReset();
+		mockListSchedules.mockResolvedValue([]);
+		mockNavigateToSpaceGoals.mockReset();
+		mockNavigateToSpaceForge.mockReset();
 		mockHubRequest.mockReset();
 		// Default: drift report returns no drifted agents so the list renders cleanly.
 		mockHubRequest.mockResolvedValue({
@@ -346,6 +368,21 @@ describe('SpaceAgentList', () => {
 		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		expect(getByText('Agent Alpha')).toBeTruthy();
 		expect(getByText('Agent Beta')).toBeTruthy();
+	});
+
+	it('loads schedules for reminder totals', () => {
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		expect(mockListSchedules).toHaveBeenCalledOnce();
+	});
+
+	it('uses SPA navigation for goals and Forge links', () => {
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+
+		fireEvent.click(screen.getByText('View'));
+		fireEvent.click(screen.getByText('Open Forge'));
+
+		expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('space-1');
+		expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('space-1');
 	});
 
 	it('shows Coordinator as default long-horizon agent with basic scopes', () => {

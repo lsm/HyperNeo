@@ -8,8 +8,8 @@
  * builtin code path.
  *
  * Preset agents seeded per Space:
- *   - Coordinator — built-in long-horizon Space agent
  *   - Coder       — implementation worker
+ *   - Coordinator — built-in long-horizon Space agent
  *   - General     — general-purpose worker
  *   - Planner     — planning/orchestration worker
  *   - Research    — research specialist (investigates topics, writes findings, opens PRs)
@@ -271,16 +271,6 @@ Treat the code as work from a competent but unfamiliar developer — it likely h
 
 const PRESET_AGENTS: PresetDefinition[] = [
 	{
-		name: 'Coordinator',
-		description:
-			'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
-		tools: GENERAL_TOOLS,
-		customPrompt:
-			'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
-			'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
-			'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
-	},
-	{
 		name: 'Coder',
 		description:
 			'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
@@ -291,6 +281,16 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
 			'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
 			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
+	},
+	{
+		name: 'Coordinator',
+		description:
+			'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
+		tools: GENERAL_TOOLS,
+		customPrompt:
+			'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
+			'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
+			'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
 	},
 	{
 		name: 'General',

@@ -99,6 +99,7 @@ describe('seedPresetAgents', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const coordinator = seeded.find((a) => a.name === 'Coordinator');
 
+		expect(seeded[0]?.name).toBe('Coder');
 		expect(coordinator).toBeDefined();
 		expect(coordinator?.description).toContain('Built-in long-horizon Space agent');
 		expect(coordinator?.customPrompt).toContain('long-horizon context');

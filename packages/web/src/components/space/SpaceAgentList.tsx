@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { AgentDriftReport, SpaceAgent } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
-import { createSpaceForgePath, createSpaceGoalsPath } from '../../lib/router';
+import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -203,6 +203,11 @@ export function SpaceAgentList() {
 
 	useEffect(() => {
 		if (!spaceId) return;
+		spaceStore.listSchedules().catch(() => {});
+	}, [spaceId]);
+
+	useEffect(() => {
+		if (!spaceId) return;
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) return;
 
@@ -284,6 +289,16 @@ export function SpaceAgentList() {
 		}
 	};
 
+	const handleGoalsClick = () => {
+		if (!spaceId) return;
+		navigateToSpaceGoals(spaceId);
+	};
+
+	const handleForgeClick = () => {
+		if (!spaceId) return;
+		navigateToSpaceForge(spaceId);
+	};
+
 	const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
 	const coordinator = agents.find(isCoordinatorAgent);
 	const otherAgents = agents.filter((agent) => agent.id !== coordinator?.id);
@@ -329,12 +344,14 @@ export function SpaceAgentList() {
 								<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
 									Managed goals
 								</p>
-								<a
-									class="text-xs text-blue-300 hover:text-blue-200"
-									href={spaceId ? createSpaceGoalsPath(spaceId) : '#'}
+								<button
+									type="button"
+									class="text-xs text-blue-300 hover:text-blue-200 disabled:opacity-50"
+									onClick={handleGoalsClick}
+									disabled={!spaceId}
 								>
 									View
-								</a>
+								</button>
 							</div>
 							<p class="mt-2 text-2xl font-semibold text-gray-100">{activeGoals.length}</p>
 							<p class="mt-1 text-xs text-gray-500">Active goals Coordinator can track.</p>
@@ -344,12 +361,14 @@ export function SpaceAgentList() {
 								<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
 									Forge scopes
 								</p>
-								<a
-									class="text-xs text-blue-300 hover:text-blue-200"
-									href={spaceId ? createSpaceForgePath(spaceId) : '#'}
+								<button
+									type="button"
+									class="text-xs text-blue-300 hover:text-blue-200 disabled:opacity-50"
+									onClick={handleForgeClick}
+									disabled={!spaceId}
 								>
 									Open Forge
-								</a>
+								</button>
 							</div>
 							<div class="mt-2 rounded border border-white/10 bg-dark-800 px-2 py-1.5 text-xs text-gray-500">
 								Per-Agent Forge scope policy coming soon.
