@@ -123,6 +123,14 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
+class MockTaskAgentManager {
+	readonly cancelledSessions: string[] = [];
+
+	cancelBySessionId(sessionId: string): void {
+		this.cancelledSessions.push(sessionId);
+	}
+}
+
 function buildLinearWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
@@ -516,7 +524,50 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// 5. External run cancellation — no stale notifications
+	// 5. Workflow-backed dependency block cleanup
+	// -------------------------------------------------------------------------
+
+	describe('workflow-backed dependency block cleanup', () => {
+		test('blocking an in-progress workflow task stops run and active node agents', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-dep-block', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-1',
+			});
+			taskRepo.updateTask(task.id, { taskAgentSessionId: 'task-session-1' });
+
+			const blocked = await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+				dependsOn: ['missing-dep'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+			});
+
+			expect(blocked?.status).toBe('blocked');
+			expect(blocked?.blockReason).toBe('dependency_added');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(tam.cancelledSessions).toEqual(['node-session-1', 'task-session-1']);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			const clearedTask = taskRepo.getTask(task.id)!;
+			expect(clearedTask.workflowRunId).toBeUndefined();
+			expect(clearedTask.taskAgentSessionId).toBeUndefined();
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// 6. External run cancellation — no stale notifications
 	// -------------------------------------------------------------------------
 
 	describe('external run cancellation — no stale notifications', () => {

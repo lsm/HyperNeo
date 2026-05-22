@@ -25,6 +25,12 @@ const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
 	'cancelled',
 	'archived',
 ]);
+
+function arraysEqual(a: string[], b: string[]): boolean {
+	if (a.length !== b.length) return false;
+	const setA = new Set(a);
+	return b.every((item) => setA.has(item));
+}
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -401,9 +407,35 @@ export function setupSpaceTaskHandlers(
 			}
 		} else {
 			// No status field — general field update
-			task = await taskManager.updateTask(taskId, updateParams, {
-				onCascadedTasks: emitCascadedTasks,
-			});
+			const currentTask = await taskManager.getTask(taskId);
+			if (!currentTask) {
+				throw new Error(`Task not found: ${taskId}`);
+			}
+			const dependencyAddedToActiveWorkflow =
+				spaceRuntimeService &&
+				updateParams.dependsOn !== undefined &&
+				currentTask.status === 'in_progress' &&
+				currentTask.workflowRunId &&
+				!arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn) &&
+				!(await taskManager.areDependenciesMet({
+					...currentTask,
+					dependsOn: updateParams.dependsOn,
+				}));
+
+			if (dependencyAddedToActiveWorkflow) {
+				task = await spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, {
+					...updateParams,
+					status: 'blocked',
+					blockReason: 'dependency_added',
+					result: 'Dependency added while task was in progress',
+					completedAt: null,
+				});
+				emitTaskUpdated = false;
+			} else {
+				task = await taskManager.updateTask(taskId, updateParams, {
+					onCascadedTasks: emitCascadedTasks,
+				});
+			}
 		}
 
 		// Best-effort goal terminal handling — must not abort the RPC response.

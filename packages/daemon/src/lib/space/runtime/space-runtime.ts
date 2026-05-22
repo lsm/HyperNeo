@@ -2088,6 +2088,55 @@ export class SpaceRuntime {
 		return spaces.filter((s) => !s.paused && !s.stopped);
 	}
 
+	private async stopBlockedWorkflowTask(
+		spaceId: string,
+		task: SpaceTask,
+		reason: string
+	): Promise<void> {
+		if (!task.workflowRunId) return;
+
+		const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+		if (run && canTransitionRunStatus(run.status, 'blocked')) {
+			await this.transitionRunStatusAndEmit(run.id, 'blocked');
+		}
+
+		const now = Date.now();
+		for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
+			if (execution.agentSessionId) {
+				this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+			}
+			if (execution.status !== 'cancelled') {
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'cancelled',
+					agentSessionId: null,
+					result: reason,
+					completedAt: now,
+				});
+			}
+		}
+
+		if (task.taskAgentSessionId) {
+			this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
+		}
+		const cleared = this.config.taskRepo.updateTask(task.id, {
+			taskAgentSessionId: null,
+			workflowRunId: null,
+		});
+		if (cleared) {
+			await this.safeOnTaskUpdated(spaceId, cleared);
+		}
+		this.clearRunInterests(task.workflowRunId);
+		this.clearAgentStuckStateForRun(task.workflowRunId);
+	}
+
+	async blockWorkflowBackedTask(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask | null> {
+		return this.updateTaskAndEmit(spaceId, taskId, params);
+	}
+
 	private async updateTaskAndEmit(
 		spaceId: string,
 		taskId: string,
@@ -2105,6 +2154,26 @@ export class SpaceRuntime {
 			//   - `cancelled` (terminal, will not auto-resume): cancel both `open` and
 			//     `in_progress` dependents so they don't wait forever on an unmet dep.
 			if (params.status === 'blocked') {
+				const reason = params.result ?? updated.result ?? 'Task blocked';
+				if (params.blockReason === 'dependency_added') {
+					await this.stopBlockedWorkflowTask(spaceId, updated, reason);
+					await this.safeNotify({
+						kind: 'task_blocked',
+						spaceId,
+						taskId: updated.id,
+						reason,
+						timestamp: new Date().toISOString(),
+					});
+					if (updated.workflowRunId) {
+						await this.safeNotify({
+							kind: 'workflow_run_blocked',
+							spaceId,
+							runId: updated.workflowRunId,
+							reason,
+							timestamp: new Date().toISOString(),
+						});
+					}
+				}
 				const taskManager = this.getOrCreateTaskManager(spaceId);
 				const cascaded = await taskManager.blockDependentTasks(taskId);
 				for (const blocked of cascaded) {
