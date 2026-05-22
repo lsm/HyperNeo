@@ -240,5 +240,22 @@ describe('Migration 142: Forge MVP evidence backfill', () => {
 				)
 				.run('manual-slow-tool', SCOPE_ID, 'slow_tool_call', 'Slow tool', 'task-425', '{}', 201)
 		).not.toThrow();
+		expect(() =>
+			db
+				.prepare(
+					`INSERT INTO evolution_evidence (
+						id, scope_id, kind, summary, source_id, metadata_json, created_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?)`
+				)
+				.run(
+					'manual-conversation-friction',
+					SCOPE_ID,
+					'conversation_friction',
+					'Conversation friction',
+					'task-425',
+					'{}',
+					202
+				)
+		).not.toThrow();
 	});
 });

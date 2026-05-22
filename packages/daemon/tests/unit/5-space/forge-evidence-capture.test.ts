@@ -4,6 +4,7 @@ import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-se
 import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
+import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
@@ -22,12 +23,31 @@ describe('Forge evidence capture on task completion', () => {
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let artifactRepo: WorkflowRunArtifactRepository;
 	let evolutionRepo: EvolutionRepository;
+	let jobQueue: JobQueueRepository;
 	let evolutionScopeService: EvolutionScopeService;
 	let spaceId: string;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
 		createSpaceTables(db);
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER
+			)
+		`);
 		spaceRepo = new SpaceRepository(db as never);
 		goalRepo = new SpaceGoalRepository(db as never);
 		taskRepo = new SpaceTaskRepository(db as never);
@@ -38,6 +58,7 @@ describe('Forge evidence capture on task completion', () => {
 		);
 		artifactRepo = new WorkflowRunArtifactRepository(db as never);
 		evolutionRepo = new EvolutionRepository(db as never);
+		jobQueue = new JobQueueRepository(db as never);
 		spaceId = spaceRepo.createSpace({
 			workspacePath: '/workspace/forge-evidence-capture',
 			slug: 'forge-evidence-capture',
@@ -51,6 +72,7 @@ describe('Forge evidence capture on task completion', () => {
 		evolutionScopeService = new EvolutionScopeService({
 			...createScopeServiceDeps(),
 			traceEvidenceService,
+			jobQueue,
 		});
 	});
 
@@ -92,6 +114,16 @@ describe('Forge evidence capture on task completion', () => {
 			'session',
 			'task_result',
 		]);
+		expect(
+			(
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count FROM job_queue
+					 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+					)
+					.get(task.id) as { count: number }
+			).count
+		).toBe(1);
 		expect(evidence.find((item) => item.kind === 'session')?.metadata.traceDiagnostic).toBe(true);
 		expect(evidence.find((item) => item.kind === 'task_result')?.summary).toContain(
 			'PR ready and tests pass'

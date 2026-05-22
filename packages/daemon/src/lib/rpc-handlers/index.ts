@@ -60,8 +60,10 @@ import { GateDataRepository } from '../../storage/repositories/gate-data-reposit
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
+import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
 import {
+	SPACE_CONVERSATION_FRICTION_ANALYZE,
 	SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
 	SPACE_WORKFLOW_RUN_SYNC_COMMITS,
 	SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
@@ -99,6 +101,7 @@ import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers';
 import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { setupEvolutionHandlers } from './evolution-handlers';
+import { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service';
 import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
@@ -391,6 +394,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		evolutionRepo: deps.db.evolution,
 		taskRepo: spaceTaskRepo,
 	});
+	const evolutionConversationAnalysisService = new EvolutionConversationAnalysisService({
+		db: deps.db.getDatabase(),
+		evolutionRepo: deps.db.evolution,
+		taskRepo: spaceTaskRepo,
+		spaceRepo,
+	});
+	deps.jobProcessor.register(
+		SPACE_CONVERSATION_FRICTION_ANALYZE,
+		createConversationFrictionEvidenceHandler(evolutionConversationAnalysisService)
+	);
 	const evolutionScopeService = new EvolutionScopeService({
 		evolutionRepo: deps.db.evolution,
 		spaceRepo,
@@ -399,6 +412,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		workflowRunRepo: spaceWorkflowRunRepo,
 		artifactRepo,
 		traceEvidenceService: evolutionTraceEvidenceService,
+		jobQueue: deps.jobQueue,
 	});
 
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());

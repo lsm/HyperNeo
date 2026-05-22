@@ -563,6 +563,12 @@ describe('EvolutionEpisodeService', () => {
 			sourceId: task.id,
 			summary: 'Retry loop evidence',
 		});
+		const conversationEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'conversation_friction',
+			sourceId: task.id,
+			summary: 'Conversation friction evidence',
+		});
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
@@ -572,10 +578,10 @@ describe('EvolutionEpisodeService', () => {
 
 		const input = service.buildEpisodeInput({
 			scopeId: scope.id,
-			evidenceIds: [taskEvidence.id, retryEvidence.id],
+			evidenceIds: [taskEvidence.id, retryEvidence.id, conversationEvidence.id],
 		});
 
-		expect(input.evidence).toHaveLength(2);
+		expect(input.evidence).toHaveLength(3);
 		expect(input.tasks).toHaveLength(1);
 		expect(input.tasks[0]?.task.id).toBe(task.id);
 	});

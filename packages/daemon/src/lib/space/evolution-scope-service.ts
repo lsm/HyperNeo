@@ -15,6 +15,7 @@ import type {
 	EvolutionPreflightTaskSummary,
 } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -24,6 +25,7 @@ import type {
 	WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../logger';
+import { SPACE_CONVERSATION_FRICTION_ANALYZE } from '../job-queue-constants';
 import type {
 	EvolutionTraceEvidenceService,
 	TraceEvidenceDiagnostic,
@@ -51,6 +53,7 @@ export interface EvolutionScopeServiceDeps {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo?: WorkflowRunArtifactRepository;
 	traceEvidenceService?: EvolutionTraceEvidenceService;
+	jobQueue?: Pick<JobQueueRepository, 'enqueue' | 'listJobs'>;
 }
 
 export interface CreateScopeFromGoalParams {
@@ -342,6 +345,7 @@ export class EvolutionScopeService {
 
 		const traceResult = this.captureTraceEvidenceForCompletedTask(scope.id, task.id);
 		evidence.push(...traceResult.evidence);
+		this.enqueueConversationFrictionAnalysis(scope.id, task.id);
 
 		return { scope, evidence, traceDiagnostic: traceResult.diagnostic };
 	}
@@ -495,6 +499,24 @@ export class EvolutionScopeService {
 			log.warn('Trace evidence capture failed; keeping primary completion evidence:', err);
 			return { evidence: [], diagnostic };
 		}
+	}
+
+	private enqueueConversationFrictionAnalysis(scopeId: string, taskId: string): void {
+		const jobQueue = this.deps.jobQueue;
+		if (!jobQueue) return;
+		const existing = jobQueue.listJobs({
+			queue: SPACE_CONVERSATION_FRICTION_ANALYZE,
+			status: ['pending', 'processing'],
+			limit: 100,
+		});
+		if (existing.some((job) => job.payload.scopeId === scopeId && job.payload.taskId === taskId)) {
+			return;
+		}
+		jobQueue.enqueue({
+			queue: SPACE_CONVERSATION_FRICTION_ANALYZE,
+			payload: { scopeId, taskId },
+			maxRetries: 3,
+		});
 	}
 
 	private createTraceDiagnosticEvidence(

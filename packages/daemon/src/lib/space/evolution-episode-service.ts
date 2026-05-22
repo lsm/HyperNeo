@@ -381,7 +381,8 @@ export class EvolutionEpisodeService {
 				item.kind !== 'tool_failure' &&
 				item.kind !== 'test_failure' &&
 				item.kind !== 'permission_block' &&
-				item.kind !== 'slow_tool_call'
+				item.kind !== 'slow_tool_call' &&
+				item.kind !== 'conversation_friction'
 			)
 				return [];
 			if (!item.sourceId || seenTaskIds.has(item.sourceId)) return [];
