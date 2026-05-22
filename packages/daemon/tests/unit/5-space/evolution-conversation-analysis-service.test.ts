@@ -139,13 +139,24 @@ describe('EvolutionConversationAnalysisService', () => {
 		expect((first[0]?.metadata.pattern as { kind?: string }).kind).toBe('human_correction');
 	});
 
-	it('excludes unsent messages from conversation friction input', async () => {
+	it('includes legacy null send_status rows and excludes unsent or subagent messages', async () => {
 		const { scope, task } = createScopedTask();
 		let analyzedMessages: TraceMessage[] = [];
 		insertTextMessage(task.id, 'consumed-human-1', 'user', 'human', {
 			type: 'user',
 			message: { role: 'user', content: [{ type: 'text', text: 'Please fix this.' }] },
 		});
+		insertTextMessage(
+			task.id,
+			'legacy-human-1',
+			'user',
+			'human',
+			{
+				type: 'user',
+				message: { role: 'user', content: [{ type: 'text', text: 'Legacy message.' }] },
+			},
+			null
+		);
 		insertTextMessage(
 			task.id,
 			'deferred-human-1',
@@ -156,6 +167,18 @@ describe('EvolutionConversationAnalysisService', () => {
 				message: { role: 'user', content: [{ type: 'text', text: 'Not sent yet.' }] },
 			},
 			'deferred'
+		);
+		insertTextMessage(
+			task.id,
+			'subagent-assistant-1',
+			'assistant',
+			null,
+			{
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'Internal apology.' }] },
+			},
+			'consumed',
+			'tool-parent-1'
 		);
 		const service = new EvolutionConversationAnalysisService({
 			db: db as never,
@@ -171,6 +194,7 @@ describe('EvolutionConversationAnalysisService', () => {
 
 		expect(analyzedMessages.map((message) => message.metadata.messageId)).toEqual([
 			'consumed-human-1',
+			'legacy-human-1',
 		]);
 	});
 
@@ -451,13 +475,14 @@ describe('EvolutionConversationAnalysisService', () => {
 		messageType: string,
 		origin: string | null,
 		message: Record<string, unknown>,
-		sendStatus = 'consumed'
+		sendStatus: string | null = 'consumed',
+		parentToolUseId: string | null = null
 	): void {
 		db.prepare(
 			`INSERT INTO sdk_messages (
 				id, session_id, message_type, sdk_message, timestamp, origin,
-				is_renderable, is_terminal, task_id, send_status
-			) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
+				is_renderable, is_terminal, task_id, send_status, parent_tool_use_id
+			) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`
 		).run(
 			id,
 			'session-1',
@@ -466,7 +491,8 @@ describe('EvolutionConversationAnalysisService', () => {
 			new Date(1_700_000_000_000).toISOString(),
 			origin,
 			taskId,
-			sendStatus
+			sendStatus,
+			parentToolUseId
 		);
 	}
 });

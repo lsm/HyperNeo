@@ -151,7 +151,9 @@ export class EvolutionConversationAnalysisService {
 				 FROM (
 					 SELECT id, session_id, message_type, sdk_message, timestamp, origin
 					 FROM sdk_messages
-					 WHERE task_id = ? AND send_status IN ('consumed', 'failed')
+					 WHERE task_id = ?
+						 AND parent_tool_use_id IS NULL
+						 AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
 					 ORDER BY timestamp DESC, id DESC
 					 LIMIT ?
 				 ) recent_trace_rows

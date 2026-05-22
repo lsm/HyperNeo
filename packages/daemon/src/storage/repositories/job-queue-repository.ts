@@ -27,6 +27,11 @@ export interface EnqueueParams {
 	runAt?: number;
 }
 
+export interface EnqueueUniquePendingParams extends EnqueueParams {
+	matchPayload: Record<string, unknown>;
+	activeStatuses?: JobStatus[];
+}
+
 export class JobQueueRepository {
 	constructor(private db: BunDatabase) {}
 
@@ -56,6 +61,15 @@ export class JobQueueRepository {
 		);
 
 		return this.getJob(id)!;
+	}
+
+	enqueueUniquePending(params: EnqueueUniquePendingParams): Job | null {
+		return this.db.transaction(() => {
+			if (this.findMatchingActiveJob(params.queue, params.matchPayload, params.activeStatuses)) {
+				return null;
+			}
+			return this.enqueue(params);
+		})();
 	}
 
 	dequeue(queue: string, limit: number = 1): Job[] {
@@ -193,6 +207,30 @@ export class JobQueueRepository {
 		return result.changes > 0;
 	}
 
+	private findMatchingActiveJob(
+		queue: string,
+		matchPayload: Record<string, unknown>,
+		activeStatuses: JobStatus[] = ['pending', 'processing']
+	): Job | null {
+		if (activeStatuses.length === 0) return null;
+		const statusPlaceholders = activeStatuses.map(() => '?').join(',');
+		const payloadPredicates = Object.keys(matchPayload).map(() => `json_extract(payload, ?) = ?`);
+		const stmt = this.db.prepare(
+			`SELECT * FROM job_queue
+			 WHERE queue = ?
+				 AND status IN (${statusPlaceholders})
+				 ${payloadPredicates.length > 0 ? `AND ${payloadPredicates.join(' AND ')}` : ''}
+			 ORDER BY created_at DESC
+			 LIMIT 1`
+		);
+		const params: (string | number | null)[] = [queue, ...activeStatuses];
+		for (const [key, value] of Object.entries(matchPayload)) {
+			params.push(`$.${key}`, sqliteJsonScalar(value));
+		}
+		const row = stmt.get(...params) as Record<string, unknown> | undefined;
+		return row ? this.rowToJob(row) : null;
+	}
+
 	reclaimStale(staleBefore: number): number {
 		const result = this.db
 			.prepare(
@@ -220,4 +258,11 @@ export class JobQueueRepository {
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
 	}
+}
+
+function sqliteJsonScalar(value: unknown): string | number | null {
+	if (typeof value === 'string' || typeof value === 'number') return value;
+	if (typeof value === 'boolean') return value ? 1 : 0;
+	if (value === null) return null;
+	throw new Error('enqueueUniquePending matchPayload values must be JSON scalar values');
 }
