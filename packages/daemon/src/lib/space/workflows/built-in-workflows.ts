@@ -22,6 +22,7 @@
 
 import type {
 	DeclarativeToolGuard,
+	GateField,
 	GatePoll,
 	GateScript,
 	Gate,
@@ -55,6 +56,59 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 	reason:
 		'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
 };
+
+// ---------------------------------------------------------------------------
+// Gate writer validation
+// ---------------------------------------------------------------------------
+
+export function validateWorkflowTemplateGateWriters(workflow: SpaceWorkflow): string[] {
+	const errors: string[] = [];
+	const validWriters = new Set<string>(['*']);
+
+	for (const node of workflow.nodes) {
+		validWriters.add(node.name);
+		for (const agent of node.agents ?? []) {
+			validWriters.add(agent.name);
+		}
+	}
+
+	for (const gate of workflow.gates ?? []) {
+		for (const field of gate.fields ?? []) {
+			const loc = `${workflow.name}.gates.${gate.id}.fields.${field.name}.writers`;
+			validateGateFieldWriters(field, validWriters, loc, errors);
+		}
+	}
+
+	return errors;
+}
+
+function validateGateFieldWriters(
+	field: GateField,
+	validWriters: ReadonlySet<string>,
+	loc: string,
+	errors: string[]
+): void {
+	if (!Array.isArray(field.writers)) {
+		errors.push(`${loc}: must be an array`);
+		return;
+	}
+
+	if (field.writers.length === 0) {
+		errors.push(`${loc}: must contain at least one writer role`);
+		return;
+	}
+
+	for (const writer of field.writers) {
+		if (typeof writer !== 'string' || writer.trim().length === 0) {
+			errors.push(`${loc}: writer roles must be non-empty strings`);
+			continue;
+		}
+
+		if (!validWriters.has(writer)) {
+			errors.push(`${loc}: unknown writer role "${writer}"`);
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Shared gate poll: PR inline review comments
@@ -1472,13 +1526,18 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 	// Note: this ordering only affects *newly created* spaces. seedBuiltInWorkflows is
 	// insert-only (it skips if any workflows already exist), so existing spaces keep
 	// whatever ordering was seeded when they were first created.
-	return [
+	const workflows = [
 		CODING_WORKFLOW,
 		PLAN_AND_DECOMPOSE_WORKFLOW,
 		FULLSTACK_QA_LOOP_WORKFLOW,
 		RESEARCH_WORKFLOW,
 		REVIEW_ONLY_WORKFLOW,
 	];
+	const errors = workflows.flatMap(validateWorkflowTemplateGateWriters);
+	if (errors.length > 0) {
+		throw new Error(`Built-in workflow gate writer validation failed:\n${errors.join('\n')}`);
+	}
+	return workflows;
 }
 
 export interface SeedBuiltInWorkflowsResult {
