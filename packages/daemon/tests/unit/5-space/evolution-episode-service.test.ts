@@ -366,6 +366,7 @@ describe('EvolutionEpisodeService', () => {
 			data: {
 				summary: 'Generic artifact',
 				result: 'CI passed and PR merged',
+				details: 'Tool-specific field says QA passed after merge validation',
 				message: largePayload,
 			},
 		});
@@ -402,9 +403,10 @@ describe('EvolutionEpisodeService', () => {
 		expect(runContext?.evidenceIds).toContain(errorEvidence.id);
 		expect(cappedRunContext?.artifacts).toHaveLength(8);
 		expect(cappedRunContext?.artifacts[0]?.data.summary).toContain('QA passed');
-		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain('summary: Generic artifact');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain('Generic artifact');
+		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain('CI passed and PR merged');
 		expect(cappedRunContext?.artifacts[1]?.data.summary).toContain(
-			'result: CI passed and PR merged'
+			'Tool-specific field says QA passed after merge validation'
 		);
 		expect(cappedRunContext?.artifacts[1]?.data.summary.length).toBeLessThanOrEqual(501);
 		expect(cappedRunContext?.artifacts.some((artifact) => 'large' in artifact.data)).toBe(false);
