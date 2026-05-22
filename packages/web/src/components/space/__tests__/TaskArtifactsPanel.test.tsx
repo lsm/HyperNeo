@@ -395,273 +395,114 @@ describe('TaskArtifactsPanel', () => {
 	});
 });
 
-describe('SpaceTaskPane — artifacts toggle', () => {
-	// Import SpaceTaskPane with signal mocks to test the toggle button
+describe('TaskAuxiliaryPanel — artifacts tab', () => {
 	let mockTasks: ReturnType<typeof import('@preact/signals').signal>;
-	let mockCurrentSpaceTaskViewTabSignal: ReturnType<typeof import('@preact/signals').signal>;
-	let mockCurrentSpaceIdSignal: ReturnType<typeof import('@preact/signals').signal>;
+	let mockRightPanelTargetSignal: ReturnType<typeof import('@preact/signals').signal>;
 
 	beforeEach(async () => {
 		cleanup();
 		vi.resetModules();
-		// Create fresh real Preact signals so the component gets reactivity
 		const { signal } = await import('@preact/signals');
-		mockCurrentSpaceTaskViewTabSignal = signal('thread');
-		mockCurrentSpaceIdSignal = signal(null);
+		mockRightPanelTargetSignal = signal(null);
 	});
 
 	afterEach(() => {
 		cleanup();
 	});
 
-	it('renders artifacts-toggle button when task has workflowRunId', async () => {
+	function makeTask(overrides: Record<string, unknown> = {}) {
+		return {
+			id: 'task-1',
+			spaceId: 'space-1',
+			taskNumber: 1,
+			title: 'Test Task',
+			description: '',
+			status: 'in_progress',
+			priority: 'normal',
+			dependsOn: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			workflowRunId: 'run-xyz',
+			taskAgentSessionId: 'session-abc',
+			...overrides,
+		};
+	}
+
+	async function renderAuxiliaryPanel(task: Record<string, unknown>, tab?: string) {
 		const { signal } = await import('@preact/signals');
-		mockTasks = signal([
-			{
-				id: 'task-1',
-				spaceId: 'space-1',
-				title: 'Test Task',
-				description: '',
-				status: 'in_progress',
-				priority: 'normal',
-				dependsOn: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-				workflowRunId: 'run-xyz',
-				taskAgentSessionId: 'session-abc',
-			},
-		]);
+		mockTasks = signal([task]);
 
 		vi.doMock('../../../lib/space-store', () => ({
 			get spaceStore() {
 				return {
 					tasks: mockTasks,
-					taskActivity: signal(new Map()),
-					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
-					unsubscribeTaskActivity: vi.fn(),
-					agents: signal([]),
-					workflows: signal([]),
-					workflowRuns: signal([]),
-					nodeExecutions: signal([]),
-					updateTask: vi.fn().mockResolvedValue(undefined),
-					ensureTaskAgentSession: vi.fn().mockResolvedValue({
-						id: 'task-1',
-						taskAgentSessionId: 'session-abc',
-					}),
-					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
-					ensureConfigData: vi.fn().mockResolvedValue(undefined),
-					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-					workflowVersions: signal(new Map()),
 				};
 			},
 		}));
-
-		vi.doMock('../SpaceTaskUnifiedThread', () => ({
-			SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
-		}));
-		vi.doMock('../PendingGateBanner', () => ({
-			PendingGateBanner: () => null,
-		}));
+		vi.doMock('../../../lib/signals', async (importOriginal) => {
+			const actual = await importOriginal();
+			return {
+				...actual,
+				get rightPanelTargetSignal() {
+					return mockRightPanelTargetSignal;
+				},
+			};
+		});
 		vi.doMock('../TaskArtifactsPanel', () => ({
 			TaskArtifactsPanel: ({ runId }: { runId: string }) => (
 				<div data-testid="artifacts-panel" data-run-id={runId} />
 			),
 		}));
-		vi.doMock('../../../lib/router', () => ({
-			navigateToSpaceSession: vi.fn(),
-			navigateToSpaceAgent: vi.fn(),
-			navigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
-				mockCurrentSpaceTaskViewTabSignal.value = view ?? 'thread';
-			}),
+		vi.doMock('../TaskTimelineFeed', () => ({
+			TaskTimelineFeed: () => <div data-testid="timeline-panel" />,
 		}));
-		vi.doMock('../../../lib/signals', async (importOriginal) => {
-			const actual = await importOriginal();
-			return {
-				...actual,
-				get currentSpaceTaskViewTabSignal() {
-					return mockCurrentSpaceTaskViewTabSignal;
-				},
-				get currentSpaceIdSignal() {
-					return mockCurrentSpaceIdSignal;
-				},
-			};
-		});
-		vi.doMock('../../../lib/utils', () => ({
-			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
-		}));
-
-		const { SpaceTaskPane } = await import('../SpaceTaskPane');
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		expect(getByTestId('artifacts-toggle')).toBeTruthy();
-	});
-
-	it('does not render artifacts-toggle when task has no workflowRunId', async () => {
-		const { signal } = await import('@preact/signals');
-		mockTasks = signal([
-			{
-				id: 'task-2',
-				spaceId: 'space-1',
-				title: 'No Run Task',
-				description: '',
-				status: 'open',
-				priority: 'normal',
-				dependsOn: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-				workflowRunId: null,
-				taskAgentSessionId: null,
-			},
-		]);
-
-		vi.doMock('../../../lib/space-store', () => ({
-			get spaceStore() {
-				return {
-					tasks: mockTasks,
-					taskActivity: signal(new Map()),
-					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
-					unsubscribeTaskActivity: vi.fn(),
-					agents: signal([]),
-					workflows: signal([]),
-					workflowRuns: signal([]),
-					nodeExecutions: signal([]),
-					updateTask: vi.fn().mockResolvedValue(undefined),
-					ensureTaskAgentSession: vi.fn().mockResolvedValue({ id: 'task-2' }),
-					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
-					ensureConfigData: vi.fn().mockResolvedValue(undefined),
-					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-					workflowVersions: signal(new Map()),
-				};
-			},
-		}));
-
-		vi.doMock('../SpaceTaskUnifiedThread', () => ({
-			SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
-		}));
-		vi.doMock('../PendingGateBanner', () => ({
-			PendingGateBanner: () => null,
-		}));
-		vi.doMock('../TaskArtifactsPanel', () => ({
-			TaskArtifactsPanel: () => <div data-testid="artifacts-panel" />,
-		}));
-		vi.doMock('../../../lib/router', () => ({
-			navigateToSpaceSession: vi.fn(),
-			navigateToSpaceAgent: vi.fn(),
-			navigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
-				mockCurrentSpaceTaskViewTabSignal.value = view ?? 'thread';
-			}),
-		}));
-		vi.doMock('../../../lib/signals', async (importOriginal) => {
-			const actual = await importOriginal();
-			return {
-				...actual,
-				get currentSpaceTaskViewTabSignal() {
-					return mockCurrentSpaceTaskViewTabSignal;
-				},
-				get currentSpaceIdSignal() {
-					return mockCurrentSpaceIdSignal;
-				},
-			};
-		});
-		vi.doMock('../../../lib/utils', () => ({
-			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
-		}));
-
-		const { SpaceTaskPane } = await import('../SpaceTaskPane');
-		const { queryByTestId } = render(<SpaceTaskPane taskId="task-2" spaceId="space-1" />);
-		expect(queryByTestId('artifacts-toggle')).toBeNull();
-	});
-
-	it('shows artifacts panel when toggle is clicked', async () => {
-		const { signal } = await import('@preact/signals');
-		mockTasks = signal([
-			{
-				id: 'task-3',
-				spaceId: 'space-1',
-				title: 'Run Task',
-				description: '',
-				status: 'in_progress',
-				priority: 'normal',
-				dependsOn: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-				workflowRunId: 'run-toggle',
-				taskAgentSessionId: 'session-toggle',
-			},
-		]);
-
-		vi.doMock('../../../lib/space-store', () => ({
-			get spaceStore() {
-				return {
-					tasks: mockTasks,
-					taskActivity: signal(new Map()),
-					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
-					unsubscribeTaskActivity: vi.fn(),
-					agents: signal([]),
-					workflows: signal([]),
-					workflowRuns: signal([]),
-					nodeExecutions: signal([]),
-					updateTask: vi.fn().mockResolvedValue(undefined),
-					ensureTaskAgentSession: vi.fn().mockResolvedValue({
-						id: 'task-3',
-						taskAgentSessionId: 'session-toggle',
-					}),
-					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
-					ensureConfigData: vi.fn().mockResolvedValue(undefined),
-					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-					workflowVersions: signal(new Map()),
-				};
-			},
-		}));
-
-		vi.doMock('../SpaceTaskUnifiedThread', () => ({
-			SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
-		}));
-		vi.doMock('../PendingGateBanner', () => ({
-			PendingGateBanner: () => null,
-		}));
-		vi.doMock('../TaskArtifactsPanel', () => ({
-			TaskArtifactsPanel: ({ runId }: { runId: string; onClose?: () => void }) => (
-				<div data-testid="artifacts-panel" data-run-id={runId} />
+		vi.doMock('../WorkflowExecutionLogFeed', () => ({
+			WorkflowExecutionLogFeed: ({ workflowRunId }: { workflowRunId: string }) => (
+				<div data-testid="log-panel" data-run-id={workflowRunId} />
 			),
 		}));
-		vi.doMock('../../../lib/router', () => ({
-			navigateToSpaceSession: vi.fn(),
-			navigateToSpaceAgent: vi.fn(),
-			navigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
-				mockCurrentSpaceTaskViewTabSignal.value = view ?? 'thread';
-			}),
-		}));
-		vi.doMock('../../../lib/signals', async (importOriginal) => {
-			const actual = await importOriginal();
-			return {
-				...actual,
-				get currentSpaceTaskViewTabSignal() {
-					return mockCurrentSpaceTaskViewTabSignal;
-				},
-				get currentSpaceIdSignal() {
-					return mockCurrentSpaceIdSignal;
-				},
-			};
-		});
 		vi.doMock('../../../lib/utils', () => ({
 			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 		}));
 
-		const { SpaceTaskPane } = await import('../SpaceTaskPane');
-		const { getByTestId, queryByTestId } = render(
-			<SpaceTaskPane taskId="task-3" spaceId="space-1" />
+		const { TaskAuxiliaryPanel } = await import('../TaskAuxiliaryPanel');
+		return render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab={tab} />);
+	}
+
+	it('renders artifacts tab when task has workflowRunId', async () => {
+		const { getByRole, getByTestId } = await renderAuxiliaryPanel(makeTask(), 'artifacts');
+
+		expect(getByRole('button', { name: 'Artifacts' })).toBeTruthy();
+		expect(getByTestId('artifacts-panel').getAttribute('data-run-id')).toBe('run-xyz');
+	});
+
+	it('does not render artifacts tab when task has no workflowRunId', async () => {
+		const { getByTestId, queryByRole, queryByTestId } = await renderAuxiliaryPanel(
+			makeTask({ workflowRunId: null }),
+			'artifacts'
 		);
 
-		// Artifacts panel not shown initially
+		expect(queryByRole('button', { name: 'Artifacts' })).toBeNull();
 		expect(queryByTestId('artifacts-panel')).toBeNull();
+		expect(getByTestId('timeline-panel')).toBeTruthy();
+		expect(mockRightPanelTargetSignal.value).toEqual({
+			type: 'task',
+			spaceId: 'space-1',
+			taskId: 'task-1',
+			tab: 'timeline',
+		});
+	});
 
-		// Click toggle → panel appears
-		fireEvent.click(getByTestId('artifacts-toggle'));
-		expect(getByTestId('artifacts-panel')).toBeTruthy();
-		expect(getByTestId('artifacts-panel').getAttribute('data-run-id')).toBe('run-toggle');
+	it('switches between auxiliary task tabs', async () => {
+		const { getByRole, getByTestId } = await renderAuxiliaryPanel(makeTask(), 'timeline');
 
-		// Click toggle again → panel disappears (the pill is the only way to close)
-		fireEvent.click(getByTestId('artifacts-toggle'));
-		expect(queryByTestId('artifacts-panel')).toBeNull();
+		expect(getByTestId('timeline-panel')).toBeTruthy();
+		fireEvent.click(getByRole('button', { name: 'Artifacts' }));
+		expect(mockRightPanelTargetSignal.value).toEqual({
+			type: 'task',
+			spaceId: 'space-1',
+			taskId: 'task-1',
+			tab: 'artifacts',
+		});
 	});
 });
