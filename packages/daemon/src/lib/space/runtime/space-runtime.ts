@@ -1810,6 +1810,16 @@ export class SpaceRuntime {
 		if (!manager) return null;
 		this.postApprovalRouter = new PostApprovalRouter({
 			taskRepo: this.config.taskRepo,
+			resolveCompletionOutcome: (task) => {
+				const artifactSummary = task.workflowRunId
+					? this.resolvePrimaryResultArtifactSummary(task.workflowRunId)
+					: undefined;
+				return this.buildTaskOutcomeUpdates(
+					task,
+					task.result?.trim() ? task.result : (artifactSummary ?? task.reportedSummary ?? null),
+					task.reportedSummary ?? artifactSummary ?? null
+				);
+			},
 			spawner: {
 				spawnPostApprovalSubSession: (args) => manager.spawnPostApprovalSubSession(args),
 			},
@@ -2240,6 +2250,7 @@ export class SpaceRuntime {
 				this.executorMeta.get(run.id)?.workflow ??
 				this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
 				null;
+			const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(run.id);
 			const summaryFromWorkflow = workflow
 				? this.resolveCompletionSummary(run.id, workflow)
 				: undefined;
@@ -2247,12 +2258,16 @@ export class SpaceRuntime {
 				.filter((task) => task.id !== canonicalTask.id)
 				.find((task) => !!task.result)?.result;
 			const reportedSummary = canonicalTask.reportedSummary ?? null;
+			const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
 			const nextResult =
+				existingResult ??
+				summaryFromArtifact ??
 				summaryFromWorkflow ??
 				reportedSummary ??
-				canonicalTask.result ??
 				summaryFromSibling ??
 				null;
+			const nextReportedSummary =
+				reportedSummary ?? summaryFromArtifact ?? summaryFromWorkflow ?? summaryFromSibling ?? null;
 
 			// Skip tasks already at a terminal or paused state — matches the
 			// active-tick guard (`taskAlreadyResolved`) at processRunTick.
@@ -2268,12 +2283,24 @@ export class SpaceRuntime {
 			) {
 				// Preserve the computed result on the task before routing —
 				// dispatchPostApproval handles the status transition itself.
-				if (nextResult && canonicalTask.result !== nextResult) {
-					await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
+				const updates = this.buildTaskOutcomeUpdates(
+					canonicalTask,
+					nextResult,
+					nextReportedSummary
+				);
+				if (updates) {
+					await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, updates);
 				}
 				await this.dispatchPostApproval(canonicalTask.id, 'agent');
-			} else if (nextResult && canonicalTask.result !== nextResult) {
-				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
+			} else {
+				const updates = this.buildTaskOutcomeUpdates(
+					canonicalTask,
+					nextResult,
+					nextReportedSummary
+				);
+				if (updates) {
+					await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, updates);
+				}
 			}
 			return;
 		}
@@ -4262,9 +4289,13 @@ export class SpaceRuntime {
 			// `setTaskStatus` directly.
 			if (runIsComplete) {
 				await this.transitionRunStatusAndEmit(runId, 'done');
+				const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
 				const reportedSummary = canonicalTask.reportedSummary ?? null;
-				const nextTaskResult = summary ?? reportedSummary ?? canonicalTask.result ?? null;
+				const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
+				const nextTaskResult =
+					existingResult ?? summaryFromArtifact ?? summary ?? reportedSummary ?? null;
+				const nextReportedSummary = reportedSummary ?? summaryFromArtifact ?? summary ?? null;
 
 				// Skip re-resolution when the task is already at a non-`open`/non-`in_progress`
 				// status — `done`/`cancelled` are terminal; `approved` means
@@ -4285,10 +4316,13 @@ export class SpaceRuntime {
 				let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
 
 				if (!taskAlreadyResolved) {
-					if (nextTaskResult && canonicalTask.result !== nextTaskResult) {
-						await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-							result: nextTaskResult,
-						});
+					const updates = this.buildTaskOutcomeUpdates(
+						canonicalTask,
+						nextTaskResult,
+						nextReportedSummary
+					);
+					if (updates) {
+						await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
 					}
 					const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
 					// Resolve the final status from the router result. 'no-route'
@@ -4300,8 +4334,15 @@ export class SpaceRuntime {
 							: result.mode === 'skipped'
 								? canonicalTask.status
 								: 'approved';
-				} else if (summary && canonicalTask.result !== summary) {
-					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
+				} else {
+					const updates = this.buildTaskOutcomeUpdates(
+						canonicalTask,
+						nextTaskResult,
+						nextReportedSummary
+					);
+					if (updates) {
+						await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
+					}
 				}
 
 				// Sibling NodeExecution quiescing: interrupt siblings still in_progress
@@ -5245,6 +5286,37 @@ export class SpaceRuntime {
 		}
 
 		return '';
+	}
+
+	private resolvePrimaryResultArtifactSummary(runId: string): string | undefined {
+		if (!this.config.artifactRepo) return undefined;
+
+		try {
+			const artifact = this.config.artifactRepo
+				.listByRun(runId, { artifactType: 'result' })
+				.find((item) => typeof item.data.summary === 'string' && item.data.summary.trim());
+			return typeof artifact?.data.summary === 'string' ? artifact.data.summary : undefined;
+		} catch (err) {
+			log.warn(
+				`SpaceRuntime.resolvePrimaryResultArtifactSummary: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+			);
+			return undefined;
+		}
+	}
+
+	private buildTaskOutcomeUpdates(
+		task: SpaceTask,
+		result: string | null,
+		reportedSummary: string | null
+	): UpdateSpaceTaskParams | null {
+		const updates: UpdateSpaceTaskParams = {};
+		if (result && task.result !== result) {
+			updates.result = result;
+		}
+		if (reportedSummary && task.reportedSummary !== reportedSummary) {
+			updates.reportedSummary = reportedSummary;
+		}
+		return Object.keys(updates).length > 0 ? updates : null;
 	}
 
 	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {

@@ -133,6 +133,8 @@ export interface PostApprovalRouterDeps {
 	taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask'>;
 	spawner: PostApprovalSubSessionSpawner;
 	livenessProbe?: SessionLivenessProbe;
+	/** Optional hook that fills task outcome fields before terminal side effects run. */
+	resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
 	/** Optional goal service for processing terminal goal-task side effects. */
 	goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
 	/** Optional Forge scope service for automatic terminal task evidence capture. */
@@ -262,7 +264,9 @@ export class PostApprovalRouter {
 		// 1. No postApproval declared → close the task directly.
 		// -------------------------------------------------------------------
 		if (!route || !route.targetAgent) {
+			const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
 			const updates: UpdateSpaceTaskParams = {
+				...outcomeUpdates,
 				status: 'done',
 				completedAt: Date.now(),
 				postApprovalSessionId: null,
