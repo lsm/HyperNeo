@@ -962,6 +962,34 @@ describe('space-task-handlers', () => {
 			expect(taskManager.updateTask).not.toHaveBeenCalled();
 		});
 
+		it('rejects non-object workflow model override payloads', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			for (const workflowModelOverrides of [123, false, ['node-1:coder']]) {
+				await expect(
+					call('spaceTask.update', {
+						spaceId: 'space-1',
+						taskId: 'task-1',
+						workflowModelOverrides,
+					})
+				).rejects.toThrow('workflowModelOverrides must be a string map');
+			}
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('rejects non-string workflow model override values', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: { 'node-1:coder': 123 },
+				})
+			).rejects.toThrow('workflowModelOverrides must be a string map');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
 		it('validates workflow model overrides against incoming workflow selection', async () => {
 			await call('spaceTask.update', {
 				spaceId: 'space-1',
@@ -1034,6 +1062,34 @@ describe('space-task-handlers', () => {
 			expect(taskManager.updateTask).toHaveBeenCalledWith(
 				'task-1',
 				{ preferredWorkflowId: null, workflowModelOverrides: null },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+		});
+
+		it('allows start and workflow selection changes without override mutations', async () => {
+			setup(
+				mockSpace,
+				makeTask({
+					preferredWorkflowId: 'workflow-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+				preferredWorkflowId: 'workflow-2',
+			});
+
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+				result: undefined,
+				approvalReason: undefined,
+				approvalSource: undefined,
+			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ preferredWorkflowId: 'workflow-2', workflowModelOverrides: null },
 				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
 			);
 		});

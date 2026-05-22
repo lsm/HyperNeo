@@ -377,6 +377,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 				workflowModelOverrides: Object.keys(nextOverrides).length > 0 ? nextOverrides : null,
 			});
 		} catch (err) {
+			pendingOverridesRef.current = task.workflowModelOverrides ?? null;
 			setOverrideError(err instanceof Error ? err.message : 'Failed to save model override');
 		} finally {
 			setSavingOverrideKey(null);

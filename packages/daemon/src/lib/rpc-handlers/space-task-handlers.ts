@@ -36,10 +36,14 @@ import type { SpaceGoalService } from '../space/goals/goal-service';
 
 const log = new Logger('space-task-handlers');
 
+function isPlainWorkflowModelOverrideMap(value: unknown): value is Record<string, string> {
+	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 async function validateWorkflowModelOverrides(
 	task: SpaceTask,
 	workflowManager: SpaceWorkflowManager,
-	overrides: Record<string, string> | null | undefined,
+	overrides: unknown,
 	workflowId: string | null | undefined = task.preferredWorkflowId
 ): Promise<Record<string, string> | null | undefined> {
 	if (overrides === undefined) return undefined;
@@ -47,8 +51,14 @@ async function validateWorkflowModelOverrides(
 		throw new Error('Workflow model overrides are locked after the task starts');
 	}
 	if (overrides === null) return null;
+	if (!isPlainWorkflowModelOverrideMap(overrides)) {
+		throw new Error('workflowModelOverrides must be a string map');
+	}
 	const clean: Record<string, string> = {};
 	for (const [key, value] of Object.entries(overrides)) {
+		if (typeof value !== 'string') {
+			throw new Error('workflowModelOverrides must be a string map');
+		}
 		const cleanKey = key.trim();
 		const cleanValue = value.trim();
 		if (cleanKey && cleanValue) clean[cleanKey] = cleanValue;
@@ -300,20 +310,20 @@ export function setupSpaceTaskHandlers(
 		const workflowSelectionChanged =
 			Object.hasOwn(updateParams, 'preferredWorkflowId') &&
 			updateParams.preferredWorkflowId !== currentTaskForOverrides.preferredWorkflowId;
-		const requestedWorkflowModelOverrides = workflowSelectionChanged
-			? (updateParams.workflowModelOverrides ?? null)
-			: updateParams.workflowModelOverrides;
+		const overrideMutationRequested = Object.hasOwn(updateParams, 'workflowModelOverrides');
 		const validatedWorkflowModelOverrides = await validateWorkflowModelOverrides(
 			taskForOverrideValidation,
 			workflowManager,
-			requestedWorkflowModelOverrides,
+			updateParams.workflowModelOverrides,
 			nextWorkflowId
 		);
 		if (validatedWorkflowModelOverrides !== undefined) {
 			updateParams.workflowModelOverrides = validatedWorkflowModelOverrides;
+		} else if (workflowSelectionChanged) {
+			updateParams.workflowModelOverrides = null;
 		}
 		const ensureWorkflowOverridesStillUnlocked = async (fields: Record<string, unknown>) => {
-			if (!Object.hasOwn(fields, 'workflowModelOverrides')) return;
+			if (!Object.hasOwn(fields, 'workflowModelOverrides') || !overrideMutationRequested) return;
 			const latestTask = await taskManager.getTask(taskId);
 			if (!latestTask) {
 				throw new Error(`Task not found: ${taskId}`);
