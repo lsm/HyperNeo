@@ -396,6 +396,15 @@ describe('SpaceAgentList', () => {
 		expect(mockListSchedules).toHaveBeenCalledTimes(2);
 	});
 
+	it('does not retry loading schedules after non-connection errors', async () => {
+		mockListSchedules.mockRejectedValueOnce(new Error('Request failed'));
+
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		await waitFor(() => expect(mockListSchedules).toHaveBeenCalledOnce());
+
+		expect(mockOnceConnected).not.toHaveBeenCalled();
+	});
+
 	it('uses SPA navigation for goals and Forge links', () => {
 		render(<SpaceAgentList {...DEFAULT_PROPS} />);
 

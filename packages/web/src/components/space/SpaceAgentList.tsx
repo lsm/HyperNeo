@@ -31,6 +31,10 @@ function isCoordinatorAgent(agent: SpaceAgent): boolean {
 	return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
 }
 
+function isConnectionUnavailableError(error: unknown): boolean {
+	return error instanceof Error && error.message === 'Not connected';
+}
+
 function AgentStat({ label, value }: { label: string; value: string | number }) {
 	return (
 		<span class="rounded border border-white/10 bg-white/[0.025] px-2 py-1 text-xs text-gray-400">
@@ -208,8 +212,8 @@ export function SpaceAgentList() {
 		let unsubscribe: (() => void) | null = null;
 		const loadSchedules = () => {
 			if (cancelled) return;
-			spaceStore.listSchedules().catch(() => {
-				if (cancelled) return;
+			spaceStore.listSchedules().catch((error) => {
+				if (cancelled || !isConnectionUnavailableError(error)) return;
 				unsubscribe?.();
 				unsubscribe = connectionManager.onceConnected(loadSchedules);
 			});
