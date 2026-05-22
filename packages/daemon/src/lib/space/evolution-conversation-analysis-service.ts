@@ -257,18 +257,16 @@ ${transcript}`;
 }
 
 export function parseConversationFrictionJson(raw: string): ConversationFrictionAnalysis {
-	let text = raw.trim();
-	if (text.startsWith('```')) {
-		text = text
-			.replace(/^```(?:json)?\s*/i, '')
-			.replace(/\s*```$/i, '')
-			.trim();
-	} else {
-		const start = text.indexOf('{');
-		const end = text.lastIndexOf('}');
-		if (start >= 0 && end > start) text = text.slice(start, end + 1);
-	}
+	const text = extractJsonText(raw.trim());
 	return normalizeAnalysis(JSON.parse(text));
+}
+
+function extractJsonText(raw: string): string {
+	const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim();
+	if (fenced) return fenced;
+	const start = raw.indexOf('{');
+	const end = raw.lastIndexOf('}');
+	return start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
 }
 
 async function analyzeConversationWithModel(

@@ -355,6 +355,26 @@ describe('EvolutionConversationAnalysisService', () => {
 		expect(analysis.patterns[0]?.kind).toBe('human_correction');
 	});
 
+	it('parses fenced analyzer JSON when trailing prose follows the closing fence', () => {
+		const analysis = parseConversationFrictionJson(`Here is the analysis:
+	some intro
+		skip
+
+		\`\`\`json
+		{
+			"patterns": [],
+			"humanInterventionCount": 0,
+			"syntheticInterventionCount": 0,
+			"agentUncertaintyCount": 0,
+			"overallAssessment": "No friction detected."
+		}
+		\`\`\`
+		Extra explanation after the JSON.`);
+
+		expect(analysis.patterns).toEqual([]);
+		expect(analysis.overallAssessment).toBe('No friction detected.');
+	});
+
 	it('returns no evidence when LLM returns empty patterns', async () => {
 		const { scope, task } = createScopedTask();
 		insertTextMessage(task.id, 'message-human-1', 'user', 'human', {
