@@ -17,7 +17,6 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
@@ -324,7 +323,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			taskRepo,
 			artifactRepo,
 			nodeExecutionRepo,
-			artifactRepo,
 			internalEventBus: bus,
 			taskAgentManager: new MockTaskAgentManager(nodeExecutionRepo) as unknown as TaskAgentManager,
 			...extraConfig,
