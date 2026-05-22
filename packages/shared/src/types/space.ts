@@ -29,6 +29,122 @@ export type SpaceStatus = 'active' | 'archived';
  * Levels have no prescribed names — workflow authors assign meaning per their domain.
  */
 export type SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5;
+export type SpaceAgentAutonomyLevel = SpaceAutonomyLevel;
+
+export type SpaceLongHorizonAgentStatus = 'active' | 'paused' | 'disabled' | 'archived';
+export type SpaceLongHorizonAgentRelationship = 'owner' | 'manager' | 'watcher';
+export type SpaceLongHorizonAgentReminderStatus = 'active' | 'paused' | 'fired' | 'cancelled';
+export type SpaceLongHorizonAgentReminderTriggerType = 'at' | 'cron';
+export type SpaceLongHorizonAgentEventSubscriptionStatus = 'active' | 'paused' | 'disabled';
+
+export interface SpaceLongHorizonAgent {
+	id: string;
+	spaceId: string;
+	handle: string;
+	displayName: string;
+	templateKey: string | null;
+	status: SpaceLongHorizonAgentStatus;
+	sessionId: string | null;
+	instructions: string;
+	autonomyLevel: SpaceAgentAutonomyLevel | null;
+	toolPermissions: Record<string, unknown>;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateSpaceLongHorizonAgentParams {
+	id?: string;
+	spaceId: string;
+	handle: string;
+	displayName?: string;
+	templateKey?: string | null;
+	status?: SpaceLongHorizonAgentStatus;
+	sessionId?: string | null;
+	instructions?: string;
+	autonomyLevel?: SpaceAgentAutonomyLevel | null;
+	toolPermissions?: Record<string, unknown>;
+}
+
+export interface UpdateSpaceLongHorizonAgentParams {
+	handle?: string;
+	displayName?: string;
+	templateKey?: string | null;
+	status?: SpaceLongHorizonAgentStatus;
+	sessionId?: string | null;
+	instructions?: string;
+	autonomyLevel?: SpaceAgentAutonomyLevel | null;
+	toolPermissions?: Record<string, unknown> | null;
+}
+
+export interface SpaceLongHorizonAgentGoal {
+	agentId: string;
+	goalId: string;
+	relationship: SpaceLongHorizonAgentRelationship;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SpaceLongHorizonAgentForgeScope {
+	agentId: string;
+	scopeId: string;
+	relationship: SpaceLongHorizonAgentRelationship;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SpaceLongHorizonAgentReminder {
+	id: string;
+	spaceId: string;
+	agentId: string;
+	title: string;
+	body: string;
+	status: SpaceLongHorizonAgentReminderStatus;
+	triggerType: SpaceLongHorizonAgentReminderTriggerType;
+	runAt: number | null;
+	cronExpression: string | null;
+	timezone: string;
+	nextRunAt: number | null;
+	lastFiredAt: number | null;
+	createdBySession: string | null;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateSpaceLongHorizonAgentReminderParams {
+	spaceId: string;
+	agentId: string;
+	title: string;
+	body?: string;
+	status?: SpaceLongHorizonAgentReminderStatus;
+	triggerType: SpaceLongHorizonAgentReminderTriggerType;
+	runAt?: number | null;
+	cronExpression?: string | null;
+	timezone?: string;
+	nextRunAt?: number | null;
+	lastFiredAt?: number | null;
+	createdBySession?: string | null;
+}
+
+export interface SpaceLongHorizonAgentEventSubscription {
+	id: string;
+	spaceId: string;
+	agentId: string;
+	source: string;
+	topic: string;
+	filter: Record<string, unknown>;
+	status: SpaceLongHorizonAgentEventSubscriptionStatus;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateSpaceLongHorizonAgentSubscriptionParams {
+	spaceId: string;
+	agentId: string;
+	source: string;
+	topic: string;
+	filter?: Record<string, unknown>;
+	status?: SpaceLongHorizonAgentEventSubscriptionStatus;
+}
 
 export const MIN_SPACE_CONCURRENT_TASKS = 1;
 export const MAX_SPACE_CONCURRENT_TASKS = 10;

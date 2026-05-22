@@ -22,6 +22,10 @@ export class SpaceTaskRepository {
 		private reactiveDb?: ReactiveDatabase
 	) {}
 
+	getDatabase(): BunDatabase {
+		return this.db;
+	}
+
 	private hasMessageSearchIndex(): boolean {
 		try {
 			const row = this.db

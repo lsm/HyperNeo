@@ -34,6 +34,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SessionManager } from '../session-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { seedPresetAgents } from '../space/agents/seed-agents';
+import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
@@ -143,6 +144,7 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.createSpace(params);
 		const seedWarnings: string[] = [];
+		new SpaceLongHorizonAgentRepository(taskRepo.getDatabase()).ensureCoordinator(space.id);
 
 		// Seed preset agents (Coder, General, Planner, Reviewer, etc.) for the new space.
 		// Errors are non-fatal — the space is still usable without preset agents.

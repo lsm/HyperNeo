@@ -7,6 +7,10 @@ import { NodeExecutionRepository } from '../../../src/storage/repositories/node-
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
+import {
+	coordinatorLongHorizonAgentId,
+	SpaceLongHorizonAgentRepository,
+} from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
@@ -70,6 +74,7 @@ describe('SpaceActorRegistryAdapter', () => {
 	let spaceRepo: SpaceRepository;
 	let sessionRepo: SessionRepository;
 	let spaceAgentRepo: SpaceAgentRepository;
+	let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
 	let workflowRepo: SpaceWorkflowRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let nodeExecutionRepo: NodeExecutionRepository;
@@ -83,6 +88,7 @@ describe('SpaceActorRegistryAdapter', () => {
 		spaceRepo = new SpaceRepository(db);
 		sessionRepo = new SessionRepository(db);
 		spaceAgentRepo = new SpaceAgentRepository(db);
+		longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 		workflowRepo = new SpaceWorkflowRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -91,6 +97,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			spaceRepo,
 			sessionRepo,
 			spaceAgentRepo,
+			longHorizonAgentRepo,
 			workflowRepo,
 			workflowRunRepo,
 			nodeExecutionRepo,
@@ -108,6 +115,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			slug: 'project',
 			name: 'Project',
 		});
+		longHorizonAgentRepo.ensureCoordinator(space.id);
 		const member = makeSession('member-1', { context: { spaceId: space.id } });
 		const legacyMember = makeSession('legacy-member');
 		const coordinator = makeSession(`space:chat:${space.id}`, {
@@ -293,7 +301,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
-			actorId: `agent:coordinator:${space.id}`,
+			actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
 			kind: 'agent',
 			spaceId: space.id,
 			handle: '@coordinator',
@@ -412,14 +420,46 @@ describe('SpaceActorRegistryAdapter', () => {
 		}
 	});
 
-	it('returns inactive coordinator when no space chat session exists', () => {
+	it('returns row-backed inactive coordinator when no space chat session exists', () => {
 		const space = spaceRepo.createSpace({
 			workspacePath: '/workspace/project',
 			slug: 'project',
 			name: 'Project',
 		});
+		longHorizonAgentRepo.ensureCoordinator(space.id);
 
-		expect(registry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
+		expect(
+			registry.getActor(
+				space.id,
+				`agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`
+			)
+		).toEqual({
+			actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
+			kind: 'agent',
+			spaceId: space.id,
+			handle: '@coordinator',
+			roles: ['coordinator', 'space-agent'],
+			status: 'inactive',
+		});
+	});
+
+	it('preserves synthetic coordinator actor when no long-horizon repository is configured', () => {
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/project',
+			slug: 'project',
+			name: 'Project',
+		});
+		const fallbackRegistry = new SpaceActorRegistryAdapter({
+			spaceRepo,
+			sessionRepo,
+			spaceAgentRepo,
+			workflowRepo,
+			workflowRunRepo,
+			nodeExecutionRepo,
+			pendingMessageRepo,
+		});
+
+		expect(fallbackRegistry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
 			actorId: `agent:coordinator:${space.id}`,
 			kind: 'agent',
 			spaceId: space.id,

@@ -1,9 +1,17 @@
 import type { ActorRef, ActorStatus } from '../../../../messaging/src/types';
-import type { NodeExecution, Session, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type {
+	NodeExecution,
+	Session,
+	Space,
+	SpaceAgent,
+	SpaceLongHorizonAgent,
+	SpaceWorkflow,
+} from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import type { SessionRepository } from '../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -19,6 +27,7 @@ export interface SpaceActorRegistryRepositories {
 	spaceRepo: SpaceRepository;
 	sessionRepo: SessionRepository;
 	spaceAgentRepo: SpaceAgentRepository;
+	longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
 	workflowRepo: SpaceWorkflowRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
@@ -41,7 +50,14 @@ export class SpaceActorRegistryAdapter {
 			if (sessionActor) this.add(actors, sessionActor);
 		}
 
-		this.add(actors, coordinatorActor(space, this.findCoordinatorSession(spaceId)));
+		this.add(
+			actors,
+			coordinatorActor(
+				space,
+				this.repos.longHorizonAgentRepo?.getCoordinator(spaceId) ?? null,
+				this.findCoordinatorSession(spaceId)
+			)
+		);
 
 		for (const actor of this.agentActors(spaceId)) {
 			this.add(actors, actor);
@@ -155,9 +171,13 @@ function humanActorForSession(session: Session, space: Space): ActorRef {
 	};
 }
 
-function coordinatorActor(space: Space, session: Session | null): ActorRef {
+function coordinatorActor(
+	space: Space,
+	agent: SpaceLongHorizonAgent | null,
+	session: Session | null
+): ActorRef {
 	return {
-		actorId: `agent:coordinator:${space.id}`,
+		actorId: agent ? `agent:${encodeActorIdComponent(agent.id)}` : `agent:coordinator:${space.id}`,
 		kind: 'agent',
 		spaceId: space.id,
 		handle: '@coordinator',
