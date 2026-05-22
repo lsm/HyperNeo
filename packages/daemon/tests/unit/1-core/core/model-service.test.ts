@@ -486,14 +486,12 @@ describe('Model Service', () => {
 			expect(cache.get('global')).toEqual(mockModels);
 		});
 
-		it('should preserve both provider entries for shared model IDs after merge', async () => {
-			// Exercises the production mergeWithFallbackModels code path.
-			// Before the P0 fix, mergeWithFallbackModels keyed by model.id alone, so
-			// the second provider's entry silently overwrote the first (last-writer-wins).
-			//
-			// Use IDs that don't conflict with built-in providers so initializeProviders()
-			// can register them without collision after the registry is reset.
+		it('should preserve both provider entries for shared model IDs after refresh', async () => {
+			// Exercises the production mergeWithFallbackModels code path without calling
+			// initializeModels(), which registers built-in providers and can wait on slow
+			// external availability checks in unit-test environments.
 			const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+			const { refreshModels } = await import('../../../../src/lib/model-service');
 			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
 
 			const registry = getProviderRegistry();
@@ -527,7 +525,7 @@ describe('Model Service', () => {
 				isAvailable: async () => true,
 			} as ProviderLike);
 
-			await initializeModels();
+			await refreshModels();
 
 			// Both entries must survive the merge — one per (provider, id) pair
 			const entryA = await getModelInfo(sharedId, 'global', 'test-provider-a');
