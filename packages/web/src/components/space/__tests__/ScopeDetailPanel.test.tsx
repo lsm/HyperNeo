@@ -503,6 +503,8 @@ describe('ScopeDetailPanel', () => {
 		expect(screen.getByText('Improve review UI')).toBeTruthy();
 
 		fireEvent.click(screen.getByLabelText(/Reviewer found regression before merge/));
+		expect(await screen.findByText('Evidence preflight: low confidence')).toBeTruthy();
+		fireEvent.click(screen.getByLabelText('Generate low-confidence episode anyway'));
 		fireEvent.click(screen.getByRole('button', { name: 'Create episode' }));
 
 		await waitFor(() =>
@@ -510,7 +512,7 @@ describe('ScopeDetailPanel', () => {
 		);
 		expect(mockRequest).toHaveBeenCalledWith(
 			'evolution.episode.createFromEvidence',
-			{ scopeId: 'scope-1', evidenceIds: ['evidence-1'] },
+			{ scopeId: 'scope-1', evidenceIds: ['evidence-1'], confirmLowConfidence: true },
 			{ timeout: 120000 }
 		);
 	});

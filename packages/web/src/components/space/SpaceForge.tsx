@@ -1557,7 +1557,7 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
 	);
 }
 
-function ScopeDetail({
+export function ScopeDetail({
 	scope,
 	goals,
 	onScopeUpdated,
