@@ -259,6 +259,51 @@ export function setupSpaceTaskHandlers(
 			}
 		};
 
+		const updateTaskWithRuntimeDependencyBlock = async (
+			currentTask: SpaceTask
+		): Promise<{ task: SpaceTask; handledByRuntime: boolean }> => {
+			let dependencyCheckResult: SpaceTask | null = null;
+			let runtimeForDependencyBlock: SpaceRuntimeService | null = null;
+			let dependencyAddedToActiveWorkflow = false;
+			if (
+				spaceRuntimeService &&
+				updateParams.dependsOn !== undefined &&
+				currentTask.status === 'in_progress' &&
+				currentTask.workflowRunId &&
+				!arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn)
+			) {
+				dependencyCheckResult = await taskManager.updateTask(taskId, updateParams, {
+					onCascadedTasks: emitCascadedTasks,
+				});
+				dependencyAddedToActiveWorkflow =
+					dependencyCheckResult.status === 'blocked' &&
+					dependencyCheckResult.blockReason === 'dependency_added';
+				runtimeForDependencyBlock = spaceRuntimeService;
+			}
+
+			if (dependencyAddedToActiveWorkflow && runtimeForDependencyBlock) {
+				return {
+					task: await runtimeForDependencyBlock.stopWorkflowBackedTask(spaceId, taskId, {
+						...updateParams,
+						status: 'blocked',
+						blockReason: 'dependency_added',
+						result: 'Dependency added while task was in progress',
+						completedAt: null,
+					}),
+					handledByRuntime: true,
+				};
+			}
+
+			return {
+				task:
+					dependencyCheckResult ??
+					(await taskManager.updateTask(taskId, updateParams, {
+						onCascadedTasks: emitCascadedTasks,
+					})),
+				handledByRuntime: false,
+			};
+		};
+
 		// Route to setTaskStatus only when the status is actually changing.
 		// Sending the current status as part of a broader metadata update must not
 		// trigger a transition check (same→same is not in the transition table and
@@ -397,9 +442,12 @@ export function setupSpaceTaskHandlers(
 				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
 				// strips it internally (guard: params.status !== task.status is false) so no
 				// transition check fires and the status column is left untouched in the DB.
-				task = await taskManager.updateTask(taskId, updateParams, {
-					onCascadedTasks: emitCascadedTasks,
-				});
+				const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
+				task = dependencyUpdate.task;
+				if (dependencyUpdate.handledByRuntime) {
+					emitTaskUpdated = false;
+					handleGoalTerminal = false;
+				}
 			}
 		} else {
 			// No status field — general field update
@@ -407,41 +455,11 @@ export function setupSpaceTaskHandlers(
 			if (!currentTask) {
 				throw new Error(`Task not found: ${taskId}`);
 			}
-			let dependencyCheckResult: SpaceTask | null = null;
-			let runtimeForDependencyBlock: SpaceRuntimeService | null = null;
-			let dependencyAddedToActiveWorkflow = false;
-			if (
-				spaceRuntimeService &&
-				updateParams.dependsOn !== undefined &&
-				currentTask.status === 'in_progress' &&
-				currentTask.workflowRunId &&
-				!arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn)
-			) {
-				dependencyCheckResult = await taskManager.updateTask(taskId, updateParams, {
-					onCascadedTasks: emitCascadedTasks,
-				});
-				dependencyAddedToActiveWorkflow =
-					dependencyCheckResult.status === 'blocked' &&
-					dependencyCheckResult.blockReason === 'dependency_added';
-				runtimeForDependencyBlock = spaceRuntimeService;
-			}
-
-			if (dependencyAddedToActiveWorkflow && runtimeForDependencyBlock) {
-				task = await runtimeForDependencyBlock.stopWorkflowBackedTask(spaceId, taskId, {
-					...updateParams,
-					status: 'blocked',
-					blockReason: 'dependency_added',
-					result: 'Dependency added while task was in progress',
-					completedAt: null,
-				});
+			const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
+			task = dependencyUpdate.task;
+			if (dependencyUpdate.handledByRuntime) {
 				emitTaskUpdated = false;
 				handleGoalTerminal = false;
-			} else if (dependencyCheckResult) {
-				task = dependencyCheckResult;
-			} else {
-				task = await taskManager.updateTask(taskId, updateParams, {
-					onCascadedTasks: emitCascadedTasks,
-				});
 			}
 		}
 
