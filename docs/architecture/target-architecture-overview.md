@@ -541,13 +541,87 @@ After that, the next slices should be:
 
 ## 11. Architectural Exit Criteria
 
-The cleanup is working when these are true:
+The architecture cleanup is complete when the following gates pass. These are intentionally stricter than design principles: each gate should be checkable by code review, targeted tests, or simple repo searches.
 
-- New cross-boundary behavior is registered as a fabric command, query, or event.
-- New durable writes use `StorageUnitOfWork`.
-- Durable events are appended through outbox before publication.
-- Client components depend on focused stores and read models, not broad RPC helpers.
-- Space runtime transitions have one owner and are recoverable from durable state.
-- Forge has its own contracts, domain types, read models, and events.
-- `@neokai/shared` root imports are shrinking, not growing.
-- `MessageHub`, `InternalEventBus`, and direct RPC handlers are compatibility paths rather than the place new architecture is invented.
+### 11.1 Fabric Boundary Gate
+
+- New cross-boundary daemon behavior is registered as a fabric command, query, or event contract.
+- Migrated contracts declare name, kind, subject/addressing, payload schema, result schema when applicable, auth policy, and durability/replay policy.
+- The first core vertical slices are fabric-backed: `space.task.create`, `space.task.update`, task archive/cancel, schedule fire, Forge proposal task creation, Forge rollup application, and runtime run/task/node transition events.
+- `MessageHub` request/event handlers for migrated slices are compatibility adapters only; they delegate into fabric or fabric-backed services.
+- `InternalEventBus`, `InternalCommandBus`, and `InternalQueryBus` are not expanded as new architectural centers. New migrated events flow through MessageFabric/outbox first, with legacy bridges where needed.
+- Transport adapters do not invent command/query/event semantics absent from the fabric envelope.
+
+### 11.2 Durability And UoW Gate
+
+- `message_outbox`, `message_inbox`, `command_receipts`, and `read_model_cursors` exist with repositories and targeted tests.
+- Migrated durable commands enter through `StorageUnitOfWorkRunner`.
+- Domain writes, accepted operation/job state, command receipts, read-model invalidation records, and durable outbox messages commit in one SQLite transaction.
+- Rollback tests prove no domain row, command receipt, reactive invalidation, or outbox row survives a failed UoW.
+- Idempotency tests prove duplicate commands with the same key/hash return the original completed result or accepted operation, and conflicting duplicate keys are rejected.
+- New repository code does not publish events. Services/domain coordinators decide events and append them through the UoW outbox writer.
+- New direct `db.transaction(...)` calls are limited to storage infrastructure, migrations, or explicitly marked legacy paths with a migration issue.
+
+### 11.3 Space Runtime Ownership Gate
+
+- `SpaceRuntimeFacade` is the boundary for workflow orchestration from outside the Space runtime module.
+- Runtime decisions have single owners:
+  - run progression: `WorkflowRunCoordinator`
+  - node spawn/recovery: `NodeExecutionSupervisor`
+  - gate evaluation/open state: `GateOrchestrator`
+  - channel routing: `ChannelDeliveryService`
+  - completion/post-approval: `CompletionCoordinator`
+- Runtime state transitions for workflow runs, canonical tasks, node executions, gates, pending messages, and completion artifacts use UoW-backed writes where migrated.
+- Durable runtime events are emitted through outbox before client/projector/agent notification delivery.
+- Active in-memory runtime state is either reconstructable from DB/outbox state or explicitly documented as ephemeral.
+- Restart/recovery tests prove active and blocked workflow runs can be rehydrated without relying on stale in-memory maps.
+
+### 11.4 Agent Runtime And Provider Gate
+
+- Source/type audits exist for every implemented agent runtime adapter and provider bridge direction, including Claude Agent SDK, current bridge paths, and any newly selectable runtime.
+- The checked-in SDK Capability Matrix states what each runtime/provider/bridge supports, degrades, emulates, or does not support.
+- Shared `AgentRuntime*` data types are a documented superset of audited SDK/protocol capabilities, with extension/raw-native preservation points for runtime-specific features.
+- New domain code that starts, resumes, sends to, interrupts, or inspects agent execution depends on `AgentRuntimeGateway`, not directly on `AgentSession` or Claude Agent SDK APIs.
+- The current Claude Agent SDK path is wrapped by `ClaudeAgentRuntimeAdapter`.
+- Runtime profiles can represent today's session config: runtime id, provider id, model id, bridge mode, credentials reference, sandbox/tool policy, and behavior profile reference.
+- `CapabilityResolver` can report `native`, `bridged`, `degraded`, or `unsupported` for current provider pairs, including Claude Agent SDK with Anthropic, OpenAI/Codex bridge, OpenRouter, Ollama, and custom endpoints.
+- Providers, models, and bridges declare capabilities that affect runtime behavior: streaming, tool use, tool choice, vision, structured output, reasoning/thinking, context window, prompt caching, resumability, and sandbox/tool limitations.
+- Adapters preserve SDK-specific lifecycle, stream, tool, approval, sandbox, reasoning, trace, and persistence features where available instead of flattening everything to the common denominator.
+- New imports from `@anthropic-ai/claude-agent-sdk` are isolated to the Claude runtime adapter and explicit compatibility internals.
+- At least one non-Claude runtime adapter can be added without changing Space runtime orchestration or client store contracts.
+
+### 11.5 Client Read Model Gate
+
+- Space UI state is split into focused stores for route, space list, selected space, tasks, runtime, configure, goals, schedules, sessions, and Forge.
+- Migrated components do not call raw `hub.request` or subscribe directly to raw `liveQuery.*` events for Space domain state.
+- Stores own command wrappers, query subscriptions, event reducers, stale-response guards, and optimistic rollback behavior for their read-model family.
+- Durable state in the UI comes from subscribed queries/read models and fabric events, not from assuming command responses are final truth.
+- Forge UI state is owned by `ForgeStore`; component-local Forge state is limited to transient forms, tabs, filters, and dialogs.
+- Store tests cover reducer behavior, subscription lifecycle, stale-response handling, and event projection for migrated stores.
+
+### 11.6 Shared Package Boundary Gate
+
+- New cross-boundary request/response/event types live under `@neokai/shared/contracts/*`.
+- New durable entity types live under `@neokai/shared/domain/*`.
+- New UI/query projection types live under `@neokai/shared/read-models/*`.
+- Provider, agent-runtime, messaging protocol, SDK declarations, utilities, and compatibility exports are reachable through explicit subpaths.
+- Root `@neokai/shared` imports are compatibility-only and are not added in migrated code.
+- Forge has the same domain/contract/read-model split as Space.
+- MessageHub runtime classes are under compatibility exports, not the public messaging API used by new code.
+- Boundary enforcement exists as either lint, dependency checks, or a documented import allowlist with CI coverage.
+
+### 11.7 Observability And Recovery Gate
+
+- Fabric envelopes include actor, correlation id, causation id, source, timestamps, subject, and traceable delivery metadata for migrated contracts.
+- Outbox, inbox, command receipt, job, and runtime profile state can be inspected through targeted queries or admin/debug surfaces.
+- Dispatcher retry, duplicate delivery, and crash-after-publish scenarios are covered by targeted tests for at-least-once delivery.
+- Materialized read-model projectors have cursors and idempotent replay behavior when introduced.
+- LiveQuery remains ephemeral and snapshot-backed; missing deltas can be recovered by resubscription.
+
+### 11.8 Legacy Exit Gate
+
+- A compatibility surface is allowed only when it has a named target replacement and no new feature depends on its internals.
+- Migrated slices have no direct RPC -> service -> repository shortcut that bypasses fabric/UoW for durable cross-boundary behavior.
+- `setupRPCHandlers` no longer grows as the service container for new architecture slices.
+- Architectural cleanup is not considered complete until the first vertical slice proves the full path:
+  `fabric command -> auth/policy -> UoW -> DB/job/receipt/outbox -> dispatcher -> event/projector -> client store`.

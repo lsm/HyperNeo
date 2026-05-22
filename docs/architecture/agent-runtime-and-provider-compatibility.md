@@ -24,6 +24,8 @@ The target is:
 
 The current codebase already proves part of this direction. NeoKai runs the Claude Agent SDK with providers that are not Anthropic by projecting those providers behind Anthropic-compatible endpoints and process environment routing. That is the correct architectural pattern. This spec generalizes it so future runtimes such as OpenAI Agents SDK, Codex SDK/server, Pi coding agent, or other local/remote agent engines can participate without forcing the rest of the daemon to know their native APIs.
 
+This document is high-level architectural guidance. The TypeScript shapes below describe target boundaries and concepts, not final implementation-ready SDK contracts. Before implementing the real gateway, adapters, compatibility resolver, or shared agent-runtime data types, NeoKai must audit the source code or type files for each target SDK/runtime and provider protocol. The implementation types should be derived from that audit, not from guesses or a lowest-common-denominator abstraction.
+
 ---
 
 ## 2. Terminology
@@ -784,7 +786,71 @@ Rules:
 
 ---
 
-## 15. Migration Plan
+## 15. Pre-Implementation SDK Audit
+
+The agent runtime abstraction must be designed from actual SDK surfaces. Before adapter implementation starts beyond a boundary skeleton, the team should inspect each supported runtime's source code, public type files, and protocol documentation, then produce a concrete compatibility matrix and superset type model.
+
+Initial runtime audit targets:
+
+- Claude Agent SDK, including the installed package types and the current local SDK declarations.
+- OpenAI Agents SDK, including source/types for sessions, tools, handoffs, streaming, tracing, and model configuration.
+- Codex SDK/server, including its session protocol, tool protocol, auth model, filesystem/process model, and event stream.
+- Pi coding agent or any other target coding-agent runtime before it becomes selectable.
+- NeoKai's existing bridge/provider code, including Anthropic-compatible, OpenAI Responses, OpenAI Chat, Ollama, custom endpoint, Codex, and Copilot bridge paths.
+
+For each runtime, the audit should record support and limitations for:
+
+- session lifecycle: start, resume, fork, checkpoint, restore, stop, and cancellation
+- input/output message shape, content blocks, attachments, files, images, and structured outputs
+- streaming event taxonomy, final message reconstruction, ordering guarantees, and backpressure behavior
+- tool definitions, MCP support, tool call ids, tool result ids, approvals, permission hooks, and parallel tool calls
+- subagents, handoffs, task delegation, planning constructs, and multi-agent orchestration
+- sandboxing, process isolation, filesystem access, terminal access, and network controls
+- reasoning/thinking support, hidden blocks, summaries, signatures, redaction rules, and provider-specific constraints
+- model selection, dynamic model switching, context-window configuration, caching, and continuation semantics
+- usage, cost, rate-limit, retry, error, trace, and diagnostic metadata
+- auth and credential routing, including environment-variable, token, OAuth, local account, and remote service modes
+- persistence semantics: what can be stored, replayed, resumed, or only observed live
+
+For each provider protocol or bridge direction, the audit should record:
+
+- native request/response message schema
+- tool-call and tool-result fidelity
+- streaming fidelity and recoverability
+- reasoning/thinking mapping
+- structured output support
+- multimodal and file support
+- prompt caching and context reuse
+- usage/error/rate-limit mapping
+- protocol-specific features that should be preserved through extension fields
+
+The audit deliverables are:
+
+1. **SDK Capability Matrix:** a checked-in table or generated artifact that states what every supported runtime/provider/bridge can and cannot do.
+2. **NeoKai Superset Agent Runtime Types:** shared discriminated-union data types that can represent the full audited feature set without erasing runtime-specific features.
+3. **Adapter Mapping Notes:** for each runtime adapter and provider bridge, a mapping from native SDK/protocol types to the NeoKai superset types and back.
+4. **Unsupported/Degraded Feature Rules:** explicit resolver rules for features that are native, bridged, emulated, degraded, or unsupported.
+
+Superset type design rules:
+
+- The shared types should be additive and capability-driven, not the intersection of all SDKs.
+- Runtime-specific features should be preserved through typed extension blocks or raw native references where they matter for full-fidelity use.
+- Domain code should use normalized fields for common behavior, but adapters must retain enough native detail to use each SDK fully.
+- Unsupported features should be represented as capability results, not silently dropped from requests.
+- Capability data must cite audited source/type surfaces or local bridge behavior, especially for non-obvious features such as resume, handoffs, thinking blocks, sandbox policy, and tool approvals.
+
+The architecture can still start with Claude Agent SDK as the first runtime, but the shared type model should be validated against at least one additional runtime surface before it is treated as stable.
+
+---
+
+## 16. Migration Plan
+
+### Phase -1: Runtime And Provider Capability Audit
+
+- Audit source/type files for Claude Agent SDK, OpenAI Agents SDK, Codex SDK/server, Pi coding agent, and existing provider bridge paths before finalizing shared runtime types.
+- Produce the SDK Capability Matrix, NeoKai Superset Agent Runtime Types, adapter mapping notes, and unsupported/degraded feature rules.
+- Use the audited matrix to decide which fields belong in common normalized types, which fields belong in typed runtime extensions, and which fields are raw diagnostic/native references.
+- Treat this phase as a blocker for stable adapter contracts. Boundary skeletons are fine, but production adapters should not lock the abstraction before the audit.
 
 ### Phase 0: Naming And Boundary
 
@@ -846,21 +912,25 @@ Rules:
 
 ---
 
-## 16. First Implementation Slice
+## 17. First Implementation Slice
 
 Do not start by adding a second runtime. Start by creating the boundary around the existing one.
 
 First slice:
 
-1. Add shared `agent-runtime` types.
-2. Add `AgentRuntimeAdapter` and `AgentRuntimeGateway` interfaces in daemon.
-3. Implement `ClaudeAgentRuntimeAdapter` as a wrapper around current `AgentSession`.
-4. Add `CapabilityResolver` for current Claude runtime plus existing providers.
-5. Add a read/query path for compatibility status.
-6. Keep existing session RPCs and MessageHub behavior unchanged.
+1. Audit Claude Agent SDK source/types, existing local SDK declarations, and existing provider bridge paths.
+2. Audit at least one additional target runtime surface enough to validate that the shared model is a real superset.
+3. Add shared `agent-runtime` types based on the audited superset, including extension/raw-native preservation points.
+4. Add `AgentRuntimeAdapter` and `AgentRuntimeGateway` interfaces in daemon.
+5. Implement `ClaudeAgentRuntimeAdapter` as a wrapper around current `AgentSession`.
+6. Add `CapabilityResolver` for current Claude runtime plus existing providers and bridges.
+7. Add a read/query path for compatibility status.
+8. Keep existing session RPCs and MessageHub behavior unchanged.
 
 Success criteria:
 
+- SDK Capability Matrix exists for Claude Agent SDK, current provider bridges, and at least one additional target runtime.
+- shared runtime data types can represent audited runtime-specific capabilities without flattening them away
 - current Claude Agent SDK sessions still work
 - current provider bridges still work
 - a runtime profile can represent today's session config
@@ -869,11 +939,10 @@ Success criteria:
 
 ---
 
-## 17. Open Questions
+## 18. Open Questions
 
 1. Should runtime profiles be user-global first, or Space-scoped from day one?
 2. Should normalized runtime messages be stored beside SDK messages immediately, or projected lazily for read models?
 3. Which second runtime should validate the abstraction first: Codex SDK/server, OpenAI Agents SDK, or Pi coding agent?
 4. Should bridges be registered by providers, runtimes, or a separate bridge registry?
 5. How should runtime-specific behavior gaps be represented in workflow definitions so authors know whether a behavior is portable?
-
