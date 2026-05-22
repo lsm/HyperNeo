@@ -2122,6 +2122,7 @@ export class SpaceRuntime {
 			this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
 		}
 		const cleared = this.config.taskRepo.updateTask(task.id, {
+			workflowRunId: task.workflowRunId,
 			taskAgentSessionId: null,
 		});
 		if (cleared) {
@@ -2163,6 +2164,7 @@ export class SpaceRuntime {
 						spaceId,
 						{
 							...updated,
+							workflowRunId: previous?.workflowRunId ?? updated.workflowRunId,
 							taskAgentSessionId: previous?.taskAgentSessionId ?? updated.taskAgentSessionId,
 						},
 						reason

@@ -576,14 +576,19 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);
 		});
 
-		test('cancels original task session when block payload overwrites taskAgentSessionId', async () => {
+		test('uses original runtime pointers when block payload overwrites them', async () => {
 			const tam = new MockTaskAgentManager();
 			const rt = makeRuntime({ taskAgentManager: tam as never });
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
-				{ id: 'step-session-overwrite', name: 'Only Step', agentId: AGENT },
+				{ id: 'step-pointer-overwrite', name: 'Only Step', agentId: AGENT },
 			]);
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-1',
+			});
 			taskRepo.updateTask(task.id, { taskAgentSessionId: 'original-task-session' });
 
 			const blocked = await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
@@ -593,14 +598,22 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 				result: 'Dependency added while task was in progress',
 				completedAt: null,
 				taskAgentSessionId: 'payload-task-session',
+				workflowRunId: null,
 			});
 
 			expect(blocked?.status).toBe('blocked');
+			expect(blocked?.workflowRunId).toBe(run.id);
 			expect(blocked?.taskAgentSessionId).toBeUndefined();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(tam.cancelledSessions).toContain('node-session-1');
 			expect(tam.cancelledSessions).toContain('original-task-session');
 			expect(tam.cancelledSessions).not.toContain('payload-task-session');
-			expect(taskRepo.getTask(task.id)?.taskAgentSessionId).toBeUndefined();
+			const clearedTask = taskRepo.getTask(task.id)!;
+			expect(clearedTask.workflowRunId).toBe(run.id);
+			expect(clearedTask.taskAgentSessionId).toBeUndefined();
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
 		});
 
 		test('preserves completed executions and emits only post-cleanup task update', async () => {

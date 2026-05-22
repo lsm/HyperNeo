@@ -858,6 +858,54 @@ describe('space-task-handlers', () => {
 			expect((result as SpaceTask).status).toBe('blocked');
 		});
 
+		it('does not pre-check overwrite runtime pointers before dependency block cleanup', async () => {
+			const activeTask = {
+				...mockTask,
+				status: 'in_progress' as const,
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'task-session-1',
+				dependsOn: ['dep-done'],
+			};
+			const runtime = {
+				stopWorkflowBackedTask: mock(async () => ({
+					...activeTask,
+					dependsOn: ['dep-open'],
+					status: 'blocked' as const,
+					blockReason: 'dependency_added' as const,
+				})),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, activeTask, runtime);
+			(taskManager.updateTask as ReturnType<typeof mock>).mockResolvedValue({
+				...activeTask,
+				dependsOn: ['dep-open'],
+				status: 'blocked' as const,
+				blockReason: 'dependency_added' as const,
+			});
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				dependsOn: ['dep-open'],
+				taskAgentSessionId: null,
+				workflowRunId: null,
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith(
+				'task-1',
+				{ dependsOn: ['dep-open'] },
+				expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+			);
+			expect(runtime.stopWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', {
+				dependsOn: ['dep-open'],
+				taskAgentSessionId: null,
+				workflowRunId: null,
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+			});
+		});
+
 		it('does not double-run goal terminal handling after runtime dependency block', async () => {
 			const activeTask = {
 				...mockTask,

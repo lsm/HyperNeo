@@ -272,7 +272,12 @@ export function setupSpaceTaskHandlers(
 				currentTask.workflowRunId &&
 				!arraysEqual(currentTask.dependsOn ?? [], updateParams.dependsOn)
 			) {
-				dependencyCheckResult = await taskManager.updateTask(taskId, updateParams, {
+				const {
+					taskAgentSessionId: _taskAgentSessionId,
+					workflowRunId: _workflowRunId,
+					...safeParams
+				} = updateParams;
+				dependencyCheckResult = await taskManager.updateTask(taskId, safeParams, {
 					onCascadedTasks: emitCascadedTasks,
 				});
 				dependencyAddedToActiveWorkflow =
