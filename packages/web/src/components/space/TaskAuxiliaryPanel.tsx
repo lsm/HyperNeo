@@ -70,8 +70,11 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
 
-// Right-panel tabs — Artifacts, Timeline, Log only (matches dev branch)
 const TASK_PANEL_TABS: Array<{ id: TaskRightPanelTab; label: string; needsRun?: boolean }> = [
+	{ id: 'details', label: 'Details' },
+	{ id: 'workflow', label: 'Workflow' },
+	{ id: 'agents', label: 'Agents' },
+	{ id: 'gates', label: 'Gates' },
 	{ id: 'artifacts', label: 'Artifacts', needsRun: true },
 	{ id: 'timeline', label: 'Timeline' },
 	{ id: 'log', label: 'Log', needsRun: true },
@@ -248,7 +251,7 @@ function availableTabs(task: SpaceTask): TaskRightPanelTab[] {
 function normalizeTab(task: SpaceTask, tab: TaskRightPanelTab | undefined): TaskRightPanelTab {
 	const tabs = availableTabs(task);
 	if (tab && tabs.includes(tab)) return tab;
-	return tabs.includes('artifacts') ? 'artifacts' : 'timeline';
+	return 'details';
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -266,6 +269,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 		? (spaceStore.workflowRuns.value.find((run) => run.id === task.workflowRunId) ?? null)
 		: null;
 	const workflowId = workflowRun?.workflowId ?? task?.preferredWorkflowId ?? null;
+	const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
 	const [workflow, setWorkflow] = useState<SpaceWorkflow | null>(null);
 	const [scopeName, setScopeName] = useState<string | null>(null);
 	const [savingOverrideKey, setSavingOverrideKey] = useState<string | null>(null);
@@ -297,13 +301,14 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 			return;
 		}
 		let cancelled = false;
+		setWorkflow(null);
 		spaceStore.fetchWorkflowDetail(workflowId).then((nextWorkflow) => {
 			if (!cancelled) setWorkflow(nextWorkflow);
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [workflowId]);
+	}, [workflowId, workflowVersion]);
 
 	useEffect(() => {
 		pendingOverridesRef.current = task?.workflowModelOverrides ?? null;
@@ -384,11 +389,13 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 			setStatusTransitioning(true);
 			if (task.status === 'draft' && newStatus === 'open') {
 				await spaceStore.publishTask(task.id);
+			} else if (newStatus === 'review') {
+				await spaceStore.submitForReview(task.id);
 			} else {
 				await spaceStore.updateTask(task.id, { status: newStatus });
 			}
-		} catch {
-			// best-effort
+		} catch (err) {
+			setOverrideError(err instanceof Error ? err.message : 'Failed to update task status');
 		} finally {
 			setStatusTransitioning(false);
 		}
@@ -441,6 +448,161 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 		disabled: statusTransitioning,
 		danger: target === 'cancelled' || target === 'archived',
 	}));
+
+	const descriptionSection = (
+		<PanelSection title="Description">
+			<textarea
+				value={descriptionDraft}
+				onInput={(e) => setDescriptionDraft((e.target as HTMLTextAreaElement).value)}
+				onBlur={handleDescriptionBlur}
+				disabled={savingDescription}
+				rows={4}
+				placeholder="Add a description…"
+				class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+			/>
+			{savingDescription && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
+		</PanelSection>
+	);
+	const detailsSection = (
+		<PanelSection title="Details">
+			<DetailRow label="Status">{STATUS_LABELS[task.status]}</DetailRow>
+			<DetailRow label="Priority">{PRIORITY_LABELS[task.priority]}</DetailRow>
+			<DetailRow label="Created">{formatTime(task.createdAt)}</DetailRow>
+			{goal && (
+				<DetailRow label="Goal">
+					<button
+						type="button"
+						onClick={() => {
+							currentSpaceGoalIdSignal.value = goal.id;
+							navigateToSpaceGoals(spaceId);
+						}}
+						class="truncate text-blue-300 hover:text-blue-200"
+					>
+						{goal.title}
+					</button>
+				</DetailRow>
+			)}
+			{task.evolutionScopeId && (
+				<DetailRow label="Forge scope">
+					<button
+						type="button"
+						onClick={() => {
+							currentSpaceScopeIdSignal.value = task.evolutionScopeId!;
+							navigateToSpaceForge(spaceId);
+						}}
+						class="truncate text-blue-300 hover:text-blue-200"
+					>
+						{scopeName ?? task.evolutionScopeId}
+					</button>
+				</DetailRow>
+			)}
+			{schedule && <DetailRow label="Schedule">{formatSchedule(schedule)}</DetailRow>}
+		</PanelSection>
+	);
+	const dependsOnSection = task.dependsOn.length > 0 && (
+		<PanelSection title="Depends on">
+			{task.dependsOn.map((depId) => {
+				const dep = spaceStore.tasks.value.find((t) => t.id === depId);
+				return (
+					<div key={depId} class="flex items-center gap-2 text-sm">
+						<span class="flex-shrink-0 font-mono text-[11px] text-gray-500">
+							#{dep?.taskNumber ?? '—'}
+						</span>
+						<span class="min-w-0 truncate text-gray-300">{dep?.title ?? depId}</span>
+						<TaskPanelBadge
+							class={
+								dep
+									? STATUS_BADGE_CLASSES[dep.status]
+									: 'border-gray-500/25 bg-gray-500/10 text-gray-500'
+							}
+						>
+							{dep ? STATUS_LABELS[dep.status] : '—'}
+						</TaskPanelBadge>
+					</div>
+				);
+			})}
+		</PanelSection>
+	);
+	const workflowSection = (
+		<PanelSection title="Workflow">
+			<select
+				value={task.preferredWorkflowId ?? ''}
+				disabled={savingWorkflow}
+				onChange={(e) => handleWorkflowChange((e.target as HTMLSelectElement).value || null)}
+				class="w-full rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50"
+			>
+				<option value="">Auto-select</option>
+				{spaceStore.workflows.value.map((wf) => (
+					<option key={wf.id} value={wf.id}>
+						{wf.name}
+					</option>
+				))}
+			</select>
+			{savingWorkflow && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
+			{workflow && (
+				<div class="space-y-2 rounded-lg border border-white/10 bg-dark-800/60 p-3 text-sm">
+					<div class="font-medium text-gray-200">{workflow.name}</div>
+					{workflow.nodes.map((node, index) => (
+						<div key={node.id} class="text-xs text-gray-500">
+							{index + 1}. {node.name}
+							{node.agents.length > 0 && (
+								<>
+									<span class="text-gray-500"> — </span>
+									<span class="text-gray-400">
+										{node.agents.map((agent) => agent.name).join(', ')}
+									</span>
+								</>
+							)}
+						</div>
+					))}
+				</div>
+			)}
+		</PanelSection>
+	);
+	const agentsSection = (
+		<PanelSection title="Agents">
+			{overrideError && (
+				<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+					{overrideError}
+				</div>
+			)}
+			{workflow?.nodes && workflow.nodes.some((n) => n.agents.length > 0) ? (
+				workflow.nodes.flatMap((node) =>
+					node.agents.map((agent) => (
+						<AgentConfigCard
+							key={overrideKey(node.id, agent.name)}
+							task={task}
+							node={node}
+							agent={agent}
+							execution={findExecution(nodeExecutions, task.workflowRunId, node.id, agent.name)}
+							canEditModels={canEditModels}
+							spaceDefaultModel={space?.defaultModel}
+							savingOverrideKey={savingOverrideKey}
+							onModelChange={updateModelOverride}
+						/>
+					))
+				)
+			) : (
+				<p class="text-sm text-gray-500">
+					{task.preferredWorkflowId
+						? 'Loading workflow…'
+						: 'Select a workflow to configure agent models.'}
+				</p>
+			)}
+		</PanelSection>
+	);
+	const gatesSection = workflow?.gates && workflow.gates.length > 0 && (
+		<PanelSection title="Gates">
+			{workflow.gates.map((gate) => (
+				<GateCard key={gate.id} gate={gate} />
+			))}
+		</PanelSection>
+	);
+	const resultSection = task.result && (
+		<PanelSection title="Result summary">
+			<p class="whitespace-pre-wrap text-sm text-gray-300">{task.result}</p>
+		</PanelSection>
+	);
 
 	return (
 		<div class="flex h-full min-w-0 flex-col overflow-hidden">
@@ -509,141 +671,13 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 				// ── Middle-column flat-card view ──────────────────────────────
 				<div class="min-h-0 flex-1 overflow-y-auto">
 					<div class="space-y-4 px-4 py-4">
-						<PanelSection title="Description">
-							<textarea
-								value={descriptionDraft}
-								onInput={(e) => setDescriptionDraft((e.target as HTMLTextAreaElement).value)}
-								onBlur={handleDescriptionBlur}
-								disabled={savingDescription}
-								rows={4}
-								placeholder="Add a description…"
-								class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
-							/>
-							{savingDescription && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
-						</PanelSection>
-						<PanelSection title="Details">
-							<DetailRow label="Status">{STATUS_LABELS[task.status]}</DetailRow>
-							<DetailRow label="Priority">{PRIORITY_LABELS[task.priority]}</DetailRow>
-							<DetailRow label="Created">{formatTime(task.createdAt)}</DetailRow>
-							{goal && (
-								<DetailRow label="Goal">
-									<button
-										type="button"
-										onClick={() => {
-											currentSpaceGoalIdSignal.value = goal.id;
-											navigateToSpaceGoals(spaceId);
-										}}
-										class="truncate text-blue-300 hover:text-blue-200"
-									>
-										{goal.title}
-									</button>
-								</DetailRow>
-							)}
-							{task.evolutionScopeId && (
-								<DetailRow label="Forge scope">
-									<button
-										type="button"
-										onClick={() => {
-											currentSpaceScopeIdSignal.value = task.evolutionScopeId!;
-											navigateToSpaceForge(spaceId);
-										}}
-										class="truncate text-blue-300 hover:text-blue-200"
-									>
-										{scopeName ?? task.evolutionScopeId}
-									</button>
-								</DetailRow>
-							)}
-							{schedule && <DetailRow label="Schedule">{formatSchedule(schedule)}</DetailRow>}
-						</PanelSection>
-						{task.dependsOn.length > 0 && (
-							<PanelSection title="Depends on">
-								{task.dependsOn.map((depId) => {
-									const dep = spaceStore.tasks.value.find((t) => t.id === depId);
-									return (
-										<div key={depId} class="flex items-center gap-2 text-sm">
-											<span class="flex-shrink-0 font-mono text-[11px] text-gray-500">
-												#{dep?.taskNumber ?? '—'}
-											</span>
-											<span class="min-w-0 truncate text-gray-300">{dep?.title ?? depId}</span>
-											<TaskPanelBadge
-												class={
-													dep
-														? STATUS_BADGE_CLASSES[dep.status]
-														: 'border-gray-500/25 bg-gray-500/10 text-gray-500'
-												}
-											>
-												{dep ? STATUS_LABELS[dep.status] : '—'}
-											</TaskPanelBadge>
-										</div>
-									);
-								})}
-							</PanelSection>
-						)}
-						<PanelSection title="Workflow">
-							<select
-								value={task.preferredWorkflowId ?? ''}
-								disabled={savingWorkflow}
-								onChange={(e) =>
-									handleWorkflowChange((e.target as HTMLSelectElement).value || null)
-								}
-								class="w-full rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50"
-							>
-								<option value="">Auto-select</option>
-								{spaceStore.workflows.value.map((wf) => (
-									<option key={wf.id} value={wf.id}>
-										{wf.name}
-									</option>
-								))}
-							</select>
-							{savingWorkflow && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
-						</PanelSection>
-						<PanelSection title="Agents">
-							{overrideError && (
-								<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-									{overrideError}
-								</div>
-							)}
-							{workflow?.nodes && workflow.nodes.some((n) => n.agents.length > 0) ? (
-								workflow.nodes.flatMap((node) =>
-									node.agents.map((agent) => (
-										<AgentConfigCard
-											key={overrideKey(node.id, agent.name)}
-											task={task}
-											node={node}
-											agent={agent}
-											execution={findExecution(
-												nodeExecutions,
-												task.workflowRunId,
-												node.id,
-												agent.name
-											)}
-											canEditModels={canEditModels}
-											spaceDefaultModel={space?.defaultModel}
-											savingOverrideKey={savingOverrideKey}
-											onModelChange={updateModelOverride}
-										/>
-									))
-								)
-							) : (
-								<p class="text-sm text-gray-500">
-									{task.preferredWorkflowId
-										? 'Loading workflow…'
-										: 'Select a workflow to configure agent models.'}
-								</p>
-							)}
-						</PanelSection>
-						{workflow?.gates && workflow.gates.length > 0 && (
-							<PanelSection title="Gates">
-								{workflow.gates.map((gate) => (
-									<GateCard key={gate.id} gate={gate} />
-								))}
-							</PanelSection>
-						)}
-						{task.result && (
-							<PanelSection title="Result summary">
-								<p class="whitespace-pre-wrap text-sm text-gray-300">{task.result}</p>
-							</PanelSection>
-						)}
+						{descriptionSection}
+						{detailsSection}
+						{dependsOnSection}
+						{workflowSection}
+						{agentsSection}
+						{gatesSection}
+						{resultSection}
 					</div>
 				</div>
 			) : (
@@ -679,6 +713,27 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 						</div>
 					</div>
 					<div class="min-h-0 flex-1 overflow-hidden">
+						{activeTab === 'details' && (
+							<div class="h-full overflow-y-auto px-4 pb-4">
+								<div class="space-y-4">
+									{descriptionSection}
+									{detailsSection}
+									{dependsOnSection}
+									{resultSection}
+								</div>
+							</div>
+						)}
+						{activeTab === 'workflow' && (
+							<div class="h-full overflow-y-auto px-4 pb-4">{workflowSection}</div>
+						)}
+						{activeTab === 'agents' && (
+							<div class="h-full overflow-y-auto px-4 pb-4">{agentsSection}</div>
+						)}
+						{activeTab === 'gates' && (
+							<div class="h-full overflow-y-auto px-4 pb-4">
+								{gatesSection ?? <p class="text-sm text-gray-500">No gates configured.</p>}
+							</div>
+						)}
 						{activeTab === 'timeline' && (
 							<TaskTimelineFeed taskId={task.id} topInsetClass="" bottomInsetPx={16} />
 						)}

@@ -18,11 +18,15 @@ const {
 	mockFetchWorkflowDetail,
 	mockFetchEvolutionScope,
 	mockUpdateTask,
+	mockSubmitForReview,
+	mockPublishTask,
+	mockWorkflowVersions,
 } = vi.hoisted(() => {
 	function makeSignal<T>(initial: T) {
 		return { value: initial };
 	}
 	const workflows = makeSignal<SpaceWorkflow[]>([]);
+	const workflowVersions = makeSignal<Map<string, number>>(new Map());
 	return {
 		mockNavigateToSpaceForge: vi.fn(),
 		mockNavigateToSpaceGoals: vi.fn(),
@@ -40,6 +44,9 @@ const {
 		),
 		mockFetchEvolutionScope: vi.fn().mockResolvedValue({ id: 'scope-1', name: 'Launch Scope' }),
 		mockUpdateTask: vi.fn().mockResolvedValue(undefined),
+		mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
+		mockPublishTask: vi.fn().mockResolvedValue(undefined),
+		mockWorkflowVersions: workflowVersions,
 	};
 });
 
@@ -135,11 +142,14 @@ vi.mock('../../../lib/space-store', () => ({
 		workflowRuns: mockWorkflowRuns,
 		schedules: mockSchedules,
 		nodeExecutions: mockNodeExecutions,
+		workflowVersions: mockWorkflowVersions,
 		ensureConfigData: mockEnsureConfigData,
 		ensureNodeExecutions: mockEnsureNodeExecutions,
 		fetchWorkflowDetail: mockFetchWorkflowDetail,
 		fetchEvolutionScope: mockFetchEvolutionScope,
 		updateTask: mockUpdateTask,
+		submitForReview: mockSubmitForReview,
+		publishTask: mockPublishTask,
 	},
 }));
 
@@ -273,11 +283,17 @@ describe('TaskAuxiliaryPanel', () => {
 		mockWorkflowRuns.value = [];
 		mockSchedules.value = [];
 		mockNodeExecutions.value = [];
+		mockWorkflowVersions.value = new Map();
 		mockEnsureConfigData.mockClear();
 		mockEnsureNodeExecutions.mockClear();
 		mockFetchWorkflowDetail.mockClear();
 		mockFetchEvolutionScope.mockClear();
 		mockUpdateTask.mockClear();
+		mockUpdateTask.mockResolvedValue(undefined);
+		mockSubmitForReview.mockClear();
+		mockSubmitForReview.mockResolvedValue(undefined);
+		mockPublishTask.mockClear();
+		mockPublishTask.mockResolvedValue(undefined);
 		mockNavigateToSpaceForge.mockClear();
 		mockNavigateToSpaceGoals.mockClear();
 		currentSpaceGoalIdSignal.value = null;
@@ -293,6 +309,7 @@ describe('TaskAuxiliaryPanel', () => {
 		mockTasks.value = [
 			makeTask({
 				preferredWorkflowId: 'workflow-1',
+				workflowRunId: 'run-1',
 				goalId: 'goal-1',
 				evolutionScopeId: 'scope-1',
 				result: 'Done summary',
@@ -491,5 +508,44 @@ describe('TaskAuxiliaryPanel', () => {
 				tab: 'details',
 			})
 		);
+	});
+
+	it('routes submit for review through submitForReview in flat view', async () => {
+		const { getByLabelText, getByText } = render(
+			<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="details" onClose={() => {}} />
+		);
+
+		fireEvent.click(getByLabelText('Task Actions'));
+		fireEvent.click(getByText('Submit for Review'));
+
+		await waitFor(() => expect(mockSubmitForReview).toHaveBeenCalledWith('task-1'));
+		expect(mockUpdateTask).not.toHaveBeenCalledWith('task-1', { status: 'review' });
+	});
+
+	it('refetches workflow detail when workflow version changes', async () => {
+		const { getByText, rerender } = render(
+			<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />
+		);
+		await waitFor(() => expect(getByText('coder')).toBeTruthy());
+
+		mockWorkflows.value = [
+			{
+				...makeWorkflow(),
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Coding',
+						agents: [{ agentId: 'agent-qa', name: 'qa', model: 'claude-opus-4-5' }],
+					},
+				],
+			},
+		];
+		mockWorkflowVersions.value = new Map([['workflow-1', 1]]);
+		rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="workflow" />);
+		rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />);
+
+		await waitFor(() => expect(mockFetchWorkflowDetail).toHaveBeenCalledTimes(2));
+		rerender(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="agents" />);
+		expect(getByText('qa')).toBeTruthy();
 	});
 });

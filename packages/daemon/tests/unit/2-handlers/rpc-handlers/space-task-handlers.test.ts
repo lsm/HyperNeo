@@ -1319,6 +1319,22 @@ describe('space-task-handlers', () => {
 			expect(taskManager.updateTask).not.toHaveBeenCalled();
 		});
 
+		it('rejects workflow model overrides for disabled workflows', async () => {
+			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }), undefined, {
+				...mockWorkflow,
+				disabled: true,
+			});
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+				})
+			).rejects.toThrow('Cannot set model overrides for a disabled workflow');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
 		it('rejects non-object workflow model override payloads', async () => {
 			setup(mockSpace, makeTask({ preferredWorkflowId: 'workflow-1' }));
 

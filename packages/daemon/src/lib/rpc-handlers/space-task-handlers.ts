@@ -74,6 +74,9 @@ async function validateWorkflowModelOverrides(
 	if (!workflow || workflow.spaceId !== task.spaceId) {
 		throw new Error(`Workflow not found: ${workflowId}`);
 	}
+	if (workflow.disabled) {
+		throw new Error('Cannot set model overrides for a disabled workflow');
+	}
 	const validKeys = new Set<string>();
 	for (const node of workflow.nodes) {
 		for (const agent of resolveNodeAgents(node)) {
