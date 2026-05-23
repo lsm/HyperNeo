@@ -61,6 +61,17 @@ describe('SpaceLongHorizonAgentRepository', () => {
 		expect(repo.listBySpaceId('space-1')).toHaveLength(2);
 	});
 
+	test('unarchives deterministic Coordinator row instead of inserting duplicate id', () => {
+		const archived = repo.ensureCoordinator('space-1');
+		repo.update(archived.id, { status: 'archived' });
+
+		const coordinator = repo.ensureCoordinator('space-1');
+
+		expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
+		expect(coordinator.status).toBe('active');
+		expect(repo.listBySpaceId('space-1')).toHaveLength(1);
+	});
+
 	test('persists agent fields and updates nullable policy fields', () => {
 		const agent = repo.create({
 			spaceId: 'space-1',
@@ -96,6 +107,51 @@ describe('SpaceLongHorizonAgentRepository', () => {
 			autonomyLevel: null,
 			toolPermissions: {},
 		});
+	});
+
+	test('rejects cross-space goal, Forge scope, reminder, and subscription links', () => {
+		db.prepare(
+			`INSERT INTO spaces (
+				id, slug, workspace_path, name, description, background_context, instructions,
+				allowed_models, session_ids, status, paused, stopped, autonomy_level,
+				max_concurrent_tasks, created_at, updated_at
+			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
+		).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
+		const agent = repo.ensureCoordinator('space-1');
+		db.prepare(
+			`INSERT INTO space_goals (
+				id, space_id, title, description, status, type, priority, labels, metrics,
+				summary, progress, next_steps, auto_trigger_next, pending_next_run, created_at, updated_at
+			) VALUES (?, ?, ?, '', 'active', 'one_shot', 'normal', '[]', '{}', '', 0, '[]', 0, 0, ?, ?)`
+		).run('goal-2', 'space-2', 'Goal 2', 1, 1);
+		db.prepare(
+			`INSERT INTO evolution_scopes (
+				id, space_id, kind, name, objective, metric_definitions_json, policy_json, created_at, updated_at
+			) VALUES (?, ?, 'mission', ?, ?, '[]', '{}', ?, ?)`
+		).run('scope-2', 'space-2', 'Scope 2', 'Improve Forge', 1, 1);
+
+		expect(() => repo.assignGoal(agent.id, 'goal-2')).toThrow(
+			'Goal goal-2 does not belong to space space-1'
+		);
+		expect(() => repo.assignForgeScope(agent.id, 'scope-2')).toThrow(
+			'Forge scope scope-2 does not belong to space space-1'
+		);
+		expect(() =>
+			repo.createReminder({
+				spaceId: 'space-2',
+				agentId: agent.id,
+				title: 'Wrong space',
+				triggerType: 'at',
+			})
+		).toThrow(`Long-horizon agent ${agent.id} does not belong to space space-2`);
+		expect(() =>
+			repo.createSubscription({
+				spaceId: 'space-2',
+				agentId: agent.id,
+				source: 'github',
+				topic: 'pull_request.*',
+			})
+		).toThrow(`Long-horizon agent ${agent.id} does not belong to space space-2`);
 	});
 
 	test('persists managed goals, Forge scopes, reminders, and event subscriptions', () => {

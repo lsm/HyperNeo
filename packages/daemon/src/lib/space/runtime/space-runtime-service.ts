@@ -174,7 +174,6 @@ export interface SpaceRuntimeServiceConfig {
 		spaceRepo: SpaceRepository;
 		sessionRepo: SessionRepository;
 		spaceAgentRepo: SpaceAgentRepository;
-		longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
 		workflowRepo: SpaceWorkflowRepository;
 		workflowRunRepo: SpaceWorkflowRunRepository;
 		nodeExecutionRepo: NodeExecutionRepository;

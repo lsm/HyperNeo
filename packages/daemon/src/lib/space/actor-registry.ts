@@ -4,7 +4,6 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import type { SessionRepository } from '../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -20,7 +19,6 @@ export interface SpaceActorRegistryRepositories {
 	spaceRepo: SpaceRepository;
 	sessionRepo: SessionRepository;
 	spaceAgentRepo: SpaceAgentRepository;
-	longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
 	workflowRepo: SpaceWorkflowRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	nodeExecutionRepo: NodeExecutionRepository;

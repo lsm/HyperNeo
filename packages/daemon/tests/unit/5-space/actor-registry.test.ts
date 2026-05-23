@@ -7,7 +7,6 @@ import { NodeExecutionRepository } from '../../../src/storage/repositories/node-
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
@@ -71,7 +70,6 @@ describe('SpaceActorRegistryAdapter', () => {
 	let spaceRepo: SpaceRepository;
 	let sessionRepo: SessionRepository;
 	let spaceAgentRepo: SpaceAgentRepository;
-	let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
 	let workflowRepo: SpaceWorkflowRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let nodeExecutionRepo: NodeExecutionRepository;
@@ -85,7 +83,6 @@ describe('SpaceActorRegistryAdapter', () => {
 		spaceRepo = new SpaceRepository(db);
 		sessionRepo = new SessionRepository(db);
 		spaceAgentRepo = new SpaceAgentRepository(db);
-		longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 		workflowRepo = new SpaceWorkflowRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -94,7 +91,6 @@ describe('SpaceActorRegistryAdapter', () => {
 			spaceRepo,
 			sessionRepo,
 			spaceAgentRepo,
-			longHorizonAgentRepo,
 			workflowRepo,
 			workflowRunRepo,
 			nodeExecutionRepo,
@@ -112,7 +108,6 @@ describe('SpaceActorRegistryAdapter', () => {
 			slug: 'project',
 			name: 'Project',
 		});
-		longHorizonAgentRepo.ensureCoordinator(space.id);
 		const member = makeSession('member-1', { context: { spaceId: space.id } });
 		const legacyMember = makeSession('legacy-member');
 		const coordinator = makeSession(`space:chat:${space.id}`, {
@@ -423,7 +418,6 @@ describe('SpaceActorRegistryAdapter', () => {
 			slug: 'project',
 			name: 'Project',
 		});
-		longHorizonAgentRepo.ensureCoordinator(space.id);
 
 		expect(registry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
 			actorId: `agent:coordinator:${space.id}`,

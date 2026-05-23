@@ -71,8 +71,16 @@ export class SpaceLongHorizonAgentRepository {
 	}
 
 	ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
-		const existing = this.getCoordinator(spaceId);
-		if (existing) return existing;
+		const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
+		if (existingById) {
+			if (existingById.status === 'archived') {
+				return this.update(existingById.id, { status: 'active' }) as SpaceLongHorizonAgent;
+			}
+			return existingById;
+		}
+
+		const existingByHandle = this.getCoordinator(spaceId);
+		if (existingByHandle) return existingByHandle;
 
 		return this.create({
 			id: coordinatorLongHorizonAgentId(spaceId),
@@ -149,6 +157,8 @@ export class SpaceLongHorizonAgentRepository {
 		goalId: string,
 		relationship: SpaceLongHorizonAgentGoal['relationship'] = 'owner'
 	): void {
+		const agent = this.requireAgent(agentId);
+		this.requireMatchingSpace('space_goals', goalId, agent.spaceId, 'Goal');
 		const now = Date.now();
 		this.db
 			.prepare(
@@ -173,6 +183,8 @@ export class SpaceLongHorizonAgentRepository {
 		scopeId: string,
 		relationship: SpaceLongHorizonAgentForgeScope['relationship'] = 'owner'
 	): void {
+		const agent = this.requireAgent(agentId);
+		this.requireMatchingSpace('evolution_scopes', scopeId, agent.spaceId, 'Forge scope');
 		const now = Date.now();
 		this.db
 			.prepare(
@@ -193,6 +205,7 @@ export class SpaceLongHorizonAgentRepository {
 	}
 
 	createReminder(params: CreateSpaceLongHorizonAgentReminderParams): SpaceLongHorizonAgentReminder {
+		this.requireAgentInSpace(params.agentId, params.spaceId);
 		const id = generateUUID();
 		const now = Date.now();
 		this.db
@@ -241,6 +254,7 @@ export class SpaceLongHorizonAgentRepository {
 	createSubscription(
 		params: CreateSpaceLongHorizonAgentSubscriptionParams
 	): SpaceLongHorizonAgentEventSubscription {
+		this.requireAgentInSpace(params.agentId, params.spaceId);
 		const id = generateUUID();
 		const now = Date.now();
 		this.db
@@ -277,6 +291,35 @@ export class SpaceLongHorizonAgentRepository {
 			)
 			.all(agentId) as Record<string, unknown>[];
 		return rows.map(rowToSubscription);
+	}
+
+	private requireAgent(agentId: string): SpaceLongHorizonAgent {
+		const agent = this.getById(agentId);
+		if (!agent) throw new Error(`Long-horizon agent not found: ${agentId}`);
+		return agent;
+	}
+
+	private requireAgentInSpace(agentId: string, spaceId: string): SpaceLongHorizonAgent {
+		const agent = this.requireAgent(agentId);
+		if (agent.spaceId !== spaceId) {
+			throw new Error(`Long-horizon agent ${agentId} does not belong to space ${spaceId}`);
+		}
+		return agent;
+	}
+
+	private requireMatchingSpace(
+		tableName: 'space_goals' | 'evolution_scopes',
+		id: string,
+		spaceId: string,
+		label: string
+	): void {
+		const row = this.db.prepare(`SELECT space_id FROM ${tableName} WHERE id = ?`).get(id) as
+			| { space_id: string }
+			| undefined;
+		if (!row) throw new Error(`${label} not found: ${id}`);
+		if (row.space_id !== spaceId) {
+			throw new Error(`${label} ${id} does not belong to space ${spaceId}`);
+		}
 	}
 }
 
