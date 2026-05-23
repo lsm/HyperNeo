@@ -55,6 +55,8 @@ describe('long-horizon agent templates', () => {
 
 	test('returns cloned template data', () => {
 		const [template] = getLongHorizonAgentTemplates();
+		const statuses = template.suggestedEventSubscriptions[0].filter.statuses as string[];
+		statuses.push('mutated');
 		template.suggestedEventSubscriptions[0].filter.mutated = true;
 		template.reminderDefaults[0].title = 'Mutated';
 		template.ownershipPatterns[0].description = 'Mutated';
@@ -63,6 +65,11 @@ describe('long-horizon agent templates', () => {
 		const [again] = getLongHorizonAgentTemplates();
 
 		expect(again.suggestedEventSubscriptions[0].filter).not.toHaveProperty('mutated');
+		expect(again.suggestedEventSubscriptions[0].filter.statuses).toEqual([
+			'blocked',
+			'review',
+			'done',
+		]);
 		expect(again.reminderDefaults[0].title).not.toBe('Mutated');
 		expect(again.ownershipPatterns[0].description).not.toBe('Mutated');
 		expect(again.toolPermissions).not.toHaveProperty('mutated');

@@ -312,16 +312,7 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
 ];
 
 export function getLongHorizonAgentTemplates(): SpaceLongHorizonAgentTemplate[] {
-	return LONG_HORIZON_AGENT_TEMPLATES.map((template) => ({
-		...template,
-		suggestedEventSubscriptions: template.suggestedEventSubscriptions.map((subscription) => ({
-			...subscription,
-			filter: { ...subscription.filter },
-		})),
-		reminderDefaults: template.reminderDefaults.map((reminder) => ({ ...reminder })),
-		ownershipPatterns: template.ownershipPatterns.map((pattern) => ({ ...pattern })),
-		toolPermissions: { ...template.toolPermissions },
-	}));
+	return structuredClone(LONG_HORIZON_AGENT_TEMPLATES);
 }
 
 export function getLongHorizonAgentTemplate(
