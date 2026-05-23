@@ -37,6 +37,39 @@ export type SpaceLongHorizonAgentReminderStatus = 'active' | 'paused' | 'fired' 
 export type SpaceLongHorizonAgentReminderTriggerType = 'at' | 'cron';
 export type SpaceLongHorizonAgentEventSubscriptionStatus = 'active' | 'paused' | 'disabled';
 
+export interface SpaceLongHorizonAgentTemplateReminderDefault {
+	title: string;
+	body: string;
+	triggerType: SpaceLongHorizonAgentReminderTriggerType;
+	cronExpression: string | null;
+	timezone: string;
+}
+
+export interface SpaceLongHorizonAgentTemplateEventSubscription {
+	source: string;
+	topic: string;
+	filter: Record<string, unknown>;
+}
+
+export interface SpaceLongHorizonAgentTemplateOwnershipPattern {
+	target: 'goal' | 'forge_scope';
+	relationship: SpaceLongHorizonAgentRelationship;
+	description: string;
+}
+
+export interface SpaceLongHorizonAgentTemplate {
+	key: string;
+	handle: string;
+	displayName: string;
+	description: string;
+	instructions: string;
+	suggestedAutonomyLevel: SpaceAgentAutonomyLevel;
+	suggestedEventSubscriptions: SpaceLongHorizonAgentTemplateEventSubscription[];
+	reminderDefaults: SpaceLongHorizonAgentTemplateReminderDefault[];
+	ownershipPatterns: SpaceLongHorizonAgentTemplateOwnershipPattern[];
+	toolPermissions: Record<string, unknown>;
+}
+
 export interface SpaceLongHorizonAgent {
 	id: string;
 	spaceId: string;
