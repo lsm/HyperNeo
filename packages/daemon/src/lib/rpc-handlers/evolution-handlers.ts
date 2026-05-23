@@ -56,6 +56,13 @@ interface RecordPayload {
 }
 
 export interface EvolutionHandlerHooks {
+	beforeScopeCreate?: (
+		params: EvolutionScopeCreateRequest['params'] | EvolutionScopeUpdateRequest['params']
+	) => void;
+	beforeScopeUpdate?: (
+		existing: EvolutionScope,
+		params: EvolutionScopeUpdateRequest['params']
+	) => void;
 	beforeScopeSave?: (
 		params: EvolutionScopeCreateRequest['params'] | EvolutionScopeUpdateRequest['params']
 	) => void;
@@ -73,6 +80,7 @@ export function setupEvolutionHandlers(
 		async (data) => {
 			const payload = readRecord(data);
 			const params = readRecord(payload.params) as unknown as EvolutionScopeCreateRequest['params'];
+			hooks.beforeScopeCreate?.(params);
 			hooks.beforeScopeSave?.(params);
 			const scope = service.createScope(params);
 			hooks.onScopeSaved?.(scope);
@@ -84,6 +92,7 @@ export function setupEvolutionHandlers(
 		'evolution.scope.createFromGoal',
 		async (data) => {
 			const payload = readRecord(data) as unknown as CreateScopeFromGoalParams;
+			hooks.beforeScopeCreate?.({ policy: payload.policy });
 			hooks.beforeScopeSave?.({ policy: payload.policy });
 			const scope = service.createScopeFromGoal(payload);
 			hooks.onScopeSaved?.(scope);
@@ -111,6 +120,8 @@ export function setupEvolutionHandlers(
 			const id = readRequiredString(payload, 'id');
 			const params = readRecord(payload.params) as EvolutionScopeUpdateRequest['params'];
 			hooks.beforeScopeSave?.(params);
+			const existing = service.getScope(id);
+			if (existing) hooks.beforeScopeUpdate?.(existing, params);
 			const scope = service.updateScope(id, params);
 			if (scope) hooks.onScopeSaved?.(scope);
 			return { scope };

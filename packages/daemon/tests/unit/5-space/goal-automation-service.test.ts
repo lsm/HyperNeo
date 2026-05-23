@@ -17,7 +17,10 @@ import { SpaceRepository } from '../../../src/storage/repositories/space-reposit
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import { TaskScheduleRepository } from '../../../src/storage/repositories/task-schedule-repository';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../../../src/lib/rpc-handlers';
+import {
+	validateGoalAutomationSelfNagPolicy,
+	syncGoalAutomationSelfNagScheduleForScope,
+} from '../../../src/lib/rpc-handlers';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 
@@ -513,6 +516,19 @@ describe('GoalAutomationService', () => {
 		const pausedSchedule = scheduleService.listSchedules(spaceId, 'paused')[0];
 		expect(pausedSchedule.id).toBe(activeSchedule.id);
 		expect(pausedSchedule.pendingJobId).toBeNull();
+	});
+
+	it('rejects invalid self-nag timezone before scope save', () => {
+		expect(() =>
+			validateGoalAutomationSelfNagPolicy({
+				policy: {
+					automation: {
+						selfNagCronExpression: '0 * * * *',
+						selfNagTimezone: 'Bad/Timezone',
+					},
+				},
+			})
+		).toThrow(/Invalid timezone/);
 	});
 
 	it('fails scope sync when self-nag cron is invalid', () => {

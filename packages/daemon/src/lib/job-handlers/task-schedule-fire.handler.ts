@@ -28,6 +28,7 @@ import type { SpaceRepository } from '../../storage/repositories/space-repositor
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceGoalService } from '../space/goals/goal-service';
 import type { GoalAutomationService } from '../space/goals/goal-automation-service';
+import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 
 const log = new Logger('task-schedule-fire-handler');
 
@@ -64,6 +65,7 @@ export interface TaskScheduleFireHandlerDeps {
 	spaceRepo: SpaceRepository;
 	taskRepo: SpaceTaskRepository;
 	goalService?: SpaceGoalService;
+	goalRepo?: SpaceGoalRepository;
 	goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
 	/**
 	 * Optional event emitter for broadcasting schedule/task changes.
@@ -89,6 +91,7 @@ export async function handleTaskScheduleFire(
 		spaceRepo,
 		taskRepo,
 		goalService,
+		goalRepo,
 		goalAutomationService,
 		eventHub,
 	} = deps;
@@ -196,6 +199,7 @@ export async function handleTaskScheduleFire(
 			schedule,
 			scheduleRepo,
 			jobQueue,
+			goalRepo,
 			goalAutomationService,
 			eventHub,
 			now,
@@ -377,19 +381,34 @@ function fireGoalAutomationSchedule(params: {
 	schedule: TaskSchedule;
 	scheduleRepo: TaskScheduleRepository;
 	jobQueue: JobQueueRepository;
+	goalRepo?: SpaceGoalRepository;
 	goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
 	eventHub?: TaskScheduleFireHandlerDeps['eventHub'];
 	now: number;
 }): TaskScheduleFireResult {
-	const { db, job, schedule, scheduleRepo, jobQueue, goalAutomationService, eventHub, now } =
-		params;
+	const {
+		db,
+		job,
+		schedule,
+		scheduleRepo,
+		jobQueue,
+		goalRepo,
+		goalAutomationService,
+		eventHub,
+		now,
+	} = params;
 	let computedNextRunAt: number | null = null;
+	const goal = schedule.goalId ? goalRepo?.getById(schedule.goalId) : null;
+	const automationDisabled =
+		schedule.status !== 'active' ||
+		schedule.goalId === null ||
+		(goalRepo !== undefined && (!goal || goal.status !== 'active'));
 	try {
 		computedNextRunAt = db.transaction(() => {
 			let nextRunAt: number | null = null;
 			let pendingJobId: string | null = null;
-			let nextStatus: 'active' | 'completed' = 'completed';
-			if (schedule.triggerType === 'cron' && schedule.cronExpression) {
+			let nextStatus: 'active' | 'completed' = automationDisabled ? 'completed' : 'active';
+			if (nextStatus === 'active' && schedule.triggerType === 'cron' && schedule.cronExpression) {
 				nextRunAt = getNextRunAt(schedule.cronExpression, schedule.timezone, now);
 				if (nextRunAt !== null) {
 					const nextJob = jobQueue.enqueue({
@@ -398,7 +417,8 @@ function fireGoalAutomationSchedule(params: {
 						runAt: nextRunAt,
 					});
 					pendingJobId = nextJob.id;
-					nextStatus = 'active';
+				} else {
+					nextStatus = 'completed';
 				}
 			}
 			const applied = scheduleRepo.updateAfterFireIfPending(schedule.id, job.id, {
@@ -424,7 +444,17 @@ function fireGoalAutomationSchedule(params: {
 		throw err;
 	}
 	const scopeId = readSelfNagScheduleScopeId(schedule);
-	goalAutomationService?.onSelfNag(schedule.goalId as string, schedule.id, scopeId ?? undefined);
+	if (!automationDisabled) {
+		try {
+			goalAutomationService?.onSelfNag(
+				schedule.goalId as string,
+				schedule.id,
+				scopeId ?? undefined
+			);
+		} catch (err) {
+			log.warn('goal automation self-nag enqueue failed after schedule advance', err);
+		}
+	}
 	const emittedSchedule = scheduleRepo.getById(schedule.id);
 	if (eventHub && emittedSchedule) {
 		eventHub

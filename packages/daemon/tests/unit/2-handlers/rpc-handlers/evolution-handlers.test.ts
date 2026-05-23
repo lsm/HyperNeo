@@ -210,6 +210,36 @@ describe('evolution RPC handlers', () => {
 		expect(calls).toEqual(['beforeScopeSave', 'beforeScopeSave']);
 	});
 
+	test('runs update hook with effective existing scope before persisting', async () => {
+		const { messageHub, handlers } = createMessageHubStub();
+		const calls: string[] = [];
+		setupEvolutionHandlers(
+			messageHub as never,
+			{
+				getScope: () => {
+					calls.push('getScope');
+					return { id: 'scope-1', policy: { automation: { selfNagTimezone: 'Bad/Zone' } } };
+				},
+				updateScope: () => {
+					calls.push('updateScope');
+					return { id: 'scope-updated' };
+				},
+			} as never,
+			undefined,
+			{
+				beforeScopeUpdate: (existing) => {
+					calls.push(`beforeScopeUpdate:${existing.id}`);
+					throw new Error('invalid effective policy');
+				},
+			}
+		);
+
+		await expect(
+			handlers.get('evolution.scope.update')?.({ id: 'scope-1', params: { name: 'New' } })
+		).rejects.toThrow('invalid effective policy');
+		expect(calls).toEqual(['getScope', 'beforeScopeUpdate:scope-1']);
+	});
+
 	test('rejects non-object payloads', async () => {
 		const { messageHub, handlers } = createMessageHubStub();
 		setupEvolutionHandlers(messageHub as never, {} as never);

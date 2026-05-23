@@ -115,7 +115,7 @@ import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
-import { isValidCronExpression } from '../space/schedule/cron-utils';
+import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
@@ -130,11 +130,17 @@ import type { ExternalEventExtensionContext } from '../external-events/types';
 export function validateGoalAutomationSelfNagPolicy(params: {
 	policy?: EvolutionScope['policy'];
 }): void {
-	const expression = readAutomationPolicyForScope({
+	const policy = readAutomationPolicyForScope({
 		policy: params.policy,
-	} as EvolutionScope).selfNagCronExpression;
-	if (expression && !isValidCronExpression(expression)) {
+	} as EvolutionScope);
+	const expression = policy.selfNagCronExpression;
+	if (!expression) return;
+	if (!isValidCronExpression(expression)) {
 		throw new Error(`Invalid cron expression: ${expression}`);
+	}
+	const timezone = policy.selfNagTimezone ?? 'UTC';
+	if (getNextRunAt(expression, timezone) === null) {
+		throw new Error(`Invalid timezone or cron expression for self-nag schedule: ${timezone}`);
 	}
 }
 
@@ -625,8 +631,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		})
 	);
 	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService, {
-		beforeScopeSave: (params) => {
+		beforeScopeCreate: (params) => {
 			validateGoalAutomationSelfNagPolicy(params);
+		},
+		beforeScopeUpdate: (existing, params) => {
+			validateGoalAutomationSelfNagPolicy({
+				policy: params.policy ? { ...existing.policy, ...params.policy } : existing.policy,
+			});
 		},
 		onScopeSaved: (scope) => {
 			syncGoalAutomationSelfNagScheduleForScope({

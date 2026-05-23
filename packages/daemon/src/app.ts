@@ -60,6 +60,7 @@ import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.ha
 import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
 import { SpaceRepository } from './storage/repositories/space-repository';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
+import { SpaceGoalRepository } from './storage/repositories/space-goal-repository';
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
@@ -656,6 +657,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			taskRepo: taskScheduleTaskRepo,
 			eventHub: internalEventBus,
 			goalService: spaceGoalService,
+			goalRepo: new SpaceGoalRepository(db.getDatabase(), reactiveDb),
 			goalAutomationService,
 		});
 	});
