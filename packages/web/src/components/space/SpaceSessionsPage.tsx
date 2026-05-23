@@ -17,7 +17,7 @@ import { getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { SpaceAgentEditor } from './SpaceAgentEditor';
 
-type Session = { id: string; title: string; status: string; lastActiveAt: number };
+type Session = { id: string; title: string; status: string; lastActiveAt: number; type?: string };
 
 const STATUS_BORDER: Record<string, string> = {
 	active: 'border-l-green-500',
@@ -183,6 +183,7 @@ function SessionItem({
 	onPromote: (session: Session) => void;
 }) {
 	const borderColor = STATUS_BORDER[session.status] ?? 'border-l-transparent';
+	const canPromote = session.type !== 'space_task_agent';
 
 	return (
 		<div
@@ -201,19 +202,21 @@ function SessionItem({
 						)}
 					</div>
 				</div>
-				<div class="ml-4 flex flex-shrink-0 items-center gap-2">
-					<button
-						type="button"
-						onClick={(event) => {
-							event.stopPropagation();
-							onPromote(session);
-						}}
-						class="rounded-md border border-blue-500/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
-					>
-						Promote
-					</button>
-					<span class="text-xs text-gray-600">&rarr;</span>
-				</div>
+				{canPromote && (
+					<div class="ml-4 flex flex-shrink-0 items-center gap-2">
+						<button
+							type="button"
+							onClick={(event) => {
+								event.stopPropagation();
+								onPromote(session);
+							}}
+							class="rounded-md border border-blue-500/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
+						>
+							Promote
+						</button>
+						<span class="text-xs text-gray-600">&rarr;</span>
+					</div>
+				)}
 			</div>
 		</div>
 	);

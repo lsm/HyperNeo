@@ -455,7 +455,12 @@ export class SDKMessageRepository {
 			if (rows.length === 0) break;
 
 			for (const row of rows) {
-				const message = JSON.parse(row.sdk_message) as SDKMessage;
+				let message: SDKMessage;
+				try {
+					message = JSON.parse(row.sdk_message) as SDKMessage;
+				} catch {
+					continue;
+				}
 				const text = this.extractVisibleText(message as unknown as Record<string, unknown>);
 				if (text.length === 0) continue;
 				messages.push({
