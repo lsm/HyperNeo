@@ -160,7 +160,11 @@ export class Database {
 		return this.sessionRepo.getSession(id);
 	}
 
-	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+	listSessions(options?: {
+		status?: string;
+		includeArchived?: boolean;
+		includeSpaceSessions?: boolean;
+	}): Session[] {
 		return this.sessionRepo.listSessions(options);
 	}
 

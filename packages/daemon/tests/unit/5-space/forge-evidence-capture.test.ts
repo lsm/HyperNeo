@@ -134,6 +134,133 @@ describe('Forge evidence capture on task completion', () => {
 		expect(artifactEvidence?.metadata.artifactCount).toBe(1);
 	});
 
+	it('captures trace-derived evidence through the normal task completion path', async () => {
+		const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+		const slowFailureScope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Slow failure path',
+			objective: 'Capture slow tool failures from completed tasks',
+		});
+		const slowFailureTask = taskRepo.createTask({
+			spaceId,
+			title: 'Finish after slow tool failure',
+			description: 'Normal completion should run trace capture for slow failures',
+			evolutionScopeId: slowFailureScope.id,
+		});
+		insertTextMessage(
+			slowFailureTask.id,
+			'session-slow-failure',
+			'message-human-correction',
+			'user',
+			'human',
+			'No, keep the slow failure fix in this PR.'
+		);
+		insertToolExchangeAt(
+			slowFailureTask.id,
+			'session-slow-failure',
+			'tool-slow-failure',
+			'Bash',
+			{ command: 'curl https://example.invalid' },
+			true,
+			{ text: 'Error: connection timed out' },
+			1_700_000_000_000,
+			1_700_000_045_000
+		);
+		await taskRepo.updateTask(slowFailureTask.id, {
+			status: 'in_progress',
+			result: 'Recovered from slow tool failure',
+		});
+
+		await manager.setTaskStatus(slowFailureTask.id, 'done');
+
+		const slowFailureEvidence = evolutionRepo.listEvidence(slowFailureScope.id);
+		expect(slowFailureEvidence.some((item) => item.kind === 'task_result')).toBe(true);
+		expect(slowFailureEvidence.some((item) => item.kind === 'slow_tool_call')).toBe(true);
+		expect(slowFailureEvidence.some((item) => item.kind === 'tool_failure')).toBe(true);
+		expect(
+			slowFailureEvidence.some(
+				(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+			)
+		).toBe(false);
+		expect(
+			(
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count FROM job_queue
+						 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+					)
+					.get(slowFailureTask.id) as { count: number }
+			).count
+		).toBe(1);
+
+		const retryLoopScope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Retry loop path',
+			objective: 'Capture retry loops from completed tasks',
+		});
+		const retryLoopTask = taskRepo.createTask({
+			spaceId,
+			title: 'Finish after retry loop',
+			description: 'Normal completion should run trace capture for retry loops',
+			evolutionScopeId: retryLoopScope.id,
+		});
+		insertToolExchange(
+			retryLoopTask.id,
+			'session-retry-loop',
+			'tool-check-fail-1',
+			'Bash',
+			{ command: 'bun run check' },
+			true,
+			{ text: 'Typecheck failed in foo.ts' }
+		);
+		insertToolExchange(
+			retryLoopTask.id,
+			'session-retry-loop',
+			'tool-check-fail-2',
+			'Bash',
+			{ command: 'bun run check' },
+			true,
+			{ text: 'Lint failed in bar.ts' }
+		);
+		insertToolExchange(
+			retryLoopTask.id,
+			'session-retry-loop',
+			'tool-check-pass',
+			'Bash',
+			{ command: 'bun run check' },
+			false,
+			{ text: 'All checks passed' }
+		);
+		await taskRepo.updateTask(retryLoopTask.id, {
+			status: 'in_progress',
+			result: 'Recovered after retry loop',
+		});
+
+		await manager.setTaskStatus(retryLoopTask.id, 'done');
+
+		const retryLoopEvidence = evolutionRepo.listEvidence(retryLoopScope.id);
+		expect(retryLoopEvidence.some((item) => item.kind === 'task_result')).toBe(true);
+		const retryLoop = retryLoopEvidence.find((item) => item.kind === 'retry_loop');
+		expect(retryLoop?.metadata.retriesBeforeSuccess).toBe(2);
+		expect(
+			retryLoopEvidence.some(
+				(item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+			)
+		).toBe(false);
+		expect(
+			(
+				db
+					.prepare(
+						`SELECT COUNT(*) AS count FROM job_queue
+						 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+					)
+					.get(retryLoopTask.id) as { count: number }
+			).count
+		).toBe(1);
+	});
+
 	it('auto-captured task_result evidence includes summary populated from result artifact', async () => {
 		const scope = evolutionRepo.createScope({
 			spaceId,
@@ -997,6 +1124,32 @@ describe('Forge evidence capture on task completion', () => {
 				},
 			},
 			toolResultTimestamp
+		);
+	}
+
+	function insertTextMessage(
+		taskId: string,
+		sessionId: string,
+		messageId: string,
+		messageType: string,
+		origin: string | null,
+		text: string
+	) {
+		insertMessageAt(
+			taskId,
+			sessionId,
+			messageType,
+			{
+				type: messageType,
+				uuid: messageId,
+				session_id: sessionId,
+				origin,
+				message: {
+					role: messageType === 'assistant' ? 'assistant' : 'user',
+					content: [{ type: 'text', text }],
+				},
+			},
+			nextMessageTime()
 		);
 	}
 
