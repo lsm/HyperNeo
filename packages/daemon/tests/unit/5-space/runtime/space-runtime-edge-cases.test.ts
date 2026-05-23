@@ -616,6 +616,114 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(cancelledExecution.agentSessionId).toBeNull();
 		});
 
+		test('pausing a workflow-backed task stops node agents and clears task session pointer', async () => {
+			const tam = new MockTaskAgentManager();
+			const updates = new TaskUpdateCollector();
+			const rt = makeRuntime({
+				taskAgentManager: tam as never,
+				onTaskUpdated: async (event) => updates.handle(event),
+			});
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-pause', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-pause',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-pause',
+			});
+			updates.tasks.length = 0;
+
+			const paused = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+				status: 'open',
+			});
+
+			expect(paused?.status).toBe('open');
+			expect(paused?.workflowRunId).toBe(run.id);
+			expect(paused?.taskAgentSessionId).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+			expect(tam.cancelledSessions).toEqual(['node-session-pause', 'task-session-pause']);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			expect(updates.tasks).toHaveLength(1);
+			expect(updates.tasks[0].status).toBe('open');
+			expect(updates.tasks[0].taskAgentSessionId).toBeUndefined();
+		});
+
+		test('cancelling a workflow-backed task stops sessions and cancels run', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-cancel-task', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-cancel-task',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-cancel-task',
+			});
+
+			const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+				status: 'cancelled',
+				cancelReason: 'user cancelled',
+			});
+
+			expect(cancelled?.status).toBe('cancelled');
+			expect(cancelled?.approvalReason).toBe('user cancelled');
+			expect(cancelled?.workflowRunId).toBe(run.id);
+			expect(cancelled?.taskAgentSessionId).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+			expect(tam.cancelledSessions).toEqual([
+				'node-session-cancel-task',
+				'task-session-cancel-task',
+			]);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+		});
+
+		test('cancelling a workflow run stops active task and node sessions', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-cancel-run', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-cancel-run',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-cancel-run',
+			});
+
+			const cancelledRun = await rt.cancelWorkflowRun(SPACE_ID, run.id);
+
+			expect(cancelledRun.status).toBe('cancelled');
+			const cancelledTask = taskRepo.getTask(task.id)!;
+			expect(cancelledTask.status).toBe('cancelled');
+			expect(cancelledTask.workflowRunId).toBe(run.id);
+			expect(cancelledTask.taskAgentSessionId).toBeUndefined();
+			expect(tam.cancelledSessions).toEqual(['node-session-cancel-run', 'task-session-cancel-run']);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+		});
+
 		test('preserves completed executions and emits only post-cleanup task update', async () => {
 			const tam = new MockTaskAgentManager();
 			const updates = new TaskUpdateCollector();

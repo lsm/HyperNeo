@@ -366,6 +366,10 @@ export function setupSpaceTaskHandlers(
 						});
 					}
 				} else {
+					const shouldStopWorkflowForStatus =
+						currentTask.workflowRunId &&
+						(currentTask.status === 'in_progress' || currentTask.status === 'blocked') &&
+						(updateParams.status === 'open' || updateParams.status === 'cancelled');
 					// Reject bare transitions into `review`. Every task that lands in
 					// `review` MUST carry the pending-completion fields so
 					// `PendingTaskCompletionBanner` renders and approvals route through
@@ -401,60 +405,75 @@ export function setupSpaceTaskHandlers(
 								`approval metadata and dispatch the configured post-approval step.`
 						);
 					}
-					// Status is changing — validate via setTaskStatus (enforces transitions).
-					// `approvalReason` is stamped on review→done; `cancelReason` is
-					// persisted into the same underlying column for review→cancelled
-					// transitions (and other terminal rejections). We map both onto the
-					// manager's `approvalReason` option because the DB schema keeps a
-					// single `approval_reason` column doubling as audit trail for
-					// approvals *and* rejections.
-					const mappedReason =
-						updateParams.status === 'cancelled'
-							? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
-							: (updateParams.approvalReason ?? undefined);
-
-					task = await taskManager.setTaskStatus(taskId, updateParams.status, {
-						result: updateParams.result ?? undefined,
-						// Human-initiated approval when transitioning from review → done
-						approvalSource:
-							currentTask.status === 'review' && updateParams.status === 'done'
-								? 'human'
-								: undefined,
-						approvalReason: mappedReason,
-					});
-
-					// When the transition alone cannot carry the rejection reason (e.g.
-					// review → cancelled — setTaskStatus only stamps approvalReason on
-					// review→done), apply it in a follow-up write. Keeps the audit trail
-					// complete regardless of direction.
-					if (
-						updateParams.status === 'cancelled' &&
-						(updateParams.cancelReason ?? updateParams.approvalReason)
-					) {
-						task = await taskManager.updateTask(
+					if (shouldStopWorkflowForStatus) {
+						if (!spaceRuntimeService) {
+							throw new Error(
+								`Cannot stop workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
+							);
+						}
+						task = await spaceRuntimeService.stopWorkflowBackedTaskForStatus(
+							spaceId,
 							taskId,
-							{
-								approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
-							},
-							{ onCascadedTasks: emitCascadedTasks }
+							updateParams
 						);
-					}
+						emitTaskUpdated = false;
+						handleGoalTerminal = false;
+					} else {
+						// Status is changing — validate via setTaskStatus (enforces transitions).
+						// `approvalReason` is stamped on review→done; `cancelReason` is
+						// persisted into the same underlying column for review→cancelled
+						// transitions (and other terminal rejections). We map both onto the
+						// manager's `approvalReason` option because the DB schema keeps a
+						// single `approval_reason` column doubling as audit trail for
+						// approvals *and* rejections.
+						const mappedReason =
+							updateParams.status === 'cancelled'
+								? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
+								: (updateParams.approvalReason ?? undefined);
 
-					// When a status transition is combined with other field updates
-					// (e.g. taskAgentSessionId), those fields are silently dropped by
-					// setTaskStatus. Apply them in a follow-up updateTask call so
-					// callers can atomically set status + metadata in one RPC.
-					const {
-						status: _s,
-						result: _r,
-						approvalReason: _ar,
-						cancelReason: _cr,
-						...otherFields
-					} = updateParams;
-					if (Object.keys(otherFields).length > 0) {
-						task = await taskManager.updateTask(taskId, otherFields, {
-							onCascadedTasks: emitCascadedTasks,
+						task = await taskManager.setTaskStatus(taskId, updateParams.status, {
+							result: updateParams.result ?? undefined,
+							// Human-initiated approval when transitioning from review → done
+							approvalSource:
+								currentTask.status === 'review' && updateParams.status === 'done'
+									? 'human'
+									: undefined,
+							approvalReason: mappedReason,
 						});
+
+						// When the transition alone cannot carry the rejection reason (e.g.
+						// review → cancelled — setTaskStatus only stamps approvalReason on
+						// review→done), apply it in a follow-up write. Keeps the audit trail
+						// complete regardless of direction.
+						if (
+							updateParams.status === 'cancelled' &&
+							(updateParams.cancelReason ?? updateParams.approvalReason)
+						) {
+							task = await taskManager.updateTask(
+								taskId,
+								{
+									approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
+								},
+								{ onCascadedTasks: emitCascadedTasks }
+							);
+						}
+
+						// When a status transition is combined with other field updates
+						// (e.g. taskAgentSessionId), those fields are silently dropped by
+						// setTaskStatus. Apply them in a follow-up updateTask call so
+						// callers can atomically set status + metadata in one RPC.
+						const {
+							status: _s,
+							result: _r,
+							approvalReason: _ar,
+							cancelReason: _cr,
+							...otherFields
+						} = updateParams;
+						if (Object.keys(otherFields).length > 0) {
+							task = await taskManager.updateTask(taskId, otherFields, {
+								onCascadedTasks: emitCascadedTasks,
+							});
+						}
 					}
 				}
 			} else {

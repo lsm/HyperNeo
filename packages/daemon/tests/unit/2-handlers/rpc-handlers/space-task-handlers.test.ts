@@ -769,6 +769,72 @@ describe('space-task-handlers', () => {
 			});
 		});
 
+		it('routes workflow-backed pause transitions through runtime cleanup', async () => {
+			const activeTask = {
+				...mockTask,
+				status: 'in_progress' as const,
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'task-session-1',
+			};
+			const pausedTask = {
+				...activeTask,
+				status: 'open' as const,
+				taskAgentSessionId: undefined,
+			};
+			const runtime = {
+				stopWorkflowBackedTaskForStatus: mock(async () => pausedTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, activeTask, runtime);
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'open',
+			});
+
+			expect(result).toEqual(pausedTask);
+			expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+				status: 'open',
+			});
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect(internalEventBus.publish).not.toHaveBeenCalledWith(
+				'space.task.updated',
+				expect.objectContaining({ taskId: 'task-1' })
+			);
+		});
+
+		it('routes workflow-backed blocked task cancellation through runtime cleanup', async () => {
+			const blockedTask = {
+				...mockTask,
+				status: 'blocked' as const,
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'task-session-1',
+			};
+			const cancelledTask = {
+				...blockedTask,
+				status: 'cancelled' as const,
+				taskAgentSessionId: undefined,
+			};
+			const runtime = {
+				stopWorkflowBackedTaskForStatus: mock(async () => cancelledTask),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, blockedTask, runtime);
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'cancelled',
+				cancelReason: 'user cancelled',
+			});
+
+			expect(result).toEqual(cancelledTask);
+			expect(runtime.stopWorkflowBackedTaskForStatus).toHaveBeenCalledWith('space-1', 'task-1', {
+				status: 'cancelled',
+				cancelReason: 'user cancelled',
+			});
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+		});
+
 		it('routes unmet dependency updates for workflow-backed in-progress tasks through runtime', async () => {
 			const activeTask = {
 				...mockTask,

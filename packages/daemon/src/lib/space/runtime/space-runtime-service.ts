@@ -16,6 +16,7 @@ import type {
 	Session,
 	Space,
 	SpaceTask,
+	SpaceWorkflowRun,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
@@ -1756,6 +1757,22 @@ export class SpaceRuntimeService {
 			throw new Error(`Failed to block workflow-backed task ${taskId}`);
 		}
 		return updated;
+	}
+
+	async stopWorkflowBackedTaskForStatus(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask> {
+		const updated = await this.runtime.stopWorkflowBackedTaskForStatus(spaceId, taskId, params);
+		if (!updated) {
+			throw new Error(`Failed to stop workflow-backed task ${taskId}`);
+		}
+		return updated;
+	}
+
+	async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
+		return this.runtime.cancelWorkflowRun(spaceId, runId);
 	}
 }
 

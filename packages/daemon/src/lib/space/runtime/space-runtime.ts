@@ -2132,6 +2132,117 @@ export class SpaceRuntime {
 		return cleared ?? task;
 	}
 
+	private async stopActiveWorkflowTaskAgents(task: SpaceTask, reason: string): Promise<SpaceTask> {
+		if (!task.workflowRunId) return task;
+
+		const now = Date.now();
+		for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
+			if (!execution.agentSessionId) continue;
+			this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
+			this.config.nodeExecutionRepo.update(execution.id, {
+				status: 'cancelled',
+				agentSessionId: null,
+				result: reason,
+				completedAt: now,
+			});
+		}
+
+		if (task.taskAgentSessionId) {
+			this.config.taskAgentManager?.cancelBySessionId(task.taskAgentSessionId);
+		}
+		this.clearAgentStuckStateForRun(task.workflowRunId);
+		return (
+			this.config.taskRepo.updateTask(task.id, {
+				workflowRunId: task.workflowRunId,
+				taskAgentSessionId: null,
+			}) ?? task
+		);
+	}
+
+	async stopWorkflowBackedTaskForStatus(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask | null> {
+		const previous = this.config.taskRepo.getTask(taskId);
+		if (!previous) return null;
+		const nextStatus = params.status;
+		if (nextStatus && previous.status !== nextStatus) {
+			const taskManager = this.getOrCreateTaskManager(spaceId);
+			let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
+				result: params.result ?? undefined,
+				approvalReason:
+					nextStatus === 'cancelled'
+						? (params.cancelReason ?? params.approvalReason ?? undefined)
+						: (params.approvalReason ?? undefined),
+			});
+
+			const {
+				status: _status,
+				result: _result,
+				approvalReason: _approvalReason,
+				cancelReason: _cancelReason,
+				...otherFields
+			} = params;
+			if (Object.keys(otherFields).length > 0) {
+				updated = this.config.taskRepo.updateTask(taskId, otherFields) ?? updated;
+			}
+			if (
+				nextStatus === 'cancelled' &&
+				(params.cancelReason ?? params.approvalReason) &&
+				updated.approvalReason !== (params.cancelReason ?? params.approvalReason)
+			) {
+				updated =
+					this.config.taskRepo.updateTask(taskId, {
+						approvalReason: params.cancelReason ?? params.approvalReason ?? null,
+					}) ?? updated;
+			}
+			if (!previous.workflowRunId) {
+				await this.safeOnTaskUpdated(spaceId, updated);
+				return updated;
+			}
+
+			const reason = params.result ?? updated.result ?? `Task ${nextStatus}`;
+			updated = await this.stopActiveWorkflowTaskAgents(
+				{
+					...updated,
+					workflowRunId: previous.workflowRunId,
+					taskAgentSessionId: previous.taskAgentSessionId ?? updated.taskAgentSessionId,
+				},
+				reason
+			);
+			await this.safeOnTaskUpdated(spaceId, updated);
+
+			if (nextStatus === 'open' || nextStatus === 'cancelled') {
+				const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
+				if (run && canTransitionRunStatus(run.status, 'cancelled')) {
+					await this.transitionRunStatusAndEmit(previous.workflowRunId, 'cancelled');
+				}
+			}
+			return updated;
+		}
+
+		const updated = this.config.taskRepo.updateTask(taskId, params);
+		if (updated) await this.safeOnTaskUpdated(spaceId, updated);
+		return updated;
+	}
+
+	async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
+		for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
+			if (task.status === 'open' || task.status === 'in_progress' || task.status === 'blocked') {
+				await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
+			}
+		}
+		const updated = this.config.workflowRunRepo.getRun(runId) ?? run;
+		if (updated.status === 'cancelled') return updated;
+		if (canTransitionRunStatus(updated.status, 'cancelled')) {
+			return this.transitionRunStatusAndEmit(runId, 'cancelled');
+		}
+		return updated;
+	}
+
 	async blockWorkflowBackedTask(
 		spaceId: string,
 		taskId: string,
