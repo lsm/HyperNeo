@@ -1402,7 +1402,8 @@ export class SpaceRuntimeService {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
 			},
-			myAgentName: coordinator?.handle ?? 'space-agent',
+			myAgentName: 'space-agent',
+			myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
