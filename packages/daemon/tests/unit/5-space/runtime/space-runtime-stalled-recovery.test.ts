@@ -282,7 +282,73 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 	// 1. Stalled with no completion signal → blocked
 	// -------------------------------------------------------------------------
 
+	function saveSystemMessage(sessionId: string, timestamp: string) {
+		db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
+			 VALUES (?, ?, 'system', ?, ?, 'consumed', 'sdk', 1, 0)`
+		).run(
+			`${sessionId}-system-${timestamp}`,
+			sessionId,
+			JSON.stringify({
+				type: 'system',
+				session_id: sessionId,
+				uuid: `${sessionId}-system-uuid-${timestamp}`,
+				subtype: 'init',
+			}),
+			timestamp
+		);
+	}
+
 	describe('non-terminal idle last-message recovery', () => {
+		test('idle coder with recent system last message is preserved without Space Agent notification', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Recent System Idle Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Recent System Idle Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle', {
+				agentSessionId: 'recent-system-session',
+			});
+			saveSystemMessage('recent-system-session', new Date().toISOString());
+			const nudges: string[] = [];
+			const rt = makeRuntime({
+				taskAgentManager: {
+					rehydrate: async () => {},
+					isSessionAlive: () => false,
+					getAgentSessionById: () => null,
+					isExecutionSpawning: () => false,
+					injectRuntimeRecoveryMessage: async (_sessionId: string, message: string) => {
+						nudges.push(message);
+						return 'nudge-message-id';
+					},
+				} as any,
+				agentNoProgressThresholdMs: 60_000,
+			});
+			(rt as any).recoveryDone = true;
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id)!;
+			expect(updated.status).toBe('idle');
+			expect(updated.agentSessionId).toBe('recent-system-session');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+			expect(nudges).toHaveLength(0);
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(false);
+		});
+
 		test('idle execution with unresolved tool_use is preserved and not advanced', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
@@ -327,7 +393,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(updated.agentSessionId).toBe('non-terminal-session');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(false);
 			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 		});
 
@@ -367,7 +433,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(updated.agentSessionId).toBe('restart-non-terminal-session');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(true);
+			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(false);
 			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
 				false
@@ -406,7 +472,15 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				} as any,
 			});
 			(rt as any).recoveryDone = true;
-			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			(rt as any).nonTerminalIdleStates.set(`${run.id}:${execution.id}`, {
+				lastSessionId: 'non-terminal-repeat',
+				lastObservedMessageId: 'message-id',
+				lastObservedProgressMessageId: 'message-id',
+				lastObservedProgressMessageAt: Date.now() - 60_000,
+				lastRuntimeNudgeMessageId: 'nudge-id',
+				nudgeCount: 3,
+				lastNudgeAt: Date.now() - 60_000,
+			});
 			await rt.executeTick();
 
 			const updated = nodeExecutionRepo.getById(execution.id)!;
@@ -446,13 +520,22 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			);
 
 			const rt = makeRuntime();
-			// Even a previously-counted idle execution should be preserved rather than blocked.
-			(rt as any).nonTerminalIdleCounts.set(`${run.id}:${execution.id}`, 3);
+			// Even a previously-noticed idle execution should be preserved rather than blocked.
+			(rt as any).nonTerminalIdleStates.set(`${run.id}:${execution.id}`, {
+				lastSessionId: 'non-terminal-blocked-session',
+				lastObservedMessageId: 'message-id',
+				lastObservedProgressMessageId: 'message-id',
+				lastObservedProgressMessageAt: Date.now() - 60_000,
+				lastRuntimeNudgeMessageId: 'nudge-id',
+				nudgeCount: 3,
+				lastNudgeAt: Date.now() - 60_000,
+			});
 			// Simulate the handler being called directly (as it would be from processRunTick)
 			const outcome = await (rt as any).handleNonTerminalIdleExecutions(
 				run.id,
 				SPACE_ID,
-				taskRepo.getTask(task.id)!
+				taskRepo.getTask(task.id)!,
+				workflow
 			);
 
 			expect(outcome).toBe('preserved');

@@ -1441,7 +1441,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			).toBe(0);
 		});
 
-		test('clears preserved idle counters when removing done run executor', async () => {
+		test('clears preserved idle state when removing done run executor', async () => {
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isSessionAlive: () => false,
 			});
@@ -1460,7 +1460,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 			await rt.executeTick();
 			expect(
-				(rt as unknown as { nonTerminalIdleCounts: Map<string, unknown> }).nonTerminalIdleCounts
+				(rt as unknown as { nonTerminalIdleStates: Map<string, unknown> }).nonTerminalIdleStates
 					.size
 			).toBe(1);
 
@@ -1472,7 +1472,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 			expect(rt.getExecutor(run.id)).toBeUndefined();
 			expect(
-				(rt as unknown as { nonTerminalIdleCounts: Map<string, unknown> }).nonTerminalIdleCounts
+				(rt as unknown as { nonTerminalIdleStates: Map<string, unknown> }).nonTerminalIdleStates
 					.size
 			).toBe(0);
 		});
