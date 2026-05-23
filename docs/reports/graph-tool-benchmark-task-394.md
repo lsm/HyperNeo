@@ -28,10 +28,18 @@ Task #394's description named four files. Direct code exploration found those pl
 
 | File | Relevant surface |
 |---|---|
-| `packages/daemon/src/lib/space/runtime/space-runtime.ts` | `SpaceNotificationEvent`, `mapNotificationEventToInternalEvent`, `safeNotify`, `handleStuckAgentRecovery`, `agent_idle_non_terminal`, `attemptBlockedRunRecovery`, `workflow_run_completed` |
+| `packages/daemon/src/lib/space/runtime/space-runtime.ts` | `SpaceNotificationEvent`, `mapNotificationEventToInternalEvent`, `safeNotify`, `handleAliveStuckExecutions`, `handleNonTerminalIdleExecutions`, `handleWaitingRebindExecutions`, `attemptBlockedRunRecovery`, `agent_idle_non_terminal`, `workflow_run_completed` |
 | `packages/daemon/src/lib/space/runtime/space-agent-notification-service.ts` | event subscription, `[TASK_EVENT]` injection, idle/retry message formatters |
 | `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` | creates `SpaceAgentNotificationService` per space |
-| `packages/daemon/src/lib/space/runtime/constants.ts` | existing stuck/retry limits such as `MAX_AGENT_STUCK_NAGS` and `MAX_BLOCKED_RUN_RETRIES` |
+| `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` | agent lifecycle management, spawn/timeout handling, execution state bridge |
+| `packages/daemon/src/lib/space/runtime/channel-router.ts` | message routing between sessions/agents and runtime channels |
+| `packages/daemon/src/lib/space/runtime/escalation-reasons.ts` | canonical escalation reasons used when stuck/recovery paths need human attention |
+| `packages/daemon/src/lib/space/runtime/last-message-classifier.ts` | classifies latest agent message; relevant to distinguishing waiting/tool-progress from stuck idle |
+| `packages/daemon/src/lib/space/runtime/workflow-run-status-machine.ts` | workflow terminal/non-terminal transition semantics |
+| `packages/daemon/src/lib/space/runtime/completion-detector.ts` | detects completion signals and terminal conditions |
+| `packages/daemon/src/lib/external-events/external-event-store.ts` | persisted external event state that feeds runtime retry/delivery paths |
+| `packages/daemon/src/lib/external-events/external-event-service.ts` | external event ingestion/service layer that can interact with retry/noise behavior |
+| `packages/daemon/src/lib/space/runtime/constants.ts` | existing stuck/retry/network constants including `MAX_AGENT_STUCK_NAGS`, `DEFAULT_AGENT_STUCK_NAG_GRACE_MS`, `MAX_AGENT_STUCK_RESTARTS`, `MAX_BLOCKED_RUN_RETRIES`, and `NETWORK_RETRY_DELAYS_MS` |
 | `packages/daemon/src/lib/space/runtime/retry-utils.ts` | generic retry/backoff helper |
 | `packages/daemon/src/lib/internal-event-bus.ts` | canonical event surface (`SpaceEvents`, `DaemonInternalEventMap`) |
 | `packages/shared/src/types/space.ts` | `SpaceGoalEventSource`, agent timeout fields, shared space/task types |
@@ -39,27 +47,32 @@ Task #394's description named four files. Direct code exploration found those pl
 | `packages/daemon/tests/unit/5-space/runtime/space-runtime-notifications.test.ts` | notification behavior coverage, including `workflow_run_completed` |
 | `packages/daemon/tests/unit/5-space/runtime/space-runtime-stalled-recovery.test.ts` | existing stalled/stuck recovery tests |
 | `packages/daemon/tests/unit/5-space/other/space-agent-notification-service.test.ts` | notification service formatter/subscriber tests |
+| `packages/daemon/tests/unit/5-space/runtime/space-runtime-external-events.test.ts` | external event retry/delivery behavior coverage |
+| `packages/daemon/tests/unit/4-space-storage/storage/external-event-store.test.ts` | external event persistence coverage |
+| `packages/daemon/tests/unit/4-space-storage/storage/external-event-service.test.ts` | external event service coverage |
+| `packages/daemon/tests/unit/5-space/workflow/completion-detector.test.ts` | completion detection coverage |
+| `packages/daemon/tests/unit/5-space/workflow/workflow-run-status-lifecycle.test.ts` | workflow status transition coverage |
 
 ## Comparison table
 
 | Setup | Build/query observed | Final GLM plan tokens | Tool/query calls used for context | Key-file recall | Extra relevant files beyond #394 | Usefulness | Friction / reliability | Security and config risk |
 |---|---:|---:|---:|---|---|---|---|---|
-| Baseline direct exploration | Investigator run took 134.7s, 34 code tools, 46,262 Claude tokens | 6,325 | 34 reads/greps/globs in investigator | Strong: 4/4 named files plus tests/types | Strong: `internal-event-bus.ts`, `types/space.ts`, `workflow-autonomy.ts`, tests | Best practical plan; concrete lines and existing functions | No install; token/tool cost high | Lowest risk; no generated DB |
-| CodeGraph | `npx @colbymchenry/codegraph init . -i`; 1,580 files, 21,487 nodes, 19,857 edges, 18.3s internal / 25.8s wall. `context` query 4.35s | 4,324 | 1 context + 4 exact symbol queries | Partial: found `space-runtime.ts`, `space-agent-notification-service.ts`; missed `task-executor.ts`; initial task-context query was mostly wrong/UI-noisy | Weak: little beyond notification/runtime, missed tests/types | Low-to-medium. Exact symbol queries useful; free-form task context poor | Fast local index; `init` creates `.codegraph/`; no `--no-install` flag but did not mutate global config in observed path | Installer can mutate `~/.claude.json`, `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, Cursor/Codex config, and optionally auto-allow tools. Keep disabled/manual only |
-| code-review-graph | `uvx --from code-review-graph code-review-graph build --repo . --data-dir /tmp/neokai-crg-467`; 1,591 files, 34,381 nodes, 399,977 edges, 893 flows, 10 communities, 61.7s wall | 17,974 | 1 minimal-context query + targeted `file_summary`/structural queries | Good after targeted file summaries: `space-runtime.ts`; structural functions; missed/assumed some paths in first pass | Medium: found `getExternalEventRateLimitState`, `scheduleExternalEventRetry`, `task-agent-manager.ts`, workflow/repository/test adjacency, but still assumed some module paths | Medium-high. Best graph depth/risk signal, but large JSON can overfeed model and concept queries require exact structural patterns | Python install via `uvx`; build reliable. Tool API easy to misuse: `query_graph(pattern, target)` uses fixed patterns, not semantic search. MCP exposes 28 tools unless filtered | Installer mutates assistant configs/hooks/MCP. Daemon uses `~/.code-review-graph/watch.toml`. Local DB can live in project or external data dir. Expose minimal MCP subset only |
-| Graphify | Existing CLI. `graphify extract . --out /tmp/neokai-graphify-467 --backend openai --model glm-5.1 --no-cluster`; first semantic chunks failed because `openai` extra missing, but AST graph still wrote 20,316 nodes / 60,564 edges in 26.9s. Generic query 15KB; targeted query 15KB | 6,847 targeted run; 7,925 generic run | 2 graph queries | Poor generic query; decent targeted query found `space-runtime.ts`, `TaskAgentManager`, `SpaceAgentNotificationService`, `InternalEventBus`, `retry-utils` | Medium after exact-term query: `task-agent-manager.ts`, repositories/managers surfaced; missed tests and some exact existing constants unless prompted | Medium. Targeted graph query useful as navigation map; generic task query drifted to schedule/task UI noise. Semantic extraction requires extra deps/API setup | CLI help fast; AST-only extraction reliable. Semantic extraction with GLM via OpenAI-compatible backend needs `openai` extra and env mapping (`OPENAI_API_KEY`, `OPENAI_BASE_URL`). Full `/graphify` skill is heavy for >200 files | Install/hooks/Claude integration can mutate CLAUDE.md, hooks, global graph. `graphify-out/` can be large and repo page recommends committing it; NeoKai should not commit generated graph outputs |
+| Baseline direct exploration | Investigator run took 134.7s, 34 code tools, 46,262 Claude tokens | 6,325 | 34 reads/greps/globs in investigator | Strong for named files but initial answer key required correction: 3/4 task-named files confirmed, `task-executor.ts` not found in current tree, and one fabricated function name was replaced with actual runtime handlers | Strong after review correction: `task-agent-manager.ts`, `channel-router.ts`, classifier/completion/status-machine files, external event files, `internal-event-bus.ts`, `types/space.ts`, `workflow-autonomy.ts`, tests | Best practical plan; concrete lines and existing functions | No install; token/tool cost high | Lowest risk; no generated DB |
+| CodeGraph | `npx @colbymchenry/codegraph init . -i`; 1,580 files, 21,487 nodes, 19,857 edges, 18.3s internal / 25.8s wall. `context` query 4.35s | 4,324 | 1 context + 4 exact symbol queries | Partial: found `space-runtime.ts`, `space-agent-notification-service.ts`; missed most runtime-adjacent answer-key files; initial task-context query was mostly wrong/UI-noisy | Weak: little beyond notification/runtime, missed tests/types/classifier/status/external-event files | Low-to-medium. Exact symbol queries useful; free-form task context poor | Fast local index; `init` creates `.codegraph/`; no `--no-install` flag but did not mutate global config in observed path | Installer can mutate `~/.claude.json`, `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, Cursor/Codex config, and optionally auto-allow tools. Keep disabled/manual only |
+| code-review-graph | `uvx --from code-review-graph code-review-graph build --repo . --data-dir /tmp/neokai-crg-467`; 1,591 files, 34,381 nodes, 399,977 edges, 893 flows, 10 communities, 61.7s wall | 17,974 | 1 minimal-context query + targeted `file_summary`/structural queries | Good after targeted file summaries: `space-runtime.ts`; structural functions; still incomplete on classifier/status/external-event files in first pass | Medium: found `getExternalEventRateLimitState`, `scheduleExternalEventRetry`, `task-agent-manager.ts`, workflow/repository/test adjacency, but still assumed some module paths | Medium-high. Best graph depth/risk signal, but large JSON can overfeed model and concept queries require exact structural patterns | Python install via `uvx`; build reliable. Tool API easy to misuse: `query_graph(pattern, target)` uses fixed patterns, not semantic search. MCP exposes 28 tools unless filtered | Installer mutates assistant configs/hooks/MCP. Daemon uses `~/.code-review-graph/watch.toml`. Local DB can live in project or external data dir. Expose minimal MCP subset only |
+| Graphify | Existing CLI. `graphify extract . --out /tmp/neokai-graphify-467 --backend openai --model glm-5.1 --no-cluster`; first semantic chunks failed because `openai` extra missing, but AST graph still wrote 20,316 nodes / 60,564 edges in 26.9s. Generic query 15KB; targeted query 15KB | 6,847 targeted run; 7,925 generic run | 2 graph queries | Poor generic query; decent targeted query found `space-runtime.ts`, `TaskAgentManager`, `SpaceAgentNotificationService`, `InternalEventBus`, `retry-utils` | Medium after exact-term query: `task-agent-manager.ts`, repositories/managers surfaced; missed tests and some exact existing constants unless prompted | Medium. Targeted graph query useful as navigation map; generic task query drifted to schedule/task UI noise. Semantic extraction requires extra deps/API setup | CLI help fast; AST-only extraction reliable. Semantic extraction with GLM via Graphify's OpenAI-compatible backend needs Graphify installed with the `openai` extra plus standard OpenAI-client env mapping (`OPENAI_API_KEY` set to `GLM_API_KEY`, `OPENAI_BASE_URL` set to GLM endpoint). Full skill pipeline is heavier than headless AST extraction on this monorepo | Install/hooks/Claude integration can mutate CLAUDE.md, hooks, global graph. `graphify-out/` can be large and repo page recommends committing it; NeoKai should not commit generated graph outputs |
 
 ## Findings by tool
 
 ### Baseline
 
-Direct read/grep exploration produced the most accurate answer because task #394 already included exact event names and likely files. It found existing recovery code (`handleStuckAgentRecovery`, `attemptBlockedRunRecovery`), notification service formatters, event-bus types, constants, retry helper, autonomy helper, and test coverage.
+Direct read/grep exploration produced the most accurate answer because task #394 already included exact event names and likely files, but the first answer key still needed review correction: `handleStuckAgentRecovery` was fabricated. Actual runtime recovery handlers are `handleAliveStuckExecutions`, `handleNonTerminalIdleExecutions`, and `handleWaitingRebindExecutions`, alongside `attemptBlockedRunRecovery`. After correction, the answer key includes notification service formatters, event-bus types, constants, retry helper, autonomy helper, classifier/completion/status-machine files, external-event files, and test coverage.
 
 Cost was high: 34 code-exploration tool calls and 46k Claude tokens before the GLM plan call. For one-off planning this is acceptable; for repeated PR review it is expensive.
 
 ### CodeGraph
 
-CodeGraph indexing was fastest and local-only. Its MCP/CLI surface is small and understandable: search, context, callers/callees, impact, files, status.
+CodeGraph indexing was fastest and local-only. Its MCP surface is small and understandable: 9 tools listed in repo docs (`codegraph_search`, `codegraph_context`, `codegraph_callers`, `codegraph_callees`, `codegraph_impact`, `codegraph_node`, `codegraph_explore`, `codegraph_files`, `codegraph_status`).
 
 Weakness: the free-form `context <task>` query over-indexed generic words like `task` and `event`, returning frontend thread-event and test-gateway code rather than daemon anti-stuck code. Exact symbol queries worked better for `SpaceAgentNotificationService` and `safeNotify`, but `agent_idle_non_terminal` and `workflow_run_completed` were weak because string-literal event names are not first-class symbols.
 
@@ -69,7 +82,7 @@ CodeGraph is best as an exact-symbol helper after an agent already knows which n
 
 code-review-graph produced the largest and richest structural graph. It captured more nodes/edges than CodeGraph and reported flows, communities, high risk, and test gaps. Targeted `file_summary` queries on answer-key files provided useful function-level maps. It also surfaced rate-limit and retry-related runtime functions not named in task #394.
 
-Weakness: MCP tool naming can mislead. `query_graph(pattern, target)` is not semantic query; `pattern` must be one of `callers_of`, `callees_of`, `imports_of`, `importers_of`, `children_of`, `tests_for`, `inheritors_of`, `file_summary`. Passing concepts returned errors. The raw targeted JSON was huge (335KB), increasing prompt tokens and causing plan output truncation at 4,096 tokens.
+Weakness: MCP tool naming can mislead. Local package source showed `query_graph(pattern, target)` is not semantic query; `pattern` is fixed to structural modes such as `callers_of`, `callees_of`, `imports_of`, `importers_of`, `children_of`, `tests_for`, `inheritors_of`, and `file_summary`. Passing concepts returned errors. The raw targeted JSON was huge (335KB), increasing prompt tokens and causing plan output truncation at 4,096 tokens.
 
 Best use in NeoKai: structural review context, impact radius, file summaries, tests-for, semantic search if enabled, and graph stats. Avoid exposing all 28 MCP tools by default.
 
@@ -77,9 +90,9 @@ Best use in NeoKai: structural review context, impact radius, file summaries, te
 
 Graphify's targeted exact-term query found the core runtime spine after the initial generic query failed. It was better than CodeGraph at surfacing neighboring managers/repositories, but worse than code-review-graph for actionable file summaries and worse than baseline for exact test/type surfaces.
 
-Graphify's strength is broader knowledge-graph workflows across code, docs, papers, images, and graph reports. That breadth is not needed for task #394's focused daemon refactor. Its full skill pipeline is heavy for NeoKai's monorepo and warns on >200 files; headless AST extraction was more practical for this benchmark.
+Graphify's strength is broader knowledge-graph workflows across code, docs, papers, images, and graph reports. That breadth is not needed for task #394's focused daemon refactor. Headless AST extraction was more practical for this benchmark than running the full assistant skill pipeline.
 
-Semantic extraction did not fully run because the local Graphify install lacked the `openai` extra. The tool still wrote an AST graph, but this means the benchmark did not measure Graphify's intended semantic extraction quality.
+Semantic extraction did not fully run because the local Graphify install lacked the `openai` extra. The tool still wrote an AST graph, but this means the benchmark did not measure Graphify's intended semantic extraction quality. Graphify's MCP server exposes 10 tools in its skill docs: `query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`, `shortest_path`, `list_prs`, `get_pr_impact`, and `triage_prs`.
 
 ## Integration recommendation
 
@@ -99,7 +112,7 @@ Suggested UI/status detection:
 
 - CLI present: `code-review-graph --version` succeeds, or `uvx --from code-review-graph code-review-graph --version` can be offered as install-free check only if user opts in.
 - Graph present: `.code-review-graph/` or configured external data dir exists and `code-review-graph status --repo <root>` succeeds.
-- Tool count warning: show that full MCP exposes many tools; default template uses filtered subset.
+- Tool count warning: show that full MCP exposes many tools (28 reported by repo docs); default template uses filtered subset.
 - Help copy: `uv tool install code-review-graph` or `pipx install code-review-graph`; then `code-review-graph build --repo <project>`.
 - Do not run `code-review-graph install`; it mutates assistant configs.
 
@@ -136,7 +149,7 @@ python -m graphify.serve ${workspaceFolder}/graphify-out/graph.json
   - graph exists and MCP enabled
 - Add `.gitignore` guidance for `graphify-out/` unless user explicitly wants to version graph artifacts.
 - Mention Graphify is better for cross-doc/code knowledge maps than focused code-review planning.
-- If user wants headless extraction with GLM, document needed OpenAI-compatible env mapping and extras; do not assume semantic extraction works with base install.
+- If user wants headless extraction with GLM, document Graphify's OpenAI-compatible backend requirements: install `openai` extra, set standard OpenAI-client variables (`OPENAI_API_KEY=$GLM_API_KEY`, `OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4`), and pass `--backend openai --model glm-5.1`. These are backend env vars consumed by the OpenAI client, not Graphify-specific variable names.
 
 ### Task #388 (code-review-graph)
 
