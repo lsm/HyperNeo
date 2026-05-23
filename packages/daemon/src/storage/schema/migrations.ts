@@ -665,7 +665,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 143: Expand Forge evidence kinds for trace-derived process evidence.
 	runMigration143(db);
 
-	// Migration 144: Add evergreen long-horizon Space agents and Coordinator default.
+	// Migration 144: Add evergreen long-horizon Space agents, Coordinator default,
+	// and long-horizon Space agent management tables.
 	runMigration144(db);
 }
 
@@ -9498,6 +9499,86 @@ export function runMigration143(db: BunDatabase): void {
 	widenEvolutionEvidenceKinds(db);
 }
 
+function createSpaceAgentManagementTables(db: BunDatabase): void {
+	if (tableExists(db, 'space_agents') && !tableHasColumn(db, 'space_agents', 'status')) {
+		db.exec(
+			`ALTER TABLE space_agents ADD COLUMN status TEXT NOT NULL DEFAULT 'active' ` +
+				`CHECK(status IN ('active', 'paused', 'archived'))`
+		);
+	}
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_goal_assignments (
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			goal_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, goal_id),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_goal_assignments_goal ` +
+			`ON space_agent_goal_assignments(space_id, goal_id)`
+	);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_forge_scope_assignments (
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, scope_id),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY (scope_id) REFERENCES evolution_scopes(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_forge_scope_assignments_scope ` +
+			`ON space_agent_forge_scope_assignments(space_id, scope_id)`
+	);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_reminders (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			message TEXT NOT NULL,
+			remind_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'done', 'cancelled')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_reminders_agent_status ` +
+			`ON space_agent_reminders(space_id, agent_id, status, remind_at)`
+	);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_event_subscriptions (
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			topic_pattern TEXT NOT NULL,
+			label TEXT,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, topic_pattern),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
+			`ON space_agent_event_subscriptions(space_id, topic_pattern)`
+	);
+}
+
 function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 	if (!tableExists(db, 'evolution_evidence')) return;
 	const sql = tableCreateSql(db, 'evolution_evidence');
@@ -10022,6 +10103,7 @@ export function runMigration140(db: BunDatabase): void {
 
 export function runMigration144(db: BunDatabase): void {
 	createLongHorizonAgentTables(db);
+	createSpaceAgentManagementTables(db);
 	backfillCoordinatorLongHorizonAgents(db);
 }
 

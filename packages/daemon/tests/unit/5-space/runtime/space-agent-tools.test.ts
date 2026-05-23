@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -255,6 +255,7 @@ function makeCtx(): TestCtx {
 function makeHandlers(ctx: TestCtx) {
 	return createSpaceAgentToolHandlers({
 		spaceId: ctx.spaceId,
+		db: ctx.db,
 		runtime: ctx.runtime,
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
@@ -294,6 +295,14 @@ function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpSer
 	return Object.keys(instance._registeredTools);
 }
 
+describe('schema evolution setup', () => {
+	test('createTables works before space_agents exists', () => {
+		const db = new BunDatabase(':memory:');
+		expect(() => createTables(db)).not.toThrow();
+		db.close();
+	});
+});
+
 describe('createSpaceAgentMcpServer — tool registration', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
@@ -318,7 +327,29 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 		const names = getRegisteredToolNames(server);
 		expect(names).not.toContain('start_workflow_run');
 		expect(names).toContain('create_standalone_task');
+		expect(names).not.toContain('create_agent');
+		expect(names).not.toContain('assign_agent_to_goal');
+		expect(names).not.toContain('create_agent_reminder');
 		expect(names).not.toContain('create_goal');
+	});
+
+	test('registers long-horizon agent tools when database is configured', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			db: ctx.db,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+		});
+
+		const names = getRegisteredToolNames(server);
+		expect(names).toContain('create_agent');
+		expect(names).toContain('assign_agent_to_goal');
+		expect(names).toContain('create_agent_reminder');
 	});
 
 	test('registers goal tools when goalService is configured', () => {
@@ -372,6 +403,263 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 // ---------------------------------------------------------------------------
 // goal tools
 // ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+	});
+
+	test('creates, updates, pauses, archives, and templates agents', async () => {
+		const handlers = makeHandlers(ctx);
+
+		const created = JSON.parse(
+			(
+				await handlers.create_agent({
+					name: 'Scout',
+					description: 'Tracks quality signals',
+					tools: ['Read', 'Grep'],
+				})
+			).content[0].text
+		);
+		expect(created.success).toBe(true);
+		expect(created.agent.status).toBe('active');
+		expect(created.agent.tools).toEqual(['Read', 'Grep']);
+
+		const blankCreateName = JSON.parse(
+			(await handlers.create_agent({ name: '  ' })).content[0].text
+		);
+		expect(blankCreateName.success).toBe(false);
+		expect(blankCreateName.error).toBe('Agent name cannot be empty');
+
+		const updated = JSON.parse(
+			(
+				await handlers.update_agent({
+					agent_id: created.agent.id,
+					description: 'Tracks product-quality signals',
+					thinking_level: 'think8k',
+				})
+			).content[0].text
+		);
+		expect(updated.success).toBe(true);
+		expect(updated.agent.thinkingLevel).toBe('think8k');
+
+		const blankUpdateName = JSON.parse(
+			(
+				await handlers.update_agent({
+					agent_id: created.agent.id,
+					name: '  ',
+				})
+			).content[0].text
+		);
+		expect(blankUpdateName.success).toBe(false);
+		expect(blankUpdateName.error).toBe('Agent name cannot be empty');
+
+		const paused = JSON.parse(
+			(await handlers.pause_agent({ agent_id: created.agent.id })).content[0].text
+		);
+		expect(paused.agent.status).toBe('paused');
+		const archived = JSON.parse(
+			(await handlers.archive_agent({ agent_id: created.agent.id })).content[0].text
+		);
+		expect(archived.agent.status).toBe('archived');
+
+		const templated = JSON.parse(
+			(
+				await handlers.create_agent_from_template({
+					template_name: 'Reviewer',
+					name: 'Reviewer Copy',
+				})
+			).content[0].text
+		);
+		expect(templated.success).toBe(true);
+		expect(templated.agent.templateName).toBe('Reviewer');
+
+		const blankTemplateName = JSON.parse(
+			(
+				await handlers.create_agent_from_template({
+					template_name: 'Reviewer',
+					name: '  ',
+				})
+			).content[0].text
+		);
+		expect(blankTemplateName.success).toBe(false);
+		expect(blankTemplateName.error).toBe('Agent name cannot be empty');
+
+		const listed = JSON.parse((await handlers.list_agents({ status: 'archived' })).content[0].text);
+		expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
+	});
+
+	test('manages agent assignments, reminders, and event subscriptions', async () => {
+		const handlers = makeHandlers(ctx);
+		const agent = JSON.parse(
+			(await handlers.create_agent({ name: 'Manager' })).content[0].text
+		).agent;
+		const goal = JSON.parse(
+			(await handlers.create_goal({ title: 'Goal', description: 'Desc' })).content[0].text
+		).goal;
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Scope',
+					objective: 'Track evidence',
+				})
+			).content[0].text
+		).scope;
+
+		expect(
+			JSON.parse(
+				(await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+					.text
+			).success
+		).toBe(true);
+		expect(
+			JSON.parse(
+				(await handlers.assign_agent_to_forge_scope({ agent_id: agent.id, scope_id: scope.id }))
+					.content[0].text
+			).success
+		).toBe(true);
+
+		const reminder = JSON.parse(
+			(
+				await handlers.create_agent_reminder({
+					agent_id: agent.id,
+					message: 'Check progress',
+					remind_at: Date.now() + 60_000,
+				})
+			).content[0].text
+		);
+		expect(reminder.success).toBe(true);
+		const reminders = JSON.parse(
+			(await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
+				.text
+		);
+		expect(reminders.reminders).toHaveLength(1);
+
+		expect(
+			JSON.parse(
+				(
+					await handlers.subscribe_agent_event({
+						agent_id: agent.id,
+						topic_pattern: 'github/*/*/pull_request/*',
+						label: 'PR activity',
+					})
+				).content[0].text
+			).success
+		).toBe(true);
+		const subscriptions = JSON.parse(
+			(await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
+		);
+		expect(subscriptions.subscriptions[0].topic_pattern).toBe('github/*/*/pull_request/*');
+
+		expect(
+			JSON.parse(
+				(await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))
+					.content[0].text
+			).success
+		).toBe(true);
+		expect(
+			JSON.parse(
+				(await handlers.unassign_agent_from_forge_scope({ agent_id: agent.id, scope_id: scope.id }))
+					.content[0].text
+			).success
+		).toBe(true);
+	});
+
+	test('returns errors for missing and cross-space agents', async () => {
+		const handlers = makeHandlers(ctx);
+		const missingId = 'missing-agent';
+
+		const missing = JSON.parse((await handlers.get_agent({ agent_id: missingId })).content[0].text);
+		expect(missing.success).toBe(false);
+		expect(missing.error).toBe(`Agent not found: ${missingId}`);
+
+		const otherSpaceId = 'other-space';
+		seedSpaceRow(ctx.db, otherSpaceId);
+		seedAgentRow(ctx.db, 'agent-other-space', otherSpaceId, 'Other Space Agent');
+
+		const crossSpace = JSON.parse(
+			(
+				await handlers.update_agent({
+					agent_id: 'agent-other-space',
+					description: 'Should not update',
+				})
+			).content[0].text
+		);
+		expect(crossSpace.success).toBe(false);
+		expect(crossSpace.error).toBe('Agent not found: agent-other-space');
+
+		const missingReminder = JSON.parse(
+			(
+				await handlers.create_agent_reminder({
+					agent_id: missingId,
+					message: 'No target',
+					remind_at: Date.now(),
+				})
+			).content[0].text
+		);
+		expect(missingReminder.success).toBe(false);
+		expect(missingReminder.error).toBe(`Agent not found: ${missingId}`);
+	});
+
+	test('returns errors from database-backed tools when database is not configured', async () => {
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			spaceManager: ctx.spaceManager,
+			goalService: ctx.goalService,
+			evolutionScopeService: ctx.evolutionScopeService,
+			evolutionEpisodeService: ctx.evolutionEpisodeService,
+		});
+
+		const agent = JSON.parse(
+			(await handlers.create_agent({ name: 'No Db Agent' })).content[0].text
+		).agent;
+		const goal = JSON.parse(
+			(await handlers.create_goal({ title: 'No DB Goal', description: 'Desc' })).content[0].text
+		).goal;
+
+		const assignment = JSON.parse(
+			(await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
+				.text
+		);
+		expect(assignment.success).toBe(false);
+		expect(assignment.error).toBe('Long-horizon agent management not available');
+
+		const reminder = JSON.parse(
+			(
+				await handlers.create_agent_reminder({
+					agent_id: agent.id,
+					message: 'No DB',
+					remind_at: Date.now(),
+				})
+			).content[0].text
+		);
+		expect(reminder.success).toBe(false);
+		expect(reminder.error).toBe('Long-horizon agent management not available');
+
+		const subscription = JSON.parse(
+			(
+				await handlers.subscribe_agent_event({
+					agent_id: agent.id,
+					topic_pattern: 'github/*',
+				})
+			).content[0].text
+		);
+		expect(subscription.success).toBe(false);
+		expect(subscription.error).toBe('Long-horizon agent management not available');
+	});
+});
 
 describe('createSpaceAgentToolHandlers — goal tools', () => {
 	let ctx: TestCtx;

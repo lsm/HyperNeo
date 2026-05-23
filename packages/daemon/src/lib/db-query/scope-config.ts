@@ -526,6 +526,12 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'space_long_horizon_agent_forge_scopes',
 	'space_long_horizon_agent_reminders',
 	'space_long_horizon_agent_event_subscriptions',
+	// Space agent management tables — agent goal/scope assignments, reminders, event subscriptions;
+	// internal MCP tool state, not useful for ad-hoc agent queries.
+	'space_agent_goal_assignments',
+	'space_agent_forge_scope_assignments',
+	'space_agent_reminders',
+	'space_agent_event_subscriptions',
 ];
 
 // ── Scope config registry ─────────────────────────────────────────────────────
