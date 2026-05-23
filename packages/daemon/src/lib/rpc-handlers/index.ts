@@ -157,18 +157,18 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
 	const scopeLabel = `scope:${scope.id}`;
 	const existing = scheduleService
 		.listSchedules(goal.spaceId)
-		.find(
+		.filter(
 			(schedule) =>
 				schedule.goalId === goal.id &&
 				schedule.createdByAgent === 'goal-automation-service' &&
 				readSelfNagScheduleScopeId(schedule) === scope.id
-		);
+		)
+		.find((schedule) => schedule.status !== 'completed');
 	if (!policy.selfNagCronExpression) {
 		if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);
 		return;
 	}
 	if (existing) {
-		if (existing.status === 'completed') return;
 		if (existing.status === 'paused') scheduleService.resumeSchedule(existing.id);
 		scheduleService.updateSchedule(existing.id, {
 			title: `Forge self-nag: ${goal.title}`,

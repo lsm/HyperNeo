@@ -460,6 +460,38 @@ describe('GoalAutomationService', () => {
 		expect(restoredSchedule.pendingJobId).not.toBeNull();
 	});
 
+	it('creates a new self-nag schedule when previous automation schedule completed', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Recreate self nag', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Recreate cadence',
+			objective: 'Recreate completed automation schedule',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+		const completedSchedule = scheduleService.listSchedules(spaceId, 'active')[0];
+		scheduleRepo.updateAfterFire(completedSchedule.id, {
+			lastCreatedTaskId: null,
+			lastRunAt: Date.now(),
+			nextRunAt: null,
+			status: 'completed',
+			pendingJobId: null,
+		});
+
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+
+		const completedSchedules = scheduleService.listSchedules(spaceId, 'completed');
+		expect(completedSchedules).toHaveLength(1);
+		expect(completedSchedules[0].id).toBe(completedSchedule.id);
+		const activeSchedules = scheduleService.listSchedules(spaceId, 'active');
+		expect(activeSchedules).toHaveLength(1);
+		expect(activeSchedules[0].id).not.toBe(completedSchedule.id);
+		expect(activeSchedules[0].metadata).toMatchObject({ goalAutomationScopeId: scope.id });
+		expect(activeSchedules[0].pendingJobId).not.toBeNull();
+	});
+
 	it('finds self-nag schedule by immutable metadata when labels are edited', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Metadata self nag', type: 'recurring' });
 		const scope = evolutionRepo.createScope({
