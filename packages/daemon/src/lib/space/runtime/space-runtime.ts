@@ -4054,6 +4054,18 @@ export class SpaceRuntime {
 			const processingState = session?.getProcessingState();
 			if (processingState?.status === 'waiting_for_input') continue;
 
+			// Skip nag when task is awaiting human approval — the agent has already
+			// submitted its work and is intentionally idle pending review.
+			if (canonicalTask.pendingCheckpointType === 'task_completion') continue;
+			// Skip nag when the execution already has a result and the task is in a
+			// review/approved state — the node agent reported completion and is waiting
+			// for the workflow to advance through the approval gate.
+			if (
+				execution.result &&
+				(canonicalTask.status === 'review' || canonicalTask.status === 'approved')
+			)
+				continue;
+
 			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(execution.agentSessionId);
 			const classification = classifyLastMessageForIdleAgent(lastMessage);
 			const state = this.getAgentStuckState(runId, execution);

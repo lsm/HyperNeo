@@ -1630,6 +1630,75 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Approval-gate and success-result nag suppression
+	// -------------------------------------------------------------------------
+
+	describe('approval-gate and success-result nag suppression', () => {
+		test('does not nag when task is pending task_completion approval', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:awaiting-approval',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			// Mark task as awaiting approval
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'review',
+				pendingCheckpointType: 'task_completion',
+			});
+
+			await rt.executeTick();
+
+			expect(nags).toHaveLength(0);
+		});
+
+		test('does not nag when execution has a result and task is in review', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:has-result',
+				startedAt: Date.now() - 20 * 60_000,
+				result: 'PR #42 opened at https://github.com/example/repo/pull/42',
+			});
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'review',
+			});
+
+			await rt.executeTick();
+
+			expect(nags).toHaveLength(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// Multiple independent workflow runs processed in same tick
 	// -------------------------------------------------------------------------
 
