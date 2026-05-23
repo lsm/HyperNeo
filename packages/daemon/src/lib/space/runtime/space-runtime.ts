@@ -307,6 +307,20 @@ interface AgentStuckRecoveryState {
 	pendingRestartNotice: string | null;
 }
 
+interface NonTerminalIdleState {
+	lastSessionId: string | null;
+	lastObservedMessageId: string | null;
+	lastObservedProgressMessageId: string | null;
+	lastObservedProgressMessageAt: number | null;
+	lastRuntimeNudgeMessageId: string | null;
+	nudgeCount: number;
+	failedNudgeCount: number;
+	lastNudgeAt: number | null;
+	lastAttentionLogAt: number | null;
+}
+
+const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
+const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
@@ -380,17 +394,6 @@ type SpaceNotificationEvent =
 			kind: 'agent_crash';
 			spaceId: string;
 			taskId: string;
-			timestamp: string;
-	  }
-	| {
-			kind: 'agent_idle_non_terminal';
-			spaceId: string;
-			taskId: string;
-			runId: string;
-			executionId: string;
-			nodeId: string;
-			agentName: string;
-			reason: string;
 			timestamp: string;
 	  }
 	| {
@@ -548,21 +551,6 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 					timestamp: event.timestamp,
 				},
 			};
-		case 'agent_idle_non_terminal':
-			return {
-				event: 'space.agent.idleNonTerminal',
-				payload: {
-					namespaceId,
-					spaceId: event.spaceId,
-					taskId: event.taskId,
-					runId: event.runId,
-					executionId: event.executionId,
-					nodeId: event.nodeId,
-					agentName: event.agentName,
-					reason: event.reason,
-					timestamp: event.timestamp,
-				},
-			};
 		case 'task_retry':
 			return {
 				event: 'space.workflowRun.retry',
@@ -704,11 +692,11 @@ export class SpaceRuntime {
 	/**
 	 * Tracks idle executions whose last SDK message was non-terminal.
 	 *
-	 * This is an in-memory duplicate-notification guard only. Naturally idle
-	 * incomplete executions are preserved; Layer 1 no longer respawns or blocks
-	 * them solely because the canonical task remains incomplete.
+	 * This is an in-memory guard only. Naturally idle incomplete executions are
+	 * preserved; qualified stale idle sessions receive one direct runtime nudge,
+	 * then repeated qualified idle is logged for human visibility.
 	 */
-	private nonTerminalIdleCounts = new Map<string, number>();
+	private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
 
 	/**
 	 * In-memory Layer 1 recovery state keyed by `${runId}:${nodeExecutionId}`.
@@ -2888,11 +2876,10 @@ export class SpaceRuntime {
 				this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
 			}
 			this.blockedRetryCounts.delete(preTxRunId);
-			// Clear non-terminal idle retry counters so a manually recovered run
-			// starts with a fresh retry budget instead of re-blocking immediately.
-			for (const key of this.nonTerminalIdleCounts.keys()) {
+			// Clear non-terminal idle state so a manually recovered run starts fresh.
+			for (const key of this.nonTerminalIdleStates.keys()) {
 				if (key.startsWith(preTxRunId + ':')) {
-					this.nonTerminalIdleCounts.delete(key);
+					this.nonTerminalIdleStates.delete(key);
 				}
 			}
 			// Clear Layer 1 alive-stuck state so manually recovered workflow runs get
@@ -3360,6 +3347,33 @@ export class SpaceRuntime {
 	 * Must be called *after* `rehydrateExecutors()` so executor metadata is
 	 * available for any run we might transition.
 	 */
+	async recoverStalledRunsForSpace(spaceId: string): Promise<void> {
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space || space.paused || space.stopped) return;
+
+		let blockedCount = 0;
+		let completionPendingCount = 0;
+		const inProgressRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
+		for (const run of inProgressRuns) {
+			try {
+				const outcome = await this.recoverSingleRun(run);
+				if (outcome === 'blocked') blockedCount++;
+				else if (outcome === 'completion-pending') completionPendingCount++;
+			} catch (err) {
+				log.error(
+					`SpaceRuntime.recoverStalledRunsForSpace: failed to recover run ${run.id} (space ${space.id}):`,
+					err
+				);
+			}
+		}
+
+		if (blockedCount + completionPendingCount > 0) {
+			log.info(
+				`SpaceRuntime.recoverStalledRunsForSpace: space=${space.id} blocked=${blockedCount} completion-pending=${completionPendingCount}`
+			);
+		}
+	}
+
 	async recoverStalledRuns(): Promise<void> {
 		if (this.recoveryDone) return;
 		this.recoveryDone = true;
@@ -3367,8 +3381,13 @@ export class SpaceRuntime {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 		let blockedCount = 0;
 		let completionPendingCount = 0;
+		let skippedPausedCount = 0;
 
 		for (const space of spaces) {
+			if (space.paused || space.stopped) {
+				if (this.config.workflowRunRepo.getActiveRuns(space.id).length > 0) skippedPausedCount += 1;
+				continue;
+			}
 			const inProgressRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
 			for (const run of inProgressRuns) {
 				try {
@@ -3382,6 +3401,10 @@ export class SpaceRuntime {
 					);
 				}
 			}
+		}
+
+		if (skippedPausedCount > 0) {
+			this.recoveryDone = false;
 		}
 
 		if (blockedCount + completionPendingCount > 0) {
@@ -3416,6 +3439,7 @@ export class SpaceRuntime {
 			await this.blockRunWithMissingWorkflow(run, executions);
 			return 'blocked';
 		}
+		const space = await this.config.spaceManager.getSpace(run.spaceId);
 		if (executions.length === 0) return 'skipped';
 
 		// If the tick loop has any work it can drive — `pending` (about
@@ -3477,7 +3501,10 @@ export class SpaceRuntime {
 			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
 				run.id,
 				run.spaceId,
-				canonicalTask
+				canonicalTask,
+				workflow,
+				undefined,
+				space ?? null
 			);
 			if (nonTerminalIdleOutcome === 'blocked') return 'blocked';
 			if (nonTerminalIdleOutcome === 'retried' || nonTerminalIdleOutcome === 'preserved') {
@@ -3955,9 +3982,9 @@ export class SpaceRuntime {
 				this.agentStuckRecovery.delete(key);
 			}
 		}
-		for (const key of this.nonTerminalIdleCounts.keys()) {
+		for (const key of this.nonTerminalIdleStates.keys()) {
 			if (key.startsWith(runId + ':')) {
-				this.nonTerminalIdleCounts.delete(key);
+				this.nonTerminalIdleStates.delete(key);
 			}
 		}
 	}
@@ -3988,6 +4015,10 @@ export class SpaceRuntime {
 			'',
 			'Please continue your assigned work from the current state. If work is complete, report completion through the workflow tools. If you are blocked, report the blocker clearly through the available tools. Do not wait silently.',
 		].join('\n');
+	}
+
+	private buildNonTerminalIdleNudgeMessage(): string {
+		return 'Runtime noticed no recent progress. Continue current work, or report a blocker.';
 	}
 
 	private buildRuntimeRestartNotice(execution: NodeExecution): string {
@@ -4022,6 +4053,18 @@ export class SpaceRuntime {
 			const session = tam.getAgentSessionById?.(execution.agentSessionId);
 			const processingState = session?.getProcessingState();
 			if (processingState?.status === 'waiting_for_input') continue;
+
+			// Skip nag when task is awaiting human approval — the agent has already
+			// submitted its work and is intentionally idle pending review.
+			if (canonicalTask.pendingCheckpointType === 'task_completion') continue;
+			// Skip nag when the execution already has a result and the task is in a
+			// review/approved state — the node agent reported completion and is waiting
+			// for the workflow to advance through the approval gate.
+			if (
+				execution.result &&
+				(canonicalTask.status === 'review' || canonicalTask.status === 'approved')
+			)
+				continue;
 
 			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(execution.agentSessionId);
 			const classification = classifyLastMessageForIdleAgent(lastMessage);
@@ -4448,7 +4491,10 @@ export class SpaceRuntime {
 			const nonTerminalIdleOutcome = await this.handleNonTerminalIdleExecutions(
 				runId,
 				meta.spaceId,
-				canonicalTask
+				canonicalTask,
+				meta.workflow,
+				tam,
+				space ?? null
 			);
 			if (nonTerminalIdleOutcome === 'blocked') {
 				return;
@@ -5124,8 +5170,13 @@ export class SpaceRuntime {
 	private async handleNonTerminalIdleExecutions(
 		runId: string,
 		spaceId: string,
-		canonicalTask: SpaceTask
+		canonicalTask: SpaceTask,
+		workflow?: SpaceWorkflow,
+		tam?: TaskAgentManager,
+		space?: Space | null
 	): Promise<'none' | 'retried' | 'blocked' | 'preserved'> {
+		if (space?.paused || space?.stopped) return 'none';
+
 		// Explicit task completion or pause signals are authoritative. A final tool
 		// call may have set reportedStatus or parked the task for human/post-approval
 		// review even if the SDK result row has not been persisted yet.
@@ -5149,31 +5200,139 @@ export class SpaceRuntime {
 			if (!sessionId) continue;
 			const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
 			const classification = classifyLastMessageForIdleAgent(lastMessage);
+			const key = `${runId}:${execution.id}`;
 			if (classification.terminal) {
-				this.nonTerminalIdleCounts.delete(`${runId}:${execution.id}`);
+				this.nonTerminalIdleStates.delete(key);
 				continue;
 			}
 
 			preservedAny = true;
-			const key = `${runId}:${execution.id}`;
-			if (this.nonTerminalIdleCounts.has(key)) continue;
-			this.nonTerminalIdleCounts.set(key, 1);
+			const state = this.nonTerminalIdleStates.get(key) ?? {
+				lastSessionId: sessionId,
+				lastObservedMessageId: null,
+				lastObservedProgressMessageId: null,
+				lastObservedProgressMessageAt: null,
+				lastRuntimeNudgeMessageId: null,
+				nudgeCount: 0,
+				failedNudgeCount: 0,
+				lastNudgeAt: null,
+				lastAttentionLogAt: null,
+			};
+			this.nonTerminalIdleStates.set(key, state);
+
+			const isRuntimeNudgeMessage =
+				lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNudgeMessageId;
+			const progressMessage = lastMessage && !isRuntimeNudgeMessage ? lastMessage : null;
+			if (state.lastSessionId !== sessionId) {
+				state.lastSessionId = sessionId;
+				state.lastObservedMessageId = lastMessage?.dbId ?? null;
+				state.lastObservedProgressMessageId = progressMessage?.dbId ?? null;
+				state.lastObservedProgressMessageAt = progressMessage?.timestamp ?? null;
+				state.lastRuntimeNudgeMessageId = null;
+				state.nudgeCount = 0;
+				state.failedNudgeCount = 0;
+				state.lastNudgeAt = null;
+				state.lastAttentionLogAt = null;
+			} else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
+				state.lastObservedMessageId = lastMessage?.dbId ?? null;
+				if (progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId) {
+					state.lastObservedProgressMessageId = progressMessage.dbId;
+					state.lastObservedProgressMessageAt = progressMessage.timestamp;
+					state.lastRuntimeNudgeMessageId = null;
+					state.nudgeCount = 0;
+					state.lastNudgeAt = null;
+				}
+			}
+
+			const observedAt =
+				state.lastObservedProgressMessageAt ??
+				progressMessage?.timestamp ??
+				execution.startedAt ??
+				Date.now();
+			const thresholdMs = workflow
+				? this.getAgentNoProgressThresholdMs(workflow, execution)
+				: (this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS);
+			const now = Date.now();
 			const reason = `Agent went idle without completing — non-terminal last message (${classification.reason})`;
-			log.warn(
-				`Node ${execution.workflowNodeId} went idle with non-terminal last message; preserving idle session: ` +
-					`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
-			);
-			await this.safeNotify({
-				kind: 'agent_idle_non_terminal',
-				spaceId,
-				taskId: canonicalTask.id,
-				runId,
-				executionId: execution.id,
-				nodeId: execution.workflowNodeId,
-				agentName: execution.agentName,
-				reason,
-				timestamp: new Date().toISOString(),
-			});
+			if (now - observedAt <= thresholdMs) {
+				log.debug(
+					`Node ${execution.workflowNodeId} is idle with non-terminal last message but within threshold; preserving idle session: ` +
+						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+				);
+				continue;
+			}
+			if (this.toolContinuationRepo.hasActiveToolUseForExecution(execution.id)) {
+				log.debug(
+					`Node ${execution.workflowNodeId} is idle with non-terminal last message but has active tool use; preserving idle session: ` +
+						`execution=${execution.id} agent=${execution.agentName} session=${sessionId}`
+				);
+				continue;
+			}
+			if (this.toolContinuationRepo.listPendingInboxForExecution(execution.id).length > 0) {
+				log.debug(
+					`Node ${execution.workflowNodeId} is idle with non-terminal last message but has pending tool continuation; preserving idle session: ` +
+						`execution=${execution.id} agent=${execution.agentName} session=${sessionId}`
+				);
+				continue;
+			}
+			if (state.nudgeCount > 0) {
+				if (state.failedNudgeCount > 0 && state.lastNudgeAt !== null) {
+					const retryAfter = state.lastNudgeAt + NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS;
+					if (now < retryAfter) {
+						if (
+							state.lastAttentionLogAt === null ||
+							now - state.lastAttentionLogAt >= NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS
+						) {
+							state.lastAttentionLogAt = now;
+							log.warn(
+								`Node ${execution.workflowNodeId} remains idle with non-terminal last message after failed runtime nudge; needs attention: ` +
+									`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+							);
+						}
+						continue;
+					}
+				} else {
+					if (
+						state.lastAttentionLogAt === null ||
+						now - state.lastAttentionLogAt >= NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS
+					) {
+						state.lastAttentionLogAt = now;
+						log.warn(
+							`Node ${execution.workflowNodeId} remains idle with non-terminal last message after runtime nudge; needs attention: ` +
+								`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+						);
+					}
+					continue;
+				}
+			}
+			const manager = tam ?? this.config.taskAgentManager;
+			if (!manager) {
+				log.warn(
+					`Node ${execution.workflowNodeId} qualified as idle with non-terminal last message, but TaskAgentManager is unavailable; needs attention: ` +
+						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+				);
+				continue;
+			}
+			state.nudgeCount += 1;
+			state.lastNudgeAt = now;
+			try {
+				state.lastRuntimeNudgeMessageId = await manager.injectRuntimeRecoveryMessage(
+					sessionId,
+					this.buildNonTerminalIdleNudgeMessage()
+				);
+				state.failedNudgeCount = 0;
+				log.warn(
+					`Node ${execution.workflowNodeId} went idle with non-terminal last message; sent direct runtime nudge: ` +
+						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+				);
+			} catch (error) {
+				state.failedNudgeCount += 1;
+				state.lastAttentionLogAt = now;
+				log.warn(
+					`Failed to nudge idle non-terminal node ${execution.workflowNodeId}; needs attention: ` +
+						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${reason}: ${formatCommandError(error)}`
+				);
+			}
 		}
 		return preservedAny ? 'preserved' : 'none';
 	}

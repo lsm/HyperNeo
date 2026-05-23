@@ -225,6 +225,7 @@ export class SpaceRuntimeService {
 	 */
 	private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
 	private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
+	private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
 	/**
 	 * Resolves when startup-time session provisioning has completed:
 	 *   - every existing space's space:chat session has had MCP tools +
@@ -816,6 +817,21 @@ export class SpaceRuntimeService {
 		} catch (err) {
 			log.error('SpaceRuntimeService: recoverStalledWorkflowRuns failed:', err);
 		}
+	}
+
+	recoverStalledWorkflowRunsAfterSpaceResume(spaceId: string): void {
+		this.resumeStalledRecoveryPromise = this.resumeStalledRecoveryPromise
+			.catch(() => {})
+			.then(async () => {
+				try {
+					await this.runtime.recoverStalledRunsForSpace(spaceId);
+				} catch (err) {
+					log.error(
+						`SpaceRuntimeService: recoverStalledWorkflowRuns after space resume failed for ${spaceId}:`,
+						err
+					);
+				}
+			});
 	}
 
 	private async recoverLongTermAgentInbox(): Promise<void> {

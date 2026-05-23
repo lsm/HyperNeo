@@ -301,34 +301,6 @@ describe('SpaceAgentNotificationService', () => {
 		});
 	});
 
-	describe('space.agent.idleNonTerminal event', () => {
-		it('formats idle non-terminal message', async () => {
-			const { factory, bus } = makeService();
-			await bus.publish('space.agent.idleNonTerminal', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-idle',
-				runId: 'run-idle',
-				executionId: 'exec-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				reason: 'Agent stopped responding',
-				timestamp: TIMESTAMP,
-			});
-
-			const { message } = factory.calls[0];
-			expect(message).toContain('[TASK_EVENT] agent_idle_non_terminal');
-			expect(message).toContain('node-1');
-			expect(message).toContain('coder');
-			expect(message).toContain('Agent stopped responding');
-
-			const json = extractJson(message);
-			expect(json.kind).toBe('agent_idle_non_terminal');
-			expect(json.nodeId).toBe('node-1');
-			expect(json.agentName).toBe('coder');
-		});
-	});
-
 	describe('space.workflowRun.retry event', () => {
 		it('formats retry message', async () => {
 			const { factory, bus } = makeService();

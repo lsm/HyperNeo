@@ -2494,10 +2494,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 		await new Promise((resolve) => setTimeout(resolve, 1100));
 		await runtime.executeTick();
 
-		// Runtime recovery keeps the blocked run retryable and leaves delivery queued.
+		// Blocked runs without active executions are not externally deliverable.
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
-		expect(delivery.state).toBe('pending');
-		expect(delivery.failureReason).toContain('simulated transient failure');
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
 	});
 
 	test('re-registers interests when recovering a terminal workflow run', async () => {

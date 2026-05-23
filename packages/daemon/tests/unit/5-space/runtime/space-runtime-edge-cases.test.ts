@@ -39,7 +39,6 @@ type BusEventKind =
 	| 'workflow_run_completed'
 	| 'workflow_run_reopened'
 	| 'agent_crash'
-	| 'agent_idle_non_terminal'
 	| 'task_retry'
 	| 'workflow_run_needs_attention'
 	| 'task_awaiting_approval';
@@ -56,7 +55,6 @@ const EVENT_MAP: Record<string, BusEventKind> = {
 	'space.workflowRun.completed': 'workflow_run_completed',
 	'space.workflowRun.reopened': 'workflow_run_reopened',
 	'space.agent.crashed': 'agent_crash',
-	'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
 	'space.workflowRun.retry': 'task_retry',
 	'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
 	'space.task.awaitingApproval': 'task_awaiting_approval',
