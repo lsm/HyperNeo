@@ -18,8 +18,10 @@ import {
 } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
+import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskTimelineFeed } from './TaskTimelineFeed';
+import { getTransitionActions } from './TaskStatusActions';
 import { WorkflowExecutionLogFeed } from './WorkflowExecutionLogFeed';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
@@ -27,6 +29,7 @@ interface TaskAuxiliaryPanelProps {
 	spaceId: string;
 	taskId: string;
 	tab?: TaskRightPanelTab;
+	onClose?: () => void;
 }
 
 const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
@@ -67,11 +70,8 @@ const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
 	urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
 };
 
+// Right-panel tabs — Artifacts, Timeline, Log only (matches dev branch)
 const TASK_PANEL_TABS: Array<{ id: TaskRightPanelTab; label: string; needsRun?: boolean }> = [
-	{ id: 'details', label: 'Details' },
-	{ id: 'workflow', label: 'Workflow' },
-	{ id: 'agents', label: 'Agents' },
-	{ id: 'gates', label: 'Gates', needsRun: true },
 	{ id: 'artifacts', label: 'Artifacts', needsRun: true },
 	{ id: 'timeline', label: 'Timeline' },
 	{ id: 'log', label: 'Log', needsRun: true },
@@ -96,6 +96,8 @@ function TaskPanelBadge({
 	);
 }
 
+// ── Flat-view helpers (middle column only) ────────────────────────────────────
+
 function PanelSection({ title, children }: { title: string; children: ComponentChildren }) {
 	return (
 		<section class="rounded-xl border border-white/10 bg-dark-900/50 p-4">
@@ -112,23 +114,6 @@ function DetailRow({ label, children }: { label: string; children: ComponentChil
 			<span class="min-w-0 text-right text-gray-200">{children}</span>
 		</div>
 	);
-}
-
-function availableTabs(task: SpaceTask): TaskRightPanelTab[] {
-	return TASK_PANEL_TABS.filter((item) => !item.needsRun || task.workflowRunId).map(
-		(item) => item.id
-	);
-}
-
-function normalizeTab(task: SpaceTask, tab: TaskRightPanelTab | undefined): TaskRightPanelTab {
-	const tabs = availableTabs(task);
-	if (tab && tabs.includes(tab)) return tab;
-	return 'details';
-}
-
-function formatTime(timestamp: number | null | undefined): string {
-	if (!timestamp) return '—';
-	return new Date(timestamp).toLocaleString();
 }
 
 function overrideKey(nodeId: string, agentName: string): string {
@@ -166,6 +151,11 @@ function resolvedAgentModel(
 	);
 }
 
+function formatTime(timestamp: number | null | undefined): string {
+	if (!timestamp) return '—';
+	return new Date(timestamp).toLocaleString();
+}
+
 function formatSchedule(schedule: {
 	cronExpression?: string | null;
 	timezone?: string;
@@ -173,30 +163,6 @@ function formatSchedule(schedule: {
 }) {
 	if (schedule.cronExpression) return `${schedule.cronExpression} (${schedule.timezone})`;
 	return formatTime(schedule.runAt);
-}
-
-function WorkflowStepCard({
-	node,
-	index,
-	executions,
-}: {
-	node: WorkflowNode;
-	index: number;
-	executions: NodeExecution[];
-}) {
-	return (
-		<div class="rounded-lg border border-white/10 bg-dark-800/60 p-3">
-			<div class="flex items-center justify-between gap-3">
-				<span class="text-sm font-medium text-gray-200">
-					{index + 1}. {node.name}
-				</span>
-				<span class="text-xs text-gray-500">{executions[0]?.status ?? 'pending'}</span>
-			</div>
-			<div class="mt-2 text-xs text-gray-500">
-				{node.agents.map((agent) => agent.name).join(', ')}
-			</div>
-		</div>
-	);
 }
 
 function AgentConfigCard({
@@ -229,9 +195,9 @@ function AgentConfigCard({
 					<div class="truncate text-sm font-medium text-gray-100">{agent.name}</div>
 					<div class="truncate text-xs text-gray-500">{node.name}</div>
 				</div>
-				<TaskPanelBadge class="border-white/10 bg-dark-900/70 text-gray-300">
-					{execution?.status ?? 'Not started'}
-				</TaskPanelBadge>
+				<span class="inline-flex h-6 max-w-[11rem] items-center rounded-md border border-white/10 bg-dark-900/70 px-2 text-[11px] font-medium leading-none text-gray-300 whitespace-nowrap">
+					<span class="truncate">{execution?.status ?? 'Not started'}</span>
+				</span>
 			</div>
 			{locked ? (
 				<DetailRow label="Model">
@@ -271,23 +237,42 @@ function GateCard({ gate }: { gate: NonNullable<SpaceWorkflow['gates']>[number] 
 	);
 }
 
-export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelProps) {
+// ── Right-panel tab helpers ───────────────────────────────────────────────────
+
+function availableTabs(task: SpaceTask): TaskRightPanelTab[] {
+	return TASK_PANEL_TABS.filter((item) => !item.needsRun || task.workflowRunId).map(
+		(item) => item.id
+	);
+}
+
+function normalizeTab(task: SpaceTask, tab: TaskRightPanelTab | undefined): TaskRightPanelTab {
+	const tabs = availableTabs(task);
+	if (tab && tabs.includes(tab)) return tab;
+	return tabs.includes('artifacts') ? 'artifacts' : 'timeline';
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxiliaryPanelProps) {
 	const task = spaceStore.tasks.value.find((item) => item.id === taskId) ?? null;
+
+	// Right-panel tab state
+	const tabs = task ? availableTabs(task) : [];
+	const activeTab = task ? normalizeTab(task, tab) : 'timeline';
+
+	// Flat-view state (middle column only)
 	const space = spaceStore.space.value;
 	const workflowRun = task?.workflowRunId
 		? (spaceStore.workflowRuns.value.find((run) => run.id === task.workflowRunId) ?? null)
 		: null;
 	const workflowId = workflowRun?.workflowId ?? task?.preferredWorkflowId ?? null;
-	const workflowSummary = workflowId
-		? (spaceStore.workflows.value.find((item) => item.id === workflowId) ?? null)
-		: null;
 	const [workflow, setWorkflow] = useState<SpaceWorkflow | null>(null);
 	const [scopeName, setScopeName] = useState<string | null>(null);
 	const [savingOverrideKey, setSavingOverrideKey] = useState<string | null>(null);
 	const [overrideError, setOverrideError] = useState<string | null>(null);
+	const [savingWorkflow, setSavingWorkflow] = useState(false);
+	const [statusTransitioning, setStatusTransitioning] = useState(false);
 	const pendingOverridesRef = useRef<Record<string, string> | null>(null);
-	const tabs = task ? availableTabs(task) : [];
-	const activeTab = task ? normalizeTab(task, tab) : 'timeline';
 
 	useEffect(() => {
 		if (!task) return;
@@ -352,6 +337,8 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 	const selectTab = (nextTab: TaskRightPanelTab) => {
 		rightPanelTargetSignal.value = { type: 'task', spaceId, taskId, tab: nextTab };
 	};
+
+	// Flat-view data
 	const goal = task.goalId
 		? (spaceStore.goals.value.find((item) => item.id === task.goalId) ?? null)
 		: null;
@@ -359,7 +346,9 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 		? (spaceStore.schedules.value.find((item) => item.id === task.createdByTaskScheduleId) ?? null)
 		: null;
 	const nodeExecutions = spaceStore.nodeExecutions.value;
-	const canEditModels = !task.workflowRunId && !task.startedAt && task.status === 'open';
+	const canEditModels =
+		!task.workflowRunId && !task.startedAt && (task.status === 'open' || task.status === 'draft');
+
 	const updateModelOverride = async (
 		nodeId: string,
 		agentName: string,
@@ -384,61 +373,134 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 		}
 	};
 
+	const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
+		try {
+			setStatusTransitioning(true);
+			if (task.status === 'draft' && newStatus === 'open') {
+				await spaceStore.publishTask(task.id);
+			} else {
+				await spaceStore.updateTask(task.id, { status: newStatus });
+			}
+		} catch {
+			// best-effort
+		} finally {
+			setStatusTransitioning(false);
+		}
+	};
+
+	const handleWorkflowChange = async (nextWorkflowId: string | null) => {
+		try {
+			setSavingWorkflow(true);
+			await spaceStore.updateTask(task.id, { preferredWorkflowId: nextWorkflowId });
+		} catch {
+			// best-effort
+		} finally {
+			setSavingWorkflow(false);
+		}
+	};
+
+	// ── Shared header badges ────────────────────────────────────────────────
+
+	const badges = (
+		<div class="mt-2 flex flex-wrap items-center gap-2">
+			<TaskPanelBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
+				#{task.taskNumber}
+			</TaskPanelBadge>
+			<TaskPanelBadge class={STATUS_BADGE_CLASSES[task.status]}>
+				{STATUS_LABELS[task.status]}
+			</TaskPanelBadge>
+			<TaskPanelBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
+				{PRIORITY_LABELS[task.priority]} Priority
+			</TaskPanelBadge>
+		</div>
+	);
+
+	const transitionActions = getTransitionActions(task.status);
+	const taskMenuItems: DropdownMenuItem[] = transitionActions.map(({ target, label }) => ({
+		label,
+		onClick: () => handleStatusTransition(target),
+		disabled: statusTransitioning,
+		danger: target === 'cancelled' || target === 'archived',
+	}));
+
 	return (
 		<div class="flex h-full min-w-0 flex-col overflow-hidden">
-			<div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
-				{/* pr-12 keeps labels clear of the floating right-panel toggle. */}
-				<div class="pr-12">
-					<h2 class="truncate text-base font-semibold leading-6 text-gray-100">{task.title}</h2>
-					<div class="mt-2 flex flex-wrap items-center gap-2">
-						<TaskPanelBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
-							#{task.taskNumber}
-						</TaskPanelBadge>
-						<TaskPanelBadge class={STATUS_BADGE_CLASSES[task.status]}>
-							{STATUS_LABELS[task.status]}
-						</TaskPanelBadge>
-						<TaskPanelBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
-							{PRIORITY_LABELS[task.priority]} Priority
-						</TaskPanelBadge>
-					</div>
-				</div>
-				<div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
-			</div>
-
-			<div class="px-3 pb-3 pt-3">
-				<div class="grid grid-cols-3 gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1">
-					{TASK_PANEL_TABS.filter((item) => tabs.includes(item.id)).map((item) => (
-						<button
-							key={item.id}
-							type="button"
-							onClick={() => selectTab(item.id)}
-							class={cn(
-								'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors',
-								activeTab === item.id
-									? 'bg-dark-700 text-gray-100 shadow-sm'
-									: 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+			{onClose ? (
+				// Middle-column header — row layout with back button
+				<div class="relative flex h-[88px] items-center bg-dark-900/30 px-4">
+					<button
+						type="button"
+						onClick={onClose}
+						class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+						aria-label="Back"
+						data-testid="task-back-button"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M15 19l-7-7 7-7"
+							/>
+						</svg>
+					</button>
+					<div class="min-w-0 flex-1 pl-3">
+						<div class="flex min-w-0 items-center gap-2">
+							<h2 class="min-w-0 truncate text-base font-semibold leading-6 text-gray-100">
+								{task.title}
+							</h2>
+							{taskMenuItems.length > 0 && (
+								<Dropdown
+									items={taskMenuItems}
+									position="right"
+									trigger={
+										<button
+											type="button"
+											class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+											data-testid="task-actions-menu-trigger"
+											aria-label="Task Actions"
+											title="Task Actions"
+										>
+											<svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+												<circle cx="10" cy="4" r="1.75" />
+												<circle cx="10" cy="10" r="1.75" />
+												<circle cx="10" cy="16" r="1.75" />
+											</svg>
+										</button>
+									}
+								/>
 							)}
-							aria-pressed={activeTab === item.id}
-						>
-							{item.label}
-						</button>
-					))}
+						</div>
+						{badges}
+					</div>
+					<div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
 				</div>
-			</div>
+			) : (
+				// Right-panel header — vertical stack (matches dev branch)
+				<div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
+					<div class="pr-12">
+						<h2 class="truncate text-base font-semibold leading-6 text-gray-100">{task.title}</h2>
+						{badges}
+					</div>
+					<div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
+				</div>
+			)}
 
-			<div class="min-h-0 flex-1 overflow-hidden">
-				{activeTab === 'details' && (
-					<div class="h-full space-y-4 overflow-y-auto px-4 pb-6">
-						<PanelSection title="Task setup">
+			{onClose ? (
+				// ── Middle-column flat-card view ──────────────────────────────
+				<div class="min-h-0 flex-1 overflow-y-auto">
+					<div class="space-y-4 px-4 py-4">
+						{task.description && (
+							<PanelSection title="Description">
+								<p class="whitespace-pre-wrap text-sm text-gray-300">{task.description}</p>
+							</PanelSection>
+						)}
+						<PanelSection title="Details">
 							<DetailRow label="Status">{STATUS_LABELS[task.status]}</DetailRow>
 							<DetailRow label="Priority">{PRIORITY_LABELS[task.priority]}</DetailRow>
 							<DetailRow label="Created">{formatTime(task.createdAt)}</DetailRow>
-							<DetailRow label="Started">{formatTime(task.startedAt)}</DetailRow>
-							<DetailRow label="Completed">{formatTime(task.completedAt)}</DetailRow>
-						</PanelSection>
-						<PanelSection title="Context links">
-							<DetailRow label="Goal">
-								{goal ? (
+							{goal && (
+								<DetailRow label="Goal">
 									<button
 										type="button"
 										onClick={() => {
@@ -449,12 +511,10 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 									>
 										{goal.title}
 									</button>
-								) : (
-									'—'
-								)}
-							</DetailRow>
-							<DetailRow label="Forge scope">
-								{task.evolutionScopeId ? (
+								</DetailRow>
+							)}
+							{task.evolutionScopeId && (
+								<DetailRow label="Forge scope">
 									<button
 										type="button"
 										onClick={() => {
@@ -465,111 +525,126 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab }: TaskAuxiliaryPanelP
 									>
 										{scopeName ?? task.evolutionScopeId}
 									</button>
-								) : (
-									'—'
-								)}
-							</DetailRow>
-							<DetailRow label="Schedule">{schedule ? formatSchedule(schedule) : '—'}</DetailRow>
+								</DetailRow>
+							)}
+							{schedule && <DetailRow label="Schedule">{formatSchedule(schedule)}</DetailRow>}
 						</PanelSection>
+						<PanelSection title="Workflow">
+							<select
+								value={task.preferredWorkflowId ?? ''}
+								disabled={savingWorkflow}
+								onChange={(e) =>
+									handleWorkflowChange((e.target as HTMLSelectElement).value || null)
+								}
+								class="w-full rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50"
+							>
+								<option value="">Auto-select</option>
+								{spaceStore.workflows.value.map((wf) => (
+									<option key={wf.id} value={wf.id}>
+										{wf.name}
+									</option>
+								))}
+							</select>
+							{savingWorkflow && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
+						</PanelSection>
+						<PanelSection title="Agents">
+							{overrideError && (
+								<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+									{overrideError}
+								</div>
+							)}
+							{workflow?.nodes && workflow.nodes.some((n) => n.agents.length > 0) ? (
+								workflow.nodes.flatMap((node) =>
+									node.agents.map((agent) => (
+										<AgentConfigCard
+											key={overrideKey(node.id, agent.name)}
+											task={task}
+											node={node}
+											agent={agent}
+											execution={findExecution(
+												nodeExecutions,
+												task.workflowRunId,
+												node.id,
+												agent.name
+											)}
+											canEditModels={canEditModels}
+											spaceDefaultModel={space?.defaultModel}
+											savingOverrideKey={savingOverrideKey}
+											onModelChange={updateModelOverride}
+										/>
+									))
+								)
+							) : (
+								<p class="text-sm text-gray-500">
+									{task.preferredWorkflowId
+										? 'Loading workflow…'
+										: 'Select a workflow to configure agent models.'}
+								</p>
+							)}
+						</PanelSection>
+						{workflow?.gates && workflow.gates.length > 0 && (
+							<PanelSection title="Gates">
+								{workflow.gates.map((gate) => (
+									<GateCard key={gate.id} gate={gate} />
+								))}
+							</PanelSection>
+						)}
 						{task.result && (
 							<PanelSection title="Result summary">
 								<p class="whitespace-pre-wrap text-sm text-gray-300">{task.result}</p>
 							</PanelSection>
 						)}
 					</div>
-				)}
-				{activeTab === 'workflow' && (
-					<div class="h-full space-y-4 overflow-y-auto px-4 pb-6">
-						<PanelSection title="Selected workflow">
-							<DetailRow label="Name">
-								{workflow?.name ?? workflowSummary?.name ?? 'Auto-select'}
-							</DetailRow>
-							<DetailRow label="Run status">{workflowRun?.status ?? 'Not started'}</DetailRow>
-							<DetailRow label="Nodes">
-								{workflow?.nodes.length ?? workflowSummary?.nodeCount ?? '—'}
-							</DetailRow>
-						</PanelSection>
-						<PanelSection title="Workflow steps">
-							{workflow?.nodes.map((node, index) => {
-								const executions = nodeExecutions.filter(
-									(execution) =>
-										execution.workflowRunId === task.workflowRunId &&
-										execution.workflowNodeId === node.id
-								);
-								return (
-									<WorkflowStepCard
-										key={node.id}
-										node={node}
-										index={index}
-										executions={executions}
-									/>
-								);
-							}) ?? (
-								<p class="text-sm text-gray-500">Workflow will be selected when task starts.</p>
+				</div>
+			) : (
+				// ── Right-panel tab view (matches dev branch) ─────────────────
+				<>
+					<div class="px-3 pb-3 pt-3">
+						<div
+							class={cn(
+								'grid gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1',
+								tabs.length === 3
+									? 'grid-cols-3'
+									: tabs.length === 2
+										? 'grid-cols-2'
+										: 'grid-cols-1'
 							)}
-						</PanelSection>
+						>
+							{TASK_PANEL_TABS.filter((item) => tabs.includes(item.id)).map((item) => (
+								<button
+									key={item.id}
+									type="button"
+									onClick={() => selectTab(item.id)}
+									class={cn(
+										'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors',
+										activeTab === item.id
+											? 'bg-dark-700 text-gray-100 shadow-sm'
+											: 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+									)}
+									aria-pressed={activeTab === item.id}
+								>
+									{item.label}
+								</button>
+							))}
+						</div>
 					</div>
-				)}
-				{activeTab === 'agents' && (
-					<div class="h-full space-y-4 overflow-y-auto px-4 pb-6">
-						{overrideError && (
-							<div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-								{overrideError}
-							</div>
+					<div class="min-h-0 flex-1 overflow-hidden">
+						{activeTab === 'timeline' && (
+							<TaskTimelineFeed taskId={task.id} topInsetClass="" bottomInsetPx={16} />
 						)}
-						<PanelSection title="Agent configuration">
-							{workflow?.nodes.flatMap((node) =>
-								node.agents.map((agent) => (
-									<AgentConfigCard
-										key={overrideKey(node.id, agent.name)}
-										task={task}
-										node={node}
-										agent={agent}
-										execution={findExecution(
-											nodeExecutions,
-											task.workflowRunId,
-											node.id,
-											agent.name
-										)}
-										canEditModels={canEditModels}
-										spaceDefaultModel={space?.defaultModel}
-										savingOverrideKey={savingOverrideKey}
-										onModelChange={updateModelOverride}
-									/>
-								))
-							) ?? (
-								<p class="text-sm text-gray-500">
-									Workflow agents will appear after workflow selection.
-								</p>
-							)}
-						</PanelSection>
+						{activeTab === 'log' && task.workflowRunId && (
+							<WorkflowExecutionLogFeed
+								workflowRunId={task.workflowRunId}
+								topInsetClass=""
+								bottomInsetPx={16}
+							/>
+						)}
+						{activeTab === 'artifacts' && task.workflowRunId && (
+							<TaskArtifactsPanel runId={task.workflowRunId} taskId={task.id} class="h-full" />
+						)}
 					</div>
-				)}
-				{activeTab === 'gates' && (
-					<div class="h-full space-y-4 overflow-y-auto px-4 pb-6">
-						<PanelSection title="Gates and approvals">
-							{workflow?.gates?.length ? (
-								workflow.gates.map((gate) => <GateCard key={gate.id} gate={gate} />)
-							) : (
-								<p class="text-sm text-gray-500">No gates configured.</p>
-							)}
-						</PanelSection>
-					</div>
-				)}
-				{activeTab === 'timeline' && (
-					<TaskTimelineFeed taskId={task.id} topInsetClass="" bottomInsetPx={16} />
-				)}
-				{activeTab === 'log' && task.workflowRunId && (
-					<WorkflowExecutionLogFeed
-						workflowRunId={task.workflowRunId}
-						topInsetClass=""
-						bottomInsetPx={16}
-					/>
-				)}
-				{activeTab === 'artifacts' && task.workflowRunId && (
-					<TaskArtifactsPanel runId={task.workflowRunId} taskId={task.id} class="h-full" />
-				)}
-			</div>
+				</>
+			)}
 		</div>
 	);
 }

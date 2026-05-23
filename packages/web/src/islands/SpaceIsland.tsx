@@ -13,6 +13,7 @@
 import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
+import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { createSession } from '../lib/api-helpers';
@@ -248,6 +249,9 @@ export default function SpaceIsland({
 	}
 
 	if (taskViewId) {
+		const tasks = spaceStore.tasks.value;
+		const currentTask = tasks.find((t) => t.id === taskViewId) ?? null;
+		const showInMiddle = currentTask?.status === 'draft' || currentTask?.status === 'open';
 		return (
 			<>
 				<div
@@ -255,7 +259,15 @@ export default function SpaceIsland({
 					data-testid="space-task-pane"
 				>
 					<Suspense fallback={lazyFallback}>
-						<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+						{showInMiddle ? (
+							<TaskAuxiliaryPanel
+								spaceId={spaceId}
+								taskId={taskViewId}
+								onClose={handleTaskPaneClose}
+							/>
+						) : (
+							<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+						)}
 					</Suspense>
 				</div>
 				{overlay}
