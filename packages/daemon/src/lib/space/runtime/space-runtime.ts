@@ -3347,8 +3347,31 @@ export class SpaceRuntime {
 	 * Must be called *after* `rehydrateExecutors()` so executor metadata is
 	 * available for any run we might transition.
 	 */
-	resetStalledRunRecovery(): void {
-		this.recoveryDone = false;
+	async recoverStalledRunsForSpace(spaceId: string): Promise<void> {
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space || space.paused || space.stopped) return;
+
+		let blockedCount = 0;
+		let completionPendingCount = 0;
+		const inProgressRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
+		for (const run of inProgressRuns) {
+			try {
+				const outcome = await this.recoverSingleRun(run);
+				if (outcome === 'blocked') blockedCount++;
+				else if (outcome === 'completion-pending') completionPendingCount++;
+			} catch (err) {
+				log.error(
+					`SpaceRuntime.recoverStalledRunsForSpace: failed to recover run ${run.id} (space ${space.id}):`,
+					err
+				);
+			}
+		}
+
+		if (blockedCount + completionPendingCount > 0) {
+			log.info(
+				`SpaceRuntime.recoverStalledRunsForSpace: space=${space.id} blocked=${blockedCount} completion-pending=${completionPendingCount}`
+			);
+		}
 	}
 
 	async recoverStalledRuns(): Promise<void> {

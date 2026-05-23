@@ -396,28 +396,57 @@ describe('SpaceRuntimeService', () => {
 			await svc.stop();
 		});
 
-		test('space resume hook resets and schedules stalled recovery', async () => {
+		test('space resume hook schedules recovery only for the resumed space', async () => {
 			const svc = new SpaceRuntimeService(buildConfig(spaceManager));
 			const calls: string[] = [];
 			const runtime = (
 				svc as unknown as {
 					runtime: {
-						resetStalledRunRecovery: () => void;
-						recoverStalledRuns: () => Promise<void>;
+						recoverStalledRunsForSpace: (spaceId: string) => Promise<void>;
 					};
 				}
 			).runtime;
-			runtime.resetStalledRunRecovery = () => {
-				calls.push('reset');
-			};
-			runtime.recoverStalledRuns = async () => {
-				calls.push('recover');
+			runtime.recoverStalledRunsForSpace = async (spaceId: string) => {
+				calls.push(spaceId);
 			};
 
 			svc.recoverStalledWorkflowRunsAfterSpaceResume('space-1');
 			await new Promise((resolve) => setTimeout(resolve, 0));
 
-			expect(calls).toEqual(['reset', 'recover']);
+			expect(calls).toEqual(['space-1']);
+		});
+
+		test('space resume recovery calls are serialized', async () => {
+			const svc = new SpaceRuntimeService(buildConfig(spaceManager));
+			const calls: string[] = [];
+			let releaseFirst!: () => void;
+			const firstRecovery = new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+			const runtime = (
+				svc as unknown as {
+					runtime: {
+						recoverStalledRunsForSpace: (spaceId: string) => Promise<void>;
+					};
+				}
+			).runtime;
+			runtime.recoverStalledRunsForSpace = async (spaceId: string) => {
+				calls.push(`start:${spaceId}`);
+				if (spaceId === 'space-1') await firstRecovery;
+				calls.push(`finish:${spaceId}`);
+			};
+
+			svc.recoverStalledWorkflowRunsAfterSpaceResume('space-1');
+			svc.recoverStalledWorkflowRunsAfterSpaceResume('space-2');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(calls).toEqual(['start:space-1']);
+
+			releaseFirst();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(calls).toEqual(['start:space-1', 'finish:space-1', 'start:space-2', 'finish:space-2']);
 		});
 	});
 
