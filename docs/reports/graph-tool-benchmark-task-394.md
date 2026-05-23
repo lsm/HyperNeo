@@ -171,12 +171,35 @@ The unseeded round makes the priority order clearer:
 3. **Graphify** remains lower priority for focused daemon refactors unless NeoKai invests in full semantic extraction and better query workflows; AST-only unseeded Graphify did not beat plain GLM.
 4. **CodeGraph** should stay out of stock integration for now; exact-symbol lookup is useful, but generic task-context retrieval was too noisy in both rounds and did not improve enough over plain GLM.
 
+## Follow-up: mixed discovery + targeted-tool round
+
+A third round tested the hybrid workflow agents would actually use: first do minimal built-in search/read to identify likely files, classes, and functions, then use one targeting tool for deeper context before asking `glm-5.1` for the implementation plan. This was not scored as a separate baseline; the minimal discovery step is included inside every run's wall time.
+
+Minimal discovery took 0.32s and identified the core seed set: `space-runtime.ts`, `space-agent-notification-service.ts`, `CompletionDetector`, `handleAliveStuckExecutions`, `handleNonTerminalIdleExecutions`, `handleWaitingRebindExecutions`, `safeNotify`, `agent_idle_non_terminal`, `workflow_run_completed`, `retryWithBackoff`, `TaskAgentManager`, `ChannelRouter`, and `classifyLastMessageForIdleAgent`.
+
+| Setup | Total wall time | Tool-context step | Final GLM tokens | Mixed-run quality | Main failure mode | Impact on recommendation |
+|---|---:|---|---:|---|---|---|
+| CodeGraph mixed | 101.1s | 12.7s for targeted `context` queries after minimal discovery | 6,968 | Medium. With seed symbols from built-in search, the plan named the right runtime/notification/completion/retry files and proposed plausible tracker/policy/rate-limit modules | Still lacked full function bodies and storage details; output was more generic than code-review-graph or ast-grep. CodeGraph contributed little beyond what minimal search already found | Better than unseeded CodeGraph, but still not strong enough for stock integration |
+| code-review-graph mixed | 109.9s | 11.1s for `get_minimal_context`, `file_summary`, callers/callees, and graph stats | 21,682 | Strongest mixed run. Produced best grounded plan around `SpaceRuntime`, `SpaceAgentNotificationService`, constants, `TaskAgentManager`, `CompletionDetector`, `retryWithBackoff`, and existing stuck-recovery caps | High token cost; context still verbose and some internals referenced rather than fully shown | Reinforces code-review-graph as best optional graph-context integration |
+| Graphify mixed | 94.4s | 0.34s direct query over existing AST graph for seeded terms | 19,624 | Improved sharply from unseeded. Targeted graph search found many nodes/edges and yielded a reasonable source-grounded plan naming `last-message-classifier.ts`, `task-agent-manager.ts`, `completion-detector.ts`, and notification/runtime surfaces | AST-only context remained shallow: no semantic rationale, many raw node hits, high prompt tokens. Quality depended on built-in search seed terms | Useful only after seeding; still lower priority unless semantic extraction is available |
+| ast-grep mixed | 119.6s | 30.1s for ten targeted read-only structural/string searches | 9,943 | High practical value. Produced grounded plan with correct runtime flow (`processRunTick` → stuck handlers → classifier → `safeNotify`), strong exact-symbol recall, and lower tokens than graph tools except CodeGraph | Slower than expected via repeated `npx`; no relationship graph or architecture ranking; still needs reads for bodies and schemas | Best non-graph companion. Worth documenting as optional search/codemod helper |
+
+### Mixed-round conclusion
+
+The mixed round changed the shape of the comparison:
+
+1. **Minimal built-in search is mandatory regardless of tool.** It found the decisive seed symbols in under a second and prevented CodeGraph/Graphify from drifting.
+2. **code-review-graph remained best when seeded.** It produced the most complete implementation plan and best reuse of existing recovery concepts, but at highest token cost.
+3. **ast-grep became highly competitive as a practical companion.** With seed symbols, it gave strong actual-file grounding at modest prompt size, though repeated `npx` made wall time high.
+4. **Graphify improved only after seeding.** AST graph can help navigate known terms, but unseeded discovery and semantic-free context remain weak.
+5. **CodeGraph improved after seeding but added least incremental value.** Its mixed plan was acceptable, but minimal search already supplied most important evidence.
+
 ## Integration recommendation
 
-1. **Prioritize task #388 (`code-review-graph`) over task #387 (`Graphify`) for stock optional integration.** It fits NeoKai's code-review/task-planning workflows better: local SQLite, structural graph, review context, impact radius, tests-for, and graph stats. The unseeded round strengthened this recommendation because code-review-graph was the only graph tool to surface the existing anti-stuck runtime seam without file-path hints.
+1. **Prioritize task #388 (`code-review-graph`) over task #387 (`Graphify`) for stock optional integration.** It fits NeoKai's code-review/task-planning workflows better: local SQLite, structural graph, review context, impact radius, tests-for, and graph stats. The unseeded and mixed rounds both strengthened this recommendation: code-review-graph was the strongest graph tool without file-path hints and remained strongest after minimal built-in discovery seeded deeper search.
 2. **Keep both integrations optional, disabled by default, and never auto-install or auto-enable MCP servers.** Both projects have install commands that can mutate assistant configs, hooks, or global state.
-3. **Do not add CodeGraph as stock integration yet.** Revisit if NeoKai wants a lighter exact-symbol helper, but task #394 showed poor first-pass planning quality in both seeded and unseeded rounds.
-4. **Do not treat `ast-grep` as a graph integration.** It is useful as a fast structural search/codemod tool and performed decently in unseeded term discovery, but it should be integrated only as optional CLI help/rules if NeoKai wants codemod workflows.
+3. **Do not add CodeGraph as stock integration yet.** Revisit if NeoKai wants a lighter exact-symbol helper, but task #394 showed poor first-pass planning quality unseeded and low incremental value after minimal built-in search.
+4. **Do not treat `ast-grep` as a graph integration.** It is useful as a fast structural search/codemod tool and performed well in mixed discovery, but it should be integrated only as optional CLI help/rules if NeoKai wants codemod workflows.
 
 ## Suggested minimal configuration for winner
 
