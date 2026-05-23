@@ -646,7 +646,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(paused?.status).toBe('open');
 			expect(paused?.workflowRunId).toBe(run.id);
 			expect(paused?.taskAgentSessionId).toBeUndefined();
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(tam.cancelledSessions).toEqual(['node-session-pause', 'task-session-pause']);
 			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
 			expect(cancelledExecution.status).toBe('cancelled');
@@ -654,6 +654,66 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			expect(updates.tasks).toHaveLength(1);
 			expect(updates.tasks[0].status).toBe('open');
 			expect(updates.tasks[0].taskAgentSessionId).toBeUndefined();
+		});
+
+		test('pausing a workflow-backed task preserves idle execution history', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-pause-idle', name: 'Idle Step', agentId: AGENT },
+				{ id: 'step-pause-active', name: 'Active Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [idleExecution] = nodeExecutionRepo.listByNode(run.id, 'step-pause-idle');
+			nodeExecutionRepo.update(idleExecution.id, {
+				status: 'idle',
+				agentSessionId: 'idle-session-pause',
+				result: 'idle output',
+				completedAt: Date.now() - 1000,
+			});
+			const activeExecution = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'step-pause-active',
+				agentName: 'agent-1',
+				agentId: AGENT,
+				status: 'in_progress',
+				agentSessionId: 'active-session-pause',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-pause-idle',
+			});
+
+			await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'open' });
+
+			const preservedExecution = nodeExecutionRepo.getById(idleExecution.id)!;
+			expect(preservedExecution.status).toBe('idle');
+			expect(preservedExecution.agentSessionId).toBe('idle-session-pause');
+			expect(preservedExecution.result).toBe('idle output');
+			const cancelledExecution = nodeExecutionRepo.getById(activeExecution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			expect(tam.cancelledSessions).toEqual(['active-session-pause', 'task-session-pause-idle']);
+		});
+
+		test('validates metadata fields when stopping workflow-backed task status', async () => {
+			const rt = makeRuntime();
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-status-metadata', name: 'Only Step', agentId: AGENT },
+			]);
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+
+			await expect(
+				rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+					status: 'cancelled',
+					dependsOn: [task.id],
+				})
+			).rejects.toThrow('A task cannot depend on itself');
+			expect(taskRepo.getTask(task.id)?.dependsOn).toEqual([]);
+			expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
 		});
 
 		test('cancelling a workflow-backed task stops sessions and cancels run', async () => {

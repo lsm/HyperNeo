@@ -2137,7 +2137,13 @@ export class SpaceRuntime {
 
 		const now = Date.now();
 		for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId)) {
-			if (!execution.agentSessionId) continue;
+			if (
+				!execution.agentSessionId ||
+				execution.status === 'idle' ||
+				execution.status === 'cancelled'
+			) {
+				continue;
+			}
 			this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
 			this.config.nodeExecutionRepo.update(execution.id, {
 				status: 'cancelled',
@@ -2185,7 +2191,7 @@ export class SpaceRuntime {
 				...otherFields
 			} = params;
 			if (Object.keys(otherFields).length > 0) {
-				updated = this.config.taskRepo.updateTask(taskId, otherFields) ?? updated;
+				updated = await taskManager.updateTask(taskId, otherFields);
 			}
 			if (
 				nextStatus === 'cancelled' &&
@@ -2213,7 +2219,7 @@ export class SpaceRuntime {
 			);
 			await this.safeOnTaskUpdated(spaceId, updated);
 
-			if (nextStatus === 'open' || nextStatus === 'cancelled') {
+			if (nextStatus === 'cancelled') {
 				const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
 				if (run && canTransitionRunStatus(run.status, 'cancelled')) {
 					await this.transitionRunStatusAndEmit(previous.workflowRunId, 'cancelled');
