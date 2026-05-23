@@ -272,6 +272,8 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 	const [overrideError, setOverrideError] = useState<string | null>(null);
 	const [savingWorkflow, setSavingWorkflow] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
+	const [descriptionDraft, setDescriptionDraft] = useState(task?.description ?? '');
+	const [savingDescription, setSavingDescription] = useState(false);
 	const pendingOverridesRef = useRef<Record<string, string> | null>(null);
 
 	useEffect(() => {
@@ -306,6 +308,10 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 	useEffect(() => {
 		pendingOverridesRef.current = task?.workflowModelOverrides ?? null;
 	}, [task?.id, task?.workflowModelOverrides]);
+
+	useEffect(() => {
+		setDescriptionDraft(task?.description ?? '');
+	}, [task?.id, task?.description]);
 
 	useEffect(() => {
 		if (!task?.evolutionScopeId) {
@@ -385,6 +391,19 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 			// best-effort
 		} finally {
 			setStatusTransitioning(false);
+		}
+	};
+
+	const handleDescriptionBlur = async () => {
+		const current = task.description ?? '';
+		if (descriptionDraft === current) return;
+		try {
+			setSavingDescription(true);
+			await spaceStore.updateTask(task.id, { description: descriptionDraft });
+		} catch {
+			setDescriptionDraft(current);
+		} finally {
+			setSavingDescription(false);
 		}
 	};
 
@@ -490,11 +509,18 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 				// ── Middle-column flat-card view ──────────────────────────────
 				<div class="min-h-0 flex-1 overflow-y-auto">
 					<div class="space-y-4 px-4 py-4">
-						{task.description && (
-							<PanelSection title="Description">
-								<p class="whitespace-pre-wrap text-sm text-gray-300">{task.description}</p>
-							</PanelSection>
-						)}
+						<PanelSection title="Description">
+							<textarea
+								value={descriptionDraft}
+								onInput={(e) => setDescriptionDraft((e.target as HTMLTextAreaElement).value)}
+								onBlur={handleDescriptionBlur}
+								disabled={savingDescription}
+								rows={4}
+								placeholder="Add a description…"
+								class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+							/>
+							{savingDescription && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
+						</PanelSection>
 						<PanelSection title="Details">
 							<DetailRow label="Status">{STATUS_LABELS[task.status]}</DetailRow>
 							<DetailRow label="Priority">{PRIORITY_LABELS[task.priority]}</DetailRow>
@@ -529,6 +555,30 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 							)}
 							{schedule && <DetailRow label="Schedule">{formatSchedule(schedule)}</DetailRow>}
 						</PanelSection>
+						{task.dependsOn.length > 0 && (
+							<PanelSection title="Depends on">
+								{task.dependsOn.map((depId) => {
+									const dep = spaceStore.tasks.value.find((t) => t.id === depId);
+									return (
+										<div key={depId} class="flex items-center gap-2 text-sm">
+											<span class="flex-shrink-0 font-mono text-[11px] text-gray-500">
+												#{dep?.taskNumber ?? '—'}
+											</span>
+											<span class="min-w-0 truncate text-gray-300">{dep?.title ?? depId}</span>
+											<TaskPanelBadge
+												class={
+													dep
+														? STATUS_BADGE_CLASSES[dep.status]
+														: 'border-gray-500/25 bg-gray-500/10 text-gray-500'
+												}
+											>
+												{dep ? STATUS_LABELS[dep.status] : '—'}
+											</TaskPanelBadge>
+										</div>
+									);
+								})}
+							</PanelSection>
+						)}
 						<PanelSection title="Workflow">
 							<select
 								value={task.preferredWorkflowId ?? ''}
