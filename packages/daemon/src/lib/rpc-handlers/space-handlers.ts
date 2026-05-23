@@ -34,6 +34,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SessionManager } from '../session-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { seedPresetAgents } from '../space/agents/seed-agents';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
@@ -104,6 +105,10 @@ function collapseToCanonicalTasks(
 	return canonical.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+type SetupSpaceHandlersOptions = {
+	longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+};
+
 export function setupSpaceHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
@@ -113,7 +118,8 @@ export function setupSpaceHandlers(
 	spaceAgentManager: SpaceAgentManager,
 	spaceWorkflowManager: SpaceWorkflowManager,
 	sessionManager?: SessionManager,
-	spaceRuntimeService?: SpaceRuntimeService
+	spaceRuntimeService?: SpaceRuntimeService,
+	options: SetupSpaceHandlersOptions = {}
 ): void {
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
@@ -143,6 +149,7 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.createSpace(params);
 		const seedWarnings: string[] = [];
+		options.longHorizonAgentRepo?.ensureCoordinator(space.id);
 
 		// Seed preset agents (Coder, General, Planner, Reviewer, etc.) for the new space.
 		// Errors are non-fatal — the space is still usable without preset agents.

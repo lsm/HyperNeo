@@ -297,7 +297,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					}
 				/>
 				<SpaceNavItem
-					label="Space Agent"
+					label="Agents"
 					active={isSpaceAgentSelected}
 					onClick={handleSpaceAgentClick}
 					testId="space-detail-agent"

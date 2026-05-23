@@ -124,16 +124,6 @@ export class SpaceAgentNotificationService {
 				{ subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.crashed` }
 			),
 			this.internalEventBus.subscribe(
-				'space.agent.idleNonTerminal',
-				(event) => {
-					if (event.spaceId !== this.spaceId) return;
-					void this.notify(formatAgentIdleNonTerminal(event, this.autonomyLevel));
-				},
-				{
-					subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.agent.idleNonTerminal`,
-				}
-			),
-			this.internalEventBus.subscribe(
 				'space.workflowRun.retry',
 				(event) => {
 					if (event.spaceId !== this.spaceId) return;
@@ -304,36 +294,6 @@ function formatAgentCrash(
 		autonomyLevel,
 	};
 	return buildMessage('agent_crash', humanReadable, payload);
-}
-
-function formatAgentIdleNonTerminal(
-	event: {
-		spaceId: string;
-		taskId: string;
-		runId: string;
-		executionId: string;
-		nodeId: string;
-		agentName: string;
-		reason: string;
-		timestamp: string;
-	},
-	autonomyLevel: SpaceAutonomyLevel
-): string {
-	const humanReadable =
-		`Node ${event.nodeId} (${event.agentName}) in workflow run ${event.runId} went idle with a non-terminal last message. ` +
-		`The runtime will not advance the workflow from this idle state. Reason: ${event.reason}`;
-	return buildMessage('agent_idle_non_terminal', humanReadable, {
-		kind: 'agent_idle_non_terminal',
-		spaceId: event.spaceId,
-		taskId: event.taskId,
-		runId: event.runId,
-		executionId: event.executionId,
-		nodeId: event.nodeId,
-		agentName: event.agentName,
-		reason: event.reason,
-		timestamp: event.timestamp,
-		autonomyLevel,
-	});
 }
 
 function formatTaskRetry(

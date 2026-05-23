@@ -616,6 +616,26 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.agentId).toBe('');
 		});
 
+		it('does not auto-select Coordinator as the secondary agent', () => {
+			const onUpdate = vi.fn();
+			const agents = [
+				makeAgent('coder-1', 'Coder'),
+				makeAgent('coordinator-1', 'Coordinator'),
+				makeAgent('general-1', 'General'),
+			];
+			const { getByTestId } = render(
+				<NodeConfigPanel
+					{...makeProps({ agents, step: makeStep({ agentId: 'coder-1' }), onUpdate })}
+				/>
+			);
+
+			fireEvent.click(getByTestId('add-agent-button'));
+
+			const updatedStep = onUpdate.mock.calls[0][0];
+			expect(updatedStep.agents[0].agentId).toBe('coder-1');
+			expect(updatedStep.agents[1].agentId).toBe('general-1');
+		});
+
 		it('shows agents list in multi-agent mode', () => {
 			const step = makeStep({
 				agentId: '',

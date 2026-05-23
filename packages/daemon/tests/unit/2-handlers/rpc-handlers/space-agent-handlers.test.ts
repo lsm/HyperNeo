@@ -155,9 +155,10 @@ describe('Space Agent RPC Handlers', () => {
 			});
 
 			expect(Array.isArray(result.templates)).toBe(true);
-			expect(result.templates).toHaveLength(6);
+			expect(result.templates).toHaveLength(7);
 			expect(result.templates.map((template) => template.name).sort()).toEqual([
 				'Coder',
+				'Coordinator',
 				'General',
 				'Planner',
 				'QA',

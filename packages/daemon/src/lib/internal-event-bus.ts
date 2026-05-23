@@ -483,19 +483,6 @@ export interface SpaceAgentRecoveredEvent {
 	timestamp: string;
 }
 
-/** A node agent went idle without a terminal SDK message or reported status. */
-export interface SpaceAgentIdleNonTerminalEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	runId: string;
-	executionId: string;
-	nodeId: string;
-	agentName: string;
-	reason: string;
-	timestamp: string;
-}
-
 /** A workflow run has reached a terminal state. */
 export interface SpaceWorkflowRunCompletedEvent {
 	sessionId: string;
@@ -593,7 +580,6 @@ export interface SpaceEvents {
 	'space.task.failed': SpaceTaskFailedEvent;
 	'space.agent.crashed': SpaceAgentCrashedEvent;
 	'space.agent.recovered': SpaceAgentRecoveredEvent;
-	'space.agent.idleNonTerminal': SpaceAgentIdleNonTerminalEvent;
 	'space.workflowRun.completed': SpaceWorkflowRunCompletedEvent;
 	'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;
 	'space.workflowRun.blocked': SpaceWorkflowRunBlockedEvent;

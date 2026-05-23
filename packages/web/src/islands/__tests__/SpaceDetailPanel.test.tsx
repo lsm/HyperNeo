@@ -163,10 +163,10 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.getByText('Loading…')).toBeTruthy();
 	});
 
-	it('renders Overview and Space Agent buttons', () => {
+	it('renders Overview and Agents buttons', () => {
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('Overview')).toBeTruthy();
-		expect(screen.getByText('Space Agent')).toBeTruthy();
+		expect(screen.getByText('Agents')).toBeTruthy();
 	});
 
 	it('removes the old Space Activity header block', () => {
@@ -187,7 +187,7 @@ describe('SpaceDetailPanel', () => {
 	it('navigates to the space agent and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
-		fireEvent.click(screen.getByText('Space Agent'));
+		fireEvent.click(screen.getByText('Agents'));
 		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
@@ -198,10 +198,10 @@ describe('SpaceDetailPanel', () => {
 		expect(button?.className).toContain('bg-white/10');
 	});
 
-	it('highlights Space Agent when its synthetic session is selected', () => {
+	it('highlights Agents when the Coordinator synthetic session is selected', () => {
 		mockCurrentSpaceSessionIdSignal.value = 'space:chat:space-1';
 		render(<SpaceDetailPanel spaceId="space-1" />);
-		const button = screen.getByText('Space Agent').closest('button');
+		const button = screen.getByText('Agents').closest('button');
 		expect(button?.className).toContain('bg-white/10');
 	});
 

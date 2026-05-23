@@ -563,6 +563,12 @@ describe('EvolutionEpisodeService', () => {
 			sourceId: task.id,
 			summary: 'Retry loop evidence',
 		});
+		const conversationEvidence = evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'conversation_friction',
+			sourceId: task.id,
+			summary: 'Conversation friction evidence',
+		});
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
 			taskRepo,
@@ -572,10 +578,10 @@ describe('EvolutionEpisodeService', () => {
 
 		const input = service.buildEpisodeInput({
 			scopeId: scope.id,
-			evidenceIds: [taskEvidence.id, retryEvidence.id],
+			evidenceIds: [taskEvidence.id, retryEvidence.id, conversationEvidence.id],
 		});
 
-		expect(input.evidence).toHaveLength(2);
+		expect(input.evidence).toHaveLength(3);
 		expect(input.tasks).toHaveLength(1);
 		expect(input.tasks[0]?.task.id).toBe(task.id);
 	});
@@ -757,7 +763,7 @@ describe('EvolutionEpisodeService', () => {
 		).toThrow('finding.domain must be one of');
 	});
 
-	it('creates a scoped SpaceTask from a proposal and records evidence context', async () => {
+	it('atomically creates a scoped SpaceTask from a proposal with dependencies', async () => {
 		const goal = goalRepo.create({
 			spaceId,
 			title: 'Improve review loop',
@@ -783,6 +789,11 @@ describe('EvolutionEpisodeService', () => {
 			priority: 'high',
 			evidenceEpisodeIds: [episode.id],
 		});
+		const dependency = taskRepo.createTask({
+			spaceId,
+			title: 'Dependency task',
+			description: 'Must finish first',
+		});
 		const publishedEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
 		const service = new EvolutionEpisodeService({
 			evolutionRepo,
@@ -797,13 +808,14 @@ describe('EvolutionEpisodeService', () => {
 			},
 		});
 
-		const result = service.createTaskFromProposal(proposal.id);
+		const result = service.createTaskFromProposal(proposal.id, { dependsOn: [dependency.id] });
 		const duplicate = service.createTaskFromProposal(proposal.id);
 
 		expect(duplicate.task.id).toBe(result.task.id);
 		expect(
 			taskRepo.listBySpace(spaceId).filter((item) => item.title === 'Improve review UI')
 		).toHaveLength(1);
+		expect(taskRepo.getTask(result.task.id)?.dependsOn).toEqual([dependency.id]);
 		expect(publishedEvents).toHaveLength(1);
 		expect(publishedEvents[0]).toMatchObject({
 			event: 'space.task.created',
@@ -819,6 +831,7 @@ describe('EvolutionEpisodeService', () => {
 			evolutionScopeId: scope.id,
 			title: 'Improve review UI',
 			priority: 'high',
+			dependsOn: [dependency.id],
 		});
 		expect(result.task.description).toContain('Make actions clearer');
 		expect(result.task.description).toContain('Proposal reason:\nUsers miss next steps');
@@ -913,6 +926,81 @@ describe('EvolutionEpisodeService', () => {
 		expect(() => service.createTaskFromProposal('missing-proposal')).toThrow(
 			'TaskProposal not found: missing-proposal'
 		);
+	});
+
+	it('rejects proposal-to-task dependencies missing from the scope space', () => {
+		const otherSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/other-space',
+			slug: 'other-space',
+			name: 'Other Space',
+		}).id;
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Dependency scope',
+			objective: 'Validate dependency space',
+		});
+		const proposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Dependent task',
+			description: 'Should reject cross-space deps',
+			reason: 'Avoid invalid dependency graph',
+		});
+		const otherSpaceTask = taskRepo.createTask({
+			spaceId: otherSpaceId,
+			title: 'Other space task',
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+
+		expect(() =>
+			service.createTaskFromProposal(proposal.id, { dependsOn: [otherSpaceTask.id] })
+		).toThrow(`Dependency task not found in space: ${otherSpaceTask.id}`);
+	});
+
+	it('rejects self-dependency and cycles during proposal-to-task creation', () => {
+		const taskId = 'proposal-cycle-task';
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			kind: 'custom',
+			name: 'Dependency scope',
+			objective: 'Validate dependency graph',
+		});
+		const selfProposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Self-dependent task',
+			description: 'Should reject self dependency',
+			reason: 'Avoid impossible dependency ordering',
+		});
+		const cycleProposal = evolutionRepo.createTaskProposal({
+			scopeId: scope.id,
+			title: 'Cycle task',
+			description: 'Should reject bad graph',
+			reason: 'Avoid impossible dependency ordering',
+		});
+		const upstream = taskRepo.createTask({
+			spaceId,
+			title: 'Upstream task',
+			dependsOn: [taskId],
+		});
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			taskIdFactory: () => taskId,
+		});
+
+		expect(() => service.createTaskFromProposal(selfProposal.id, { dependsOn: [taskId] })).toThrow(
+			'A task cannot depend on itself'
+		);
+		expect(() =>
+			service.createTaskFromProposal(cycleProposal.id, { dependsOn: [upstream.id] })
+		).toThrow('Adding these dependencies would create a circular dependency');
 	});
 
 	it('rejects invalid rollup writeback requests', () => {
@@ -1023,6 +1111,210 @@ describe('EvolutionEpisodeService', () => {
 			})
 		).toThrow('Dismissed episode cannot accept rollup');
 	});
+
+	it('exercises the full Forge episode lifecycle with deduped evidence and accepted rollup context', async () => {
+		const goal = goalRepo.create({
+			spaceId,
+			title: 'Improve Forge evidence quality',
+			description: 'Catch cross-boundary evidence regressions before review',
+			type: 'recurring',
+			summary: 'Old lifecycle summary',
+			progress: 40,
+			metrics: { completedTasks: 0, rollups: 0 },
+		});
+		const scopeService = new EvolutionScopeService({
+			evolutionRepo,
+			spaceRepo,
+			goalRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+		});
+		const scope = scopeService.createScopeFromGoal({
+			spaceGoalId: goal.id,
+			name: 'Improve Forge evidence quality',
+			objective: 'Validate evidence collection across the full episode lifecycle',
+			metricDefinitions: [
+				{ key: 'completedTasks', label: 'Completed tasks', direction: 'increase' },
+				{ key: 'rollups', label: 'Rollups applied', direction: 'increase' },
+			],
+		});
+		const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Coding workflow' });
+		const run = workflowRunRepo.createRun({
+			spaceId,
+			workflowId: workflow.id,
+			title: 'Forge lifecycle test run',
+		});
+		workflowRunRepo.updateRun(run.id, { status: 'done' });
+		artifactRepo.upsert({
+			id: 'artifact-forge-lifecycle-result',
+			runId: run.id,
+			nodeId: 'Coding',
+			artifactType: 'result',
+			artifactKey: 'final',
+			data: {
+				summary:
+					'Lifecycle coverage captured episode acceptance, proposal task creation, and rollup writeback.',
+				pr_url: 'https://github.com/lsm/neokai/pull/455',
+			},
+		});
+		const completedTask = taskRepo.createTask({
+			spaceId,
+			title: 'Add Forge lifecycle integration test',
+			description: 'Cover evidence, episode, lesson, proposal, and rollup paths together',
+			goalId: goal.id,
+			workflowRunId: run.id,
+			priority: 'high',
+		});
+		taskRepo.updateTask(completedTask.id, {
+			status: 'done',
+			result: 'Initial lifecycle result before dedup update',
+			reportedSummary: 'Evidence captured through completion path',
+		});
+
+		const firstCapture = scopeService.captureCompletedTaskEvidence({ taskId: completedTask.id });
+		taskRepo.updateTask(completedTask.id, {
+			result: 'Updated lifecycle result after repeated completion capture',
+			reportedSummary: 'Updated evidence should replace auto-captured metadata',
+		});
+		const secondCapture = scopeService.captureCompletedTaskEvidence({ taskId: completedTask.id });
+		const { evidence: metricEvidence } = scopeService.addMetricSnapshotEvidence({
+			scopeId: scope.id,
+			values: { completedTasks: 1, rollups: 0 },
+			source: 'integration-test',
+			note: 'Lifecycle evidence before rollup',
+		});
+		const manualEvidence = scopeService.addManualNoteEvidence({
+			scopeId: scope.id,
+			summary: 'Accepted episodes must retain findings and evidence IDs for downstream actions.',
+		});
+		const autoEvidence = evolutionRepo
+			.listEvidence(scope.id)
+			.filter((item) => item.metadata.autoCaptured);
+		const taskEvidence = autoEvidence.find((item) => item.kind === 'task_result');
+		const artifactEvidence = autoEvidence.find((item) => item.kind === 'artifact');
+		const service = new EvolutionEpisodeService({
+			evolutionRepo,
+			taskRepo,
+			workflowRunRepo,
+			artifactRepo,
+			goalService: createGoalService(),
+			judgeEpisode: async (input) => ({
+				title: 'Forge evidence lifecycle episode',
+				outcomeSummary: `Lifecycle judge saw ${input.evidence.length} evidence items and ${input.tasks.length} task context.`,
+				findings: [
+					{
+						domain: 'workflow',
+						kind: 'regression',
+						impact: 'high',
+						confidence: 0.9,
+						evidence: input.evidence.map((item) => item.id),
+						proposedAction: 'Keep full Forge lifecycle covered by one integration test.',
+					},
+				],
+				candidateLessons: [
+					{
+						appliesTo: ['workflow', 'test'],
+						rule: 'Exercise Forge evidence, episode, proposal, and rollup paths together.',
+						why: 'Boundary bugs escape isolated unit tests.',
+						confidence: 0.88,
+					},
+				],
+				proposals: [
+					{
+						title: 'Harden Forge lifecycle assertions',
+						description:
+							'Add assertions that accepted episodes keep enough context for follow-up work.',
+						reason: 'Accepted rollups must not erase evidence IDs or findings used downstream.',
+						priority: 'high',
+					},
+				],
+			}),
+		});
+
+		expect(firstCapture.scope?.id).toBe(scope.id);
+		expect(firstCapture.evidence.map((item) => item.kind).sort()).toEqual([
+			'artifact',
+			'task_result',
+		]);
+		expect(secondCapture.evidence.map((item) => item.id).sort()).toEqual(
+			firstCapture.evidence.map((item) => item.id).sort()
+		);
+		expect(autoEvidence.map((item) => item.kind).sort()).toEqual(['artifact', 'task_result']);
+		expect(taskEvidence?.metadata.result).toBe(
+			'Updated lifecycle result after repeated completion capture'
+		);
+		expect(artifactEvidence?.metadata.artifactCount).toBe(1);
+
+		const episodeResult = await service.createFromEvidence({
+			scopeId: scope.id,
+			evidenceIds: [
+				taskEvidence?.id,
+				artifactEvidence?.id,
+				metricEvidence.id,
+				manualEvidence.id,
+			].filter((id): id is string => Boolean(id)),
+		});
+		const rollup = service.applyRollupGoalUpdate({
+			episodeId: episodeResult.episode.id,
+			goalUpdate: {
+				summary: 'Forge lifecycle test accepted evidence and wrote rollup.',
+				progress: 70,
+				nextSteps: ['Run follow-up proposal task with active lesson context'],
+				metrics: { completedTasks: 1, rollups: 1 },
+			},
+		});
+		const activeLesson = service.updateLesson(episodeResult.lessons[0].id, { status: 'active' });
+		const created = service.createTaskFromProposal(episodeResult.proposals[0].id);
+		const acceptedEpisode = service.getEpisode(episodeResult.episode.id);
+
+		expect(episodeResult.episode).toMatchObject({
+			status: 'draft',
+			title: 'Forge evidence lifecycle episode',
+		});
+		expect(episodeResult.preflight.level).toBe('high');
+		expect(episodeResult.preflight.counts.taskResults).toBe(1);
+		expect(episodeResult.preflight.counts.workflowArtifacts).toBe(1);
+		expect(episodeResult.lessons[0]).toMatchObject({
+			status: 'candidate',
+			evidenceEpisodeIds: [episodeResult.episode.id],
+		});
+		expect(episodeResult.proposals[0]).toMatchObject({
+			status: 'proposed',
+			evidenceEpisodeIds: [episodeResult.episode.id],
+		});
+		expect(rollup.episode.status).toBe('accepted');
+		expect(rollup.episode.rollupAppliedAt).toBeNumber();
+		expect(rollup.goal).toMatchObject({
+			summary: 'Forge lifecycle test accepted evidence and wrote rollup.',
+			progress: 70,
+			nextSteps: ['Run follow-up proposal task with active lesson context'],
+			metrics: { completedTasks: 1, rollups: 1 },
+		});
+		expect(acceptedEpisode).toMatchObject({
+			status: 'accepted',
+			evidenceIds: episodeResult.episode.evidenceIds,
+			findings: episodeResult.episode.findings,
+			outcomeSummary: episodeResult.episode.outcomeSummary,
+		});
+		expect(created.task).toMatchObject({
+			goalId: goal.id,
+			evolutionScopeId: scope.id,
+			title: 'Harden Forge lifecycle assertions',
+			priority: 'high',
+		});
+		expect(created.task.description).toContain(episodeResult.episode.id);
+		expect(created.task.description).toContain(
+			'Accepted rollups must not erase evidence IDs or findings used downstream.'
+		);
+		expect(scopeService.selectActiveLessonsForTask({ taskId: created.task.id })).toMatchObject([
+			{
+				id: activeLesson?.id,
+				rule: 'Exercise Forge evidence, episode, proposal, and rollup paths together.',
+			},
+		]);
+	});
+
 	it('dogfoods the Forge MVP loop from recurring goal to next scoped task', async () => {
 		const goal = goalRepo.create({
 			spaceId,

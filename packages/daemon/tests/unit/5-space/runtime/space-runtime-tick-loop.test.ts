@@ -1355,9 +1355,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(nags).toEqual([]);
 		});
 
-		test('preserves naturally idle incomplete executions', async () => {
+		test('nudges naturally idle incomplete executions after threshold', async () => {
+			const nudges: string[] = [];
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isSessionAlive: () => false,
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nudges.push(sessionId);
+					return `nudge:${sessionId}`;
+				},
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1377,6 +1382,88 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(updated?.status).toBe('idle');
 			expect(updated?.agentSessionId).toBe('session:idle');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(nudges).toEqual(['session:idle']);
+			const state = (
+				rt as unknown as { nonTerminalIdleStates: Map<string, { nudgeCount: number }> }
+			).nonTerminalIdleStates.get(`${run.id}:${execution.id}`);
+			expect(state?.nudgeCount).toBe(1);
+		});
+
+		test('does not nudge idle incomplete executions while space is paused', async () => {
+			const nudges: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => false,
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nudges.push(sessionId);
+					return `nudge:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			(rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'idle',
+				agentSessionId: 'session:paused-idle',
+			});
+			saveAssistantMessage('session:paused-idle', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id);
+			expect(updated?.status).toBe('idle');
+			expect(updated?.agentSessionId).toBe('session:paused-idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(nudges).toEqual([]);
+		});
+
+		test('backs off then retries failed idle nudge attempts', async () => {
+			let attempts = 0;
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => false,
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					attempts += 1;
+					if (attempts === 1) throw new Error('session gone');
+					return `nudge:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'idle',
+				agentSessionId: 'session:failed-idle-nudge',
+			});
+			saveAssistantMessage('session:failed-idle-nudge', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+			await rt.executeTick();
+
+			type IdleStateForTest = {
+				nudgeCount: number;
+				failedNudgeCount: number;
+				lastNudgeAt: number;
+			};
+			const states = (rt as unknown as { nonTerminalIdleStates: Map<string, IdleStateForTest> })
+				.nonTerminalIdleStates;
+			const state = states.get(`${run.id}:${execution.id}`)!;
+			expect(attempts).toBe(1);
+			expect(state.nudgeCount).toBe(1);
+			expect(state.failedNudgeCount).toBe(1);
+
+			state.lastNudgeAt = Date.now() - 61_000;
+			await rt.executeTick();
+
+			expect(attempts).toBe(2);
+			expect(state.nudgeCount).toBe(2);
+			expect(state.failedNudgeCount).toBe(0);
 		});
 	});
 
@@ -1441,7 +1528,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			).toBe(0);
 		});
 
-		test('clears preserved idle counters when removing done run executor', async () => {
+		test('clears preserved idle state when removing done run executor', async () => {
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isSessionAlive: () => false,
 			});
@@ -1460,7 +1547,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 			await rt.executeTick();
 			expect(
-				(rt as unknown as { nonTerminalIdleCounts: Map<string, unknown> }).nonTerminalIdleCounts
+				(rt as unknown as { nonTerminalIdleStates: Map<string, unknown> }).nonTerminalIdleStates
 					.size
 			).toBe(1);
 
@@ -1472,7 +1559,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 			expect(rt.getExecutor(run.id)).toBeUndefined();
 			expect(
-				(rt as unknown as { nonTerminalIdleCounts: Map<string, unknown> }).nonTerminalIdleCounts
+				(rt as unknown as { nonTerminalIdleStates: Map<string, unknown> }).nonTerminalIdleStates
 					.size
 			).toBe(0);
 		});
@@ -1539,6 +1626,75 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(rt.getExecutor(run1.id)).toBeUndefined();
 			expect(rt.getExecutor(run2.id)).toBeDefined();
 			expect(rt.executorCount).toBe(1);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Approval-gate and success-result nag suppression
+	// -------------------------------------------------------------------------
+
+	describe('approval-gate and success-result nag suppression', () => {
+		test('does not nag when task is pending task_completion approval', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:awaiting-approval',
+				startedAt: Date.now() - 20 * 60_000,
+			});
+			// Mark task as awaiting approval
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'review',
+				pendingCheckpointType: 'task_completion',
+			});
+
+			await rt.executeTick();
+
+			expect(nags).toHaveLength(0);
+		});
+
+		test('does not nag when execution has a result and task is in review', async () => {
+			const nags: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => true,
+				getAgentSessionById: () => processingState('processing'),
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nags.push(sessionId);
+					return `nag:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'session:has-result',
+				startedAt: Date.now() - 20 * 60_000,
+				result: 'PR #42 opened at https://github.com/example/repo/pull/42',
+			});
+			taskRepo.updateTask(tasks[0].id, {
+				status: 'review',
+			});
+
+			await rt.executeTick();
+
+			expect(nags).toHaveLength(0);
 		});
 	});
 

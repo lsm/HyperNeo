@@ -486,7 +486,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				? 'View Worker Session'
 				: agentSessionId
 					? 'View Agent Session'
-					: 'Open Space Agent';
+					: 'Open Coordinator';
 	const visibleTarget = visibleTargetName
 		? composerTargets.find(
 				(target) =>

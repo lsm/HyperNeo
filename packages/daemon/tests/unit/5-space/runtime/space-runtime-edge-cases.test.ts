@@ -13,6 +13,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import type { SpaceTask } from '@neokai/shared';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -38,7 +39,6 @@ type BusEventKind =
 	| 'workflow_run_completed'
 	| 'workflow_run_reopened'
 	| 'agent_crash'
-	| 'agent_idle_non_terminal'
 	| 'task_retry'
 	| 'workflow_run_needs_attention'
 	| 'task_awaiting_approval';
@@ -55,7 +55,6 @@ const EVENT_MAP: Record<string, BusEventKind> = {
 	'space.workflowRun.completed': 'workflow_run_completed',
 	'space.workflowRun.reopened': 'workflow_run_reopened',
 	'space.agent.crashed': 'agent_crash',
-	'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
 	'space.workflowRun.retry': 'task_retry',
 	'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
 	'space.task.awaitingApproval': 'task_awaiting_approval',
@@ -121,6 +120,22 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
 	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+}
+
+class MockTaskAgentManager {
+	readonly cancelledSessions: string[] = [];
+
+	cancelBySessionId(sessionId: string): void {
+		this.cancelledSessions.push(sessionId);
+	}
+}
+
+class TaskUpdateCollector {
+	readonly tasks: SpaceTask[] = [];
+
+	handle({ task }: { task: SpaceTask }): void {
+		this.tasks.push(task);
+	}
 }
 
 function buildLinearWorkflow(
@@ -516,7 +531,368 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// 5. External run cancellation — no stale notifications
+	// 5. Workflow-backed dependency block cleanup
+	// -------------------------------------------------------------------------
+
+	describe('workflow-backed dependency block cleanup', () => {
+		test('blocking an in-progress workflow task stops run and active node agents', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-dep-block', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-1',
+			});
+			taskRepo.updateTask(task.id, { taskAgentSessionId: 'task-session-1' });
+
+			const blocked = await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+				dependsOn: ['missing-dep'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+			});
+
+			expect(blocked?.status).toBe('blocked');
+			expect(blocked?.blockReason).toBe('dependency_added');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(tam.cancelledSessions).toEqual(['node-session-1', 'task-session-1']);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			const clearedTask = taskRepo.getTask(task.id)!;
+			expect(blocked?.workflowRunId).toBe(run.id);
+			expect(blocked?.taskAgentSessionId).toBeUndefined();
+			expect(clearedTask.workflowRunId).toBe(run.id);
+			expect(clearedTask.taskAgentSessionId).toBeUndefined();
+			expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(collector.events.filter((e) => e.kind === 'workflow_run_blocked')).toHaveLength(1);
+		});
+
+		test('uses original runtime pointers when block payload overwrites them', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-pointer-overwrite', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-1',
+			});
+			taskRepo.updateTask(task.id, { taskAgentSessionId: 'original-task-session' });
+
+			const blocked = await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+				dependsOn: ['missing-dep'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+				taskAgentSessionId: 'payload-task-session',
+				workflowRunId: null,
+			});
+
+			expect(blocked?.status).toBe('blocked');
+			expect(blocked?.workflowRunId).toBe(run.id);
+			expect(blocked?.taskAgentSessionId).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(tam.cancelledSessions).toContain('node-session-1');
+			expect(tam.cancelledSessions).toContain('original-task-session');
+			expect(tam.cancelledSessions).not.toContain('payload-task-session');
+			const clearedTask = taskRepo.getTask(task.id)!;
+			expect(clearedTask.workflowRunId).toBe(run.id);
+			expect(clearedTask.taskAgentSessionId).toBeUndefined();
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+		});
+
+		test('ignores payload task session when dependency-block task had no session pointer', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-dep-payload-session', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-dep-payload-ignore',
+			});
+			taskRepo.updateTask(task.id, { taskAgentSessionId: null });
+
+			await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+				dependsOn: ['missing-dep'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+				taskAgentSessionId: 'unrelated-session',
+			});
+
+			expect(tam.cancelledSessions).toEqual(['node-session-dep-payload-ignore']);
+			expect(tam.cancelledSessions).not.toContain('unrelated-session');
+		});
+
+		test('pausing a workflow-backed task stops node agents and clears task session pointer', async () => {
+			const tam = new MockTaskAgentManager();
+			const updates = new TaskUpdateCollector();
+			const rt = makeRuntime({
+				taskAgentManager: tam as never,
+				onTaskUpdated: async (event) => updates.handle(event),
+			});
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-pause', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-pause',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-pause',
+			});
+			updates.tasks.length = 0;
+
+			const paused = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+				status: 'open',
+			});
+
+			expect(paused?.status).toBe('open');
+			expect(paused?.workflowRunId).toBe(run.id);
+			expect(paused?.taskAgentSessionId).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(tam.cancelledSessions).toEqual(['node-session-pause', 'task-session-pause']);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			expect(updates.tasks).toHaveLength(1);
+			expect(updates.tasks[0].status).toBe('open');
+			expect(updates.tasks[0].taskAgentSessionId).toBeUndefined();
+		});
+
+		test('pausing a workflow-backed task preserves idle execution history', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-pause-idle', name: 'Idle Step', agentId: AGENT },
+				{ id: 'step-pause-active', name: 'Active Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [idleExecution] = nodeExecutionRepo.listByNode(run.id, 'step-pause-idle');
+			nodeExecutionRepo.update(idleExecution.id, {
+				status: 'idle',
+				agentSessionId: 'idle-session-pause',
+				result: 'idle output',
+				completedAt: Date.now() - 1000,
+			});
+			const activeExecution = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'step-pause-active',
+				agentName: 'agent-1',
+				agentId: AGENT,
+				status: 'in_progress',
+				agentSessionId: 'active-session-pause',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-pause-idle',
+			});
+
+			await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'open' });
+
+			const preservedExecution = nodeExecutionRepo.getById(idleExecution.id)!;
+			expect(preservedExecution.status).toBe('idle');
+			expect(preservedExecution.agentSessionId).toBe('idle-session-pause');
+			expect(preservedExecution.result).toBe('idle output');
+			const cancelledExecution = nodeExecutionRepo.getById(activeExecution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			expect(tam.cancelledSessions).toEqual(['active-session-pause', 'task-session-pause-idle']);
+		});
+
+		test('ignores payload task session when status-stop task had no session pointer', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-status-payload-session', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-payload-ignore',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: null,
+			});
+
+			const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+				status: 'cancelled',
+				taskAgentSessionId: 'unrelated-session',
+			});
+
+			expect(cancelled?.taskAgentSessionId).toBeUndefined();
+			expect(tam.cancelledSessions).toEqual(['node-session-payload-ignore']);
+			expect(tam.cancelledSessions).not.toContain('unrelated-session');
+		});
+
+		test('validates metadata fields when stopping workflow-backed task status', async () => {
+			const rt = makeRuntime();
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-status-metadata', name: 'Only Step', agentId: AGENT },
+			]);
+			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			taskRepo.updateTask(task.id, { status: 'in_progress' });
+
+			await expect(
+				rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+					status: 'cancelled',
+					dependsOn: [task.id],
+				})
+			).rejects.toThrow('A task cannot depend on itself');
+			expect(taskRepo.getTask(task.id)?.dependsOn).toEqual([]);
+			expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
+		});
+
+		test('cancelling a workflow-backed task stops sessions and cancels run', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-cancel-task', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-cancel-task',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-cancel-task',
+			});
+
+			const cancelled = await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+				status: 'cancelled',
+				cancelReason: 'user cancelled',
+			});
+
+			expect(cancelled?.status).toBe('cancelled');
+			expect(cancelled?.approvalReason).toBe('user cancelled');
+			expect(cancelled?.workflowRunId).toBe(run.id);
+			expect(cancelled?.taskAgentSessionId).toBeUndefined();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+			expect(tam.cancelledSessions).toEqual([
+				'node-session-cancel-task',
+				'task-session-cancel-task',
+			]);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+		});
+
+		test('cancelling a workflow run stops active task and node sessions', async () => {
+			const tam = new MockTaskAgentManager();
+			const rt = makeRuntime({ taskAgentManager: tam as never });
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-cancel-run', name: 'Only Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [execution] = nodeExecutionRepo.listByWorkflowRun(run.id);
+			nodeExecutionRepo.update(execution.id, {
+				status: 'in_progress',
+				agentSessionId: 'node-session-cancel-run',
+			});
+			taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: 'task-session-cancel-run',
+			});
+
+			const cancelledRun = await rt.cancelWorkflowRun(SPACE_ID, run.id);
+
+			expect(cancelledRun.status).toBe('cancelled');
+			const cancelledTask = taskRepo.getTask(task.id)!;
+			expect(cancelledTask.status).toBe('cancelled');
+			expect(cancelledTask.workflowRunId).toBe(run.id);
+			expect(cancelledTask.taskAgentSessionId).toBeUndefined();
+			expect(tam.cancelledSessions).toEqual(['node-session-cancel-run', 'task-session-cancel-run']);
+			const cancelledExecution = nodeExecutionRepo.getById(execution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+		});
+
+		test('preserves completed executions and emits only post-cleanup task update', async () => {
+			const tam = new MockTaskAgentManager();
+			const updates = new TaskUpdateCollector();
+			const rt = makeRuntime({
+				taskAgentManager: tam as never,
+				onTaskUpdated: async (event) => updates.handle(event),
+			});
+			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-complete', name: 'Completed Step', agentId: AGENT },
+				{ id: 'step-active', name: 'Active Step', agentId: AGENT },
+			]);
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const task = tasks[0];
+			const [firstExecution] = nodeExecutionRepo.listByNode(run.id, 'step-complete');
+			nodeExecutionRepo.update(firstExecution.id, {
+				status: 'idle',
+				result: 'completed output',
+				completedAt: Date.now() - 1000,
+			});
+			const activeExecution = nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'step-active',
+				agentName: 'agent-1',
+				agentId: AGENT,
+				status: 'in_progress',
+				agentSessionId: 'node-session-2',
+			});
+			taskRepo.updateTask(task.id, { taskAgentSessionId: 'task-session-2' });
+			updates.tasks.length = 0;
+
+			const blocked = await rt.blockWorkflowBackedTask(SPACE_ID, task.id, {
+				dependsOn: ['missing-dep'],
+				status: 'blocked',
+				blockReason: 'dependency_added',
+				result: 'Dependency added while task was in progress',
+				completedAt: null,
+			});
+
+			expect(blocked?.taskAgentSessionId).toBeUndefined();
+			expect(updates.tasks).toHaveLength(1);
+			expect(updates.tasks[0].status).toBe('blocked');
+			expect(updates.tasks[0].taskAgentSessionId).toBeUndefined();
+			const preservedExecution = nodeExecutionRepo.getById(firstExecution.id)!;
+			expect(preservedExecution.status).toBe('idle');
+			expect(preservedExecution.result).toBe('completed output');
+			expect(preservedExecution.agentSessionId).toBeNull();
+			const cancelledExecution = nodeExecutionRepo.getById(activeExecution.id)!;
+			expect(cancelledExecution.status).toBe('cancelled');
+			expect(cancelledExecution.agentSessionId).toBeNull();
+			expect(tam.cancelledSessions).toEqual(['node-session-2', 'task-session-2']);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// 6. External run cancellation — no stale notifications
 	// -------------------------------------------------------------------------
 
 	describe('external run cancellation — no stale notifications', () => {

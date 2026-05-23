@@ -9,6 +9,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { createEvolutionTables } from './evolution';
+import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
 
 // Re-export migrations
@@ -118,6 +119,8 @@ export { configureMessageSearchFts, runMigration141 } from './migrations';
 export { runMigration142 } from './migrations';
 // knip-ignore-next-line
 export { runMigration143 } from './migrations';
+// knip-ignore-next-line
+export { runMigration144 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -703,6 +706,7 @@ export function createTables(db: BunDatabase): void {
 	createSpaceAgentInboxTables(db);
 	createAgentMemoryTables(db);
 	createEvolutionTables(db);
+	createLongHorizonAgentTables(db);
 
 	// Create indexes
 	createIndexes(db);

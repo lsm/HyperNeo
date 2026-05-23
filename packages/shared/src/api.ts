@@ -794,7 +794,9 @@ export interface EvolutionTaskProposalListResponse {
 
 export interface EvolutionTaskProposalCreateTaskRequest {
 	id: string;
-	params?: Partial<Pick<TaskProposal, 'title' | 'description' | 'reason' | 'priority'>>;
+	params?: Partial<Pick<TaskProposal, 'title' | 'description' | 'reason' | 'priority'>> & {
+		dependsOn?: string[];
+	};
 }
 
 export interface EvolutionTaskProposalCreateTaskResponse {

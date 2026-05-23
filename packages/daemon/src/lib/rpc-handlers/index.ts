@@ -60,8 +60,10 @@ import { GateDataRepository } from '../../storage/repositories/gate-data-reposit
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
+import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
 import {
+	SPACE_CONVERSATION_FRICTION_ANALYZE,
 	SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
 	SPACE_WORKFLOW_RUN_SYNC_COMMITS,
 	SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
@@ -71,9 +73,11 @@ import { PendingAgentMessageRepository } from '../../storage/repositories/pendin
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository';
 import { SessionRepository } from '../../storage/repositories/session-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
+import { setupSpaceLongHorizonAgentHandlers } from './space-long-horizon-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
@@ -99,6 +103,7 @@ import { setupTaskScheduleHandlers } from './task-schedule-handlers';
 import { setupAgentMemoryHandlers } from './agent-memory-handlers';
 import { setupSpaceGoalHandlers } from './space-goal-handlers';
 import { setupEvolutionHandlers } from './evolution-handlers';
+import { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service';
 import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
@@ -371,26 +376,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 	});
 
-	// When a space is resumed/started, re-seed any of its active schedules
-	// whose fire jobs were skipped during the inactive window so cron/at
-	// schedules pick up forward progress without waiting for daemon restart.
-	deps.spaceManager.onSpaceResumedRegister((spaceId) => {
-		try {
-			const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
-			if (recovered > 0) {
-				log.info('recovered schedules after space resume', { spaceId, recovered });
-			}
-		} catch (err) {
-			log.error('schedule recovery after space resume failed (non-fatal)', err);
-		}
-	});
-
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const evolutionTraceEvidenceService = new EvolutionTraceEvidenceService({
 		db: deps.db.getDatabase(),
 		evolutionRepo: deps.db.evolution,
 		taskRepo: spaceTaskRepo,
 	});
+	const evolutionConversationAnalysisService = new EvolutionConversationAnalysisService({
+		db: deps.db.getDatabase(),
+		evolutionRepo: deps.db.evolution,
+		taskRepo: spaceTaskRepo,
+		spaceRepo,
+	});
+	deps.jobProcessor.register(
+		SPACE_CONVERSATION_FRICTION_ANALYZE,
+		createConversationFrictionEvidenceHandler(evolutionConversationAnalysisService)
+	);
 	const evolutionScopeService = new EvolutionScopeService({
 		evolutionRepo: deps.db.evolution,
 		spaceRepo,
@@ -399,10 +400,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		workflowRunRepo: spaceWorkflowRunRepo,
 		artifactRepo,
 		traceEvidenceService: evolutionTraceEvidenceService,
+		jobQueue: deps.jobQueue,
 	});
 
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+	const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
 	const agentLookup: SpaceAgentLookup = {
 		getAgentById(spaceId: string, id: string) {
 			const agent = spaceAgentRepo.getById(id);
@@ -428,6 +431,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceAgentManager,
 		deps.spaceManager
 	);
+	setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager);
 
 	setupSpaceWorkflowHandlers(
 		deps.messageHub,
@@ -499,6 +503,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		dbPath: deps.db.getDatabasePath(),
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
+		longHorizonAgentRepo,
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
@@ -530,6 +535,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalService: spaceGoalService,
 		evolutionScopeService,
 		evolutionEpisodeService,
+	});
+
+	// When a space is resumed/started, re-seed skipped schedules and re-run restart
+	// stalled recovery for active runs that were skipped while inactive.
+	deps.spaceManager.onSpaceResumedRegister((spaceId) => {
+		try {
+			const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
+			if (recovered > 0) {
+				log.info('recovered schedules after space resume', { spaceId, recovered });
+			}
+		} catch (err) {
+			log.error('schedule recovery after space resume failed (non-fatal)', err);
+		}
+		spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so
@@ -581,7 +600,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceAgentManager,
 		spaceWorkflowManager,
 		deps.sessionManager,
-		spaceRuntimeService
+		spaceRuntimeService,
+		{ longHorizonAgentRepo }
 	);
 
 	// Space Worktree Manager — one worktree per task, shared by all node agents.

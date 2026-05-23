@@ -77,12 +77,18 @@ export class SessionRepository {
 	 * @param options.status - Filter by status ('active', 'archived'). If omitted, excludes archived.
 	 * @param options.includeArchived - If true, returns all sessions regardless of status.
 	 */
-	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+	listSessions(options?: {
+		status?: string;
+		includeArchived?: boolean;
+		includeSpaceSessions?: boolean;
+	}): Session[] {
 		let sql = `SELECT * FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
-				AND json_extract(session_context, '$.roomId') IS NULL
-				AND json_extract(session_context, '$.spaceId') IS NULL`;
+				AND json_extract(session_context, '$.roomId') IS NULL`;
 		const params: string[] = [];
+		if (!options?.includeSpaceSessions) {
+			sql += ` AND json_extract(session_context, '$.spaceId') IS NULL`;
+		}
 
 		if (options?.status) {
 			sql += ` AND status = ?`;

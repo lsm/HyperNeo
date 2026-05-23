@@ -10,7 +10,15 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { AgentDefinition, McpServerConfig, Session, Space, SpaceTask } from '@neokai/shared';
+import type {
+	AgentDefinition,
+	McpServerConfig,
+	Session,
+	Space,
+	SpaceTask,
+	SpaceWorkflowRun,
+	UpdateSpaceTaskParams,
+} from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { SpaceActorRegistryAdapter } from '../actor-registry';
@@ -23,6 +31,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -91,6 +100,7 @@ export interface SpaceRuntimeServiceConfig {
 	dbPath?: string;
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
+	longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
@@ -215,6 +225,7 @@ export class SpaceRuntimeService {
 	 */
 	private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
 	private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
+	private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
 	/**
 	 * Resolves when startup-time session provisioning has completed:
 	 *   - every existing space's space:chat session has had MCP tools +
@@ -633,6 +644,7 @@ export class SpaceRuntimeService {
 	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
 		return createSpaceAgentMcpServer({
 			spaceId: space.id,
+			db: this.config.db,
 			runtime: this.runtime,
 			workflowManager: this.config.spaceWorkflowManager,
 			spaceManager: this.config.spaceManager,
@@ -805,6 +817,21 @@ export class SpaceRuntimeService {
 		} catch (err) {
 			log.error('SpaceRuntimeService: recoverStalledWorkflowRuns failed:', err);
 		}
+	}
+
+	recoverStalledWorkflowRunsAfterSpaceResume(spaceId: string): void {
+		this.resumeStalledRecoveryPromise = this.resumeStalledRecoveryPromise
+			.catch(() => {})
+			.then(async () => {
+				try {
+					await this.runtime.recoverStalledRunsForSpace(spaceId);
+				} catch (err) {
+					log.error(
+						`SpaceRuntimeService: recoverStalledWorkflowRuns after space resume failed for ${spaceId}:`,
+						err
+					);
+				}
+			});
 	}
 
 	private async recoverLongTermAgentInbox(): Promise<void> {
@@ -1188,7 +1215,10 @@ export class SpaceRuntimeService {
 		if (!sessionManager) return;
 
 		try {
-			const all = sessionManager.listSessions({ includeArchived: false });
+			const all = sessionManager.listSessions({
+				includeArchived: false,
+				includeSpaceSessions: true,
+			});
 			for (const session of all) {
 				const policy = this.resolveMcpSessionPolicy(session);
 				if (policy.owner !== 'space-runtime') continue;
@@ -1245,6 +1275,7 @@ export class SpaceRuntimeService {
 		const spaceManagerForApproval = this.config.spaceManager;
 		const mcpServer = createSpaceAgentMcpServer({
 			spaceId: space.id,
+			db: this.config.db,
 			runtime: this.runtime,
 			workflowManager: this.config.spaceWorkflowManager,
 			spaceManager: this.config.spaceManager,
@@ -1362,12 +1393,14 @@ export class SpaceRuntimeService {
 		}
 
 		// Build context for the system prompt.
+		const coordinator = this.config.longHorizonAgentRepo?.ensureCoordinator(space.id) ?? null;
 		const agents = spaceAgentManager.listBySpaceId(space.id);
 		const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
 		const spaceManagerForApproval = this.config.spaceManager;
 		const mcpServer = createSpaceAgentMcpServer({
 			spaceId: space.id,
+			db: this.config.db,
 			runtime: this.runtime,
 			workflowManager: spaceWorkflowManager,
 			spaceManager: this.config.spaceManager,
@@ -1396,6 +1429,7 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			myAgentName: 'space-agent',
+			myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,
@@ -1734,6 +1768,34 @@ export class SpaceRuntimeService {
 	): Promise<SpaceTask> {
 		const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
 		return recovered.task;
+	}
+
+	async stopWorkflowBackedTask(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask> {
+		const updated = await this.runtime.blockWorkflowBackedTask(spaceId, taskId, params);
+		if (!updated) {
+			throw new Error(`Failed to block workflow-backed task ${taskId}`);
+		}
+		return updated;
+	}
+
+	async stopWorkflowBackedTaskForStatus(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask> {
+		const updated = await this.runtime.stopWorkflowBackedTaskForStatus(spaceId, taskId, params);
+		if (!updated) {
+			throw new Error(`Failed to stop workflow-backed task ${taskId}`);
+		}
+		return updated;
+	}
+
+	async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
+		return this.runtime.cancelWorkflowRun(spaceId, runId);
 	}
 }
 

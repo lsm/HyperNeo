@@ -93,6 +93,10 @@ class MockTaskAgentManager {
 
 	async tryResumeNodeAgentSession(): Promise<void> {}
 
+	cancelBySessionId(sessionId: string): void {
+		this.alive.delete(sessionId);
+	}
+
 	async prepareSubSessionForWorkflowResume(): Promise<boolean> {
 		return true;
 	}
@@ -127,7 +131,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 	let tam: MockTaskAgentManager;
 	let bus: ReturnType<typeof createDaemonInternalEventBus>;
 
-	function createWorkflow(nodeId = 'code'): SpaceWorkflow {
+	function createWorkflow(
+		nodeId = 'code',
+		options: { eventInterests?: Array<{ topic: string }> } = {}
+	): SpaceWorkflow {
 		return workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Workflow ${Math.random()}`,
@@ -140,6 +147,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 						{
 							agentId: AGENT_ID,
 							name: 'coder',
+							...(options.eventInterests ? { eventInterests: options.eventInterests } : {}),
 						},
 					],
 				},
@@ -157,16 +165,22 @@ describe('SpaceRuntime external event subscriptions', () => {
 	 */
 	async function startRunWithSubscription(
 		topic = DEFAULT_TOPIC,
-		nodeId = 'code'
+		nodeId = 'code',
+		options: { staticInterest?: boolean } = {}
 	): Promise<{
 		workflow: SpaceWorkflow;
 		run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
 		task: SpaceTask;
 	}> {
-		const workflow = createWorkflow(nodeId);
+		const workflow = createWorkflow(
+			nodeId,
+			options.staticInterest ? { eventInterests: [{ topic }] } : {}
+		);
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		const task = tasks[0]!;
-		runtime.registerSubscription(run.id, task.id, nodeId, 'coder', topic);
+		if (!options.staticInterest) {
+			runtime.registerSubscription(run.id, task.id, nodeId, 'coder', topic);
+		}
 		return { workflow, run, task };
 	}
 
@@ -454,6 +468,51 @@ describe('SpaceRuntime external event subscriptions', () => {
 		expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
 		expect(injected).toHaveLength(1);
 		expect(injected[0]!.sessionId).toBe('session-dedupe');
+		expect(eventStore.getById(event.id)?.state).toBe('delivered');
+	});
+
+	test('preserves subscriptions across dependency-added block and recovery', async () => {
+		const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
+		const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+		nodeExecutionRepo.update(execution.id, {
+			status: 'in_progress',
+			agentSessionId: 'session-before-block',
+			startedAt: Date.now(),
+		});
+		tam.alive.add('session-before-block');
+
+		await runtime.blockWorkflowBackedTask(SPACE_ID, task.id, {
+			status: 'blocked',
+			blockReason: 'dependency_added',
+			result: 'Dependency added while task was in progress',
+			completedAt: null,
+		});
+		const blockedEvent = makeEvent({
+			id: 'evt-blocked-preserved-subscription',
+			dedupeKey: 'dedupe-blocked-preserved-subscription',
+		});
+		await eventService.publish(blockedEvent);
+		expect(eventStore.getById(blockedEvent.id)?.state).toBe('published');
+		expect(eventStore.listDeliveries(blockedEvent.id)).toHaveLength(0);
+
+		await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+		const recoveredExecution = [...nodeExecutionRepo.listByNode(run.id, 'code')]
+			.filter((execution) => execution.completedAt === null && execution.status !== 'cancelled')
+			.sort((a, b) => b.updatedAt - a.updatedAt)[0]!;
+		const sessionId = recoveredExecution.agentSessionId ?? 'session-after-recover';
+		nodeExecutionRepo.update(recoveredExecution.id, {
+			status: 'in_progress',
+			agentSessionId: sessionId,
+			startedAt: Date.now(),
+			completedAt: null,
+		});
+		tam.alive.add(sessionId);
+
+		const event = makeEvent();
+		await eventService.publish(event);
+
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.sessionId).toBe(sessionId);
 		expect(eventStore.getById(event.id)?.state).toBe('delivered');
 	});
 
@@ -2435,10 +2494,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 		await new Promise((resolve) => setTimeout(resolve, 1100));
 		await runtime.executeTick();
 
-		// Runtime recovery keeps the blocked run retryable and leaves delivery queued.
+		// Blocked runs without active executions are not externally deliverable.
 		const delivery = eventStore.listDeliveries(event.id)[0]!;
-		expect(delivery.state).toBe('pending');
-		expect(delivery.failureReason).toContain('simulated transient failure');
+		expect(delivery.state).toBe('failed');
+		expect(delivery.failureReason).toBe('run_not_externally_deliverable');
 	});
 
 	test('re-registers interests when recovering a terminal workflow run', async () => {
