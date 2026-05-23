@@ -1417,6 +1417,27 @@ describe('space-task-handlers', () => {
 			);
 		});
 
+		it('rejects implicit workflow model override clears after task start', async () => {
+			setup(
+				mockSpace,
+				makeTask({
+					preferredWorkflowId: 'workflow-1',
+					workflowModelOverrides: { 'node-1:coder': 'claude-opus-4-5' },
+					startedAt: NOW,
+					workflowRunId: 'run-1',
+				})
+			);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					preferredWorkflowId: 'workflow-2',
+				})
+			).rejects.toThrow('Workflow model overrides are locked after the task starts');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
 		it('clears existing workflow model overrides when workflow selection is removed', async () => {
 			setup(
 				mockSpace,

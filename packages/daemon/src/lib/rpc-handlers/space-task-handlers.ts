@@ -315,7 +315,6 @@ export function setupSpaceTaskHandlers(
 		const workflowSelectionChanged =
 			Object.hasOwn(updateParams, 'preferredWorkflowId') &&
 			updateParams.preferredWorkflowId !== currentTaskForOverrides.preferredWorkflowId;
-		const overrideMutationRequested = Object.hasOwn(updateParams, 'workflowModelOverrides');
 		const validatedWorkflowModelOverrides = await validateWorkflowModelOverrides(
 			taskForOverrideValidation,
 			workflowManager,
@@ -328,7 +327,7 @@ export function setupSpaceTaskHandlers(
 			updateParams.workflowModelOverrides = null;
 		}
 		const ensureWorkflowOverridesStillUnlocked = async (fields: Record<string, unknown>) => {
-			if (!Object.hasOwn(fields, 'workflowModelOverrides') || !overrideMutationRequested) return;
+			if (!Object.hasOwn(fields, 'workflowModelOverrides')) return;
 			const latestTask = await taskManager.getTask(taskId);
 			if (!latestTask) {
 				throw new Error(`Task not found: ${taskId}`);
@@ -591,6 +590,7 @@ export function setupSpaceTaskHandlers(
 			if (!currentTask) {
 				throw new Error(`Task not found: ${taskId}`);
 			}
+			await ensureWorkflowOverridesStillUnlocked(updateParams);
 			const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
 			task = dependencyUpdate.task;
 			if (dependencyUpdate.handledByRuntime) {
