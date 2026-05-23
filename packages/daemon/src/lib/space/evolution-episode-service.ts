@@ -23,7 +23,7 @@ import type {
 	UpdateEvolutionLessonParams,
 	UpdateTaskProposalParams,
 } from '@neokai/shared';
-import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
+import { generateUUID, scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -81,6 +81,7 @@ export interface CreateTaskFromProposalParams {
 	description?: string;
 	reason?: string;
 	priority?: SpaceTaskPriority;
+	dependsOn?: string[];
 }
 
 export interface CreateTaskFromProposalResult {
@@ -110,6 +111,7 @@ export interface EvolutionEpisodeServiceDeps {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	artifactRepo: WorkflowRunArtifactRepository;
 	goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
+	taskIdFactory?: () => string;
 	db?: BunDatabase;
 	taskCreatedEventHub?: {
 		publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
@@ -290,7 +292,15 @@ export class EvolutionEpisodeService {
 	): CreateTaskFromProposalResult {
 		const result = this.runAtomic(() => {
 			const existing = this.deps.evolutionRepo.getTaskProposal(id);
+			const taskId = this.deps.taskIdFactory?.() ?? generateUUID();
+			const dependsOn = params.dependsOn ?? [];
 			if (!existing) throw new Error(`TaskProposal not found: ${id}`);
+			const scope = this.requireScope(existing.scopeId);
+			validateTaskDependencies({
+				taskId,
+				dependsOn,
+				tasks: this.deps.taskRepo.listBySpace(scope.spaceId, true),
+			});
 			if (existing.status === 'created' && existing.createdTaskId) {
 				const existingTask = this.deps.taskRepo.getTask(existing.createdTaskId);
 				if (existingTask) return { proposal: existing, task: existingTask, created: false };
@@ -313,19 +323,19 @@ export class EvolutionEpisodeService {
 				throw new Error('Task proposal is already being created');
 			}
 
-			const scope = this.requireScope(existing.scopeId);
 			const title = params.title?.trim() || existing.title;
 			const description = params.description?.trim() || existing.description;
 			const reason = params.reason?.trim() || existing.reason;
 			const priority = params.priority ?? existing.priority;
 			if (!title.trim()) throw new Error('title is required');
-			const task = this.deps.taskRepo.createTask({
+			const task = this.deps.taskRepo.createTaskWithId(taskId, {
 				spaceId: scope.spaceId,
 				title,
 				description: buildProposalTaskDescription(description, reason, existing.evidenceEpisodeIds),
 				priority,
 				goalId: scope.spaceGoalId,
 				evolutionScopeId: scope.id,
+				dependsOn,
 			});
 			const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {
 				title,
@@ -741,6 +751,52 @@ function buildProposalTaskDescription(
 		parts.push(`Forge evidence episodes:\n${evidenceEpisodeIds.map((id) => `- ${id}`).join('\n')}`);
 	}
 	return parts.filter(Boolean).join('\n\n');
+}
+
+function validateTaskDependencies(params: {
+	taskId: string;
+	dependsOn: string[];
+	tasks: SpaceTask[];
+}): void {
+	const taskIds = new Set(params.tasks.map((task) => task.id));
+	for (const depId of params.dependsOn) {
+		if (depId === params.taskId) throw new Error('A task cannot depend on itself');
+		if (!taskIds.has(depId)) throw new Error(`Dependency task not found in space: ${depId}`);
+	}
+	if (params.dependsOn.length === 0) return;
+
+	const adj = new Map<string, string[]>();
+	for (const task of params.tasks) {
+		adj.set(task.id, [...(task.dependsOn ?? [])]);
+	}
+	adj.set(params.taskId, [...params.dependsOn]);
+	if (hasDependencyCycle(adj)) {
+		throw new Error('Adding these dependencies would create a circular dependency');
+	}
+}
+
+function hasDependencyCycle(adj: Map<string, string[]>): boolean {
+	const white = 0;
+	const gray = 1;
+	const black = 2;
+	const color = new Map<string, number>();
+	for (const id of adj.keys()) color.set(id, white);
+
+	const dfs = (node: string): boolean => {
+		color.set(node, gray);
+		for (const neighbor of adj.get(node) ?? []) {
+			const state = color.get(neighbor);
+			if (state === gray) return true;
+			if (state === white && dfs(neighbor)) return true;
+		}
+		color.set(node, black);
+		return false;
+	};
+
+	for (const id of adj.keys()) {
+		if (color.get(id) === white && dfs(id)) return true;
+	}
+	return false;
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {

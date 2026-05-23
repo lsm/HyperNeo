@@ -1028,6 +1028,54 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
 		expect(reactivated.error).toContain('Dismissed lessons cannot be reactivated');
 	});
 
+	test('creates proposal task with unmet dependencies before runtime can launch it', async () => {
+		const handlers = makeHandlers(ctx);
+		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Coding workflow');
+		const dependency = await ctx.taskManager.createTask({
+			title: 'Dependency task',
+			description: 'Finish first',
+		});
+		const scope = JSON.parse(
+			(
+				await handlers.create_forge_scope({
+					kind: 'custom',
+					name: 'Dependent proposal scope',
+					objective: 'Create dependent task',
+				})
+			).content[0].text
+		).scope;
+		const proposal = JSON.parse(
+			(
+				await handlers.create_forge_task_proposal({
+					scope_id: scope.id,
+					title: 'Dependent proposal',
+					description: 'Wait for dependency',
+					reason: 'Prevent premature launch',
+				})
+			).content[0].text
+		).proposal;
+
+		const taskResult = JSON.parse(
+			(
+				await handlers.create_task_from_forge_proposal({
+					proposal_id: proposal.id,
+					depends_on: [dependency.id],
+				})
+			).content[0].text
+		);
+		expect(taskResult.success).toBe(true);
+		expect(taskResult.task.dependsOn).toEqual([dependency.id]);
+		expect(taskResult.task.status).toBe('open');
+		expect(taskResult.task.workflowRunId).toBeUndefined();
+
+		await ctx.runtime.executeTick();
+
+		const taskAfterTick = ctx.taskRepo.getTask(taskResult.task.id);
+		expect(taskAfterTick?.dependsOn).toEqual([dependency.id]);
+		expect(taskAfterTick?.status).toBe('open');
+		expect(taskAfterTick?.workflowRunId).toBeUndefined();
+	});
+
 	test('rejects unsafe proposal status updates', async () => {
 		const handlers = makeHandlers(ctx);
 		const scope = JSON.parse(

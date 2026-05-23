@@ -2294,6 +2294,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			description?: string;
 			reason?: string;
 			priority?: SpaceTaskPriority;
+			depends_on?: string[];
 		}): Promise<ToolResult> {
 			try {
 				requireTaskProposalInSpace(args.proposal_id);
@@ -2302,10 +2303,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					description: args.description,
 					reason: args.reason,
 					priority: args.priority,
+					dependsOn: args.depends_on,
 				});
 				logAudit(
 					'create_task_from_forge_proposal',
-					{ proposal_id: args.proposal_id },
+					{ proposal_id: args.proposal_id, depends_on: args.depends_on },
 					result.task.id
 				);
 				return jsonResult({ success: true, ...result });
@@ -3216,13 +3218,19 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			),
 			tool(
 				'create_task_from_forge_proposal',
-				'Create a real SpaceTask from a Forge proposal, preserving linked goalId and evolutionScopeId. Idempotent when task already exists.',
+				'Create a real SpaceTask from a Forge proposal, preserving linked goalId and evolutionScopeId. Supports structured dependencies via depends_on so prerequisite checks are attached atomically before runtime pickup. Idempotent when task already exists.',
 				{
 					proposal_id: z.string().describe('TaskProposal ID'),
 					title: z.string().optional().describe('Optional edited task title'),
 					description: z.string().optional().describe('Optional edited task description'),
 					reason: z.string().optional().describe('Optional edited proposal reason'),
 					priority: prioritySchema.optional(),
+					depends_on: z
+						.array(z.string())
+						.optional()
+						.describe(
+							'List of task IDs this task depends on. All must be in the same space. Dependencies are persisted during task creation so the runtime cannot launch the task before they are attached.'
+						),
 				},
 				(args) => handlers.create_task_from_forge_proposal(args)
 			),
