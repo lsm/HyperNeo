@@ -429,6 +429,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 		expect(created.agent.status).toBe('active');
 		expect(created.agent.tools).toEqual(['Read', 'Grep']);
 
+		const blankCreateName = JSON.parse(
+			(await handlers.create_agent({ name: '  ' })).content[0].text
+		);
+		expect(blankCreateName.success).toBe(false);
+		expect(blankCreateName.error).toBe('Agent name cannot be empty');
+
 		const updated = JSON.parse(
 			(
 				await handlers.update_agent({
@@ -440,6 +446,17 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 		);
 		expect(updated.success).toBe(true);
 		expect(updated.agent.thinkingLevel).toBe('think8k');
+
+		const blankUpdateName = JSON.parse(
+			(
+				await handlers.update_agent({
+					agent_id: created.agent.id,
+					name: '  ',
+				})
+			).content[0].text
+		);
+		expect(blankUpdateName.success).toBe(false);
+		expect(blankUpdateName.error).toBe('Agent name cannot be empty');
 
 		const paused = JSON.parse(
 			(await handlers.pause_agent({ agent_id: created.agent.id })).content[0].text

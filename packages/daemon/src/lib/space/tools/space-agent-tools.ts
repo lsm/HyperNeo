@@ -539,6 +539,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			setting_sources?: SpaceAgent['settingSources'] | null;
 		}): Promise<ToolResult> {
 			try {
+				if (args.name.trim() === '') {
+					return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+				}
 				const result = await spaceAgentManager.create({
 					spaceId,
 					name: args.name,
@@ -605,6 +608,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			const existing = spaceAgentManager.getById(args.agent_id);
 			if (!existing || existing.spaceId !== spaceId) {
 				return jsonResult({ success: false, error: `Agent not found: ${args.agent_id}` });
+			}
+			if (args.name !== undefined && args.name.trim() === '') {
+				return jsonResult({ success: false, error: 'Agent name cannot be empty' });
 			}
 			const result = await spaceAgentManager.update(
 				args.agent_id,
