@@ -396,6 +396,43 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 		});
 
+		test('recoverStalledRuns rechecks paused runs after the space resumes', async () => {
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Step A', agentId: AGENT },
+			]);
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Paused Restart Stall Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Paused Restart Stall Run',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				status: 'in_progress',
+			});
+			const execution = seedExec(run.id, STEP_A, 'Step A', 'idle');
+
+			const rt = makeRuntime();
+			await rt.recoverStalledRuns();
+
+			expect((rt as unknown as { recoveryDone: boolean }).recoveryDone).toBe(false);
+			expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+
+			db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+			await rt.recoverStalledRuns();
+
+			expect((rt as unknown as { recoveryDone: boolean }).recoveryDone).toBe(true);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+			expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+		});
+
 		test('recoverStalledRuns preserves non-terminal idle execution instead of blocking', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT },
@@ -478,6 +515,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				lastObservedProgressMessageAt: Date.now() - 60_000,
 				lastRuntimeNudgeMessageId: 'nudge-id',
 				nudgeCount: 3,
+				failedNudgeCount: 0,
 				lastNudgeAt: Date.now() - 60_000,
 				lastAttentionLogAt: null,
 			});
@@ -528,6 +566,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				lastObservedProgressMessageAt: Date.now() - 60_000,
 				lastRuntimeNudgeMessageId: 'nudge-id',
 				nudgeCount: 3,
+				failedNudgeCount: 0,
 				lastNudgeAt: Date.now() - 60_000,
 				lastAttentionLogAt: null,
 			});

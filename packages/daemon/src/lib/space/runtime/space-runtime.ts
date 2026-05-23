@@ -314,10 +314,12 @@ interface NonTerminalIdleState {
 	lastObservedProgressMessageAt: number | null;
 	lastRuntimeNudgeMessageId: string | null;
 	nudgeCount: number;
+	failedNudgeCount: number;
 	lastNudgeAt: number | null;
 	lastAttentionLogAt: number | null;
 }
 
+const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
 const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
@@ -3352,8 +3354,13 @@ export class SpaceRuntime {
 		const spaces = await this.config.spaceManager.listSpaces(false);
 		let blockedCount = 0;
 		let completionPendingCount = 0;
+		let skippedPausedCount = 0;
 
 		for (const space of spaces) {
+			if (space.paused || space.stopped) {
+				if (this.config.workflowRunRepo.getActiveRuns(space.id).length > 0) skippedPausedCount += 1;
+				continue;
+			}
 			const inProgressRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
 			for (const run of inProgressRuns) {
 				try {
@@ -3367,6 +3374,10 @@ export class SpaceRuntime {
 					);
 				}
 			}
+		}
+
+		if (skippedPausedCount > 0) {
+			this.recoveryDone = false;
 		}
 
 		if (blockedCount + completionPendingCount > 0) {
@@ -3402,7 +3413,6 @@ export class SpaceRuntime {
 			return 'blocked';
 		}
 		const space = await this.config.spaceManager.getSpace(run.spaceId);
-		if (space?.paused || space?.stopped) return 'skipped';
 		if (executions.length === 0) return 'skipped';
 
 		// If the tick loop has any work it can drive — `pending` (about
@@ -5165,6 +5175,7 @@ export class SpaceRuntime {
 				lastObservedProgressMessageAt: null,
 				lastRuntimeNudgeMessageId: null,
 				nudgeCount: 0,
+				failedNudgeCount: 0,
 				lastNudgeAt: null,
 				lastAttentionLogAt: null,
 			};
@@ -5180,6 +5191,7 @@ export class SpaceRuntime {
 				state.lastObservedProgressMessageAt = progressMessage?.timestamp ?? null;
 				state.lastRuntimeNudgeMessageId = null;
 				state.nudgeCount = 0;
+				state.failedNudgeCount = 0;
 				state.lastNudgeAt = null;
 				state.lastAttentionLogAt = null;
 			} else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
@@ -5225,17 +5237,34 @@ export class SpaceRuntime {
 				continue;
 			}
 			if (state.nudgeCount > 0) {
-				if (
-					state.lastAttentionLogAt === null ||
-					now - state.lastAttentionLogAt >= NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS
-				) {
-					state.lastAttentionLogAt = now;
-					log.warn(
-						`Node ${execution.workflowNodeId} remains idle with non-terminal last message after runtime nudge; needs attention: ` +
-							`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
-					);
+				if (state.failedNudgeCount > 0 && state.lastNudgeAt !== null) {
+					const retryAfter = state.lastNudgeAt + NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS;
+					if (now < retryAfter) {
+						if (
+							state.lastAttentionLogAt === null ||
+							now - state.lastAttentionLogAt >= NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS
+						) {
+							state.lastAttentionLogAt = now;
+							log.warn(
+								`Node ${execution.workflowNodeId} remains idle with non-terminal last message after failed runtime nudge; needs attention: ` +
+									`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+							);
+						}
+						continue;
+					}
+				} else {
+					if (
+						state.lastAttentionLogAt === null ||
+						now - state.lastAttentionLogAt >= NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS
+					) {
+						state.lastAttentionLogAt = now;
+						log.warn(
+							`Node ${execution.workflowNodeId} remains idle with non-terminal last message after runtime nudge; needs attention: ` +
+								`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+						);
+					}
+					continue;
 				}
-				continue;
 			}
 			const manager = tam ?? this.config.taskAgentManager;
 			if (!manager) {
@@ -5252,11 +5281,13 @@ export class SpaceRuntime {
 					sessionId,
 					this.buildNonTerminalIdleNudgeMessage()
 				);
+				state.failedNudgeCount = 0;
 				log.warn(
 					`Node ${execution.workflowNodeId} went idle with non-terminal last message; sent direct runtime nudge: ` +
 						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
 				);
 			} catch (error) {
+				state.failedNudgeCount += 1;
 				state.lastAttentionLogAt = now;
 				log.warn(
 					`Failed to nudge idle non-terminal node ${execution.workflowNodeId}; needs attention: ` +

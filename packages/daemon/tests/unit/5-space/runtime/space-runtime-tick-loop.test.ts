@@ -1421,13 +1421,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(nudges).toEqual([]);
 		});
 
-		test('throttles failed and repeated idle nudge attempts', async () => {
+		test('backs off then retries failed idle nudge attempts', async () => {
 			let attempts = 0;
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isSessionAlive: () => false,
-				injectRuntimeRecoveryMessage: async () => {
+				injectRuntimeRecoveryMessage: async (sessionId) => {
 					attempts += 1;
-					throw new Error('session gone');
+					if (attempts === 1) throw new Error('session gone');
+					return `nudge:${sessionId}`;
 				},
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
@@ -1445,11 +1446,24 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			await rt.executeTick();
 			await rt.executeTick();
 
+			type IdleStateForTest = {
+				nudgeCount: number;
+				failedNudgeCount: number;
+				lastNudgeAt: number;
+			};
+			const states = (rt as unknown as { nonTerminalIdleStates: Map<string, IdleStateForTest> })
+				.nonTerminalIdleStates;
+			const state = states.get(`${run.id}:${execution.id}`)!;
 			expect(attempts).toBe(1);
-			const state = (
-				rt as unknown as { nonTerminalIdleStates: Map<string, { nudgeCount: number }> }
-			).nonTerminalIdleStates.get(`${run.id}:${execution.id}`);
-			expect(state?.nudgeCount).toBe(1);
+			expect(state.nudgeCount).toBe(1);
+			expect(state.failedNudgeCount).toBe(1);
+
+			state.lastNudgeAt = Date.now() - 61_000;
+			await rt.executeTick();
+
+			expect(attempts).toBe(2);
+			expect(state.nudgeCount).toBe(2);
+			expect(state.failedNudgeCount).toBe(0);
 		});
 	});
 
