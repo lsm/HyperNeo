@@ -13,6 +13,7 @@ import type {
 	SpaceLongHorizonAgentStatus,
 	UpdateSpaceLongHorizonAgentParams,
 } from '@neokai/shared';
+import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates';
 import type { SQLiteValue } from '../types';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
@@ -82,15 +83,21 @@ export class SpaceLongHorizonAgentRepository {
 		const existingByHandle = this.getCoordinator(spaceId);
 		if (existingByHandle) return existingByHandle;
 
+		const template = getLongHorizonAgentTemplate('coordinator.default');
+
 		return this.create({
 			id: coordinatorLongHorizonAgentId(spaceId),
 			spaceId,
-			handle: 'coordinator',
-			displayName: 'Coordinator',
-			templateKey: 'coordinator.default',
+			handle: template?.handle ?? 'coordinator',
+			displayName: template?.displayName ?? 'Coordinator',
+			templateKey: template?.key ?? 'coordinator.default',
 			status: 'active',
 			sessionId: coordinatorSessionId(spaceId),
-			instructions: 'Coordinate goals, tasks, reminders, event subscriptions, and Space activity.',
+			instructions:
+				template?.instructions ??
+				'Coordinate goals, tasks, reminders, event subscriptions, and Space activity.',
+			autonomyLevel: template?.suggestedAutonomyLevel,
+			toolPermissions: template?.toolPermissions,
 		});
 	}
 

@@ -39,7 +39,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
 		expect(coordinator.templateKey).toBe('coordinator.default');
 		expect(coordinator.status).toBe('active');
 		expect(coordinator.sessionId).toBe(coordinatorSessionId('space-1'));
-		expect(coordinator.instructions).toContain('Coordinate goals');
+		expect(coordinator.instructions).toContain('Coordinate long-horizon Space activity');
+		expect(coordinator.autonomyLevel).toBe(2);
 		expect(coordinator.toolPermissions).toEqual({});
 		expect(repo.listBySpaceId('space-1')).toHaveLength(1);
 	});
