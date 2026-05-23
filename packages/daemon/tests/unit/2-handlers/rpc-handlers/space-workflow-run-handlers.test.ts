@@ -201,6 +201,7 @@ function createMockRuntimeService(
 			if (!space) throw new Error(`Space not found: ${spaceId}`);
 			return runtime;
 		}),
+		cancelWorkflowRun: mock(async () => ({ ...mockRun, status: 'cancelled' as const })),
 		start: mock(() => {}),
 		stop: mock(() => {}),
 		stopRuntime: mock(() => {}),
@@ -621,104 +622,31 @@ describe('space-workflow-run-handlers', () => {
 			);
 		});
 
-		it('cancels the run and emits space.workflowRun.updated (no tasks)', async () => {
+		it('delegates cancellation to the runtime service', async () => {
 			setup({ tasks: [] });
 
 			const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
 			expect(result).toEqual({ success: true });
 
-			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
-			expect(
-				(internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
-			).toHaveBeenCalledWith('space.workflowRun.updated', {
-				sessionId: 'global',
-				spaceId: 'space-1',
-				runId: 'run-1',
-				run: expect.objectContaining({ status: 'cancelled' }),
-			});
+			expect(runtimeService.cancelWorkflowRun).toHaveBeenCalledWith('space-1', 'run-1');
+			expect(runRepo.transitionStatus).not.toHaveBeenCalled();
+			expect(taskManager.cancelTask).not.toHaveBeenCalled();
 		});
 
-		it('cancels open and in_progress tasks before cancelling the run', async () => {
+		it('does not cancel tasks in the RPC handler when delegating to runtime', async () => {
 			const inProgressTask: SpaceTask = {
 				...mockTask,
 				id: 'task-2',
 				status: 'in_progress',
 			};
-			const doneTask: SpaceTask = {
-				...mockTask,
-				id: 'task-3',
-				status: 'done',
-			};
-			setup({ tasks: [mockTask, inProgressTask, doneTask] });
+			setup({ tasks: [mockTask, inProgressTask] });
 
 			await call('spaceWorkflowRun.cancel', { id: 'run-1' });
 
-			// Factory should have been called with the run's spaceId
-			expect(taskManagerFactory).toHaveBeenCalledWith('space-1');
-
-			// cancelTask should be called for open and in_progress but not done
-			expect(taskManager.cancelTask).toHaveBeenCalledTimes(2);
-			expect(taskManager.cancelTask).toHaveBeenCalledWith('task-1');
-			expect(taskManager.cancelTask).toHaveBeenCalledWith('task-2');
-			// done task should not be cancelled
-			const callArgs = (taskManager.cancelTask as ReturnType<typeof mock>).mock.calls.map(
-				(c) => c[0]
-			);
-			expect(callArgs).not.toContain('task-3');
-
-			// Run should also be cancelled
-			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
-		});
-
-		it('continues cancelling remaining tasks even if one cancelTask fails', async () => {
-			const task2: SpaceTask = { ...mockTask, id: 'task-2', status: 'open' };
-			setup({ tasks: [mockTask, task2] });
-
-			// Make the first cancelTask fail
-			let callCount = 0;
-			taskManager = {
-				listTasksByWorkflowRun: mock(async () => [mockTask, task2]),
-				cancelTask: mock(async (taskId: string) => {
-					callCount++;
-					if (callCount === 1) throw new Error('cancel failed');
-					return { ...mockTask, id: taskId, status: 'cancelled' as const };
-				}),
-			} as unknown as SpaceTaskManager;
-			taskManagerFactory = mock(() => taskManager);
-
-			// Re-setup with new mocks
-			const mh = createMockMessageHub();
-			hub = mh.hub;
-			handlers = mh.handlers;
-			internalEventBus = createMockInternalEventBus();
-			spaceManager = createMockSpaceManager();
-			workflowManager = createMockWorkflowManager();
-			runRepo = createMockRunRepo();
-
-			setupSpaceWorkflowRunHandlers(
-				hub,
-				spaceManager,
-				workflowManager,
-				runRepo,
-				createMockGateDataRepo(),
-				createMockRuntimeService(),
-				taskManagerFactory,
-				internalEventBus,
-				createMockSpaceTaskRepo([mockTask]),
-				createMockSpaceWorktreeManager(),
-				createMockArtifactRepo(),
-				createMockArtifactCacheRepo(),
-				createMockJobQueue()
-			);
-
-			// Should not throw even though one cancelTask failed
-			const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
-			expect(result).toEqual({ success: true });
-
-			// Both tasks were attempted
-			expect(taskManager.cancelTask).toHaveBeenCalledTimes(2);
-			// Run still gets cancelled
-			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'cancelled');
+			expect(runtimeService.cancelWorkflowRun).toHaveBeenCalledWith('space-1', 'run-1');
+			expect(taskManagerFactory).not.toHaveBeenCalled();
+			expect(taskManager.cancelTask).not.toHaveBeenCalled();
+			expect(runRepo.transitionStatus).not.toHaveBeenCalled();
 		});
 	});
 

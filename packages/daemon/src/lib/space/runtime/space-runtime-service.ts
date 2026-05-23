@@ -10,7 +10,15 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { AgentDefinition, McpServerConfig, Session, Space, SpaceTask } from '@neokai/shared';
+import type {
+	AgentDefinition,
+	McpServerConfig,
+	Session,
+	Space,
+	SpaceTask,
+	SpaceWorkflowRun,
+	UpdateSpaceTaskParams,
+} from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { SpaceActorRegistryAdapter } from '../actor-registry';
@@ -1741,6 +1749,34 @@ export class SpaceRuntimeService {
 	): Promise<SpaceTask> {
 		const recovered = await this.runtime.recoverWorkflowBackedTask(spaceId, taskId, targetStatus);
 		return recovered.task;
+	}
+
+	async stopWorkflowBackedTask(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask> {
+		const updated = await this.runtime.blockWorkflowBackedTask(spaceId, taskId, params);
+		if (!updated) {
+			throw new Error(`Failed to block workflow-backed task ${taskId}`);
+		}
+		return updated;
+	}
+
+	async stopWorkflowBackedTaskForStatus(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask> {
+		const updated = await this.runtime.stopWorkflowBackedTaskForStatus(spaceId, taskId, params);
+		if (!updated) {
+			throw new Error(`Failed to stop workflow-backed task ${taskId}`);
+		}
+		return updated;
+	}
+
+	async cancelWorkflowRun(spaceId: string, runId: string): Promise<SpaceWorkflowRun> {
+		return this.runtime.cancelWorkflowRun(spaceId, runId);
 	}
 }
 
