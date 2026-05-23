@@ -33,6 +33,10 @@ import { GateEditorPanel } from './GateEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
 import { normalizeThinkingLevel } from '@neokai/shared';
 
+function isCoordinatorAgent(agent: SpaceAgent): boolean {
+	return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
+}
+
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
 	{ value: '', label: 'Inherit' },
 	{ value: 'off', label: 'Off' },
@@ -333,7 +337,10 @@ function AgentsSection({
 								customPrompt: selectedSingleCustomPrompt,
 							};
 
-							const secondaryAgent = agents.find((a) => a.id !== primaryAgentId) ?? agents[0];
+							const secondaryAgent =
+								agents.find((a) => a.id !== primaryAgentId && !isCoordinatorAgent(a)) ??
+								agents.find((a) => a.id !== primaryAgentId) ??
+								agents[0];
 							const secondarySlot: WorkflowNodeAgent = {
 								agentId: secondaryAgent?.id ?? '',
 								name: buildUniqueRole(secondaryAgent?.name ?? 'agent'),

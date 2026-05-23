@@ -4,7 +4,7 @@
  *
  * Tests:
  * - Loading state
- * - Empty state: "No custom agents yet. Create one to get started."
+ * - Empty state: "No agents yet. Create one to get started."
  * - Agent cards render name, model, description preview
  * - Tool count and preview tags render
  * - Create Agent button opens editor
@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
@@ -25,25 +25,49 @@ import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
+let mockGoals: ReturnType<typeof signal<any[]>>;
+let mockSchedules: ReturnType<typeof signal<any[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockSpaceId: ReturnType<typeof signal<string | null>>;
 let mockSpace: ReturnType<typeof signal<any>>;
 
-const mockDeleteAgent = vi.fn();
-const mockCreateAgent = vi.fn();
-const mockUpdateAgent = vi.fn();
+const {
+	mockDeleteAgent,
+	mockCreateAgent,
+	mockUpdateAgent,
+	mockListSchedules,
+	mockOnceConnected,
+	mockNavigateToSpaceGoals,
+	mockNavigateToSpaceForge,
+} = vi.hoisted(() => ({
+	mockDeleteAgent: vi.fn(),
+	mockCreateAgent: vi.fn(),
+	mockUpdateAgent: vi.fn(),
+	mockListSchedules: vi.fn(),
+	mockOnceConnected: vi.fn(),
+	mockNavigateToSpaceGoals: vi.fn(),
+	mockNavigateToSpaceForge: vi.fn(),
+}));
+
+vi.mock('../../../lib/router', () => ({
+	navigateToSpaceGoals: mockNavigateToSpaceGoals,
+	navigateToSpaceForge: mockNavigateToSpaceForge,
+}));
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			goals: mockGoals,
+			schedules: mockSchedules,
 			loading: mockLoading,
 			spaceId: mockSpaceId,
 			space: mockSpace,
 			deleteAgent: mockDeleteAgent,
 			createAgent: mockCreateAgent,
 			updateAgent: mockUpdateAgent,
+			listSchedules: mockListSchedules,
 		};
 	},
 }));
@@ -52,6 +76,7 @@ const mockHubRequest = vi.fn();
 vi.mock('../../../lib/connection-manager', () => ({
 	connectionManager: {
 		getHubIfConnected: () => ({ request: mockHubRequest }),
+		onceConnected: mockOnceConnected,
 	},
 }));
 
@@ -193,6 +218,8 @@ vi.mock('../../ui/Modal', () => ({
 // Initialize signals before import
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
+mockGoals = signal<any[]>([]);
+mockSchedules = signal<any[]>([]);
 mockLoading = signal(false);
 mockSpaceId = signal<string | null>('space-1');
 mockSpace = signal<any>({ id: 'space-1', defaultModel: undefined, taskAgentConfig: undefined });
@@ -237,11 +264,19 @@ describe('SpaceAgentList', () => {
 		cleanup();
 		mockAgents.value = [];
 		mockWorkflows.value = [];
+		mockGoals.value = [];
+		mockSchedules.value = [];
 		mockLoading.value = false;
 		mockSpaceId.value = 'space-1';
 		mockDeleteAgent.mockReset();
 		mockCreateAgent.mockReset();
 		mockUpdateAgent.mockReset();
+		mockListSchedules.mockReset();
+		mockListSchedules.mockResolvedValue([]);
+		mockOnceConnected.mockReset();
+		mockOnceConnected.mockReturnValue(() => {});
+		mockNavigateToSpaceGoals.mockReset();
+		mockNavigateToSpaceForge.mockReset();
 		mockHubRequest.mockReset();
 		// Default: drift report returns no drifted agents so the list renders cleanly.
 		mockHubRequest.mockResolvedValue({
@@ -265,7 +300,7 @@ describe('SpaceAgentList', () => {
 
 	it('renders empty state when no agents exist', () => {
 		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		expect(getByText('No custom agents yet')).toBeTruthy();
+		expect(getByText('No agents yet')).toBeTruthy();
 		expect(getByText('Create one to get started.')).toBeTruthy();
 	});
 
@@ -338,6 +373,81 @@ describe('SpaceAgentList', () => {
 		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		expect(getByText('Agent Alpha')).toBeTruthy();
 		expect(getByText('Agent Beta')).toBeTruthy();
+	});
+
+	it('loads schedules for reminder totals', () => {
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		expect(mockListSchedules).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		'Not connected',
+		'Not connected to transport',
+	])('retries loading schedules when the connection recovers after %s', async (message) => {
+		let reconnect: (() => void) | undefined;
+		mockListSchedules.mockRejectedValueOnce(new Error(message));
+		mockOnceConnected.mockImplementation((callback) => {
+			reconnect = callback;
+			return vi.fn();
+		});
+
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		await waitFor(() => expect(mockOnceConnected).toHaveBeenCalledOnce());
+
+		mockListSchedules.mockResolvedValue([]);
+		reconnect?.();
+		expect(mockListSchedules).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not retry loading schedules after non-connection errors', async () => {
+		mockListSchedules.mockRejectedValueOnce(new Error('Request failed'));
+
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+		await waitFor(() => expect(mockListSchedules).toHaveBeenCalledOnce());
+
+		expect(mockOnceConnected).not.toHaveBeenCalled();
+	});
+
+	it('uses SPA navigation for goals and Forge links', () => {
+		render(<SpaceAgentList {...DEFAULT_PROPS} />);
+
+		fireEvent.click(screen.getByText('View'));
+		fireEvent.click(screen.getByText('Open Forge'));
+
+		expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('space-1');
+		expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('space-1');
+	});
+
+	it('shows Coordinator as default long-horizon agent with basic scopes', () => {
+		mockAgents.value = [
+			makeAgent({
+				id: 'coordinator-1',
+				name: 'Coordinator',
+				templateName: 'Coordinator',
+				description: 'Built-in long-horizon Space agent.',
+			}),
+			makeAgent({ id: 'coder-1', name: 'Coder' }),
+		];
+		mockGoals.value = [
+			{ id: 'goal-1', status: 'active' },
+			{ id: 'goal-2', status: 'completed' },
+			{ id: 'goal-3', status: 'paused' },
+		];
+		mockSchedules.value = [{ id: 'schedule-1', status: 'active' }];
+
+		const { container, getByText, queryByLabelText } = render(
+			<SpaceAgentList {...DEFAULT_PROPS} />
+		);
+
+		expect(getByText('Default Coordinator')).toBeTruthy();
+		expect(container.textContent).toContain('managed goals');
+		expect(container.textContent).toContain('Forge scopes');
+		expect(container.textContent).toContain('reminders');
+		expect(container.textContent).toContain('event subscriptions');
+		expect(container.textContent).toContain('Per-Agent Forge scope policy coming soon.');
+		expect(container.textContent).toContain('Event subscriptions coming soon.');
+		expect(queryByLabelText('Forge scope filter')).toBeNull();
+		expect(queryByLabelText('Event subscription pattern')).toBeNull();
 	});
 
 	// ── Editor opening ─────────────────────────────────────────────────────────

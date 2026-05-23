@@ -223,7 +223,7 @@ export default function SpaceIsland({
 				<ChatContainer
 					key={sessionViewId}
 					sessionId={sessionViewId}
-					titleOverride={isSpaceAgentSession ? 'Space Agent' : undefined}
+					titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
 				/>
 				{overlay}
 			</>
