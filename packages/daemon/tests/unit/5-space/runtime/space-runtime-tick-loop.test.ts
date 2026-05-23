@@ -1355,9 +1355,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(nags).toEqual([]);
 		});
 
-		test('preserves naturally idle incomplete executions', async () => {
+		test('nudges naturally idle incomplete executions after threshold', async () => {
+			const nudges: string[] = [];
 			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
 				isSessionAlive: () => false,
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nudges.push(sessionId);
+					return `nudge:${sessionId}`;
+				},
 			});
 			const rt = new SpaceRuntime(buildConfig(tam));
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1377,6 +1382,74 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(updated?.status).toBe('idle');
 			expect(updated?.agentSessionId).toBe('session:idle');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(nudges).toEqual(['session:idle']);
+			const state = (
+				rt as unknown as { nonTerminalIdleStates: Map<string, { nudgeCount: number }> }
+			).nonTerminalIdleStates.get(`${run.id}:${execution.id}`);
+			expect(state?.nudgeCount).toBe(1);
+		});
+
+		test('does not nudge idle incomplete executions while space is paused', async () => {
+			const nudges: string[] = [];
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => false,
+				injectRuntimeRecoveryMessage: async (sessionId) => {
+					nudges.push(sessionId);
+					return `nudge:${sessionId}`;
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			(rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+			db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'idle',
+				agentSessionId: 'session:paused-idle',
+			});
+			saveAssistantMessage('session:paused-idle', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+
+			const updated = nodeExecutionRepo.getById(execution.id);
+			expect(updated?.status).toBe('idle');
+			expect(updated?.agentSessionId).toBe('session:paused-idle');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(nudges).toEqual([]);
+		});
+
+		test('throttles failed and repeated idle nudge attempts', async () => {
+			let attempts = 0;
+			const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+				isSessionAlive: () => false,
+				injectRuntimeRecoveryMessage: async () => {
+					attempts += 1;
+					throw new Error('session gone');
+				},
+			});
+			const rt = new SpaceRuntime(buildConfig(tam));
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+			nodeExecutionRepo.update(execution.id, {
+				status: 'idle',
+				agentSessionId: 'session:failed-idle-nudge',
+			});
+			saveAssistantMessage('session:failed-idle-nudge', { minutesAgo: 20, toolUse: true });
+
+			await rt.executeTick();
+			await rt.executeTick();
+
+			expect(attempts).toBe(1);
+			const state = (
+				rt as unknown as { nonTerminalIdleStates: Map<string, { nudgeCount: number }> }
+			).nonTerminalIdleStates.get(`${run.id}:${execution.id}`);
+			expect(state?.nudgeCount).toBe(1);
 		});
 	});
 

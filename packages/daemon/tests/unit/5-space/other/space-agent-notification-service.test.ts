@@ -301,25 +301,6 @@ describe('SpaceAgentNotificationService', () => {
 		});
 	});
 
-	describe('space.agent.idleNonTerminal event', () => {
-		it('does not inject idle non-terminal events into Space Agent chat', async () => {
-			const { factory, bus } = makeService();
-			await bus.publish('space.agent.idleNonTerminal', {
-				sessionId: 'global',
-				spaceId: SPACE_ID,
-				taskId: 'task-idle',
-				runId: 'run-idle',
-				executionId: 'exec-1',
-				nodeId: 'node-1',
-				agentName: 'coder',
-				reason: 'Agent stopped responding',
-				timestamp: TIMESTAMP,
-			});
-
-			expect(factory.calls).toHaveLength(0);
-		});
-	});
-
 	describe('space.workflowRun.retry event', () => {
 		it('formats retry message', async () => {
 			const { factory, bus } = makeService();

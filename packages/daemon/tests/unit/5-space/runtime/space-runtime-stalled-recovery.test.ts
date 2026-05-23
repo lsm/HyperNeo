@@ -159,7 +159,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 		'space.workflowRun.completed': 'workflow_run_completed',
 		'space.workflowRun.reopened': 'workflow_run_reopened',
 		'space.agent.crashed': 'agent_crash',
-		'space.agent.idleNonTerminal': 'agent_idle_non_terminal',
 		'space.workflowRun.retry': 'task_retry',
 		'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
 		'space.task.awaitingApproval': 'task_awaiting_approval',
@@ -346,7 +345,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
 			expect(nudges).toHaveLength(0);
-			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(false);
+			expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
 		});
 
 		test('idle execution with unresolved tool_use is preserved and not advanced', async () => {
@@ -393,7 +392,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(updated.agentSessionId).toBe('non-terminal-session');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(false);
+			expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
 			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 		});
 
@@ -433,7 +432,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 			expect(updated.agentSessionId).toBe('restart-non-terminal-session');
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-			expect(notifications.some((event) => event.kind === 'agent_idle_non_terminal')).toBe(false);
+			expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
 			expect(notifications.some((event) => event.kind === 'task_retry')).toBe(false);
 			expect(notifications.some((event) => event.kind === 'workflow_run_needs_attention')).toBe(
 				false
@@ -480,6 +479,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				lastRuntimeNudgeMessageId: 'nudge-id',
 				nudgeCount: 3,
 				lastNudgeAt: Date.now() - 60_000,
+				lastAttentionLogAt: null,
 			});
 			await rt.executeTick();
 
@@ -529,6 +529,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 				lastRuntimeNudgeMessageId: 'nudge-id',
 				nudgeCount: 3,
 				lastNudgeAt: Date.now() - 60_000,
+				lastAttentionLogAt: null,
 			});
 			// Simulate the handler being called directly (as it would be from processRunTick)
 			const outcome = await (rt as any).handleNonTerminalIdleExecutions(

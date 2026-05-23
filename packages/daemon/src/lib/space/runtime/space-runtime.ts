@@ -315,8 +315,10 @@ interface NonTerminalIdleState {
 	lastRuntimeNudgeMessageId: string | null;
 	nudgeCount: number;
 	lastNudgeAt: number | null;
+	lastAttentionLogAt: number | null;
 }
 
+const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
@@ -390,17 +392,6 @@ type SpaceNotificationEvent =
 			kind: 'agent_crash';
 			spaceId: string;
 			taskId: string;
-			timestamp: string;
-	  }
-	| {
-			kind: 'agent_idle_non_terminal';
-			spaceId: string;
-			taskId: string;
-			runId: string;
-			executionId: string;
-			nodeId: string;
-			agentName: string;
-			reason: string;
 			timestamp: string;
 	  }
 	| {
@@ -555,21 +546,6 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 					namespaceId,
 					spaceId: event.spaceId,
 					taskId: event.taskId,
-					timestamp: event.timestamp,
-				},
-			};
-		case 'agent_idle_non_terminal':
-			return {
-				event: 'space.agent.idleNonTerminal',
-				payload: {
-					namespaceId,
-					spaceId: event.spaceId,
-					taskId: event.taskId,
-					runId: event.runId,
-					executionId: event.executionId,
-					nodeId: event.nodeId,
-					agentName: event.agentName,
-					reason: event.reason,
 					timestamp: event.timestamp,
 				},
 			};
@@ -1262,13 +1238,7 @@ export class SpaceRuntime {
 			// Re-check run deliverability before queueing a retry — the run may
 			// have transitioned to terminal while the dispatch was in flight.
 			const currentRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
-			const blockedWithoutActiveExec =
-				currentRun?.status === 'blocked' && !this.hasActiveExecutionForRun(currentRun.id);
-			if (
-				!currentRun ||
-				!isExternallyDeliverableRun(currentRun.status) ||
-				blockedWithoutActiveExec
-			) {
+			if (!currentRun || !isExternallyDeliverableRun(currentRun.status)) {
 				store.markDeliveryFailed(event.eventId, deliveryKey, {
 					terminal: true,
 					reason: 'run_not_externally_deliverable',
@@ -1361,8 +1331,7 @@ export class SpaceRuntime {
 			// Re-check run deliverability before dispatching — the run may have
 			// transitioned to terminal while the retry timer was pending.
 			const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-			const blockedNoExec = run?.status === 'blocked' && !this.hasActiveExecutionForRun(run.id);
-			if (!run || !isExternallyDeliverableRun(run.status) || blockedNoExec) {
+			if (!run || !isExternallyDeliverableRun(run.status)) {
 				this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
 					terminal: true,
 					reason: 'run_not_externally_deliverable',
@@ -3425,6 +3394,8 @@ export class SpaceRuntime {
 			await this.blockRunWithMissingWorkflow(run, executions);
 			return 'blocked';
 		}
+		const space = await this.config.spaceManager.getSpace(run.spaceId);
+		if (space?.paused || space?.stopped) return 'skipped';
 		if (executions.length === 0) return 'skipped';
 
 		// If the tick loop has any work it can drive — `pending` (about
@@ -3487,7 +3458,9 @@ export class SpaceRuntime {
 				run.id,
 				run.spaceId,
 				canonicalTask,
-				workflow
+				workflow,
+				undefined,
+				space ?? null
 			);
 			if (nonTerminalIdleOutcome === 'blocked') return 'blocked';
 			if (nonTerminalIdleOutcome === 'retried' || nonTerminalIdleOutcome === 'preserved') {
@@ -4464,7 +4437,8 @@ export class SpaceRuntime {
 				meta.spaceId,
 				canonicalTask,
 				meta.workflow,
-				tam
+				tam,
+				space ?? null
 			);
 			if (nonTerminalIdleOutcome === 'blocked') {
 				return;
@@ -5142,8 +5116,11 @@ export class SpaceRuntime {
 		spaceId: string,
 		canonicalTask: SpaceTask,
 		workflow?: SpaceWorkflow,
-		tam?: TaskAgentManager
+		tam?: TaskAgentManager,
+		space?: Space | null
 	): Promise<'none' | 'retried' | 'blocked' | 'preserved'> {
+		if (space?.paused || space?.stopped) return 'none';
+
 		// Explicit task completion or pause signals are authoritative. A final tool
 		// call may have set reportedStatus or parked the task for human/post-approval
 		// review even if the SDK result row has not been persisted yet.
@@ -5182,6 +5159,7 @@ export class SpaceRuntime {
 				lastRuntimeNudgeMessageId: null,
 				nudgeCount: 0,
 				lastNudgeAt: null,
+				lastAttentionLogAt: null,
 			};
 			this.nonTerminalIdleStates.set(key, state);
 
@@ -5196,6 +5174,7 @@ export class SpaceRuntime {
 				state.lastRuntimeNudgeMessageId = null;
 				state.nudgeCount = 0;
 				state.lastNudgeAt = null;
+				state.lastAttentionLogAt = null;
 			} else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
 				state.lastObservedMessageId = lastMessage?.dbId ?? null;
 				if (progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId) {
@@ -5239,10 +5218,16 @@ export class SpaceRuntime {
 				continue;
 			}
 			if (state.nudgeCount > 0) {
-				log.warn(
-					`Node ${execution.workflowNodeId} remains idle with non-terminal last message after runtime nudge; needs attention: ` +
-						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
-				);
+				if (
+					state.lastAttentionLogAt === null ||
+					now - state.lastAttentionLogAt >= NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS
+				) {
+					state.lastAttentionLogAt = now;
+					log.warn(
+						`Node ${execution.workflowNodeId} remains idle with non-terminal last message after runtime nudge; needs attention: ` +
+							`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
+					);
+				}
 				continue;
 			}
 			const manager = tam ?? this.config.taskAgentManager;
@@ -5253,18 +5238,19 @@ export class SpaceRuntime {
 				);
 				continue;
 			}
+			state.nudgeCount += 1;
+			state.lastNudgeAt = now;
 			try {
 				state.lastRuntimeNudgeMessageId = await manager.injectRuntimeRecoveryMessage(
 					sessionId,
 					this.buildNonTerminalIdleNudgeMessage()
 				);
-				state.nudgeCount += 1;
-				state.lastNudgeAt = now;
 				log.warn(
 					`Node ${execution.workflowNodeId} went idle with non-terminal last message; sent direct runtime nudge: ` +
 						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${classification.reason}`
 				);
 			} catch (error) {
+				state.lastAttentionLogAt = now;
 				log.warn(
 					`Failed to nudge idle non-terminal node ${execution.workflowNodeId}; needs attention: ` +
 						`execution=${execution.id} agent=${execution.agentName} session=${sessionId} reason=${reason}: ${formatCommandError(error)}`
