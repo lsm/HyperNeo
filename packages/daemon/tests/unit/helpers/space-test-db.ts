@@ -13,6 +13,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
+import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 
 export function createSpaceTables(db: BunDatabase): void {
 	db.exec('PRAGMA foreign_keys = ON');
@@ -301,6 +302,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
 
 	createEvolutionTables(db);
+	createLongHorizonAgentTables(db);
 
 	// Minimal `sessions` table — used by tests that need to seed
 	// `session_context.taskId` so the SDKMessageRepository can derive the

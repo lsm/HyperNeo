@@ -520,6 +520,12 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	// Legacy dropped tables
 	'messages',
 	'tool_calls',
+	// Long-horizon Space agent persistence — internal goal/scope/reminder/subscription state
+	'space_long_horizon_agents',
+	'space_long_horizon_agent_goals',
+	'space_long_horizon_agent_forge_scopes',
+	'space_long_horizon_agent_reminders',
+	'space_long_horizon_agent_event_subscriptions',
 ];
 
 // ── Scope config registry ─────────────────────────────────────────────────────

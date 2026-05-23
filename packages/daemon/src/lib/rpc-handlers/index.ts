@@ -76,6 +76,7 @@ import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
@@ -417,6 +418,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
+	const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
 	const agentLookup: SpaceAgentLookup = {
 		getAgentById(spaceId: string, id: string) {
 			const agent = spaceAgentRepo.getById(id);
@@ -513,6 +515,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		dbPath: deps.db.getDatabasePath(),
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
+		longHorizonAgentRepo,
 		spaceWorkflowManager,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		taskRepo: spaceTaskRepo,
@@ -594,7 +597,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceAgentManager,
 		spaceWorkflowManager,
 		deps.sessionManager,
-		spaceRuntimeService
+		spaceRuntimeService,
+		{ longHorizonAgentRepo }
 	);
 
 	// Space Worktree Manager — one worktree per task, shared by all node agents.

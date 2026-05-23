@@ -14,6 +14,7 @@ import { runMigration94 as runMigration94External } from './m94-backfill-workflo
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
+import { createLongHorizonAgentTables } from './long-horizon-agents';
 
 /**
  * Run all database migrations
@@ -663,6 +664,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 143: Expand Forge evidence kinds for trace-derived process evidence.
 	runMigration143(db);
+
+	// Migration 144: Add evergreen long-horizon Space agents and Coordinator default.
+	runMigration144(db);
 }
 
 /**
@@ -10014,6 +10018,36 @@ export function runMigration140(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
 	);
+}
+
+export function runMigration144(db: BunDatabase): void {
+	createLongHorizonAgentTables(db);
+	backfillCoordinatorLongHorizonAgents(db);
+}
+
+function backfillCoordinatorLongHorizonAgents(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	const now = Date.now();
+	db.prepare(
+		`INSERT OR IGNORE INTO space_long_horizon_agents (
+			id, space_id, handle, display_name, template_key, status, session_id,
+			instructions, autonomy_level, tool_permissions_json, created_at, updated_at
+		)
+		SELECT
+			'space-lh-agent:coordinator:' || id,
+			id,
+			'coordinator',
+			'Coordinator',
+			'coordinator.default',
+			'active',
+			'space:chat:' || id,
+			'Coordinate goals, tasks, reminders, event subscriptions, and Space activity.',
+			NULL,
+			'{}',
+			?,
+			?
+		FROM spaces`
+	).run(now, now);
 }
 
 function migrateNeoMessageOrigins(db: BunDatabase): void {

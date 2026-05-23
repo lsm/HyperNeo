@@ -31,6 +31,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -99,6 +100,7 @@ export interface SpaceRuntimeServiceConfig {
 	dbPath?: string;
 	spaceManager: SpaceManager;
 	spaceAgentManager: SpaceAgentManager;
+	longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
 	spaceWorkflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
@@ -1373,6 +1375,7 @@ export class SpaceRuntimeService {
 		}
 
 		// Build context for the system prompt.
+		const coordinator = this.config.longHorizonAgentRepo?.ensureCoordinator(space.id) ?? null;
 		const agents = spaceAgentManager.listBySpaceId(space.id);
 		const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
@@ -1407,6 +1410,7 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			myAgentName: 'space-agent',
+			myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
 			mySessionId: spaceChatSessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,

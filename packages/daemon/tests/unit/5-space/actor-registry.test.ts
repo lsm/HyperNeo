@@ -412,7 +412,7 @@ describe('SpaceActorRegistryAdapter', () => {
 		}
 	});
 
-	it('returns inactive coordinator when no space chat session exists', () => {
+	it('returns row-backed inactive coordinator when no space chat session exists', () => {
 		const space = spaceRepo.createSpace({
 			workspacePath: '/workspace/project',
 			slug: 'project',
@@ -420,6 +420,32 @@ describe('SpaceActorRegistryAdapter', () => {
 		});
 
 		expect(registry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
+			actorId: `agent:coordinator:${space.id}`,
+			kind: 'agent',
+			spaceId: space.id,
+			handle: '@coordinator',
+			roles: ['coordinator', 'space-agent'],
+			status: 'inactive',
+		});
+	});
+
+	it('preserves synthetic coordinator actor when no long-horizon repository is configured', () => {
+		const space = spaceRepo.createSpace({
+			workspacePath: '/workspace/project',
+			slug: 'project',
+			name: 'Project',
+		});
+		const fallbackRegistry = new SpaceActorRegistryAdapter({
+			spaceRepo,
+			sessionRepo,
+			spaceAgentRepo,
+			workflowRepo,
+			workflowRunRepo,
+			nodeExecutionRepo,
+			pendingMessageRepo,
+		});
+
+		expect(fallbackRegistry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
 			actorId: `agent:coordinator:${space.id}`,
 			kind: 'agent',
 			spaceId: space.id,
