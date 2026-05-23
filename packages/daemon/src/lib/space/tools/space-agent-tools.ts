@@ -56,8 +56,6 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import { encodeActorIdComponent } from '../long-term-agent-session';
-import { coordinatorLongHorizonAgentId } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
@@ -328,7 +326,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
 	const outboundSenderDisplayName =
 		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
-	const fallbackSenderActorId = `agent:${encodeActorIdComponent(coordinatorLongHorizonAgentId(spaceId))}`;
 
 	function requireGoalService() {
 		if (!config.goalService) throw new Error('Goal management not available');
@@ -1161,7 +1158,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					const messageRecord: MessageRecord = {
 						messageId: `msg_space_tool_${Date.now()}_${Math.random().toString(36).slice(2)}`,
 						spaceId,
-						senderActorId: mySessionId ? `session:${mySessionId}` : fallbackSenderActorId,
+						senderActorId: mySessionId ? `session:${mySessionId}` : `agent:coordinator:${spaceId}`,
 						targets: [genericTarget],
 						body: formatAgentMessage({
 							fromLevel: outboundSenderLevel,

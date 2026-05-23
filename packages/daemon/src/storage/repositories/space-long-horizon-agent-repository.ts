@@ -59,7 +59,9 @@ export class SpaceLongHorizonAgentRepository {
 
 	getByHandle(spaceId: string, handle: string): SpaceLongHorizonAgent | null {
 		const row = this.db
-			.prepare(`SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle = ?`)
+			.prepare(
+				`SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle = ? AND status != 'archived'`
+			)
 			.get(spaceId, handle) as Record<string, unknown> | undefined;
 		return row ? rowToAgent(row) : null;
 	}

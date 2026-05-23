@@ -105,6 +105,10 @@ function collapseToCanonicalTasks(
 	return canonical.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+type SetupSpaceHandlersOptions = {
+	longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+};
+
 export function setupSpaceHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
@@ -113,9 +117,9 @@ export function setupSpaceHandlers(
 	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
 	spaceAgentManager: SpaceAgentManager,
 	spaceWorkflowManager: SpaceWorkflowManager,
-	longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
 	sessionManager?: SessionManager,
-	spaceRuntimeService?: SpaceRuntimeService
+	spaceRuntimeService?: SpaceRuntimeService,
+	options: SetupSpaceHandlersOptions = {}
 ): void {
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
@@ -145,7 +149,7 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.createSpace(params);
 		const seedWarnings: string[] = [];
-		longHorizonAgentRepo.ensureCoordinator(space.id);
+		options.longHorizonAgentRepo?.ensureCoordinator(space.id);
 
 		// Seed preset agents (Coder, General, Planner, Reviewer, etc.) for the new space.
 		// Errors are non-fatal — the space is still usable without preset agents.

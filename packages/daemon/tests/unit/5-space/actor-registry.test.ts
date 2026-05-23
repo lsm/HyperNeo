@@ -7,10 +7,7 @@ import { NodeExecutionRepository } from '../../../src/storage/repositories/node-
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
-import {
-	coordinatorLongHorizonAgentId,
-	SpaceLongHorizonAgentRepository,
-} from '../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
@@ -301,7 +298,7 @@ describe('SpaceActorRegistryAdapter', () => {
 			status: 'active',
 		});
 		expect(actors).toContainEqual({
-			actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
+			actorId: `agent:coordinator:${space.id}`,
 			kind: 'agent',
 			spaceId: space.id,
 			handle: '@coordinator',
@@ -428,13 +425,8 @@ describe('SpaceActorRegistryAdapter', () => {
 		});
 		longHorizonAgentRepo.ensureCoordinator(space.id);
 
-		expect(
-			registry.getActor(
-				space.id,
-				`agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`
-			)
-		).toEqual({
-			actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
+		expect(registry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({
+			actorId: `agent:coordinator:${space.id}`,
 			kind: 'agent',
 			spaceId: space.id,
 			handle: '@coordinator',

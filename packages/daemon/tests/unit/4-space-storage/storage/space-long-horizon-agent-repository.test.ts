@@ -44,6 +44,23 @@ describe('SpaceLongHorizonAgentRepository', () => {
 		expect(repo.listBySpaceId('space-1')).toHaveLength(1);
 	});
 
+	test('ignores archived rows when fetching by handle', () => {
+		const archived = repo.create({
+			spaceId: 'space-1',
+			handle: 'coordinator',
+			displayName: 'Archived Coordinator',
+			status: 'archived',
+		});
+
+		const coordinator = repo.ensureCoordinator('space-1');
+
+		expect(archived.status).toBe('archived');
+		expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
+		expect(coordinator.status).toBe('active');
+		expect(repo.getByHandle('space-1', 'coordinator')?.id).toBe(coordinator.id);
+		expect(repo.listBySpaceId('space-1')).toHaveLength(2);
+	});
+
 	test('persists agent fields and updates nullable policy fields', () => {
 		const agent = repo.create({
 			spaceId: 'space-1',
