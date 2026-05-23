@@ -141,6 +141,90 @@ export function createEvolutionTables(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_evolution_metric_snapshots_scope_captured ON evolution_metric_snapshots(scope_id, captured_at DESC)`
 	);
+
+	createSpaceAgentLongHorizonTables(db);
+}
+
+function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
+	if (hasTable(db, 'space_agents') && !hasColumn(db, 'space_agents', 'status')) {
+		db.exec(
+			`ALTER TABLE space_agents ADD COLUMN status TEXT NOT NULL DEFAULT 'active' ` +
+				`CHECK(status IN ('active', 'paused', 'archived'))`
+		);
+	}
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_goal_assignments (
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			goal_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, goal_id),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_goal_assignments_goal ` +
+			`ON space_agent_goal_assignments(space_id, goal_id)`
+	);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_forge_scope_assignments (
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, scope_id),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE,
+			FOREIGN KEY (scope_id) REFERENCES evolution_scopes(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_forge_scope_assignments_scope ` +
+			`ON space_agent_forge_scope_assignments(space_id, scope_id)`
+	);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_reminders (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			message TEXT NOT NULL,
+			remind_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'done', 'cancelled')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_reminders_agent_status ` +
+			`ON space_agent_reminders(space_id, agent_id, status, remind_at)`
+	);
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_event_subscriptions (
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			topic_pattern TEXT NOT NULL,
+			label TEXT,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, topic_pattern),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
+			`ON space_agent_event_subscriptions(space_id, topic_pattern)`
+	);
+}
+
+function hasTable(db: BunDatabase, tableName: string): boolean {
+	return !!db
+		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+		.get(tableName);
 }
 
 function hasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {

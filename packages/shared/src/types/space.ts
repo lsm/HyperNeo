@@ -29,6 +29,155 @@ export type SpaceStatus = 'active' | 'archived';
  * Levels have no prescribed names — workflow authors assign meaning per their domain.
  */
 export type SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5;
+export type SpaceAgentAutonomyLevel = SpaceAutonomyLevel;
+
+export type SpaceLongHorizonAgentStatus = 'active' | 'paused' | 'disabled' | 'archived';
+export type SpaceLongHorizonAgentRelationship = 'owner' | 'manager' | 'watcher';
+export type SpaceLongHorizonAgentReminderStatus = 'active' | 'paused' | 'fired' | 'cancelled';
+export type SpaceLongHorizonAgentReminderTriggerType = 'at' | 'cron';
+export type SpaceLongHorizonAgentEventSubscriptionStatus = 'active' | 'paused' | 'disabled';
+
+export interface SpaceLongHorizonAgentTemplateReminderDefault {
+	title: string;
+	body: string;
+	triggerType: SpaceLongHorizonAgentReminderTriggerType;
+	cronExpression: string | null;
+	timezone: string;
+}
+
+export interface SpaceLongHorizonAgentTemplateEventSubscription {
+	source: string;
+	topic: string;
+	filter: Record<string, unknown>;
+}
+
+export interface SpaceLongHorizonAgentTemplateOwnershipPattern {
+	target: 'goal' | 'forge_scope';
+	relationship: SpaceLongHorizonAgentRelationship;
+	description: string;
+}
+
+export interface SpaceLongHorizonAgentTemplate {
+	key: string;
+	handle: string;
+	displayName: string;
+	description: string;
+	instructions: string;
+	suggestedAutonomyLevel: SpaceAgentAutonomyLevel;
+	suggestedEventSubscriptions: SpaceLongHorizonAgentTemplateEventSubscription[];
+	reminderDefaults: SpaceLongHorizonAgentTemplateReminderDefault[];
+	ownershipPatterns: SpaceLongHorizonAgentTemplateOwnershipPattern[];
+	toolPermissions: Record<string, unknown>;
+}
+
+export interface SpaceLongHorizonAgent {
+	id: string;
+	spaceId: string;
+	handle: string;
+	displayName: string;
+	templateKey: string | null;
+	status: SpaceLongHorizonAgentStatus;
+	sessionId: string | null;
+	instructions: string;
+	autonomyLevel: SpaceAgentAutonomyLevel | null;
+	toolPermissions: Record<string, unknown>;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateSpaceLongHorizonAgentParams {
+	id?: string;
+	spaceId: string;
+	handle: string;
+	displayName?: string;
+	templateKey?: string | null;
+	status?: SpaceLongHorizonAgentStatus;
+	sessionId?: string | null;
+	instructions?: string;
+	autonomyLevel?: SpaceAgentAutonomyLevel | null;
+	toolPermissions?: Record<string, unknown>;
+}
+
+export interface UpdateSpaceLongHorizonAgentParams {
+	handle?: string;
+	displayName?: string;
+	templateKey?: string | null;
+	status?: SpaceLongHorizonAgentStatus;
+	sessionId?: string | null;
+	instructions?: string;
+	autonomyLevel?: SpaceAgentAutonomyLevel | null;
+	toolPermissions?: Record<string, unknown> | null;
+}
+
+export interface SpaceLongHorizonAgentGoal {
+	agentId: string;
+	goalId: string;
+	relationship: SpaceLongHorizonAgentRelationship;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SpaceLongHorizonAgentForgeScope {
+	agentId: string;
+	scopeId: string;
+	relationship: SpaceLongHorizonAgentRelationship;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface SpaceLongHorizonAgentReminder {
+	id: string;
+	spaceId: string;
+	agentId: string;
+	title: string;
+	body: string;
+	status: SpaceLongHorizonAgentReminderStatus;
+	triggerType: SpaceLongHorizonAgentReminderTriggerType;
+	runAt: number | null;
+	cronExpression: string | null;
+	timezone: string;
+	nextRunAt: number | null;
+	lastFiredAt: number | null;
+	createdBySession: string | null;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateSpaceLongHorizonAgentReminderParams {
+	spaceId: string;
+	agentId: string;
+	title: string;
+	body?: string;
+	status?: SpaceLongHorizonAgentReminderStatus;
+	triggerType: SpaceLongHorizonAgentReminderTriggerType;
+	runAt?: number | null;
+	cronExpression?: string | null;
+	timezone?: string;
+	nextRunAt?: number | null;
+	lastFiredAt?: number | null;
+	createdBySession?: string | null;
+}
+
+export interface SpaceLongHorizonAgentEventSubscription {
+	id: string;
+	spaceId: string;
+	agentId: string;
+	source: string;
+	topic: string;
+	filter: Record<string, unknown>;
+	status: SpaceLongHorizonAgentEventSubscriptionStatus;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface CreateSpaceLongHorizonAgentSubscriptionParams {
+	spaceId: string;
+	agentId: string;
+	source: string;
+	topic: string;
+	filter?: Record<string, unknown>;
+	status?: SpaceLongHorizonAgentEventSubscriptionStatus;
+}
 
 export const MIN_SPACE_CONCURRENT_TASKS = 1;
 export const MAX_SPACE_CONCURRENT_TASKS = 10;
@@ -1002,6 +1151,8 @@ export interface CreateWorkflowRunParams {
  * A named agent configuration within a Space.
  * SpaceAgents can be referenced by name in SpaceWorkflow nodes.
  */
+export type SpaceAgentStatus = 'active' | 'paused' | 'archived';
+
 export interface SpaceAgent {
 	/** Unique identifier */
 	id: string;
@@ -1009,6 +1160,8 @@ export interface SpaceAgent {
 	spaceId: string;
 	/** Human-readable name (unique within a space) */
 	name: string;
+	/** Long-horizon agent lifecycle state */
+	status?: SpaceAgentStatus;
 	/** Optional description of this agent's specialization */
 	description?: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
@@ -1058,6 +1211,7 @@ export interface SpaceAgent {
 export interface CreateSpaceAgentParams {
 	spaceId: string;
 	name: string;
+	status?: SpaceAgentStatus;
 	description?: string;
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
@@ -1090,6 +1244,7 @@ export interface CreateSpaceAgentParams {
  */
 export interface UpdateSpaceAgentParams {
 	name?: string;
+	status?: SpaceAgentStatus;
 	description?: string | null;
 	model?: string | null;
 	thinkingLevel?: ThinkingLevel | null;

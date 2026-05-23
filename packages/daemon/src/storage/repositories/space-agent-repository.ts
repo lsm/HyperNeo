@@ -29,14 +29,15 @@ export class SpaceAgentRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_agents
-					(id, space_id, name, description, model, thinking_level, provider, tools, custom_prompt,
+					(id, space_id, name, status, description, model, thinking_level, provider, tools, custom_prompt,
 					 setting_sources, template_name, template_hash, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
 				params.spaceId,
 				params.name,
+				params.status ?? 'active',
 				params.description ?? '',
 				params.model ?? null,
 				params.thinkingLevel ?? null,
@@ -115,6 +116,10 @@ export class SpaceAgentRepository {
 		if (params.name !== undefined) {
 			fields.push('name = ?');
 			values.push(params.name);
+		}
+		if (params.status !== undefined) {
+			fields.push('status = ?');
+			values.push(params.status);
 		}
 		if (params.description !== undefined) {
 			fields.push('description = ?');
@@ -213,6 +218,7 @@ export class SpaceAgentRepository {
 			id: row.id as string,
 			spaceId: row.space_id as string,
 			name: row.name as string,
+			status: (row.status as SpaceAgent['status'] | null | undefined) ?? 'active',
 			description: (row.description as string) || undefined,
 			model: (row.model as string | null) ?? undefined,
 			thinkingLevel:
