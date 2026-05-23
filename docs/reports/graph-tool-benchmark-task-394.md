@@ -116,12 +116,60 @@ Weaknesses:
 
 Best use in NeoKai: optional developer/search helper for structural grep and codemods, not a stock graph-context integration. If integrated later, expose it as a local CLI template/snippet library rather than auto-enabled MCP.
 
+## Follow-up: unseeded discovery round
+
+After the first benchmark, a second round removed seed file paths, exact function names, event constants, and test names from the prompt. The prompt described only the desired feature: detect genuinely stuck or idle Space task agents, track recovery state, apply autonomy-aware recovery with backoff/caps, avoid retry loops, and reduce operator notification noise while preserving internal logs.
+
+This round tested each tool's first-pass discovery behavior rather than exact-symbol lookup.
+
+| Setup | Unseeded context collected | Final GLM plan tokens | Discovery quality | Main misses / failure mode | Impact on recommendation |
+|---|---:|---:|---|---|---|
+| CodeGraph | Rebuilt `.codegraph/`; `context` query returned 170 lines / 5.3KB | 5,708 | Poor. Found mostly frontend thread-event display types and tool schema names: `SpaceTaskThreadEvent`, `SpaceTaskThreadEventKind`, `TaskAgentToolName`, `buildThreadEvents` | Missed core daemon runtime, notification service, tick loop, recovery handlers, storage, and tests. Plan inferred likely paths instead of naming actual modules | Confirms CodeGraph is weak as unseeded task-discovery context for backend/runtime work |
+| code-review-graph | `get_minimal_context` plus broad structural/context queries returned 655 lines / 37KB | 13,998 | Best unseeded result. Surfaced `handleNonTerminalIdleExecutions`, `retry-utils.ts`, `CompletionDetector`, `space-runtime-tick-loop.test.ts`, `SpaceTaskManager.submitTaskForReview`, autonomy concepts, migration history around stuck rows, and backoff/job-queue tests | Still missed some high-value source implementations and noisy event constants; large context drove high prompt tokens | Strengthens recommendation to prioritize code-review-graph for optional graph-context integration |
+| Graphify | Query over existing AST graph returned only 3 generic `workflow` test nodes | 4,463 | Poor. Context was too shallow for source discovery and mostly test-only | GLM plan invented likely paths such as `packages/daemon/src/5-space/...` from directory conventions; no core runtime source found | Keep lower priority. Generic graph query needs better seeding or semantic extraction to be useful for this task class |
+| ast-grep | Broad read-only string/AST searches sampled 68 matches across `stuck`, `idle`, `blocked`, `waiting`, `retry`, `workflow`, etc. | 5,951 | Moderate. Found `packages/shared/src/types/space.ts`, `state-types.ts`, `internal-event-bus.ts`, task/workflow repositories, `space-workflow-manager.ts`, `space-task-handlers.ts`, `rate-limit-watchdog.ts`, and completion-detector tests | Results were broad and partly misleading; plan over-focused on adding new states/schema and reused `rate-limit-watchdog.ts` more confidently than evidence justified | Useful as cheap discovery/search helper, especially when no seed files exist, but still not graph context |
+
+### Unseeded findings by tool
+
+#### CodeGraph
+
+Unseeded CodeGraph underperformed more sharply than in the seeded round. Because the prompt used generic words like "task", "workflow", "event", and "notification", retrieval drifted to frontend event-thread rendering and tool-schema types. That produced a plausible but mostly inferred implementation plan, not a codebase-grounded plan.
+
+Takeaway: CodeGraph may still help once an agent knows exact symbols, but its current free-form context retrieval is not reliable enough to bootstrap a backend/runtime refactor in NeoKai.
+
+#### code-review-graph
+
+code-review-graph was the only tool that independently surfaced the existing anti-stuck seam. Its context led `glm-5.1` to identify `handleNonTerminalIdleExecutions`, existing Layer-1 runtime anti-stuck tests, `retryWithBackoff`, `CompletionDetector`, review/waiting flow, autonomy levels, and migration history. Those discoveries are directly relevant to task #394 even without seed file paths.
+
+Weaknesses remain: broad concept queries are not semantic unless embeddings are available, raw context is verbose, and several important source files still required targeted follow-up. Still, this was the strongest unseeded planning substrate.
+
+#### Graphify
+
+Graphify's existing AST graph did not help much without seed terms. The unseeded query found only three workflow-related test nodes. The resulting plan was honest about poor context quality but had to infer most architecture and proposed incorrect path shapes.
+
+This does not fully measure Graphify's intended semantic mode because semantic extraction had not completed in this benchmark environment. It does show that AST-only Graphify queries are not enough for unseeded NeoKai runtime planning.
+
+#### ast-grep
+
+`ast-grep` performed better than expected for unseeded discovery because broad terms quickly exposed type definitions, repositories, event-bus entries, workflow manager code, RPC handlers, and prior stuck/completion tests. It also surfaced `rate-limit-watchdog.ts`, which is a plausible pattern source for timer-based detection.
+
+But this was search, not graph understanding. It did not rank architecture accurately, infer data flow, or distinguish primary runtime files from incidental matches. Its plan included some overbroad schema/state suggestions that would need careful validation against existing Space runtime state machines.
+
+### Unseeded-round conclusion
+
+The unseeded round makes the priority order clearer:
+
+1. **code-review-graph** is the best candidate for NeoKai's optional graph-context integration because it found real runtime seams without seed paths.
+2. **ast-grep** is worth documenting as a low-risk search/codemod companion, especially for first-pass term discovery and later precise rewrites, but it should not be framed as graph memory.
+3. **Graphify** remains lower priority for focused daemon refactors unless NeoKai invests in full semantic extraction and better query workflows.
+4. **CodeGraph** should stay out of stock integration for now; exact-symbol lookup is useful, but generic task-context retrieval was too noisy in both rounds.
+
 ## Integration recommendation
 
-1. **Prioritize task #388 (`code-review-graph`) over task #387 (`Graphify`) for stock optional integration.** It fits NeoKai's code-review/task-planning workflows better: local SQLite, structural graph, review context, impact radius, tests-for, and graph stats.
+1. **Prioritize task #388 (`code-review-graph`) over task #387 (`Graphify`) for stock optional integration.** It fits NeoKai's code-review/task-planning workflows better: local SQLite, structural graph, review context, impact radius, tests-for, and graph stats. The unseeded round strengthened this recommendation because code-review-graph was the only graph tool to surface the existing anti-stuck runtime seam without file-path hints.
 2. **Keep both integrations optional, disabled by default, and never auto-install or auto-enable MCP servers.** Both projects have install commands that can mutate assistant configs, hooks, or global state.
-3. **Do not add CodeGraph as stock integration yet.** Revisit if NeoKai wants a lighter exact-symbol helper, but task #394 showed poor first-pass planning quality.
-4. **Do not treat `ast-grep` as a graph integration.** It is useful as a fast structural search/codemod tool, but it should be integrated only as optional CLI help/rules if NeoKai wants codemod workflows.
+3. **Do not add CodeGraph as stock integration yet.** Revisit if NeoKai wants a lighter exact-symbol helper, but task #394 showed poor first-pass planning quality in both seeded and unseeded rounds.
+4. **Do not treat `ast-grep` as a graph integration.** It is useful as a fast structural search/codemod tool and performed decently in unseeded term discovery, but it should be integrated only as optional CLI help/rules if NeoKai wants codemod workflows.
 
 ## Suggested minimal configuration for winner
 
