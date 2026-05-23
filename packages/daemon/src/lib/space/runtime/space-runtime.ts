@@ -2213,7 +2213,7 @@ export class SpaceRuntime {
 				{
 					...updated,
 					workflowRunId: previous.workflowRunId,
-					taskAgentSessionId: previous.taskAgentSessionId ?? updated.taskAgentSessionId,
+					taskAgentSessionId: previous.taskAgentSessionId,
 				},
 				reason
 			);
@@ -2282,7 +2282,7 @@ export class SpaceRuntime {
 						{
 							...updated,
 							workflowRunId: previous?.workflowRunId ?? updated.workflowRunId,
-							taskAgentSessionId: previous?.taskAgentSessionId ?? updated.taskAgentSessionId,
+							taskAgentSessionId: previous?.taskAgentSessionId,
 						},
 						reason
 					);
