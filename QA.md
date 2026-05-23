@@ -31,4 +31,4 @@ Project-specific QA guidance for the QA agent.
 ## General
 
 - Record all findings in QA result artifact with `ui_changed`, `dev_server_started`, `browser_validation` fields
-- If QA.md itself is the only change, minimal validation (file exists, content renders) is sufficient
+- When QA instruction files change, review them as process-affecting code and verify the policy changes preserve required validation rigor
