@@ -376,20 +376,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 	});
 
-	// When a space is resumed/started, re-seed any of its active schedules
-	// whose fire jobs were skipped during the inactive window so cron/at
-	// schedules pick up forward progress without waiting for daemon restart.
-	deps.spaceManager.onSpaceResumedRegister((spaceId) => {
-		try {
-			const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
-			if (recovered > 0) {
-				log.info('recovered schedules after space resume', { spaceId, recovered });
-			}
-		} catch (err) {
-			log.error('schedule recovery after space resume failed (non-fatal)', err);
-		}
-	});
-
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const evolutionTraceEvidenceService = new EvolutionTraceEvidenceService({
 		db: deps.db.getDatabase(),
@@ -549,6 +535,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		goalService: spaceGoalService,
 		evolutionScopeService,
 		evolutionEpisodeService,
+	});
+
+	// When a space is resumed/started, re-seed skipped schedules and re-run restart
+	// stalled recovery for active runs that were skipped while inactive.
+	deps.spaceManager.onSpaceResumedRegister((spaceId) => {
+		try {
+			const recovered = scheduleService.recoverSchedulesForSpace(spaceId);
+			if (recovered > 0) {
+				log.info('recovered schedules after space resume', { spaceId, recovered });
+			}
+		} catch (err) {
+			log.error('schedule recovery after space resume failed (non-fatal)', err);
+		}
+		spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
 	});
 
 	// Session handlers — registered here (after spaceRuntimeService is built) so

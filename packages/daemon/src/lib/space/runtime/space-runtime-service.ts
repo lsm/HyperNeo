@@ -818,6 +818,16 @@ export class SpaceRuntimeService {
 		}
 	}
 
+	recoverStalledWorkflowRunsAfterSpaceResume(spaceId: string): void {
+		this.runtime.resetStalledRunRecovery();
+		void this.recoverStalledWorkflowRuns().catch((err) => {
+			log.error(
+				`SpaceRuntimeService: recoverStalledWorkflowRuns after space resume failed for ${spaceId}:`,
+				err
+			);
+		});
+	}
+
 	private async recoverLongTermAgentInbox(): Promise<void> {
 		const inboxRepo = this.config.spaceAgentInboxRepo;
 		if (!inboxRepo) return;

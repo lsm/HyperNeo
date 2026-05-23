@@ -3347,6 +3347,10 @@ export class SpaceRuntime {
 	 * Must be called *after* `rehydrateExecutors()` so executor metadata is
 	 * available for any run we might transition.
 	 */
+	resetStalledRunRecovery(): void {
+		this.recoveryDone = false;
+	}
+
 	async recoverStalledRuns(): Promise<void> {
 		if (this.recoveryDone) return;
 		this.recoveryDone = true;

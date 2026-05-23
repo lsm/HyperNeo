@@ -395,6 +395,30 @@ describe('SpaceRuntimeService', () => {
 
 			await svc.stop();
 		});
+
+		test('space resume hook resets and schedules stalled recovery', async () => {
+			const svc = new SpaceRuntimeService(buildConfig(spaceManager));
+			const calls: string[] = [];
+			const runtime = (
+				svc as unknown as {
+					runtime: {
+						resetStalledRunRecovery: () => void;
+						recoverStalledRuns: () => Promise<void>;
+					};
+				}
+			).runtime;
+			runtime.resetStalledRunRecovery = () => {
+				calls.push('reset');
+			};
+			runtime.recoverStalledRuns = async () => {
+				calls.push('recover');
+			};
+
+			svc.recoverStalledWorkflowRunsAfterSpaceResume('space-1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(calls).toEqual(['reset', 'recover']);
+		});
 	});
 
 	// ─── setupSpaceAgentSession ──────────────────────────────────────────────
