@@ -388,30 +388,7 @@ export function setupSpaceWorkflowRunHandlers(
 			throw new Error('Cannot cancel a done workflow run');
 		}
 
-		// Cancel all pending tasks belonging to this run
-		const taskManager = taskManagerFactory(run.spaceId);
-		const tasks = await taskManager.listTasksByWorkflowRun(run.id);
-		for (const task of tasks) {
-			if (task.status === 'open' || task.status === 'in_progress') {
-				await taskManager.cancelTask(task.id).catch((err: unknown) => {
-					log.warn(`Failed to cancel task ${task.id} for run ${run.id}:`, err);
-				});
-			}
-		}
-
-		// Cancel the run (pending/in_progress/blocked → cancelled)
-		const updated = workflowRunRepo.transitionStatus(params.id, 'cancelled');
-
-		internalEventBus
-			.publish('space.workflowRun.updated', {
-				sessionId: 'global',
-				spaceId: run.spaceId,
-				runId: run.id,
-				run: updated,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.workflowRun.updated:', err);
-			});
+		await spaceRuntimeService.cancelWorkflowRun(run.spaceId, run.id);
 
 		return { success: true };
 	});

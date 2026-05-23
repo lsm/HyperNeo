@@ -20,6 +20,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { Logger } from '../../logger';
 import type { EvolutionScopeService } from '../evolution-scope-service';
+import { arraysEqual } from '../../utils/array-utils';
 
 const log = new Logger('space-task-manager');
 
@@ -833,14 +834,4 @@ export class SpaceTaskManager {
 		}
 		return false;
 	}
-}
-
-/**
- * Order-independent comparison for two string arrays.
- */
-function arraysEqual(a: string[], b: string[]): boolean {
-	if (a.length !== b.length) return false;
-	const sortedA = [...a].sort();
-	const sortedB = [...b].sort();
-	return sortedA.every((v, i) => v === sortedB[i]);
 }
