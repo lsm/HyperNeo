@@ -8,9 +8,9 @@
 
 ## Executive summary
 
-Graph tools helped most when they could answer exact-symbol questions after the task terms were known. None replaced normal code exploration for this task.
+Graph/context tools helped most when they could answer exact-symbol questions after the task terms were known. None replaced normal code exploration for this task. `ast-grep` was fast and useful as a structural search primitive, but it is not a graph/context memory tool and produced a narrower plan than baseline or code-review-graph.
 
-**Recommendation:** prioritize **code-review-graph** before Graphify for NeoKai stock integration, but ship it as optional/disabled with a small default MCP tool subset. Keep Graphify optional but lower priority unless NeoKai wants broader document/code knowledge graphs. Do not prioritize CodeGraph until its task-context retrieval improves for backend/runtime tasks.
+**Recommendation:** prioritize **code-review-graph** before Graphify for NeoKai stock integration, but ship it as optional/disabled with a small default MCP tool subset. Keep Graphify optional but lower priority unless NeoKai wants broader document/code knowledge graphs. Do not prioritize CodeGraph until its task-context retrieval improves for backend/runtime tasks. Treat `ast-grep` as a possible local search/codemod helper, not as a replacement for graph context.
 
 ## Method
 
@@ -18,7 +18,8 @@ Graph tools helped most when they could answer exact-symbol questions after the 
 2. Established an answer key with read-only code exploration for relevant files and line ranges.
 3. Built or queried each graph tool locally without running global installers or mutating user-wide agent config.
 4. Asked `glm-5.1` to produce the same implementation-plan deliverable from each context bundle.
-5. Scored each output against key file recall, extra relevant discovery, usefulness, setup/runtime friction, tool-surface complexity, and config/privacy risk.
+5. Added `ast-grep` as a non-graph structural-search comparison using equivalent task terms (`agent_idle_non_terminal`, `workflow_run_completed`, `SpaceAgentNotificationService`, and exact handler/backoff names).
+6. Scored each output against key file recall, extra relevant discovery, usefulness, setup/runtime friction, tool-surface complexity, and config/privacy risk.
 
 `claude -p --model glm-5.1` failed in this harness because the active Claude provider path reported: `The 'glm-5.1' model is not supported when using Codex with a ChatGPT account.` To keep the model constant, the benchmark called the GLM API directly (`model: glm-5.1`) for the final plan-generation step.
 
@@ -61,6 +62,7 @@ Task #394's description named four files. Direct code exploration found those pl
 | CodeGraph | `npx @colbymchenry/codegraph init . -i`; 1,580 files, 21,487 nodes, 19,857 edges, 18.3s internal / 25.8s wall. `context` query 4.35s | 4,324 | 1 context + 4 exact symbol queries | Partial: found `space-runtime.ts`, `space-agent-notification-service.ts`; missed most runtime-adjacent answer-key files; initial task-context query was mostly wrong/UI-noisy | Weak: little beyond notification/runtime, missed tests/types/classifier/status/external-event files | Low-to-medium. Exact symbol queries useful; free-form task context poor | Fast local index; `init` creates `.codegraph/`; no `--no-install` flag but did not mutate global config in observed path | Installer can mutate `~/.claude.json`, `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, Cursor/Codex config, and optionally auto-allow tools. Keep disabled/manual only |
 | code-review-graph | `uvx --from code-review-graph code-review-graph build --repo . --data-dir /tmp/neokai-crg-467`; 1,591 files, 34,381 nodes, 399,977 edges, 893 flows, 10 communities, 61.7s wall | 17,974 | 1 minimal-context query + targeted `file_summary`/structural queries | Good after targeted file summaries: `space-runtime.ts`; structural functions; still incomplete on classifier/status/external-event files in first pass | Medium: found `getExternalEventRateLimitState`, `scheduleExternalEventRetry`, `task-agent-manager.ts`, workflow/repository/test adjacency, but still assumed some module paths | Medium-high. Best graph depth/risk signal, but large JSON can overfeed model and concept queries require exact structural patterns | Python install via `uvx`; build reliable. Tool API easy to misuse: `query_graph(pattern, target)` uses fixed patterns, not semantic search. MCP exposes 28 tools unless filtered | Installer mutates assistant configs/hooks/MCP. Daemon uses `~/.code-review-graph/watch.toml`. Local DB can live in project or external data dir. Expose minimal MCP subset only |
 | Graphify | Existing CLI. `graphify extract . --out /tmp/neokai-graphify-467 --backend openai --model glm-5.1 --no-cluster`; first semantic chunks failed because `openai` extra missing, but AST graph still wrote 20,316 nodes / 60,564 edges in 26.9s. Generic query 15KB; targeted query 15KB | 6,847 targeted run; 7,925 generic run | 2 graph queries | Poor generic query; decent targeted query found `space-runtime.ts`, `TaskAgentManager`, `SpaceAgentNotificationService`, `InternalEventBus`, `retry-utils` | Medium after exact-term query: `task-agent-manager.ts`, repositories/managers surfaced; missed tests and some exact existing constants unless prompted | Medium. Targeted graph query useful as navigation map; generic task query drifted to schedule/task UI noise. Semantic extraction requires extra deps/API setup | CLI help fast; AST-only extraction reliable. Semantic extraction with GLM via Graphify's OpenAI-compatible backend needs Graphify installed with the `openai` extra plus standard OpenAI-client env mapping (`OPENAI_API_KEY` set to `GLM_API_KEY`, `OPENAI_BASE_URL` set to GLM endpoint). Full skill pipeline is heavier than headless AST extraction on this monorepo | Install/hooks/Claude integration can mutate CLAUDE.md, hooks, global graph. `graphify-out/` can be large and repo page recommends committing it; NeoKai should not commit generated graph outputs |
+| ast-grep | `npx -y -p @ast-grep/cli ast-grep run`; no index. Help startup 2.4s; event string queries 2.6-2.7s each. Found 15 `agent_idle_non_terminal` matches, 44 `workflow_run_completed` matches, notification service class, and 11 `retryWithBackoff` call/test matches. Exact private handler-name call queries returned 0 because declarations/calls did not match simple call patterns | 4,798 | 4 successful structural queries + 5 exact handler/backoff follow-ups | Narrow: found event emission files and several tests; missed answer-key files not containing queried strings (`channel-router.ts`, classifier/status/completion/external-event files unless separately queried) | Medium-low: surfaced `space-runtime-completion.test.ts`, `space-runtime-edge-cases.test.ts`, `space-chat-agent.test.ts`, `retry-utils.test.ts`; did not discover architecture by itself | Medium as a search accelerator; low as planner context. GLM plan correctly flagged missing payload/state-machine context and over-representation of tests | Very low setup friction via `npx -p @ast-grep/cli`; no database or daemon; supports JSON output and rewrites. Requires hand-authored patterns/rules and can miss symbols if pattern syntax is off | Low read-only risk when using `run` without `--rewrite`, `--interactive`, or `--update-all`; rewrite/codemod modes can mutate files. No global config mutation unless user creates config/rules |
 
 ## Findings by tool
 
@@ -94,11 +96,32 @@ Graphify's strength is broader knowledge-graph workflows across code, docs, pape
 
 Semantic extraction did not fully run because the local Graphify install lacked the `openai` extra. The tool still wrote an AST graph, but this means the benchmark did not measure Graphify's intended semantic extraction quality. Graphify's MCP server exposes 10 tools in its skill docs: `query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`, `shortest_path`, `list_prs`, `get_pr_impact`, and `triage_prs`.
 
+### ast-grep
+
+`ast-grep` is not a graph database or MCP context server in this benchmark; it is a structural AST search/codemod CLI. It performed best when asked precise syntax or string-literal questions. It found the primary event emission sites quickly and produced compact JSON suitable for feeding into `glm-5.1`.
+
+Strengths:
+
+- Fast no-index searches over TypeScript/TSX.
+- Good structured JSON output for exact syntax/string matching.
+- Good for confirming event emission sites, class boundaries, and test files that mention specific event names.
+- Low local-state risk when used read-only.
+
+Weaknesses:
+
+- No persistent graph, no automatic architecture/context synthesis, no impact radius, and no semantic recall.
+- Pattern syntax matters. Simple exact function-call patterns found `retryWithBackoff` calls but missed private runtime handler declarations/calls without more careful rule construction.
+- Results over-represent tests when event names are common in assertions.
+- Output lacks payload shapes and surrounding method structure unless follow-up reads or richer patterns are used.
+
+Best use in NeoKai: optional developer/search helper for structural grep and codemods, not a stock graph-context integration. If integrated later, expose it as a local CLI template/snippet library rather than auto-enabled MCP.
+
 ## Integration recommendation
 
 1. **Prioritize task #388 (`code-review-graph`) over task #387 (`Graphify`) for stock optional integration.** It fits NeoKai's code-review/task-planning workflows better: local SQLite, structural graph, review context, impact radius, tests-for, and graph stats.
 2. **Keep both integrations optional, disabled by default, and never auto-install or auto-enable MCP servers.** Both projects have install commands that can mutate assistant configs, hooks, or global state.
 3. **Do not add CodeGraph as stock integration yet.** Revisit if NeoKai wants a lighter exact-symbol helper, but task #394 showed poor first-pass planning quality.
+4. **Do not treat `ast-grep` as a graph integration.** It is useful as a fast structural search/codemod tool, but it should be integrated only as optional CLI help/rules if NeoKai wants codemod workflows.
 
 ## Suggested minimal configuration for winner
 
@@ -170,6 +193,7 @@ code-review-graph build --repo ${workspaceFolder} --data-dir <local-cache-dir>
 ## Sources
 
 - CodeGraph repository: https://github.com/colbymchenry/codegraph
+- ast-grep repository: https://github.com/ast-grep/ast-grep
 - code-review-graph repository: https://github.com/tirth8205/code-review-graph
 - Graphify repository: https://github.com/safishamsi/graphify
 - Task #394 requirements from NeoKai task system
