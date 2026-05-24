@@ -407,7 +407,7 @@ function fireGoalAutomationSchedule(params: {
 		computedNextRunAt = db.transaction(() => {
 			let nextRunAt: number | null = null;
 			let pendingJobId: string | null = null;
-			let nextStatus: 'active' | 'completed' = automationDisabled ? 'completed' : 'active';
+			let nextStatus: 'active' | 'completed' | 'paused' = automationDisabled ? 'paused' : 'active';
 			if (nextStatus === 'active' && schedule.triggerType === 'cron' && schedule.cronExpression) {
 				nextRunAt = getNextRunAt(schedule.cronExpression, schedule.timezone, now);
 				if (nextRunAt !== null) {

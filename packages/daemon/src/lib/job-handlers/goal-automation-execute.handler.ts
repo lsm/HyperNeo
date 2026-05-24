@@ -246,18 +246,27 @@ function findExistingAutomationReviewTask(
 	scopeId: string,
 	payload: GoalAutomationExecutePayload
 ): { reviewTask: SpaceTask; episodeId: string } | null {
-	if (payload.triggerKind === 'self_nag') return null;
 	const scope = deps.evolutionRepo.getScope(scopeId);
 	if (!scope) return null;
 	const token = automationTriggerToken(payload);
-	const task = deps.taskRepo
-		.listBySpace(scope.spaceId, true)
-		.find(
-			(item) =>
-				item.evolutionScopeId === scopeId &&
-				item.labels.includes('automation') &&
-				item.labels.includes(token)
-		);
+	// For self-nag, the token is stable across ticks (same scheduleId).
+	// Only reuse a task if it was created in the current automation run
+	// (after the cursor's lastFiredAt). This prevents cross-tick dedup
+	// while still protecting against retry duplication within a tick.
+	const cursor = deps.cursorRepo.get(
+		payload.goalId,
+		scopeId,
+		payload.triggerKind,
+		payload.triggerKey
+	);
+	const afterTimestamp = cursor?.lastFiredAt ?? 0;
+	const task = deps.taskRepo.listBySpace(scope.spaceId, true).find((item) => {
+		if (item.evolutionScopeId !== scopeId) return false;
+		if (!item.labels.includes('automation') || !item.labels.includes(token)) return false;
+		// For self-nag, only match tasks created after the last cursor fire.
+		if (payload.triggerKind === 'self_nag' && item.createdAt <= afterTimestamp) return false;
+		return true;
+	});
 	if (!task) return null;
 	const match = task.description.match(/Episode: ([^\n]+)/);
 	const episodeId = match?.[1]?.trim();

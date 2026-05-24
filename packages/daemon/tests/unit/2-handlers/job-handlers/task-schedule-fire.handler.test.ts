@@ -249,7 +249,7 @@ describe('handleTaskScheduleFire', () => {
 		expect(calls).toEqual([]);
 		expect(jobQueue.listJobs({})).toHaveLength(beforeJobs);
 		const updated = scheduleRepo.getById(scheduleId);
-		expect(updated?.status).toBe('completed');
+		expect(updated?.status).toBe('paused');
 		expect(updated?.pendingJobId).toBeNull();
 	});
 

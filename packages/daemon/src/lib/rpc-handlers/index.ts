@@ -150,19 +150,48 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
 	scope: EvolutionScope;
 }): void {
 	const { goalRepo, scheduleService, scope } = params;
-	if (!scope.spaceGoalId) return;
-	const goal = goalRepo.getById(scope.spaceGoalId);
-	if (!goal || goal.status !== 'active') return;
 	const policy = readAutomationPolicyForScope(scope);
-	const scopeLabel = `scope:${scope.id}`;
-	const existing = scheduleService
-		.listSchedules(goal.spaceId)
+	// Find all automation schedules for this scope across any goal, including
+	// completed ones (so reconciliation can recreate after goal reactivation).
+	const allScopeSchedules = scheduleService
+		.listSchedules(scope.spaceId)
 		.filter(
 			(schedule) =>
-				schedule.goalId === goal.id &&
 				schedule.createdByAgent === 'goal-automation-service' &&
 				readSelfNagScheduleScopeId(schedule) === scope.id
-		)
+		);
+	// Pause any active schedule whose goalId no longer matches the current scope
+	// goal (e.g. scope was reassigned from goal A to goal B).
+	for (const sched of allScopeSchedules) {
+		if (sched.status === 'active' && sched.goalId !== null && sched.goalId !== scope.spaceGoalId) {
+			try {
+				scheduleService.pauseSchedule(sched.id);
+			} catch {
+				// Schedule may have been concurrently modified; best-effort.
+			}
+		}
+	}
+
+	// If scope has no goal linkage or goal is inactive, pause active schedules
+	// and stop — reconciliation on goal relink/resume will re-enable.
+	if (!scope.spaceGoalId) {
+		for (const sched of allScopeSchedules) {
+			if (sched.status === 'active') {
+				try {
+					scheduleService.pauseSchedule(sched.id);
+				} catch {
+					// Best-effort.
+				}
+			}
+		}
+		return;
+	}
+	const goal = goalRepo.getById(scope.spaceGoalId);
+	if (!goal || goal.status !== 'active') return;
+	const scopeLabel = `scope:${scope.id}`;
+	// Find the current-goal schedule (excluding completed — reconciliation recreates those).
+	const existing = allScopeSchedules
+		.filter((schedule) => schedule.goalId === goal.id)
 		.find((schedule) => schedule.status !== 'completed');
 	if (!policy.selfNagCronExpression) {
 		if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);

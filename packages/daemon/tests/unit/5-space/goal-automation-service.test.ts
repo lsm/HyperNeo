@@ -492,6 +492,69 @@ describe('GoalAutomationService', () => {
 		expect(activeSchedules[0].pendingJobId).not.toBeNull();
 	});
 
+	it('pauses orphan self-nag schedule when scope is unlinked from goal', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Unlink self nag', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Unlink cadence',
+			objective: 'Unlink scope from goal',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+		expect(scheduleService.listSchedules(spaceId, 'active')).toHaveLength(1);
+
+		// Unlink scope from goal.
+		evolutionRepo.updateScope(scope.id, { spaceGoalId: null });
+		const unlinkedScope = evolutionRepo.getScope(scope.id)!;
+		expect(unlinkedScope.spaceGoalId).toBeNull();
+
+		syncGoalAutomationSelfNagScheduleForScope({
+			goalRepo,
+			scheduleService,
+			scope: unlinkedScope as typeof scope,
+		});
+
+		expect(scheduleService.listSchedules(spaceId, 'active')).toHaveLength(0);
+		expect(scheduleService.listSchedules(spaceId, 'paused')).toHaveLength(1);
+	});
+
+	it('pauses old self-nag schedule when scope is reassigned to a new goal', () => {
+		const goalA = goalRepo.create({ spaceId, title: 'Goal A', type: 'recurring' });
+		const goalB = goalRepo.create({ spaceId, title: 'Goal B', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goalA.id,
+			kind: 'mission',
+			name: 'Reassign cadence',
+			objective: 'Move scope between goals',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+		expect(scheduleService.listSchedules(spaceId, 'active')).toHaveLength(1);
+		const goalASchedule = scheduleService.listSchedules(spaceId, 'active')[0];
+
+		// Reassign scope from goal A to goal B.
+		evolutionRepo.updateScope(scope.id, { spaceGoalId: goalB.id });
+		const reassignedScope = evolutionRepo.getScope(scope.id)!;
+
+		syncGoalAutomationSelfNagScheduleForScope({
+			goalRepo,
+			scheduleService,
+			scope: reassignedScope as typeof scope,
+		});
+
+		// Old schedule (goal A) should be paused.
+		const pausedSchedules = scheduleService.listSchedules(spaceId, 'paused');
+		expect(pausedSchedules.some((s) => s.id === goalASchedule.id)).toBe(true);
+
+		// New schedule (goal B) should be active.
+		const activeSchedules = scheduleService.listSchedules(spaceId, 'active');
+		expect(activeSchedules).toHaveLength(1);
+		expect(activeSchedules[0].goalId).toBe(goalB.id);
+	});
+
 	it('finds self-nag schedule by immutable metadata when labels are edited', () => {
 		const goal = goalRepo.create({ spaceId, title: 'Metadata self nag', type: 'recurring' });
 		const scope = evolutionRepo.createScope({
