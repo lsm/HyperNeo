@@ -238,9 +238,17 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 
 		if ((msg as { type?: string }).type === 'result') {
 			const result = msg as {
+				subtype?: string;
 				usage?: { inputTokens: number; outputTokens: number };
 				session_id?: string;
 			};
+			// Reject errored results — max_turns, auth failures, etc.
+			if (result.subtype === 'error_max_turns' || result.subtype === 'error') {
+				throw new Error(
+					`Benchmark case "${name}" ended with error subtype: ${result.subtype}. ` +
+						'Run is contaminated and cannot be used for comparison.'
+				);
+			}
 			resultUsage = result.usage;
 			sessionId = result.session_id ?? '';
 			break;
@@ -377,7 +385,7 @@ rl.on('line', (line) => {
       if (toolName === 'ast_grep_search') {
         result = runAstGrep(args.pattern, args.lang || 'ts');
       } else if (toolName === 'ast_grep_scan') {
-        result = runAstGrepScan(args.rule, args.lang || 'ts');
+        result = runAstGrepScan(args.rule);
       } else if (toolName === 'ast_grep_search_multiple') {
         const patterns = (args.patterns || '').split(',').map(s => s.trim()).filter(Boolean);
         const parts = patterns.map(p => ({ pattern: p, output: runAstGrep(p, args.lang || 'ts') }));
@@ -411,8 +419,8 @@ function runAstGrep(pattern, lang) {
   if (r.status !== 0) throw new Error(r.stderr || 'ast-grep exited with code ' + r.status);
   return r.stdout || '(no output)';
 }
-function runAstGrepScan(rule, lang) {
-  const cmd = astGrepCmd(['scan', '--inline-rules', rule, '--lang', lang, '--json', WORKSPACE]);
+function runAstGrepScan(rule) {
+  const cmd = astGrepCmd(['scan', '--inline-rules', rule, '--json', WORKSPACE]);
   const r = spawnSync(cmd[0], cmd.slice(1), SPAWN_OPTS);
   if (r.status === 1) return '(no matches)';
   if (r.status !== 0) throw new Error(r.stderr || 'ast-grep scan exited with code ' + r.status);
