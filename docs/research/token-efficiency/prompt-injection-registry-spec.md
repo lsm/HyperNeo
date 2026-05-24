@@ -130,7 +130,7 @@ Proposed table:
 
 ```sql
 CREATE TABLE prompt_injections (
-	id TEXT PRIMARY KEY,
+	id TEXT NOT NULL PRIMARY KEY,
 	scope_type TEXT NOT NULL CHECK(scope_type IN (
 		'global', 'session', 'space', 'space_agent', 'workflow', 'workflow_node', 'task'
 	)),
@@ -144,7 +144,9 @@ CREATE TABLE prompt_injections (
 	priority INTEGER NOT NULL,
 	enabled INTEGER NOT NULL DEFAULT 1,
 	content TEXT NOT NULL,
-	source_kind TEXT NOT NULL,
+	source_kind TEXT NOT NULL CHECK(source_kind IN (
+		'builtin', 'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
+	)),
 	source_ref TEXT,
 	constraints TEXT,
 	created_at INTEGER NOT NULL,
@@ -464,7 +466,7 @@ Run paired normal/compressed tests across:
 7. Space QA failure report.
 8. SDK subagent exploration receipt.
 9. Safety/approval destructive operation.
-10. At least one pair each with `thinkingLevel: 'none'` and `'low'`.
+10. At least one pair each with `thinkingLevel: 'off'` and `'think8k'`.
 
 Record output tokens, input tokens, quality rubric, ambiguity/safety issues. Require >=50% median output-token reduction without quality regression before changing defaults.
 

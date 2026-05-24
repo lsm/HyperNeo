@@ -283,7 +283,7 @@ Run identical tasks in `normal` and `compressed` modes across session types:
 ### Method
 
 - Use same model/provider and fresh sessions.
-- Run at least one pair each with `thinkingLevel: 'none'` and `thinkingLevel: 'low'`; compressed mode may otherwise hide useful visible reasoning when little/no extended thinking is available.
+- Run at least one pair each with `thinkingLevel: 'off'` and `thinkingLevel: 'think8k'`; compressed mode may otherwise hide useful visible reasoning when little/no extended thinking is available.
 - Disable unrelated prompt changes.
 - Capture final SDK result messages and assistant text.
 - Compare token counts and rubric scores.
