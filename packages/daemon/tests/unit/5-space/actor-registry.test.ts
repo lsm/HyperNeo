@@ -1,7 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { parseAddress } from '../../../../messaging/src/address';
-import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry';
+import {
+	canonicalAgentHandle,
+	SpaceActorRegistryAdapter,
+} from '../../../src/lib/space/actor-registry';
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
@@ -259,6 +262,10 @@ describe('SpaceActorRegistryAdapter', () => {
 		});
 
 		const actors = registry.listActors(space.id);
+
+		expect(canonicalAgentHandle([agent, reservedNameAgent], reservedNameAgent)).toBe(
+			`@coordinator-${reservedNameAgent.id.slice(0, 8)}`
+		);
 
 		expect(actors).toContainEqual({
 			actorId: `human:${member.id}`,

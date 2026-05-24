@@ -15,13 +15,14 @@ import type {
 	McpServerConfig,
 	Session,
 	Space,
+	SpaceAgent,
 	SpaceTask,
 	SpaceWorkflowRun,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
-import { SpaceActorRegistryAdapter } from '../actor-registry';
+import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import { SpaceMessageResolver } from '../messaging-adapter';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -542,7 +543,7 @@ export class SpaceRuntimeService {
 			});
 		}
 		if (created || this.missingLongTermAgentMcpServers(session)) {
-			this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId);
+			this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent);
 		}
 		return session;
 	}
@@ -576,7 +577,7 @@ export class SpaceRuntimeService {
 		}
 		const agentName =
 			session.metadata.promptProvenance?.agentName ?? persistedAgent?.name ?? 'Space Agent';
-		this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id);
+		this.attachLongTermAgentMcpServers(agentSession, space, agentName, session.id, persistedAgent);
 		agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
 			log.warn(
 				`Long-term Space agent session ${session.id} missing MCP servers [${missing.join(', ')}]; re-attaching space-agent-tools before query start`
@@ -596,13 +597,15 @@ export class SpaceRuntimeService {
 		},
 		space: Space,
 		agentName: string,
-		sessionId: string
+		sessionId: string,
+		agent: SpaceAgent | null
 	): void {
 		const mcpServers: Record<string, McpServerConfig> = {
 			'space-agent-tools': this.buildLongTermAgentMcpServer(
 				space,
 				agentName,
-				sessionId
+				sessionId,
+				agent
 			) as unknown as McpServerConfig,
 		};
 		if (this.config.memoryRepo) {
@@ -641,7 +644,14 @@ export class SpaceRuntimeService {
 		this.longTermAgentDbQueryServers.delete(sessionId);
 	}
 
-	private buildLongTermAgentMcpServer(space: Space, agentName: string, sessionId: string) {
+	private buildLongTermAgentMcpServer(
+		space: Space,
+		agentName: string,
+		sessionId: string,
+		agent: SpaceAgent | null
+	) {
+		const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
+		const agentHandle = agent ? canonicalAgentHandle(agents, agent) : undefined;
 		return createSpaceAgentMcpServer({
 			spaceId: space.id,
 			db: this.config.db,
@@ -670,6 +680,7 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			myAgentName: agentName,
+			myAgentNameAliases: agentHandle ? [agentHandle] : undefined,
 			mySessionId: sessionId,
 			auditLogRepo: this.auditLogRepo,
 			scheduleService: this.config.scheduleService,

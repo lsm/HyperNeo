@@ -129,8 +129,8 @@ function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
 	return 'node-agent';
 }
 
-function expectedEnvelopeSenderName(sourceAgentName: string): string {
-	return sourceAgentName;
+function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
+	return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
 }
 
 export function hasAgentMessageEnvelopeForTest(
@@ -142,9 +142,14 @@ export function hasAgentMessageEnvelopeForTest(
 	if (!match) return false;
 
 	const fromLevel = pendingSourceLevel(sourceAgentName);
-	const expectedSender = expectedEnvelopeSenderName(sourceAgentName);
+	const expectedSenders = expectedEnvelopeSenderNames(sourceAgentName);
 	const headerSender = match[1];
-	if (headerSender !== expectedSender && !headerSender.startsWith(`${expectedSender} (task #`)) {
+	if (
+		!expectedSenders.some(
+			(expectedSender) =>
+				headerSender === expectedSender || headerSender.startsWith(`${expectedSender} (task #`)
+		)
+	) {
 		return false;
 	}
 

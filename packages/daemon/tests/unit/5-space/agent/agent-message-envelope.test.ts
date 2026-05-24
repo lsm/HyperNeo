@@ -42,7 +42,7 @@ describe('formatAgentMessage', () => {
 		);
 	});
 
-	test('formats ad-hoc session messages with session reply instructions', () => {
+	test('formats ad-hoc session messages with fallback reply instructions', () => {
 		expect(
 			formatAgentMessage({
 				fromLevel: 'session-agent',
@@ -56,7 +56,7 @@ describe('formatAgentMessage', () => {
 				'Ad-hoc follow-up\n\n' +
 				'<reply-routing replyToSessionId="session-adhoc-42" />\n\n' +
 				'─── Reply ───\n' +
-				'To reply, use: send_message with target "@session:session-adhoc-42"'
+				'To reply, use: send_message with target "@space-member"'
 		);
 	});
 
@@ -186,7 +186,16 @@ describe('hasAgentMessageEnvelopeForTest', () => {
 		});
 
 		expect(hasAgentMessageEnvelopeForTest(message, 'space-agent', 'node-agent')).toBe(true);
-		expect(hasAgentMessageEnvelopeForTest(message, 'Space Agent', 'node-agent')).toBe(false);
+	});
+
+	test('recognizes legacy queued Space Agent envelopes during flush', () => {
+		const message =
+			'─── Message from Space Agent ───\n\n' +
+			'Legacy queued message\n\n' +
+			'─── Reply ───\n' +
+			'To reply, use: send_message with target "space-agent"';
+
+		expect(hasAgentMessageEnvelopeForTest(message, 'space-agent', 'node-agent')).toBe(true);
 	});
 
 	test('recognizes queued ad-hoc session envelopes from space-member', () => {

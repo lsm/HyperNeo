@@ -34,7 +34,6 @@ function replyTargetSuffix(options: FormatAgentMessageOptions): string {
 
 function replyTargetHandle(options: FormatAgentMessageOptions): string {
 	if (options.replyTargetHandle) return options.replyTargetHandle;
-	if (options.replyToSessionId) return `@session:${options.replyToSessionId}`;
 	return `@${options.fromAgentName}`;
 }
 

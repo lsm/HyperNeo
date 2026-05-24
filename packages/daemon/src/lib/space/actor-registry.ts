@@ -179,21 +179,48 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 	};
 }
 
+export function canonicalAgentHandle(
+	agents: SpaceAgent[],
+	agent: SpaceAgent,
+	reserved: string[] = reservedHandles()
+): string {
+	const handleCounts = new Map<string, number>();
+	for (const handle of reserved) {
+		handleCounts.set(handle, 1);
+	}
+	for (const candidate of agents) {
+		const slug = baseHandleSlug(candidate.name, candidate.id);
+		handleCounts.set(slug, (handleCounts.get(slug) ?? 0) + 1);
+	}
+
+	const slug = baseHandleSlug(agent.name, agent.id);
+	const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
+	return `@${handleSlug}`;
+}
+
 function agentActor(
 	agent: SpaceAgent,
 	handleCounts: Map<string, number>,
 	session: Session | null
 ): ActorRef {
-	const slug = baseHandleSlug(agent.name, agent.id);
-	const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
+	const handle = canonicalAgentHandleFromCounts(agent, handleCounts);
 	return {
 		actorId: `agent:${encodeActorIdComponent(agent.id)}`,
 		kind: 'agent',
 		spaceId: agent.spaceId,
-		handle: `@${handleSlug}`,
-		roles: unique(['space-agent', routingRole(handleSlug)]),
+		handle,
+		roles: unique(['space-agent', routingRole(handle.slice(1))]),
 		status: session ? statusFromSession(session) : 'inactive',
 	};
+}
+
+function canonicalAgentHandleFromCounts(
+	agent: SpaceAgent,
+	handleCounts: Map<string, number>
+): string {
+	const slug = baseHandleSlug(agent.name, agent.id);
+	const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
+	return `@${handleSlug}`;
 }
 
 function workerActorFromExecution(spaceId: string, execution: NodeExecution): ActorRef {

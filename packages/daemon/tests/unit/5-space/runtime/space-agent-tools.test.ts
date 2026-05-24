@@ -3740,7 +3740,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects[0]?.message).not.toContain('@@coordinator');
 	});
 
-	test('long-horizon sender derives slug handle from display name when no alias exists', async () => {
+	test('long-horizon sender falls back to display-name handle only when no alias exists', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Slug');
 		const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Slug target');
 		const task = tasks[0];
@@ -3768,6 +3768,42 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		expect(tam.subSessionInjects[0]?.message).toContain(
 			'To reply, use: send_message with target "@plan-reviewer"'
 		);
+	});
+
+	test('long-horizon sender omits invalid fallback when name slug is empty', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Empty Slug'
+		);
+		const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Empty slug target');
+		const task = tasks[0];
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: task.workflowRunId,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-session-live',
+			status: 'idle',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async () => {},
+			myAgentName: '!!!',
+		});
+
+		await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'check empty slug',
+		});
+
+		expect(tam.subSessionInjects[0]?.message).toContain('─── Message from !!! ───');
+		expect(tam.subSessionInjects[0]?.message).toContain(
+			'To reply, use: send_message with target "@!!!"'
+		);
+		expect(tam.subSessionInjects[0]?.message).not.toContain('target "@space-agent"');
 	});
 
 	test('node_id by agent name routes directly to the live sub-session', async () => {
