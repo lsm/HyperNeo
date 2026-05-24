@@ -42,7 +42,7 @@ describe('formatAgentMessage', () => {
 		);
 	});
 
-	test('formats ad-hoc session messages with fallback reply instructions', () => {
+	test('formats ad-hoc session messages with explicit reply instructions', () => {
 		expect(
 			formatAgentMessage({
 				fromLevel: 'session-agent',
@@ -50,13 +50,14 @@ describe('formatAgentMessage', () => {
 				toLevel: 'node-agent',
 				body: 'Ad-hoc follow-up',
 				replyToSessionId: 'session-adhoc-42',
+				replyTargetHandle: '@session:session-adhoc-42',
 			})
 		).toBe(
 			'─── Message from space-member ───\n\n' +
 				'Ad-hoc follow-up\n\n' +
 				'<reply-routing replyToSessionId="session-adhoc-42" />\n\n' +
 				'─── Reply ───\n' +
-				'To reply, use: send_message with target "@space-member"'
+				'To reply, use: send_message with target "@session:session-adhoc-42"'
 		);
 	});
 

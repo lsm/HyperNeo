@@ -3566,6 +3566,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			pendingMessageQueue?: FakePendingMessageQueue;
 			myAgentName?: string;
 			myAgentNameAliases?: string[];
+			mySessionId?: string;
 		} = {}
 	) {
 		const fakeQueue = opts.pendingMessageQueue;
@@ -3582,6 +3583,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 			activateNode: opts.activateNode,
 			myAgentName: opts.myAgentName,
 			myAgentNameAliases: opts.myAgentNameAliases,
+			mySessionId: opts.mySessionId,
 			pendingMessageQueue: fakeQueue
 				? {
 						enqueue(input) {
@@ -3706,6 +3708,36 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(false);
 		expect(parsed.error).toContain('99999');
+	});
+
+	test('ad-hoc sender uses routable session target in reply instructions', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Session');
+		const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Session target');
+		const task = tasks[0];
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: task.workflowRunId,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-session-live',
+			status: 'idle',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async () => {},
+			mySessionId: 'member-session-42',
+		});
+
+		await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'ad-hoc question',
+		});
+
+		expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-member ───');
+		expect(tam.subSessionInjects[0]?.message).toContain(
+			'To reply, use: send_message with target "@session:member-session-42"'
+		);
 	});
 
 	test('long-horizon sender uses canonical handle alias without double prefix', async () => {

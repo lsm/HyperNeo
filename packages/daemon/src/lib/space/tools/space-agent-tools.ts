@@ -396,9 +396,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 	const outboundReplyTargetHandle = myAgentName
 		? (normalizeReplyTargetHandle(myAgentNameAliases?.[0] ?? '') ??
 			normalizeReplyTargetHandle(outboundSenderName))
-		: !mySessionId
-			? normalizeReplyTargetHandle(outboundSenderName)
-			: null;
+		: mySessionId
+			? `@session:${mySessionId}`
+			: normalizeReplyTargetHandle(outboundSenderName);
 
 	function requireGoalService() {
 		if (!config.goalService) throw new Error('Goal management not available');
