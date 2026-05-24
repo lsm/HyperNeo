@@ -125,14 +125,15 @@ const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo re
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
 	if (sourceAgentName === 'task-agent') return 'task-agent';
 	if (sourceAgentName === 'space-agent') return 'space-agent';
+	if (sourceAgentName === 'space-member') return 'session-agent';
 	return 'node-agent';
 }
 
 function expectedEnvelopeSenderName(sourceAgentName: string): string {
-	return sourceAgentName === 'space-agent' ? 'Space Agent' : sourceAgentName;
+	return sourceAgentName;
 }
 
-function hasAgentMessageEnvelope(
+export function hasAgentMessageEnvelopeForTest(
 	message: string,
 	sourceAgentName: string,
 	toLevel: AgentMessageLevel
@@ -1156,7 +1157,7 @@ export class TaskAgentManager {
 		for (const row of pending) {
 			const isSyntheticMessage = row.sourceAgentName !== 'human';
 			const message = isSyntheticMessage
-				? hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'node-agent')
+				? hasAgentMessageEnvelopeForTest(row.message, row.sourceAgentName, 'node-agent')
 					? row.message
 					: formatAgentMessage({
 							fromLevel: pendingSourceLevel(row.sourceAgentName),
@@ -1243,7 +1244,11 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const message = hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'space-agent')
+			const message = hasAgentMessageEnvelopeForTest(
+				row.message,
+				row.sourceAgentName,
+				'space-agent'
+			)
 				? row.message
 				: formatAgentMessage({
 						fromLevel: pendingSourceLevel(row.sourceAgentName),

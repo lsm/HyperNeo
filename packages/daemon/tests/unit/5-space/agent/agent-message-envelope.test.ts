@@ -3,6 +3,7 @@ import {
 	formatAgentMessage,
 	extractReplyToSessionId,
 } from '../../../../src/lib/space/agent-message-envelope.ts';
+import { hasAgentMessageEnvelopeForTest } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 describe('formatAgentMessage', () => {
 	test('formats node to space-agent messages with task context and reply instructions', () => {
@@ -169,5 +170,36 @@ describe('extractReplyToSessionId', () => {
 			'To reply, use: send_message_to_task\n\n' +
 			'<reply-routing replyToSessionId="session-adhoc-99" />';
 		expect(extractReplyToSessionId(message)).toBe('session-adhoc-99');
+	});
+});
+
+describe('hasAgentMessageEnvelopeForTest', () => {
+	test('recognizes queued space-agent envelopes with canonical sender label', () => {
+		const message = formatAgentMessage({
+			fromLevel: 'space-agent',
+			fromAgentName: 'space-agent',
+			toLevel: 'node-agent',
+			body: 'Queued message',
+			taskId: 'task-123',
+			nodeId: 'coder',
+			replyTargetHandle: '@coordinator',
+		});
+
+		expect(hasAgentMessageEnvelopeForTest(message, 'space-agent', 'node-agent')).toBe(true);
+		expect(hasAgentMessageEnvelopeForTest(message, 'Space Agent', 'node-agent')).toBe(false);
+	});
+
+	test('recognizes queued ad-hoc session envelopes from space-member', () => {
+		const message = formatAgentMessage({
+			fromLevel: 'session-agent',
+			fromAgentName: 'space-member',
+			toLevel: 'node-agent',
+			body: 'Queued ad-hoc message',
+			taskId: 'task-123',
+			nodeId: 'coder',
+			replyToSessionId: 'session-adhoc-42',
+		});
+
+		expect(hasAgentMessageEnvelopeForTest(message, 'space-member', 'node-agent')).toBe(true);
 	});
 });
