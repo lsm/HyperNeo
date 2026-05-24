@@ -17,6 +17,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
+import type { GoalAutomationService } from './goal-automation-service';
 
 export type PublicSpaceGoalUpdateParams = Pick<
 	UpdateSpaceGoalParams,
@@ -51,10 +52,16 @@ export interface SpaceGoalServiceDeps {
 	eventHub?: {
 		publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
 	};
+	goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
+	onGoalResumed?: (goalId: string, spaceId: string) => void;
 }
 
 export class SpaceGoalService {
 	constructor(private readonly deps: SpaceGoalServiceDeps) {}
+
+	setGoalAutomationService(service: Pick<GoalAutomationService, 'onTaskCompleted'>): void {
+		this.deps.goalAutomationService = service;
+	}
 
 	createGoal(params: CreateSpaceGoalParams, context?: SpaceGoalMutationContext): SpaceGoal {
 		this.validateCreate(params);
@@ -144,6 +151,9 @@ export class SpaceGoalService {
 			updated,
 			context
 		);
+		if (params.status === 'active' && existing.status !== 'active') {
+			this.deps.onGoalResumed?.(goalId, existing.spaceId);
+		}
 		return updated;
 	}
 
@@ -168,6 +178,7 @@ export class SpaceGoalService {
 		const updated = this.deps.goalRepo.update(goalId, { status: 'active', nextCheckInAt });
 		if (!updated) throw new Error(`Goal not found: ${goalId}`);
 		this.recordGoalEvent(updated, 'status_changed', goal, updated, context);
+		this.deps.onGoalResumed?.(goalId, goal.spaceId);
 		return updated;
 	}
 
@@ -257,6 +268,7 @@ export class SpaceGoalService {
 			sourceTaskId: taskId,
 			note: `Task reached terminal status: ${task.status}`,
 		});
+		if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
 		if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
 			return { goal: fresh, nextTask: null };
 		}

@@ -414,6 +414,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		blacklistedColumns: [],
 		description: 'Metric snapshots captured for Forge evolution scopes over time.',
 	},
+	{
+		tableName: 'goal_automation_cursors',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Forge automation cursor state for deduplicating goal-triggered retrospectives and external event runs.',
+	},
 	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
 	{
 		tableName: 'sessions',

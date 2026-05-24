@@ -17,6 +17,15 @@ export class SpaceGoalRepository {
 		private reactiveDb?: ReactiveDatabase
 	) {}
 
+	listAllActive(): SpaceGoal[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM space_goals WHERE status = 'active' ORDER BY updated_at DESC, id DESC`
+			)
+			.all() as Record<string, unknown>[];
+		return rows.map((r) => this.rowToGoal(r));
+	}
+
 	create(params: CreateSpaceGoalParams): SpaceGoal {
 		const id = generateUUID();
 		const now = Date.now();

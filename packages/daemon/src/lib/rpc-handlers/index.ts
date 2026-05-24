@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { EvolutionScope, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
@@ -61,8 +61,14 @@ import { GateOpenStateRepository } from '../../storage/repositories/gate-open-st
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { createConversationFrictionEvidenceHandler } from '../job-handlers/conversation-friction-evidence.handler';
+import { handleGoalAutomationExecute } from '../job-handlers/goal-automation-execute.handler';
+import {
+	GoalAutomationService,
+	readAutomationPolicyForScope,
+} from '../space/goals/goal-automation-service';
 import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
 import {
+	GOAL_AUTOMATION_EXECUTE,
 	SPACE_CONVERSATION_FRICTION_ANALYZE,
 	SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
 	SPACE_WORKFLOW_RUN_SYNC_COMMITS,
@@ -80,6 +86,7 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
@@ -108,6 +115,7 @@ import { EvolutionEpisodeService } from '../space/evolution-episode-service';
 import { EvolutionScopeService } from '../space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../space/evolution-trace-evidence-service';
 import { ScheduleService } from '../space/schedule/schedule-service';
+import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils';
 import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
@@ -118,6 +126,145 @@ import {
 	type ExternalEventExtensionManager,
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
+
+export function validateGoalAutomationSelfNagPolicy(params: {
+	policy?: EvolutionScope['policy'];
+}): void {
+	const policy = readAutomationPolicyForScope({
+		policy: params.policy,
+	} as EvolutionScope);
+	const expression = policy.selfNagCronExpression;
+	if (!expression) return;
+	if (!isValidCronExpression(expression)) {
+		throw new Error(`Invalid cron expression: ${expression}`);
+	}
+	const timezone = policy.selfNagTimezone ?? 'UTC';
+	if (getNextRunAt(expression, timezone) === null) {
+		throw new Error(`Invalid timezone or cron expression for self-nag schedule: ${timezone}`);
+	}
+}
+
+export function syncGoalAutomationSelfNagScheduleForScope(params: {
+	goalRepo: SpaceGoalRepository;
+	scheduleService: ScheduleService;
+	scope: EvolutionScope;
+	db?: import('bun:sqlite').Database;
+}): void {
+	const { goalRepo, scheduleService, scope, db } = params;
+	const run = () => {
+		const policy = readAutomationPolicyForScope(scope);
+		// Find all automation schedules for this scope across any goal, including
+		// completed ones (so reconciliation can recreate after goal reactivation).
+		const allScopeSchedules = scheduleService
+			.listSchedules(scope.spaceId)
+			.filter(
+				(schedule) =>
+					schedule.createdByAgent === 'goal-automation-service' &&
+					readSelfNagScheduleScopeId(schedule) === scope.id
+			);
+		// Pause any active schedule whose goalId no longer matches the current scope
+		// goal (e.g. scope was reassigned from goal A to goal B).
+		for (const sched of allScopeSchedules) {
+			if (
+				sched.status === 'active' &&
+				sched.goalId !== null &&
+				sched.goalId !== scope.spaceGoalId
+			) {
+				try {
+					scheduleService.pauseSchedule(sched.id);
+				} catch {
+					// Schedule may have been concurrently modified; best-effort.
+				}
+			}
+		}
+
+		// If scope has no goal linkage or goal is inactive, pause active schedules
+		// and stop — reconciliation on goal relink/resume will re-enable.
+		if (!scope.spaceGoalId) {
+			for (const sched of allScopeSchedules) {
+				if (sched.status === 'active') {
+					try {
+						scheduleService.pauseSchedule(sched.id);
+					} catch {
+						// Best-effort.
+					}
+				}
+			}
+			return;
+		}
+		const goal = goalRepo.getById(scope.spaceGoalId);
+		if (!goal || goal.status !== 'active') return;
+		const scopeLabel = `scope:${scope.id}`;
+		// Find the current-goal schedule (excluding completed — reconciliation recreates those).
+		const existing = allScopeSchedules
+			.filter((schedule) => schedule.goalId === goal.id)
+			.find((schedule) => schedule.status !== 'completed');
+		if (!policy.selfNagCronExpression) {
+			if (existing?.status === 'active') scheduleService.pauseSchedule(existing.id);
+			return;
+		}
+		if (existing) {
+			// Update cron/timezone *before* resume so resumeSchedule computes
+			// nextRunAt from the new (valid) trigger config instead of the
+			// stale config persisted when the schedule was paused.
+			scheduleService.updateSchedule(existing.id, {
+				title: `Forge self-nag: ${goal.title}`,
+				description: `Run Forge automation for goal: ${goal.title}`,
+				priority: goal.priority,
+				labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
+				cronExpression: policy.selfNagCronExpression,
+				timezone: policy.selfNagTimezone ?? 'UTC',
+			});
+			if (existing.status === 'paused') scheduleService.resumeSchedule(existing.id);
+			return;
+		}
+		scheduleService.createGoalSchedule({
+			spaceId: goal.spaceId,
+			goalId: goal.id,
+			title: `Forge self-nag: ${goal.title}`,
+			description: `Run Forge automation for goal: ${goal.title}`,
+			priority: goal.priority,
+			labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
+			metadata: goalAutomationSelfNagMetadata(scope.id),
+			triggerType: 'cron',
+			cronExpression: policy.selfNagCronExpression,
+			timezone: policy.selfNagTimezone ?? 'UTC',
+			createdByAgent: 'goal-automation-service',
+		});
+	}; // end run()
+	if (db) {
+		db.transaction(run)();
+	} else {
+		run();
+	}
+}
+
+export function readSelfNagScheduleScopeId(schedule: {
+	metadata?: Record<string, unknown>;
+}): string | null {
+	const scopeId = schedule.metadata?.goalAutomationScopeId;
+	return typeof scopeId === 'string' && scopeId.trim() ? scopeId : null;
+}
+
+function goalAutomationSelfNagMetadata(scopeId: string): Record<string, unknown> {
+	return { goalAutomationKind: 'self_nag', goalAutomationScopeId: scopeId };
+}
+
+function createGoalAutomationSelfNagSchedules(
+	goalRepo: SpaceGoalRepository,
+	scheduleService: ScheduleService,
+	evolutionRepo: EvolutionRepository
+): void {
+	for (const goal of goalRepo.listAllActive()) {
+		for (const scope of evolutionRepo.listScopes({ spaceId: goal.spaceId, spaceGoalId: goal.id })) {
+			try {
+				syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+			} catch (err) {
+				log.warn('could not create Forge self-nag schedule', err);
+			}
+		}
+	}
+}
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -249,6 +396,7 @@ export interface RPCHandlerSetupResult {
 	taskAgentManager: TaskAgentManager;
 	spaceWorktreeManager: SpaceWorktreeManager;
 	spaceGoalService: SpaceGoalService;
+	goalAutomationService: GoalAutomationService;
 }
 
 /**
@@ -374,6 +522,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		eventHub: {
 			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
 		},
+		onGoalResumed: (goalId, spaceId) => {
+			for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
+				try {
+					syncGoalAutomationSelfNagScheduleForScope({
+						goalRepo: spaceGoalRepo,
+						scheduleService,
+						scope,
+						db: deps.db.getDatabase(),
+					});
+				} catch (err) {
+					log.warn('could not sync self-nag schedule on goal resume', err);
+				}
+			}
+		},
 	});
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
@@ -402,6 +564,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		traceEvidenceService: evolutionTraceEvidenceService,
 		jobQueue: deps.jobQueue,
 	});
+	const goalAutomationService = new GoalAutomationService({
+		goalRepo: spaceGoalRepo,
+		taskRepo: spaceTaskRepo,
+		evolutionRepo: deps.db.evolution,
+		cursorRepo: deps.db.goalAutomationCursors,
+		jobQueue: deps.jobQueue,
+		evolutionScopeService,
+	});
+	spaceGoalService.setGoalAutomationService(goalAutomationService);
+	createGoalAutomationSelfNagSchedules(spaceGoalRepo, scheduleService, deps.db.evolution);
+	deps.internalEventBus.subscribe(
+		'externalEvent.published',
+		(event) => {
+			goalAutomationService.onExternalEventPublished(event);
+		},
+		{ subscriberName: 'goal-automation-service' }
+	);
 
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
 	const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
@@ -497,7 +676,37 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
 		},
 	});
-	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService);
+	deps.jobProcessor.register(GOAL_AUTOMATION_EXECUTE, async (job) =>
+		handleGoalAutomationExecute(job, {
+			db: deps.db.getDatabase(),
+			goalRepo: spaceGoalRepo,
+			taskRepo: spaceTaskRepo,
+			evolutionRepo: deps.db.evolution,
+			cursorRepo: deps.db.goalAutomationCursors,
+			episodeService: evolutionEpisodeService,
+			taskCreatedEventHub: {
+				publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
+			},
+		})
+	);
+	setupEvolutionHandlers(deps.messageHub, evolutionScopeService, evolutionEpisodeService, {
+		beforeScopeCreate: (params) => {
+			validateGoalAutomationSelfNagPolicy(params);
+		},
+		beforeScopeUpdate: (existing, params) => {
+			validateGoalAutomationSelfNagPolicy({
+				policy: params.policy ? { ...existing.policy, ...params.policy } : existing.policy,
+			});
+		},
+		onScopeSaved: (scope) => {
+			syncGoalAutomationSelfNagScheduleForScope({
+				goalRepo: spaceGoalRepo,
+				scheduleService,
+				scope,
+				db: deps.db.getDatabase(),
+			});
+		},
+	});
 
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
@@ -796,5 +1005,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		taskAgentManager,
 		spaceWorktreeManager,
 		spaceGoalService,
+		goalAutomationService,
 	};
 }

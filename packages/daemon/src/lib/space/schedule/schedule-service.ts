@@ -33,6 +33,7 @@ export interface CreateScheduleInput {
 	priority?: SpaceTaskPriority;
 	preferredWorkflowId?: string | null;
 	labels?: string[];
+	metadata?: Record<string, unknown>;
 	triggerType: TaskScheduleTriggerType;
 	cronExpression?: string | null;
 	runAt?: number | null;
@@ -157,6 +158,7 @@ export class ScheduleService {
 				priority: input.priority,
 				preferredWorkflowId: input.preferredWorkflowId,
 				labels: input.labels,
+				metadata: input.metadata,
 				triggerType: input.triggerType,
 				cronExpression: input.cronExpression,
 				runAt: input.runAt,
