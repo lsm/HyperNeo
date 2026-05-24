@@ -570,6 +570,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupSpaceTaskHandlers(
 		deps.messageHub,
 		deps.spaceManager,
+		spaceWorkflowManager,
 		spaceTaskManagerFactory,
 		deps.internalEventBus,
 		spaceRuntimeService,

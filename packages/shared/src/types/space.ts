@@ -707,6 +707,11 @@ export interface SpaceTask {
 	/** ID of the EvolutionScope this task explicitly contributes evidence to. */
 	evolutionScopeId?: string | null;
 	/**
+	 * Per-task workflow node-agent model overrides. Keyed as `${workflowNodeId}:${agentName}`.
+	 * Applies only to this task's workflow run; does not mutate the workflow template.
+	 */
+	workflowModelOverrides?: Record<string, string>;
+	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
 	 */
@@ -976,6 +981,8 @@ export interface UpdateSpaceTaskParams {
 	reportedStatus?: SpaceReportedStatus | null;
 	/** Agent-reported summary (written to `task.reportedSummary`); null to clear */
 	reportedSummary?: string | null;
+	/** Per-task workflow node-agent model overrides; null clears all overrides. */
+	workflowModelOverrides?: Record<string, string> | null;
 	/**
 	 * Session ID of the post-approval executor; null to clear.
 	 * Schema only in PR 1 of the post-approval refactor; no runtime consumer yet.
@@ -1001,6 +1008,8 @@ export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
 	goalId?: string | null;
 	/** ID of the EvolutionScope this task explicitly contributes evidence to; null to clear. */
 	evolutionScopeId?: string | null;
+	/** Per-task workflow node-agent model overrides; null clears all overrides. */
+	workflowModelOverrides?: Record<string, string> | null;
 }
 
 // ============================================================================

@@ -436,6 +436,20 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
 			get spaceStore() {
 				return {
 					tasks: mockTasks,
+					space: signal(null),
+					workflowRuns: signal([]),
+					workflowVersions: signal(new Map()),
+					nodeExecutions: signal([]),
+					ensureConfigData: vi.fn().mockResolvedValue(undefined),
+					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+					fetchWorkflowDetail: vi.fn().mockResolvedValue(null),
+					fetchEvolutionScope: vi.fn().mockResolvedValue(null),
+					updateTask: vi.fn().mockResolvedValue(undefined),
+					submitForReview: vi.fn().mockResolvedValue(undefined),
+					publishTask: vi.fn().mockResolvedValue(undefined),
+					workflows: signal([]),
+					goals: signal([]),
+					schedules: signal([]),
 				};
 			},
 		}));
@@ -464,6 +478,33 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
 		vi.doMock('../../../lib/utils', () => ({
 			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 		}));
+		vi.doMock('../../../lib/connection-manager', () => ({
+			connectionManager: {
+				getHub: () =>
+					Promise.resolve({
+						request: vi.fn(async (method: string) => {
+							if (method === 'models.list') return { models: [] };
+							return {};
+						}),
+					}),
+				getHubIfConnected: () => ({
+					request: vi.fn(async () => ({})),
+				}),
+			},
+		}));
+		vi.doMock('../visual-editor/WorkflowModelSelect', () => ({
+			WorkflowModelSelect: () => <div />,
+		}));
+		vi.doMock('../TaskStatusActions', () => ({
+			getTransitionActions: () => [],
+		}));
+		vi.doMock('../../../lib/router', () => ({
+			navigateToSpaceForge: vi.fn(),
+			navigateToSpaceGoals: vi.fn(),
+		}));
+		vi.doMock('../ui/Dropdown', () => ({
+			Dropdown: ({ children }: { children: unknown }) => <>{children}</>,
+		}));
 
 		const { TaskAuxiliaryPanel } = await import('../TaskAuxiliaryPanel');
 		return render(<TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab={tab} />);
@@ -484,12 +525,13 @@ describe('TaskAuxiliaryPanel — artifacts tab', () => {
 
 		expect(queryByRole('button', { name: 'Artifacts' })).toBeNull();
 		expect(queryByTestId('artifacts-panel')).toBeNull();
-		expect(getByTestId('timeline-panel')).toBeTruthy();
+		// Without a run, the artifacts tab is unavailable and normalizeTab
+		// falls back to 'details' (the new default).
 		expect(mockRightPanelTargetSignal.value).toEqual({
 			type: 'task',
 			spaceId: 'space-1',
 			taskId: 'task-1',
-			tab: 'timeline',
+			tab: 'details',
 		});
 	});
 
