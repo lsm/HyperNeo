@@ -2,18 +2,23 @@
 
 ## Executive summary
 
-Recommendation: implement a NeoKai-native `compressed` output mode as a prompt-only MVP for Space task agents, then measure before adapting Caveman tools.
+Recommendation: implement a NeoKai-native `compressed` output mode as a prompt-only MVP for all agent sessions — user chat, Space tasks, and SDK subagents — then measure before adapting Caveman tools.
 
 Do **not** bundle Caveman wholesale. Caveman's highest-value primitive is a small style contract: terse status, no filler, code/identifier preservation, short failures, and normal-prose escape hatches for safety/approval/clarity. Its hooks, installer, statusline, memory compressor, MCP shrink proxy, and branded slash commands solve Claude Code/plugin distribution problems that do not map cleanly to NeoKai's runtime.
 
-Best first integration point: add output-mode prompt injection in `buildCustomAgentSystemPrompt()` or task-message composition in `packages/daemon/src/lib/space/agents/custom-agent.ts`, with persisted config on `SpaceAgent` and optional workflow-slot override later.
+Best first integration point: add output-mode prompt injection in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/space/agents/custom-agent.ts`. Space agents still need per-agent overrides, but the mechanism should apply to every `AgentSession` created by NeoKai.
 
-Target: 50%+ output-token reduction on representative Space agent outputs without lower review/coding/research quality.
+Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, Space task, and subagent outputs without lower task quality.
 
 ## Evidence reviewed
 
 - Local Caveman plugin installation under `~/.claude/plugins/marketplaces/caveman`.
 - Existing NeoKai research note: `docs/research/token-efficiency/reports/05-caveman.md`.
+- NeoKai general session prompt path:
+  - `packages/daemon/src/lib/agent/agent-session.ts`
+  - `packages/daemon/src/lib/agent/query-options-builder.ts`
+  - `packages/shared/src/types/sdk-config.ts`
+  - `packages/shared/src/types/settings.ts`
 - NeoKai Space agent prompt path:
   - `packages/daemon/src/lib/space/agents/custom-agent.ts`
   - `packages/daemon/src/lib/space/agents/seed-agents.ts`
@@ -78,13 +83,14 @@ This keeps token-saving semantics without Caveman persona or mode complexity.
 
 ### MVP: prompt-only
 
-Prompt-only is enough for first adoption because NeoKai already centralizes Space agent behavior in runtime prompt assembly:
+Prompt-only is enough for first adoption because NeoKai centralizes SDK session startup in `AgentSession` and `QueryOptionsBuilder`:
 
-- `buildCustomAgentSystemPrompt()` returns behavior prompt from `SpaceAgent.customPrompt` plus slot override.
-- `buildCustomAgentTaskMessage()` builds factual task/workflow/space context.
-- Preset prompts in `seed-agents.ts` are verbose but controlled data.
+- `AgentSessionInit` is the common creation contract for worker, chat, Space, and task sessions.
+- `QueryOptionsBuilder.buildSystemPrompt()` maps session config to SDK `systemPrompt` before the query starts.
+- `SettingsManager.prepareSDKOptions()` already writes file-only display settings such as SDK `outputStyle` into `.claude/settings.local.json`.
+- Space `buildCustomAgentSystemPrompt()` should supply only Space-agent behavior; generic output compression should sit upstream so user chat and subagents get the same mechanism.
 
-A native output-style fragment can be appended after preset/custom prompt, or represented as a dedicated contract block that user prompts cannot override.
+A native output-style fragment can be appended to the effective session system prompt, or represented as a dedicated contract block that user prompts cannot override.
 
 Benefits:
 
@@ -115,22 +121,26 @@ Do not adapt Caveman's installer/hooks/statusline directly; NeoKai has its own d
 
 ## Where output mode should live
 
-Recommended order:
+Output mode should be a generic session feature with layered overrides:
 
-1. **Per-agent default** (`SpaceAgent.outputMode?: 'normal' | 'compressed'`)
-   - Fits presets: Coder/Research/Reviewer/QA can default compressed in high-efficiency Spaces.
-   - Users can edit agent behavior once and reuse across tasks.
-2. **Per-task override**
-   - Useful for one-off research or debugging where full prose is needed.
-   - Should override agent default for task run only.
+1. **User-level default** (`GlobalSettings.outputMode?: 'normal' | 'compressed'`)
+   - Applies to all new sessions when no narrower override exists.
+   - Recommended default: `normal` for non-Space sessions to avoid surprising chat verbosity changes.
+2. **Per-session creation option** (`SessionConfig.outputMode` / `AgentSessionInit.outputMode`)
+   - Applies to user chat, ad-hoc worker sessions, Space chat, task agents, and any other session creator.
+   - Needed for a per-session toggle in UI.
 3. **Per-space default**
-   - Useful bulk preference for new agents/tasks.
+   - Useful bulk preference for new Space tasks/agents.
    - Should not silently rewrite existing agent behavior.
-4. **Workflow slot override**
+4. **Per-agent default** (`SpaceAgent.outputMode?: 'normal' | 'compressed'`)
+   - Fits Coder/Research/Reviewer/QA agents that should be terse in high-efficiency Spaces.
+   - Space agents can opt into `compressed` while user chat remains `normal`.
+5. **Workflow slot override**
    - Useful for Reviewer slot being compressed while Coder remains normal.
-   - Add after agent-level MVP.
+6. **Per-task override**
+   - Useful for one-off research/debugging where full prose is needed.
 
-Avoid global app-only mode. Token-efficiency preference varies by Space, workflow, and task.
+Avoid a Space-only implementation. Token-efficiency preference varies by chat/session/workflow/task, but the runtime mechanism should be shared by all agent sessions.
 
 ## Override precedence
 
@@ -138,11 +148,12 @@ Use deterministic precedence so compressed mode can be reasoned about before imp
 
 | Precedence | Source | Purpose |
 |---:|---|---|
-| 1 | Task-run override | One-off operator choice for this execution. |
+| 1 | Task-run/session override | One-off operator choice for this execution or newly created session. |
 | 2 | Workflow-slot override | Workflow author can make specific slots terse or normal. |
-| 3 | Agent default | Reusable preference on `SpaceAgent`. |
+| 3 | Space agent default | Reusable preference on `SpaceAgent`. |
 | 4 | Space default | Initial/inherited default for agents/tasks in a Space. |
-| 5 | App default | Fallback, `normal`. |
+| 5 | User-level setting | Global preference from SettingsManager for all new sessions. |
+| 6 | App default | Fallback, `normal`. |
 
 Resolution rule: highest non-null source wins. Explicit `normal` must override inherited `compressed`; do not treat it as absent. Persist provenance in debug metadata where possible so output-style surprises are explainable.
 
@@ -156,32 +167,61 @@ Minimal native behavior:
 export type AgentOutputMode = 'normal' | 'compressed';
 ```
 
-2. Add optional fields:
+2. Add generic session/global fields:
 
-- `SpaceAgent.outputMode?: AgentOutputMode`
+- `GlobalSettings.outputMode?: AgentOutputMode`
+- `SessionConfig.outputMode?: AgentOutputMode | null`
+- `AgentSessionInit.outputMode?: AgentOutputMode | null`
+
+3. Add Space-specific override fields:
+
+- `SpaceAgent.outputMode?: AgentOutputMode | null`
 - `CreateSpaceAgentParams.outputMode?: AgentOutputMode | null`
 - `UpdateSpaceAgentParams.outputMode?: AgentOutputMode | null`
 - later: workflow slot override and task-run override.
 
-3. Add DB column:
+4. Add DB columns where persisted:
 
 ```sql
 ALTER TABLE space_agents ADD COLUMN output_mode TEXT DEFAULT NULL
   CHECK(output_mode IS NULL OR output_mode IN ('normal', 'compressed'));
 ```
 
-4. Inject prompt fragment in `buildCustomAgentSystemPrompt()` after `resolveCustomAgentPrompt()` output.
+Session config can persist `outputMode` inside existing session config JSON if no dedicated column exists. User-level setting belongs in SettingsManager/global settings storage.
 
-Reason: output style is behavioral, not factual task context. System prompt path already holds persona/procedure and is covered by prompt provenance.
+5. Resolve effective output mode during session creation or query options build, using override precedence above.
 
-5. Preserve escape hatch explicitly in prompt.
+6. Inject prompt fragment in the general prompt-building path (`QueryOptionsBuilder.buildSystemPrompt()` or a helper it calls) so every SDK query receives the same output contract when effective mode is `compressed`.
 
-6. Add tests around prompt builder and repository serialization.
+Reason: output style is behavioral and agent-agnostic. Space `buildCustomAgentSystemPrompt()` should not be the primary injection point because user chat, ad-hoc workers, and subagents would be missed.
 
-7. Add UI toggle only after backend exists:
+7. Preserve escape hatch explicitly in prompt.
 
-- Agent editor: Output mode select (`Default`, `Normal`, `Compressed`).
+8. Add tests around mode resolution, prompt builder injection for custom-string and Claude Code preset prompts, SettingsManager/global setting serialization, session config persistence, and SpaceAgent override serialization.
+
+9. Add UI only after backend exists:
+
+- Settings UI: default output mode (`Normal`, `Compressed`).
+- Session creation / session tools UI: per-session toggle.
+- Agent editor: Space-agent override (`Default`, `Normal`, `Compressed`).
 - Task-run advanced option later.
+
+## SDK `outputStyle` interaction
+
+The Claude Agent SDK type definitions expose `outputStyle?: string` in settings and runtime result metadata includes `output_style` / `available_output_styles`. NeoKai already has `FileOnlySettings.outputStyle?: string` and `SettingsManager.prepareSDKOptions()` writes it to `.claude/settings.local.json`.
+
+Compressed mode should not blindly reuse SDK `outputStyle` as the only mechanism yet:
+
+- SDK `outputStyle` appears to be a named Claude Code display/response style loaded from settings, not a NeoKai-owned typed contract with guaranteed prompt text.
+- `QueryOptionsBuilder` currently does not pass an `outputStyle` option directly; it writes file-only settings before SDK startup.
+- NeoKai needs deterministic behavior across user chat, Space tasks, and subagents, including custom system prompts and providers/bridges where SDK style support may vary.
+
+Recommended approach:
+
+1. Keep NeoKai `outputMode` as a first-class typed setting (`normal`/`compressed`).
+2. Implement compression via explicit prompt fragment injection in the common session prompt path.
+3. Optionally map `compressed` to SDK `outputStyle` later only if SDK supports user-defined styles or a built-in concise style with compatible semantics.
+4. If both exist, NeoKai prompt fragment wins for the safety/clarity contract; SDK `outputStyle` can be treated as additive display preference.
 
 ## Measurement plan
 
@@ -204,15 +244,18 @@ Primary target: >=50% median `output_tokens` reduction with no quality regressio
 
 ### Representative task set
 
-Run identical tasks in `normal` and `compressed` modes:
+Run identical tasks in `normal` and `compressed` modes across session types:
 
-1. Coder: small bug fix with unit test.
-2. Coder: multi-file refactor with verification.
-3. Reviewer: review PR diff and post verdict.
-4. Research: investigate package/architecture and write doc.
-5. QA: run failing test shard and report failure cause.
-6. General: locate code path and summarize integration points.
-7. Safety/approval case: destructive git/database operation requiring clear warning.
+1. User chat: answer architecture/codebase question.
+2. User chat: debug failed command output and recommend next step.
+3. Ad-hoc worker session: locate code path and summarize integration points.
+4. Space Coder task: small bug fix with unit test.
+5. Space Coder task: multi-file refactor with verification.
+6. Space Reviewer task: review PR diff and post verdict.
+7. Space Research task: investigate package/architecture and write doc.
+8. Space QA task: run failing test shard and report failure cause.
+9. SDK subagent: exploration/review receipt injected back into parent context.
+10. Safety/approval case: destructive git/database operation requiring clear warning.
 
 ### Method
 
@@ -240,7 +283,7 @@ Existing NeoKai note (`05-caveman.md`) flags limitations:
 - Benchmarks do not prove correctness preservation.
 - Savings depend on verbose output-heavy workflows.
 
-NeoKai target should be more conservative: 50%+ output-token reduction in Space task outputs, quality-neutral.
+NeoKai target should be more conservative: 50%+ output-token reduction across user chat, ad-hoc worker, Space task, and subagent outputs, quality-neutral.
 
 ## Licensing and maintenance
 
@@ -263,9 +306,9 @@ Adopt minimal native compressed output mode.
 Do now:
 
 - Prompt fragment only.
-- Per-agent persistence first.
+- Generic all-session mechanism first: user-level default + per-session override, with SpaceAgent override layered on top for Space workflows.
 - Escape hatch required.
-- Measurement harness/report before defaulting presets to compressed.
+- Measurement harness/report before defaulting any preset or global setting to compressed.
 
 Defer:
 
@@ -279,8 +322,8 @@ Defer:
 ## Acceptance criteria mapping
 
 - Caveman reviewed: yes; prompt, hooks, stats, memory compression, MCP shrink, Cavecrew, licensing.
-- Recommendation: prompt-only native compressed mode first; selected tool/skill ideas later.
-- Minimal native behavior: recommended; no wholesale bundle.
+- Recommendation: prompt-only native compressed mode first for all agent sessions; selected tool/skill ideas later.
+- Minimal native behavior: recommended; no wholesale bundle; use common session-init/query-options path rather than Space-only prompt injection.
 - Escape hatch: required in prompt fragment and tests.
 - Measurement: actual NeoKai measurements deferred to implementation because this research PR does not add runnable output-mode behavior. This document provides a concrete paired-task plan targeting 50%+ output reduction without quality regression; implementation acceptance should require recorded normal-vs-compressed results before enabling defaults.
 
@@ -295,4 +338,6 @@ Defer:
 - NeoKai Space agent prompt builder: `packages/daemon/src/lib/space/agents/custom-agent.ts`
 - NeoKai preset agents: `packages/daemon/src/lib/space/agents/seed-agents.ts`
 - NeoKai Space agent types: `packages/shared/src/types/space.ts`
+- NeoKai generic session config types: `packages/shared/src/types/sdk-config.ts`
+- NeoKai settings/output style types: `packages/shared/src/types/settings.ts`
 - NeoKai context usage extraction: `packages/daemon/src/lib/agent/context-fetcher.ts`
