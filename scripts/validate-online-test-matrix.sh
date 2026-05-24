@@ -154,7 +154,7 @@ check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
-KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp providers rewind rpc sandbox sdk space websocket"
+KNOWN_DIRS="agent benchmark components convo coordinator cross-provider features git glm lifecycle mcp providers rewind rpc sandbox sdk space websocket"
 
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue
