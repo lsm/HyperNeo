@@ -136,14 +136,17 @@ CREATE TABLE prompt_injections (
 	)),
 	scope_id TEXT,
 	-- scope_id must be NULL only for global records and NOT NULL for every scoped record.
-	-- Enforce in repository validation or with CHECK(scope_type = 'global' OR scope_id IS NOT NULL).
+	CHECK(
+		(scope_type = 'global' AND scope_id IS NULL)
+		OR (scope_type <> 'global' AND scope_id IS NOT NULL)
+	),
 	channel TEXT NOT NULL CHECK(channel IN (
 		'system.prepend', 'system.append', 'agent.prompt.append', 'user.prepend'
 	)),
 	-- MVP repository validation rejects stored user.prepend records until message-level rendering exists.
 	priority INTEGER NOT NULL,
-	enabled INTEGER NOT NULL DEFAULT 1,
-	content TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+	content TEXT NOT NULL CHECK(length(content) > 0),
 	source_kind TEXT NOT NULL CHECK(source_kind IN (
 		'builtin', 'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
 	)),
