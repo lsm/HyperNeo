@@ -156,14 +156,16 @@ Recommended scope order for resolving same-template enable/suppress records:
 
 | Precedence | Scope | Purpose |
 |---:|---|---|
-| 1 | Task/session | One-off operator choice for this execution or newly created session. |
-| 2 | Workflow node/slot | Workflow author can make specific node-agent slots terse or normal. |
-| 3 | Space agent | Reusable preference for a specific `SpaceAgent`. |
-| 4 | Space | Bulk preference for Space sessions/agents when no narrower record exists. |
-| 5 | Global/user | User-level preference for all new matching sessions. |
-| 6 | App default | No compressed injection active. |
+| 1 | Task | One-off operator choice for this task/run. |
+| 2 | Session | One chat/worker/session override. |
+| 3 | Workflow node/slot | Workflow author can make specific node-agent slots terse or normal. |
+| 4 | Workflow | Workflow author can set a default for every slot in one workflow. |
+| 5 | Space agent | Reusable preference for a specific `SpaceAgent`. |
+| 6 | Space | Bulk preference for Space sessions/agents when no narrower record exists. |
+| 7 | Global/user | User-level preference for all new matching sessions. |
+| 8 | App default | No compressed injection active. |
 
-Narrower scope wins over broader scope for activation conflicts. Normal mode is represented by absence of the compressed injection or by a narrower suppressing injection record such as `constraints.suppresses: ['neokai.output-mode.compressed']`. Persist provenance in debug metadata so output-style surprises are explainable.
+Narrower scope wins over broader scope for activation conflicts: task wins over session, and workflow-node wins over workflow. Normal mode is represented by absence of the compressed injection or by a narrower suppressing injection record such as `constraints.suppresses: ['neokai.output-mode.compressed']`. Persist provenance in debug metadata so output-style surprises are explainable.
 
 Key inheritance behavior: if a Space-scoped compressed-output record exists and a new SpaceAgent has no Space-agent-scoped record, sessions for that agent inherit the Space record dynamically. If the Space record is later disabled or suppressed, that agent follows the new Space behavior until it gets its own scoped record.
 
@@ -185,6 +187,7 @@ Minimal native behavior now depends on the generic prompt injection registry spe
 - session row for one chat/worker session
 - space row for Space-wide default
 - space-agent row for reusable Space agent behavior
+- workflow row for workflow-wide default/suppression
 - workflow-node row for one workflow slot
 - task row for one task/run
 
@@ -199,6 +202,9 @@ Do **not** add `AgentOutputMode`, `GlobalSettings.outputMode`, `SessionConfig.ou
 
 -- Space default:
 (id = 'space.<space-id>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'space', scope_id = '<space-id>', enabled = 1)
+
+-- Workflow-wide default:
+(id = 'workflow.<workflow-id>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow', scope_id = '<workflow-id>', enabled = 1)
 
 -- Workflow-slot override:
 (id = 'workflow-node.<workflow-id>.<node-id>.<agent-name>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow_node', scope_id = '<workflow-id>:<node-id>:<agent-name>', enabled = 1)
@@ -230,7 +236,7 @@ Reason: output style is behavioral and agent-agnostic. Space `buildCustomAgentSy
 - Session creation / session tools UI: session-scoped compressed-output toggle.
 - Space settings: Space-scoped compressed-output toggle.
 - Agent editor: Space-agent-scoped compressed-output toggle.
-- Workflow editor: workflow-node-scoped compressed-output toggle.
+- Workflow editor: workflow-scoped and workflow-node-scoped compressed-output toggles.
 - Task-run advanced option later.
 - Debug/preview endpoint or panel showing applied/suppressed prompt injections.
 
@@ -258,7 +264,7 @@ Recommended approach:
 Measure per task pair:
 
 - Output tokens: sum `usage.output_tokens` across all SDK result turns in the run, or use equivalent session-level cumulative usage metadata.
-- Input tokens: sum `usage.input_tokens` across all SDK result turns in the run, plus context API usage where available.
+- Input tokens: use one source of truth per run: either sum `usage.input_tokens` across all SDK result turns or use equivalent session-level cumulative usage/context metadata. Do not add both together.
 - Wall time: session start/end timestamps if needed.
 - Quality rubric score:
   - Task completed? yes/no
@@ -335,7 +341,7 @@ Do now:
 
 - Generic prompt injection registry/composer/renderer first.
 - Built-in compressed output injection template activated by scoped `prompt_injections` records.
-- Generic all-session mechanism: global, session, Space, SpaceAgent, workflow-node, and task scopes all use same registry path.
+- Generic all-session mechanism: global, session, Space, SpaceAgent, workflow, workflow-node, and task scopes all use same registry path.
 - Top-level system prompt rendering plus scoped subagent prompt rendering.
 - Escape hatch required.
 - Measurement harness/report before defaulting any preset or global setting to compressed.

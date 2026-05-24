@@ -537,6 +537,7 @@ This is critical for support and prompt-order debugging.
 
 - Add Space settings behavior that manages `scope_type = 'space'` records; no `spaces.output_mode` migration.
 - Add SpaceAgent editor behavior that manages `scope_type = 'space_agent'` records; no `SpaceAgent.outputMode` field.
+- Add workflow behavior that preserves prompt injection refs/records in workflow templates and materializes `scope_type = 'workflow'` records for workflow-wide defaults/suppression.
 - Add workflow-node slot behavior that preserves prompt injection refs/records in workflow templates and materializes `scope_type = 'workflow_node'` records.
 - Add task-run/session override records when task-run options are implemented.
 - Tests for inheritance edge cases: Space compressed + agent no record inherits compressed; SpaceAgent suppress overrides Space compressed; changing Space record affects agents with no narrower records; workflow-node compressed applies only to that slot and its SDK subagents.
