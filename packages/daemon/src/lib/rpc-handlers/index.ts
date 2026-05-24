@@ -608,7 +608,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.internalEventBus,
 		deps.spaceAgentManager,
-		deps.spaceManager
+		deps.spaceManager,
+		deps.db
 	);
 	setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager);
 

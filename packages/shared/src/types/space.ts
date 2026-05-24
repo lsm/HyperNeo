@@ -1219,6 +1219,31 @@ export interface SpaceAgent {
 /**
  * Parameters for creating a new SpaceAgent
  */
+export interface SpaceAgentPromotionProfile {
+	responsibility: string;
+	standingInstructions: string;
+	autonomy: string;
+	managedGoals: string;
+	managedScopes: string;
+	reminders: string;
+	eventSubscriptions: string;
+	standingContext: string;
+}
+
+export interface SpaceAgentPromotionDraft {
+	sourceSessionId: string;
+	sourceSessionTitle: string;
+	name: string;
+	description?: string;
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+	provider?: string;
+	customPrompt: string;
+	tools?: string[];
+	settingSources?: SettingSource[];
+	profile: SpaceAgentPromotionProfile;
+}
+
 export interface CreateSpaceAgentParams {
 	spaceId: string;
 	name: string;
