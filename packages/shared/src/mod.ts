@@ -41,5 +41,17 @@ export {
 	createLogger,
 	configureLogger,
 	getLoggerConfig,
+	subscribeToStructuredLogs,
+	clearStructuredLogSubscribers,
+	emitStructuredLogEvent,
+	installConsoleLogCapture,
 } from './logger.ts';
-export type { LoggerConfig } from './logger.ts';
+export type {
+	LoggerConfig,
+	StructuredLogContext,
+	StructuredLogEvent,
+	StructuredLogLevel,
+	StructuredLogProcessMetadata,
+	StructuredLogSource,
+	StructuredLogSubscriber,
+} from './logger.ts';

@@ -1,5 +1,14 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Logger, createLogger, configureLogger, getLoggerConfig, LogLevel } from '../src/logger.ts';
+import {
+	Logger,
+	createLogger,
+	configureLogger,
+	getLoggerConfig,
+	LogLevel,
+	clearStructuredLogSubscribers,
+	installConsoleLogCapture,
+	subscribeToStructuredLogs,
+} from '../src/logger.ts';
 
 describe('Logger', () => {
 	let originalEnv: Record<string, string | undefined>;
@@ -36,6 +45,7 @@ describe('Logger', () => {
 	});
 
 	afterEach(() => {
+		clearStructuredLogSubscribers();
 		// Restore environment
 		process.env = originalEnv;
 
@@ -45,6 +55,51 @@ describe('Logger', () => {
 			filter: ['*'],
 			excludeFilter: [],
 			timestamps: false,
+		});
+	});
+
+	describe('structured log events', () => {
+		test('emits structured events for logger output', () => {
+			const events: unknown[] = [];
+			subscribeToStructuredLogs((event) => events.push(event));
+			const logger = createLogger('test:structured');
+
+			logger.warn('warning happened', { spaceId: 'space-1' });
+
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({
+				level: 'warn',
+				message: 'warning happened {"spaceId":"space-1"}',
+				module: 'test:structured',
+				source: 'logger',
+				context: { spaceId: 'space-1' },
+			});
+		});
+
+		test('does not emit for filtered logger output', () => {
+			configureLogger({ level: LogLevel.ERROR });
+			const events: unknown[] = [];
+			subscribeToStructuredLogs((event) => events.push(event));
+
+			createLogger('test:structured').warn('hidden warning');
+
+			expect(events).toHaveLength(0);
+		});
+
+		test('captures direct console calls without double-capturing logger calls', () => {
+			const events: unknown[] = [];
+			subscribeToStructuredLogs((event) => events.push(event));
+			const restore = installConsoleLogCapture();
+			try {
+				console.error('raw console failure');
+				createLogger('test:structured').error('logger failure');
+			} finally {
+				restore();
+			}
+
+			expect(events).toHaveLength(2);
+			expect(events[0]).toMatchObject({ source: 'console', level: 'error' });
+			expect(events[1]).toMatchObject({ source: 'logger', level: 'error' });
 		});
 	});
 

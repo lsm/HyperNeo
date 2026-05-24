@@ -62,6 +62,12 @@ import { SpaceRepository } from './storage/repositories/space-repository';
 import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
+import {
+	emitStructuredLogEvent,
+	installConsoleLogCapture,
+	subscribeToStructuredLogs,
+} from './lib/logger';
+import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
 import { SkillsManager } from './lib/skills-manager';
 import {
 	cleanupSuspiciousProcesses,
@@ -296,6 +302,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Initialize InternalEventBus for daemon domain events.
 	const internalEventBus = createDaemonInternalEventBus();
+	const restoreConsoleCapture = installConsoleLogCapture();
+	const logEvidenceService = new EvolutionLogEvidenceService({
+		evolutionRepo: db.evolution,
+	});
+	const unsubscribeStructuredLogs = subscribeToStructuredLogs((event) => {
+		logEvidenceService.capture(event);
+		if (event.level === 'warn' || event.level === 'error' || event.level === 'fatal') {
+			logEvidenceService.flush();
+		}
+	});
 
 	// Initialize InternalCommandBus for daemon action dispatch.
 	const commandBus = createInternalCommandBus<DaemonCommandMap>();
@@ -898,12 +914,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Stop workspace file index polling
 			fileIndex.dispose();
 
+			logEvidenceService.flush();
+			unsubscribeStructuredLogs();
+			restoreConsoleCapture();
+
 			// Close database
 			db.close();
 
 			logInfo('[Daemon] Graceful shutdown complete');
 		} catch (error) {
 			logError('Error during cleanup:', error);
+			logEvidenceService.flush();
+			unsubscribeStructuredLogs();
+			restoreConsoleCapture();
 			throw error;
 		}
 	};
