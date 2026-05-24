@@ -132,6 +132,20 @@ Recommended order:
 
 Avoid global app-only mode. Token-efficiency preference varies by Space, workflow, and task.
 
+## Override precedence
+
+Use deterministic precedence so compressed mode can be reasoned about before implementation:
+
+| Precedence | Source | Purpose |
+|---:|---|---|
+| 1 | Task-run override | One-off operator choice for this execution. |
+| 2 | Workflow-slot override | Workflow author can make specific slots terse or normal. |
+| 3 | Agent default | Reusable preference on `SpaceAgent`. |
+| 4 | Space default | Initial/inherited default for agents/tasks in a Space. |
+| 5 | App default | Fallback, `normal`. |
+
+Resolution rule: highest non-null source wins. Explicit `normal` must override inherited `compressed`; do not treat it as absent. Persist provenance in debug metadata where possible so output-style surprises are explainable.
+
 ## NeoKai implementation sketch, if approved
 
 Minimal native behavior:
@@ -203,6 +217,7 @@ Run identical tasks in `normal` and `compressed` modes:
 ### Method
 
 - Use same model/provider and fresh sessions.
+- Run at least one pair each with `thinkingLevel: 'none'` and `thinkingLevel: 'low'`; compressed mode may otherwise hide useful visible reasoning when little/no extended thinking is available.
 - Disable unrelated prompt changes.
 - Capture final SDK result messages and assistant text.
 - Compare token counts and rubric scores.
@@ -267,7 +282,7 @@ Defer:
 - Recommendation: prompt-only native compressed mode first; selected tool/skill ideas later.
 - Minimal native behavior: recommended; no wholesale bundle.
 - Escape hatch: required in prompt fragment and tests.
-- Measurement: concrete paired-task plan targeting 50%+ output reduction without quality regression.
+- Measurement: actual NeoKai measurements deferred to implementation because this research PR does not add runnable output-mode behavior. This document provides a concrete paired-task plan targeting 50%+ output reduction without quality regression; implementation acceptance should require recorded normal-vs-compressed results before enabling defaults.
 
 ## Sources
 
