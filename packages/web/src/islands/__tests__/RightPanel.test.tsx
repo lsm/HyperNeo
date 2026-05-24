@@ -84,7 +84,7 @@ describe('RightPanelToggle', () => {
 			type: 'task',
 			spaceId: 'space-1',
 			taskId: 'task-1',
-			tab: 'artifacts',
+			tab: 'details',
 		});
 	});
 

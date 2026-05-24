@@ -101,7 +101,7 @@ function useToggleTarget(): RightPanelTarget | null {
 		return { type: 'git', sessionId: activeSessionId };
 	}
 	if (inSpace && spaceId && taskId) {
-		return { type: 'task', spaceId, taskId, tab: 'artifacts' };
+		return { type: 'task', spaceId, taskId, tab: 'details' };
 	}
 	if (inSpace && spaceId && viewMode === 'goals' && goalId) {
 		return { type: 'goal', spaceId, goalId };

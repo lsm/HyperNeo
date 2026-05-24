@@ -668,6 +668,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 144: Add evergreen long-horizon Space agents, Coordinator default,
 	// and long-horizon Space agent management tables.
 	runMigration144(db);
+
+	// Migration 145: Add per-task workflow model overrides.
+	runMigration145(db);
 }
 
 /**
@@ -9577,6 +9580,13 @@ function createSpaceAgentManagementTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
 			`ON space_agent_event_subscriptions(space_id, topic_pattern)`
 	);
+}
+
+export function runMigration145(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	if (!tableHasColumn(db, 'space_tasks', 'workflow_model_overrides')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN workflow_model_overrides TEXT`);
+	}
 }
 
 function widenEvolutionEvidenceKinds(db: BunDatabase): void {

@@ -104,7 +104,14 @@ export type RightPanelTarget =
 	| { type: 'task'; spaceId: string; taskId: string; tab?: TaskRightPanelTab };
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
 
-export type TaskRightPanelTab = 'timeline' | 'log' | 'artifacts';
+export type TaskRightPanelTab =
+	| 'details'
+	| 'workflow'
+	| 'agents'
+	| 'gates'
+	| 'artifacts'
+	| 'timeline'
+	| 'log';
 
 // Current selection within the Space Goals / Forge lists. Drives card highlight
 // and gives the right-panel toggle something to (re)open. Distinct from
