@@ -4,7 +4,7 @@
 
 NeoKai needs compressed output mode, but implementing it as one bespoke append inside `QueryOptionsBuilder` would not scale. Future features will also need prompt additions: safety/approval rules, autonomy policy, workflow gates, language preference, reviewer formats, provider quirks, cost-saving hints, and task-specific contracts.
 
-Recommendation: add a generic, data-driven prompt injection registry/composer. Compressed output mode becomes the first built-in injection template controlled by typed output-mode settings.
+Recommendation: add a generic, data-driven prompt injection registry/composer. Compressed output becomes the first built-in injection template activated by scoped registry records, not by feature-specific typed fields.
 
 ## Goals
 
@@ -63,7 +63,10 @@ export type PromptInjectionSourceKind =
 	| 'runtime';
 
 export interface PromptInjection {
+	/** Unique materialized record ID for this scoped instance. */
 	id: string;
+	/** Stable built-in/template ID, e.g. `neokai.output-mode.compressed`. */
+	templateId?: string;
 	channel: PromptInjectionChannel;
 	priority: number;
 	enabled: boolean;
@@ -102,25 +105,27 @@ export interface PromptInjectionConstraints {
 
 ### Stable IDs
 
-Use reverse-DNS-like IDs for built-ins:
+Use reverse-DNS-like template IDs for built-ins:
 
 - `neokai.output-mode.compressed`
 - `neokai.worktree-isolation` (future migration, not MVP)
 - `neokai.space-chat.contract` (future migration, not MVP)
 - `neokai.workflow.runtime-contract` (future migration, not MVP)
 
-User/config records can use generated UUID-backed IDs:
+A scoped activation record still needs its own unique row ID so the same built-in can be enabled at many scopes. Example record IDs:
 
-- `user.<uuid>`
-- `space.<spaceId>.<uuid>`
+- `global.neokai.output-mode.compressed`
+- `space.<spaceId>.neokai.output-mode.compressed`
+- `workflow-node.<workflowId>.<nodeId>.<agentName>.neokai.output-mode.compressed`
+- `user.<uuid>` for user-authored content records
 
 ## Storage
 
 ### Built-in templates
 
-Built-ins live in code as template providers. They produce `PromptInjection` records at runtime when enabled by typed settings.
+Built-ins live in code as template providers. They produce `PromptInjection` content at runtime when enabled by scoped registry records.
 
-Reason: compressed output and future safety/workflow contracts need versioned source control and tests. MVP ships only the compressed output built-in; worktree isolation and workflow contracts stay on existing code paths until later migration.
+Reason: compressed output and future safety/workflow contracts need versioned source control and tests. MVP ships only the compressed output built-in; worktree isolation and workflow contracts stay on existing code paths until later migration. Activation state still lives in the same `prompt_injections` storage model as user/config records, so future built-ins use the same scoped enable/suppress mechanism.
 
 ### User/configurable injection records
 
@@ -140,13 +145,15 @@ CREATE TABLE prompt_injections (
 		(scope_type = 'global' AND scope_id IS NULL)
 		OR (scope_type <> 'global' AND scope_id IS NOT NULL)
 	),
+	template_id TEXT,
 	channel TEXT NOT NULL CHECK(channel IN (
 		'system.prepend', 'system.append', 'agent.prompt.append', 'user.prepend'
 	)),
 	-- MVP repository validation rejects stored user.prepend records until message-level rendering exists.
 	priority INTEGER NOT NULL CHECK(priority BETWEEN 500 AND 799),
 	enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
-	content TEXT NOT NULL CHECK(length(content) > 0),
+	content TEXT,
+	CHECK((template_id IS NOT NULL) OR (content IS NOT NULL AND length(content) > 0)),
 	source_kind TEXT NOT NULL CHECK(source_kind IN (
 		'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
 	)),
@@ -157,54 +164,131 @@ CREATE TABLE prompt_injections (
 );
 
 CREATE INDEX idx_prompt_injections_scope ON prompt_injections(scope_type, scope_id, enabled);
+CREATE INDEX idx_prompt_injections_template ON prompt_injections(template_id, enabled);
 ```
 
 Benefits:
 
 - Query/audit by scope.
 - Enforce size/validation at repository boundary.
+- Let scoped records activate built-in `template_id`s without copying built-in prompt content into SQLite.
 - Avoid shallow-merge issues in `global_settings.settings` JSON.
 - Easier UI inspection/debug.
 
-### Output mode setting
+### Built-in activation records
 
-Keep output mode typed, separate from generic prompt injection records.
+Compressed output is not a typed product setting. Do **not** add `AgentOutputMode`, `GlobalSettings.outputMode`, `SessionConfig.outputMode`, `AgentSessionInit.outputMode`, `Space.outputMode`, `SpaceAgent.outputMode`, or `WorkflowNodeAgent.outputMode`.
 
-```ts
-export type AgentOutputMode = 'normal' | 'compressed';
-```
+Activation is data in the prompt injection registry. The built-in template ID is stable:
 
-Persistence surfaces:
+- `neokai.output-mode.compressed`
 
-- `GlobalSettings.outputMode?: AgentOutputMode` — user-level default.
-- `SessionConfig.outputMode?: AgentOutputMode | null` — per-session override, stored inside session config JSON.
-- `AgentSessionInit.outputMode?: AgentOutputMode | null` — creation-time override.
-- `SpaceAgent.outputMode?: AgentOutputMode | null` — Space agent override.
-- Later: workflow-slot, task-run override, and optional `Space.outputMode` if bulk Space policy is needed after measurement.
+Enable or suppress that ID with scoped `prompt_injections` records:
+
+| Scope type | Scope ID | `template_id` | Meaning |
+|---|---|---|---|
+| `global` | `NULL` | `neokai.output-mode.compressed` | User-level default for all matching new sessions. |
+| `session` | `<session-id>` | `neokai.output-mode.compressed` | One chat/worker/session override. |
+| `space` | `<space-id>` | `neokai.output-mode.compressed` | Space default for Space chat, Space task agents, and agents in that Space. |
+| `space_agent` | `<space-agent-id>` | `neokai.output-mode.compressed` | Reusable SpaceAgent override. |
+| `workflow_node` | `<workflow-id>:<node-id>:<agent-name>` | `neokai.output-mode.compressed` | Workflow-template slot override. |
+| `task` | `<task-id>` | `neokai.output-mode.compressed` | One task/run override. |
+
+Normal/default behavior is absence of an enabled compressed-output record, or a narrower suppressing record with `constraints.suppresses: ['neokai.output-mode.compressed']`. This same model generalizes to future safety, autonomy, language-preference, and workflow-contract injections.
 
 Recommended defaults:
 
-- App default: `normal`.
-- Non-Space sessions: inherit user default, but initial shipped user default should remain `normal`.
-- Space agents may opt into `compressed` without changing chat default.
+- App default: no compressed-output record.
+- User-level compressed output should be opt-in via a global record.
+- Space default is a Space-scoped record, not a column on `spaces`.
+- SpaceAgent default is a Space-agent-scoped record, not a field on `SpaceAgent`.
+- Workflow-slot override is a workflow-node-scoped record, not a field on `WorkflowNodeAgent`.
 
 ## Resolution model
 
-### Output mode precedence
+### Scope precedence
 
-Highest non-null source wins:
+The injection resolver should use generic scope precedence, not output-mode-specific code. For the same injection ID or suppress target, narrower scope wins:
 
-| Precedence | Source |
+| Precedence | Scope |
 |---:|---|
-| 1 | Task-run/session override |
-| 2 | Workflow-slot override (future) |
-| 3 | SpaceAgent override |
-| 4 | User-level setting |
-| 5 | App default `normal` |
+| 1 | Task/session |
+| 2 | Workflow node/slot |
+| 3 | SpaceAgent |
+| 4 | Space |
+| 5 | Global/user |
+| 6 | App default: no record |
 
-MVP active sources: session override > SpaceAgent override > user-level setting > app default. Workflow-slot is reserved for later workflow work. Space default is explicitly deferred and not part of MVP precedence; add it later only if `Space.outputMode` ships.
+MVP implementation can ship active scopes incrementally, but the resolver contract should cover the full order above. Provenance should record the winning activation/suppression source and all suppressed candidates.
 
-Explicit `normal` overrides inherited `compressed`.
+### Space default inheritance
+
+Space default compressed output is stored as a `prompt_injections` row:
+
+```sql
+-- Conceptual row; exact insert uses repository helpers.
+id = 'space.<space-id>.neokai.output-mode.compressed'
+template_id = 'neokai.output-mode.compressed'
+scope_type = 'space'
+scope_id = '<space-id>'
+channel = 'system.append'
+priority = 650
+enabled = 1
+source_kind = 'space'
+source_ref = '<space-id>'
+```
+
+No `ALTER TABLE spaces ADD COLUMN output_mode` migration is needed.
+
+Repository/API behavior:
+
+- `SpaceRepository` does not persist output mode on the `spaces` row.
+- Space settings UI creates, enables, disables, or suppresses scoped `prompt_injections` records.
+- SpaceAgent create/update does not copy inherited Space behavior into the agent row.
+- If a Space-scoped compressed-output record exists and a new SpaceAgent has no Space-agent-scoped record, sessions for that agent inherit the Space record dynamically.
+- If the Space record is later disabled/suppressed, agents without narrower records follow the new Space behavior; agents with Space-agent-scoped records keep their explicit behavior.
+
+Space UI:
+
+- Space settings: compressed output selector backed by scoped records (`Default`, `Compressed`, `Normal/suppress`).
+- `Default` means no Space-scoped record; broader global/app behavior applies.
+- `Compressed` enables `neokai.output-mode.compressed` at `scope_type = 'space'`.
+- `Normal/suppress` creates or enables a Space-scoped suppressing record when a broader global record would otherwise compress output.
+- Agent editor uses same pattern at `scope_type = 'space_agent'`.
+
+### Workflow-slot override
+
+Workflow templates should not add `WorkflowNodeAgent.outputMode`. Per-slot compressed output is represented as workflow-scoped prompt injection metadata that materializes to `scope_type = 'workflow_node'` records.
+
+Recommended workflow template shape:
+
+```ts
+interface WorkflowNodeAgent {
+	agentId: string;
+	name: string;
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+	customPrompt?: WorkflowNodeAgentOverride;
+	promptInjectionRefs?: string[];
+	// ...existing slot fields
+}
+```
+
+`promptInjectionRefs` references template-owned injection definitions by ID, for example `neokai.output-mode.compressed`. Import/instantiation validates referenced built-ins and creates scoped activation/suppression records for `(workflowId, workflowNodeId, agentName)`.
+
+Persistence/import/export:
+
+- Workflow JSON preserves `promptInjectionRefs` or equivalent scoped injection metadata, not `outputMode`.
+- Built-in workflow templates reference compressed output only when a slot should intentionally differ from inherited SpaceAgent/Space/global behavior.
+- Export format includes prompt injection refs/records for node-agent slots; import validation accepts only known built-ins or safe user/config records.
+- Drift hashing includes slot prompt injection refs/records so template changes to output behavior are detected.
+
+Runtime mapping:
+
+- Workflow-node scoped records are resolved when launching the node execution session for that slot.
+- Task/session scoped records still win above workflow-node scope. Use them for one-off runs that need full prose even if the workflow slot defaults compressed.
+- Workflow-node scope wins over SpaceAgent scope; this lets a workflow template make Reviewer compressed while leaving the reusable Reviewer agent normal elsewhere.
+- The scoped activation applies to that node agent session and SDK subagents spawned inside it via the compressed injection's `appliesToSubagents` behavior; it does not apply to sibling node agents or future sessions for the same SpaceAgent outside this workflow slot.
 
 ### Prompt injection resolution
 
@@ -235,8 +319,8 @@ interface PromptInjectionContext {
 	spaceAgent?: SpaceAgent;
 	workflowRun?: SpaceWorkflowRun;
 	workflowNode?: WorkflowNode;
+	workflowNodeAgent?: WorkflowNodeAgent;
 	task?: SpaceTask;
-	effectiveOutputMode: AgentOutputMode;
 }
 ```
 
@@ -250,8 +334,9 @@ Reject or disable invalid records:
 - Duplicate `id` after provider merge; duplicates are invalid and must not be precedence-resolved in MVP.
 - Unsupported `channel`.
 - `scope_id` missing for any non-global `scope_type`; global records must use `scope_id = NULL`.
-- `content` empty or above configured max size.
-- User/config source tries to use reserved built-in ID prefix `neokai.`.
+- `content` empty or above configured max size when `template_id` is absent.
+- `template_id` references an unknown built-in.
+- User-authored content record tries to use reserved built-in ID prefix `neokai.` as row `id`.
 - User/config source tries to use protected priority band.
 
 ### Priority bands
@@ -278,7 +363,7 @@ Persisted user/config/workflow records are schema-limited to non-protected bands
 - If any active injection has `requiresNormalProse`, output-mode compressed injection is suppressed for that render.
 - Any injection can list `suppresses: ['neokai.output-mode.compressed']`.
 - Built-in safety/approval injections must not be suppressible by user-configured output-style injections.
-- Duplicate IDs are never resolved by priority in MVP. Treat duplicates as invalid, suppress all records with that ID for the render, log the conflict, and expose it in `suppressed` provenance. If future override semantics are needed, add explicit `overridesId` metadata rather than reusing the same `id`.
+- Duplicate row IDs are never resolved by priority in MVP. Treat duplicates as invalid, suppress all records with that row ID for the render, log the conflict, and expose it in `suppressed` provenance. Multiple rows may share a `template_id`; scope precedence decides which activation/suppression for that template applies.
 
 ### Provenance
 
@@ -363,24 +448,25 @@ The SDK type defs expose `outputStyle?: string` in settings and result metadata 
 
 For MVP:
 
-- Keep NeoKai `outputMode` typed and first-class.
-- Render compressed semantics via explicit prompt injection.
+- Do not add NeoKai `outputMode` typed fields.
+- Render compressed semantics via scoped prompt injection records.
 - Do not depend on SDK `outputStyle` because it is settings-file driven and not guaranteed to match NeoKai safety/clarity contract.
-- Later, optionally map `outputMode: 'compressed'` to a compatible SDK output style if custom styles become reliable.
+- Later, optionally map active `neokai.output-mode.compressed` injection to a compatible SDK output style if custom styles become reliable.
 
 ## Built-in compressed output injection
 
-Provider emits this only when `effectiveOutputMode === 'compressed'` and not suppressed:
+Provider emits this only when resolver finds an enabled `neokai.output-mode.compressed` activation record that is not suppressed by a narrower or higher-priority applicable record:
 
 ```json
 {
-	"id": "neokai.output-mode.compressed",
+	"id": "space.<space-id>.neokai.output-mode.compressed",
+	"templateId": "neokai.output-mode.compressed",
 	"channel": "system.append",
 	"priority": 650,
 	"enabled": true,
-	"source": { "kind": "builtin", "ref": "outputMode", "label": "Compressed output mode" },
+	"source": { "kind": "builtin", "ref": "neokai.output-mode.compressed", "label": "Compressed output" },
 	"scope": { "appliesToSubagents": true },
-	"content": "## Output style\n\nWhen outputMode is `compressed`, be terse and action-first.\n\n- Drop filler, pleasantries, hedging, and recap prose.\n- Prefer fragments and bullets over paragraphs.\n- Report only: result, blocker, changed files, verification, next required action.\n- Keep code blocks, identifiers, paths, URLs, commands, and exact errors unchanged.\n- Use normal clear prose for security warnings, irreversible actions, approval requests, and multi-step instructions where compression could create ambiguity.\n- Do not reduce review thoroughness, test expectations, or tool diligence."
+	"content": "## Output style\n\nWhen the compressed output injection is active, be terse and action-first.\n\n- Drop filler, pleasantries, hedging, and recap prose.\n- Prefer fragments and bullets over paragraphs.\n- Report only: result, blocker, changed files, verification, next required action.\n- Keep code blocks, identifiers, paths, URLs, commands, and exact errors unchanged.\n- Use normal clear prose for security warnings, irreversible actions, approval requests, and multi-step instructions where compression could create ambiguity.\n- Do not reduce review thoroughness, test expectations, or tool diligence."
 }
 ```
 
@@ -394,10 +480,10 @@ Add endpoint to preview effective prompt injections for a session/task:
 
 ```ts
 promptInjections.preview({ sessionId }) -> {
-	effectiveOutputMode,
 	applied,
 	suppressed,
-	byChannelPreview
+	byChannelPreview,
+	activeBuiltins: ['neokai.output-mode.compressed']
 }
 ```
 
@@ -405,7 +491,7 @@ This is critical for support and prompt-order debugging.
 
 ### Settings UI
 
-- Global output mode default: `Normal` / `Compressed`.
+- Global compressed-output toggle backed by `scope_type = 'global'` records.
 - Advanced prompt injections list later:
   - scope
   - enabled
@@ -415,14 +501,15 @@ This is critical for support and prompt-order debugging.
 
 ### Session UI
 
-- Per-session output mode toggle at create/session settings.
-- Shows inherited source: `Default: Normal from global settings`.
+- Per-session compressed-output toggle at create/session settings, backed by `scope_type = 'session'` records.
+- Shows inherited source, e.g. `Default: compressed from Space` or `Default: normal from app default`.
 
 ### Space UI
 
-- Space default output mode later only if bulk Space policy is needed; not MVP.
-- Agent editor override: `Default` / `Normal` / `Compressed`.
-- Task-run advanced override later.
+- Space settings compressed-output selector backed by `scope_type = 'space'` records.
+- Agent editor override backed by `scope_type = 'space_agent'` records.
+- Workflow editor slot override backed by `scope_type = 'workflow_node'` records.
+- Task-run advanced override backed by `scope_type = 'task'` records.
 
 ## Implementation plan
 
@@ -433,29 +520,31 @@ This is critical for support and prompt-order debugging.
 - Add built-in provider support for the compressed output template only. Keep worktree isolation on the existing code path in MVP.
 - Integrate renderer in `QueryOptionsBuilder` after session-specific query options are assembled and before cleanup.
 - Apply supported MVP channels to top-level `systemPrompt` and `agents[*].prompt`; retain per-entry scope metadata for subagent rendering; reject stored `user.prepend` records until message-level rendering exists.
-- Add unit tests for ordering, duplicate-ID suppression, scoped-ID validation, unsupported-channel rejection, rendering shapes, subagent append behavior with mixed parent-only/subagent-targeted records, and `user.prepend` validation rejection.
+- Add unit tests for ordering, duplicate row-ID suppression, scoped-ID validation, template-ID activation, unsupported-channel rejection, rendering shapes, subagent append behavior with mixed parent-only/subagent-targeted records, and `user.prepend` validation rejection.
 
-### Task 2 — Output mode config
+### Task 2 — Compressed output built-in activation
 
-- Add `AgentOutputMode` shared type.
-- Add `GlobalSettings.outputMode` with default `normal`.
-- Add `SessionConfig.outputMode` and `AgentSessionInit.outputMode`.
-- Resolve effective mode with precedence and provenance.
-- Add compressed output built-in provider.
-- Tests for global/session precedence and compressed prompt presence/absence.
+- Add `BuiltinOutputModeInjectionProvider` for `neokai.output-mode.compressed`.
+- Add repository helpers to create/enable/disable/suppress scoped records for built-in injections.
+- Resolve scoped activation/suppression with generic precedence: task/session > workflow-node > SpaceAgent > Space > global > app default.
+- Tests for global/session/Space/SpaceAgent scope precedence and compressed prompt presence/absence.
 
-### Task 3 — Space overrides
+### Task 3 — Space, agent, and workflow scoped records
 
-- Add `SpaceAgent.outputMode` only for MVP; defer `Space.outputMode` until bulk Space policy is justified by measurement/user demand.
-- Add migrations/repository/RPC serialization for SpaceAgent override.
-- Thread SpaceAgent override into session creation for long-term agents, workflow node agents, and Space task agents.
-- Tests for MVP precedence: session override > SpaceAgent override > user > app. Add future tests when workflow-slot or Space default ships.
+- Add Space settings behavior that manages `scope_type = 'space'` records; no `spaces.output_mode` migration.
+- Add SpaceAgent editor behavior that manages `scope_type = 'space_agent'` records; no `SpaceAgent.outputMode` field.
+- Add workflow-node slot behavior that preserves prompt injection refs/records in workflow templates and materializes `scope_type = 'workflow_node'` records.
+- Add task-run/session override records when task-run options are implemented.
+- Tests for inheritance edge cases: Space compressed + agent no record inherits compressed; SpaceAgent suppress overrides Space compressed; changing Space record affects agents with no narrower records; workflow-node compressed applies only to that slot and its SDK subagents.
 
 ### Task 4 — UI
 
-- Settings UI global default.
-- Session creation/session settings toggle.
-- Space/Agent editor override.
+- Settings UI global compressed-output toggle.
+- Session creation/session scoped toggle.
+- Space settings scoped toggle.
+- Space Agent editor scoped toggle.
+- Workflow editor node-agent slot scoped toggle.
+- Task-run advanced scoped toggle.
 - Debug preview endpoint or panel.
 
 ### Task 5 — Measurement
@@ -487,22 +576,22 @@ Record cumulative output tokens, cumulative input tokens, quality rubric, ambigu
 
 ### 1. User-authored prompt injection records
 
-Decision: keep generic user-authored prompt injection records internal/not exposed in MVP.
+Decision: keep arbitrary user-authored prompt injection records internal/not exposed in MVP.
 
-MVP exposes only typed product controls:
+MVP exposes safe controls that create scoped records for known built-ins:
 
-- global output mode default
-- per-session output mode override
-- SpaceAgent output mode override
+- global compressed-output activation/suppression
+- per-session compressed-output activation/suppression
+- SpaceAgent compressed-output activation/suppression
 - debug preview of applied/suppressed injections
 
-Reason: arbitrary user-authored prompt records create prompt-order, priority, safety, and support risk before the registry has proven behavior. The registry should exist internally as infrastructure first. Expose CRUD for custom prompt injections only after built-ins, provenance, suppression, validation, and debug preview are stable.
+Reason: arbitrary prompt content creates prompt-order, priority, safety, and support risk before the registry has proven behavior. The registry should exist internally as infrastructure first. Expose CRUD for custom prompt injections only after built-ins, provenance, suppression, validation, and debug preview are stable.
 
-### 2. Space default output mode
+### 2. Space default compressed output
 
-Decision: do not ship Space-level default in backend core MVP. Start with user-level default, per-session override, and SpaceAgent override.
+Decision: cover Space-level default in the spec, but implement it as a Space-scoped prompt injection record rather than as `Space.outputMode`.
 
-Reason: Space-level default adds another persistence/UI surface and can surprise users by changing many agents/tasks at once. SpaceAgent override gives enough control for Coder/Reviewer/Research/QA presets while keeping scope explicit. Add `Space.outputMode` later only if users need bulk Space policy after measurement.
+Reason: Space defaults are useful bulk policy, but adding feature-specific columns repeats the same design problem for every future injection. A Space-scoped `neokai.output-mode.compressed` record gives the same behavior while keeping activation generic, inspectable, and reusable for future injections.
 
 ### 3. Worktree isolation migration
 
@@ -518,4 +607,4 @@ Reason: workflow contracts involve gates, channels, terminal actions, and review
 
 ## Recommendation
 
-Build generic prompt injection infrastructure first. Keep compressed output as the first consumer, implemented as a built-in injection template controlled by typed `outputMode` settings. Render via top-level `systemPrompt` append and scoped subagent prompt append, not Claude Code hooks or SDK `outputStyle`.
+Build generic prompt injection infrastructure first. Keep compressed output as the first consumer, implemented as a built-in injection template activated by scoped `prompt_injections` records. Render via top-level `systemPrompt` append and scoped subagent prompt append, not Claude Code hooks, typed `outputMode` fields, or SDK `outputStyle`.
