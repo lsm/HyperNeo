@@ -121,6 +121,7 @@ export interface BenchmarkCaseOptions {
 const GLM_ENV_VARS = [
 	'ANTHROPIC_AUTH_TOKEN',
 	'ANTHROPIC_BASE_URL',
+	'ANTHROPIC_API_KEY',
 	'API_TIMEOUT_MS',
 	'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
 	'ANTHROPIC_DEFAULT_HAIKU_MODEL',
@@ -135,6 +136,8 @@ export function setGlmEnvVars(apiKey: string, model: string): Map<string, string
 		originals.set(key, process.env[key]);
 	}
 
+	// Clear ANTHROPIC_API_KEY to prevent SDK from using wrong credential source
+	delete process.env.ANTHROPIC_API_KEY;
 	process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
 	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
 	process.env.API_TIMEOUT_MS = '3000000';
@@ -243,9 +246,13 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 				session_id?: string;
 			};
 			// Reject errored results — max_turns, auth failures, etc.
-			if (result.subtype === 'error_max_turns' || result.subtype === 'error') {
+			// Reject all non-success terminal subtypes.
+			// Success: undefined (older SDK) or 'success'.
+			// Error: error, error_max_turns, error_during_execution,
+			//   error_max_budget_usd, error_max_structured_output_retries, etc.
+			if (result.subtype !== undefined && result.subtype !== 'success') {
 				throw new Error(
-					`Benchmark case "${name}" ended with error subtype: ${result.subtype}. ` +
+					`Benchmark case "${name}" ended with non-success subtype: ${result.subtype}. ` +
 						'Run is contaminated and cannot be used for comparison.'
 				);
 			}
