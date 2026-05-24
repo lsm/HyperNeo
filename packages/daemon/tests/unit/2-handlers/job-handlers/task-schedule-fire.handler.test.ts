@@ -110,6 +110,12 @@ describe('handleTaskScheduleFire', () => {
 		return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
 	}
 
+	function makeAutomationDeps(eventHub?: {
+		publish: (event: string, data: unknown) => Promise<unknown>;
+	}) {
+		return { ...makeDeps(eventHub), goalRepo };
+	}
+
 	function makeGoalDeps(eventHub?: {
 		publish: (event: string, data: unknown) => Promise<unknown>;
 	}) {
@@ -141,6 +147,111 @@ describe('handleTaskScheduleFire', () => {
 		});
 		return schedule.id;
 	}
+
+	it('routes goal automation self-nag by immutable schedule metadata', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Automation goal', type: 'recurring' });
+		const scheduleId = scheduleRepo.create({
+			spaceId,
+			title: 'Forge self nag',
+			description: 'Automation schedule',
+			triggerType: 'cron',
+			cronExpression: '0 9 * * 1-5',
+			timezone: 'UTC',
+			nextRunAt: Date.now() + 60_000,
+			goalId: goal.id,
+			labels: ['user-edited'],
+			metadata: { goalAutomationScopeId: 'scope-stable' },
+			createdByAgent: 'goal-automation-service',
+		}).id;
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		const calls: unknown[][] = [];
+
+		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+			...makeDeps(),
+			goalAutomationService: {
+				onSelfNag: (...args: unknown[]) => {
+					calls.push(args);
+					return { enqueued: true, reason: 'queued' as const };
+				},
+			},
+		});
+
+		expect(result.skipped).toBe(false);
+		expect(result.taskId).toBeNull();
+		expect(calls).toEqual([[goal.id, scheduleId, 'scope-stable']]);
+	});
+
+	it('keeps schedule advancement when goal automation enqueue throws after commit', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Automation goal', type: 'recurring' });
+		const scheduleId = scheduleRepo.create({
+			spaceId,
+			title: 'Forge self nag',
+			description: 'Automation schedule',
+			triggerType: 'cron',
+			cronExpression: '0 9 * * 1-5',
+			timezone: 'UTC',
+			nextRunAt: Date.now() + 60_000,
+			goalId: goal.id,
+			metadata: { goalAutomationScopeId: 'scope-stable' },
+			createdByAgent: 'goal-automation-service',
+		}).id;
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+
+		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+			...makeAutomationDeps(),
+			goalAutomationService: {
+				onSelfNag: () => {
+					throw new Error('synthetic self-nag failure');
+				},
+			},
+		});
+
+		expect(result.skipped).toBe(false);
+		expect(result.nextRunAt).not.toBeNull();
+		const updated = scheduleRepo.getById(scheduleId);
+		expect(updated?.status).toBe('active');
+		expect(updated?.pendingJobId).not.toBeNull();
+		expect(updated?.pendingJobId).not.toBe('job-1');
+		expect(updated?.lastRunAt).not.toBeNull();
+	});
+
+	it('completes self-nag schedule without re-enqueueing when goal is inactive', async () => {
+		const goal = goalRepo.create({ spaceId, title: 'Automation goal', type: 'recurring' });
+		goalRepo.update(goal.id, { status: 'completed' });
+		const scheduleId = scheduleRepo.create({
+			spaceId,
+			title: 'Forge self nag',
+			description: 'Automation schedule',
+			triggerType: 'cron',
+			cronExpression: '0 9 * * 1-5',
+			timezone: 'UTC',
+			nextRunAt: Date.now() + 60_000,
+			goalId: goal.id,
+			metadata: { goalAutomationScopeId: 'scope-stable' },
+			createdByAgent: 'goal-automation-service',
+		}).id;
+		scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+		const beforeJobs = jobQueue.listJobs({}).length;
+		const calls: unknown[][] = [];
+
+		const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+			...makeAutomationDeps(),
+			goalAutomationService: {
+				onSelfNag: (...args: unknown[]) => {
+					calls.push(args);
+					return { enqueued: false, reason: 'disabled' as const };
+				},
+			},
+		});
+
+		expect(result.skipped).toBe(false);
+		expect(result.nextRunAt).toBeNull();
+		expect(calls).toEqual([]);
+		expect(jobQueue.listJobs({})).toHaveLength(beforeJobs);
+		const updated = scheduleRepo.getById(scheduleId);
+		expect(updated?.status).toBe('paused');
+		expect(updated?.pendingJobId).toBeNull();
+	});
 
 	it('creates a SpaceTask from the cron schedule template and re-enqueues itself', async () => {
 		const scheduleId = createCronSchedule('goal-1');

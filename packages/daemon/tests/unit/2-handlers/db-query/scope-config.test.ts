@@ -80,13 +80,14 @@ describe('scope-config', () => {
 				'evolution_lessons',
 				'evolution_task_proposals',
 				'evolution_metric_snapshots',
+				'goal_automation_cursors',
 				// Main-DB tables exposed with space-scoped filtering via session ID prefix:
 				'sessions',
 				'sdk_messages',
 				'session_groups',
 				'session_group_members',
 			]);
-			expect(names).toHaveLength(26);
+			expect(names).toHaveLength(27);
 		});
 
 		it('all table configs have a description', () => {

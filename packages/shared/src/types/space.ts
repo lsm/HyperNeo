@@ -606,6 +606,8 @@ export interface TaskSchedule {
 	preferredWorkflowId: string | null;
 	/** Labels to apply to created tasks */
 	labels: string[];
+	/** System metadata for internal schedule routing. */
+	metadata: Record<string, unknown>;
 	/** Trigger type — 'cron' for recurring, 'at' for one-shot */
 	triggerType: TaskScheduleTriggerType;
 	/** Cron expression (e.g. '0 9 * * 1') — used when triggerType is 'cron' */

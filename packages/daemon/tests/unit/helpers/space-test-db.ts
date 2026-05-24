@@ -583,6 +583,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			preferred_workflow_id TEXT DEFAULT NULL,
 			labels TEXT NOT NULL DEFAULT '[]',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
 			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at')),
 			cron_expression TEXT DEFAULT NULL,
 			run_at INTEGER DEFAULT NULL,

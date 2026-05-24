@@ -8740,6 +8740,7 @@ export function runMigration125(db: BunDatabase): void {
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			preferred_workflow_id TEXT DEFAULT NULL,
 			labels TEXT NOT NULL DEFAULT '[]',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
 			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('cron', 'at')),
 			cron_expression TEXT DEFAULT NULL,
 			run_at INTEGER DEFAULT NULL,
@@ -9039,6 +9040,9 @@ export function runMigration131(db: BunDatabase): void {
 
 	if (tableExists(db, 'task_schedules') && !tableHasColumn(db, 'task_schedules', 'goal_id')) {
 		db.exec(`ALTER TABLE task_schedules ADD COLUMN goal_id TEXT DEFAULT NULL`);
+	}
+	if (tableExists(db, 'task_schedules') && !tableHasColumn(db, 'task_schedules', 'metadata_json')) {
+		db.exec(`ALTER TABLE task_schedules ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`);
 	}
 	if (tableExists(db, 'task_schedules')) {
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_task_schedules_goal ON task_schedules(goal_id)`);
@@ -10050,6 +10054,32 @@ export function runMigration135(db: BunDatabase): void {
  */
 export function runMigration139(db: BunDatabase): void {
 	createEvolutionTables(db);
+	if (tableExists(db, 'goal_automation_cursors')) {
+		if (!tableHasColumn(db, 'goal_automation_cursors', 'last_evidence_id')) {
+			db.exec(`ALTER TABLE goal_automation_cursors ADD COLUMN last_evidence_id TEXT`);
+		}
+		const createSql = tableCreateSql(db, 'goal_automation_cursors') ?? '';
+		if (createSql.includes('UNIQUE(goal_id, trigger_kind, trigger_key)')) {
+			db.exec(`ALTER TABLE goal_automation_cursors RENAME TO goal_automation_cursors_old`);
+			createEvolutionTables(db);
+			db.exec(`
+				INSERT OR IGNORE INTO goal_automation_cursors (
+					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
+					last_evidence_created_at, last_evidence_id, last_task_completed_at,
+					last_external_event_id, last_episode_id, last_fired_at, metadata_json,
+					created_at, updated_at
+				)
+				SELECT
+					id, space_id, goal_id, scope_id, trigger_kind, trigger_key,
+					last_evidence_created_at, last_evidence_id, last_task_completed_at,
+					last_external_event_id, last_episode_id, last_fired_at, metadata_json,
+					created_at, updated_at
+				FROM goal_automation_cursors_old
+			`);
+			db.exec(`DROP TABLE goal_automation_cursors_old`);
+			createEvolutionTables(db);
+		}
+	}
 	if (tableExists(db, 'space_tasks') && !tableHasColumn(db, 'space_tasks', 'evolution_scope_id')) {
 		db.exec(`ALTER TABLE space_tasks ADD COLUMN evolution_scope_id TEXT DEFAULT NULL`);
 	}

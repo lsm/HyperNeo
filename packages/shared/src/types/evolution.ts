@@ -33,9 +33,29 @@ export type EvolutionFindingKind =
 	| 'missing_capability'
 	| 'new_opportunity';
 export type EvolutionImpact = 'low' | 'medium' | 'high';
+export type GoalForgeAutomationTriggerKind =
+	| 'completed_task_threshold'
+	| 'self_nag'
+	| 'external_event';
+
+export interface GoalForgeAutomationEventSubscription {
+	topic: string;
+	source?: string;
+	filter?: Record<string, string | number | boolean | null>;
+}
+
+export interface GoalForgeAutomationPolicy {
+	completedTaskThreshold?: number;
+	selfNagCronExpression?: string;
+	selfNagTimezone?: string;
+	eventSubscriptions?: GoalForgeAutomationEventSubscription[];
+	maxEvidencePerEpisode?: number;
+}
+
 export interface EvolutionPolicy extends Record<string, unknown> {
 	episodeJudgeModel?: string;
 	episodeJudgeProvider?: string;
+	automation?: GoalForgeAutomationPolicy;
 }
 export type MetricSnapshotValues = Record<string, string | number | boolean | null>;
 
