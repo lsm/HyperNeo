@@ -132,16 +132,16 @@ Output mode should be a generic session feature with layered overrides:
 2. **Per-session creation option** (`SessionConfig.outputMode` / `AgentSessionInit.outputMode`)
    - Applies to user chat, ad-hoc worker sessions, Space chat, task agents, and any other session creator.
    - Needed for a per-session toggle in UI.
-3. **Per-space default**
-   - Useful bulk preference for new Space tasks/agents.
-   - Should not silently rewrite existing agent behavior.
-4. **Per-agent default** (`SpaceAgent.outputMode?: 'normal' | 'compressed'`)
+3. **Per-agent default** (`SpaceAgent.outputMode?: 'normal' | 'compressed'`)
    - Fits Coder/Research/Reviewer/QA agents that should be terse in high-efficiency Spaces.
    - Space agents can opt into `compressed` while user chat remains `normal`.
-5. **Workflow slot override**
+4. **Workflow slot override**
    - Useful for Reviewer slot being compressed while Coder remains normal.
-6. **Per-task override**
+5. **Per-task override**
    - Useful for one-off research/debugging where full prose is needed.
+6. **Per-space default, later only if needed**
+   - Useful bulk preference for new Space tasks/agents, but not part of the immediate rollout.
+   - Add only after measurement shows users need bulk Space policy; do not wire it in MVP.
 
 Avoid a Space-only implementation. Token-efficiency preference varies by chat/session/workflow/task, but the runtime mechanism should be shared by all agent sessions.
 
@@ -152,11 +152,12 @@ Use deterministic precedence so compressed mode can be reasoned about before imp
 | Precedence | Source | Purpose |
 |---:|---|---|
 | 1 | Task-run/session override | One-off operator choice for this execution or newly created session. |
-| 2 | Workflow-slot override | Workflow author can make specific slots terse or normal. |
+| 2 | Workflow-slot override (future) | Workflow author can make specific slots terse or normal. |
 | 3 | Space agent default | Reusable preference on `SpaceAgent`. |
-| 4 | Space default | Initial/inherited default for agents/tasks in a Space. |
-| 5 | User-level setting | Global preference from SettingsManager for all new sessions. |
-| 6 | App default | Fallback, `normal`. |
+| 4 | User-level setting | Global preference from SettingsManager for all new sessions. |
+| 5 | App default | Fallback, `normal`. |
+
+MVP active sources: session override > SpaceAgent override > user-level setting > app default. Workflow-slot override and Space default are future additions; do not wire `Space.outputMode` in the immediate rollout.
 
 Resolution rule: highest non-null source wins. Explicit `normal` must override inherited `compressed`; do not treat it as absent. Persist provenance in debug metadata where possible so output-style surprises are explainable.
 
