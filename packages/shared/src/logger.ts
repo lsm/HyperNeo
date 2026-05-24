@@ -245,6 +245,7 @@ let globalConfig: LoggerConfig = {
 
 const structuredLogSubscribers = new Set<StructuredLogSubscriber>();
 let consoleCaptureRestore: (() => void) | null = null;
+let consoleCaptureRefCount = 0;
 let suppressConsoleCapture = false;
 
 export function subscribeToStructuredLogs(subscriber: StructuredLogSubscriber): () => void {
@@ -294,41 +295,49 @@ export function withConsoleLogCaptureSuppressed<T>(callback: () => T): T {
 }
 
 export function installConsoleLogCapture(): () => void {
-	if (consoleCaptureRestore) return consoleCaptureRestore;
-	const original = {
-		log: console.log,
-		info: console.info,
-		warn: console.warn,
-		error: console.error,
-		debug: console.debug,
-	};
-	const wrap = (method: keyof typeof original, level: StructuredLogLevel) => {
-		return (...args: unknown[]) => {
-			if (!suppressConsoleCapture) {
-				emitStructuredLogEvent({
-					level,
-					args,
-					source: 'console',
-					metadata: { consoleMethod: method },
-				});
-			}
-			return original[method](...args);
+	consoleCaptureRefCount += 1;
+	let restored = false;
+	if (!consoleCaptureRestore) {
+		const original = {
+			log: console.log,
+			info: console.info,
+			warn: console.warn,
+			error: console.error,
+			debug: console.debug,
 		};
+		const wrap = (method: keyof typeof original, level: StructuredLogLevel) => {
+			return (...args: unknown[]) => {
+				if (!suppressConsoleCapture) {
+					emitStructuredLogEvent({
+						level,
+						args,
+						source: 'console',
+						metadata: { consoleMethod: method },
+					});
+				}
+				return original[method](...args);
+			};
+		};
+		console.log = wrap('log', 'info');
+		console.info = wrap('info', 'info');
+		console.warn = wrap('warn', 'warn');
+		console.error = wrap('error', 'error');
+		console.debug = wrap('debug', 'debug');
+		consoleCaptureRestore = () => {
+			console.log = original.log;
+			console.info = original.info;
+			console.warn = original.warn;
+			console.error = original.error;
+			console.debug = original.debug;
+			consoleCaptureRestore = null;
+		};
+	}
+	return () => {
+		if (restored) return;
+		restored = true;
+		consoleCaptureRefCount = Math.max(0, consoleCaptureRefCount - 1);
+		if (consoleCaptureRefCount === 0) consoleCaptureRestore?.();
 	};
-	console.log = wrap('log', 'info');
-	console.info = wrap('info', 'info');
-	console.warn = wrap('warn', 'warn');
-	console.error = wrap('error', 'error');
-	console.debug = wrap('debug', 'debug');
-	consoleCaptureRestore = () => {
-		console.log = original.log;
-		console.info = original.info;
-		console.warn = original.warn;
-		console.error = original.error;
-		console.debug = original.debug;
-		consoleCaptureRestore = null;
-	};
-	return consoleCaptureRestore;
 }
 
 function createLogEventId(timestamp: number): string {

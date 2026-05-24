@@ -106,6 +106,7 @@ describe('EvolutionLogEvidenceService', () => {
 					return [{ id: dynamicSpaceId }] as never;
 				},
 			},
+			subscriptionRefreshMs: 0,
 		});
 		expect(evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID)).toBeNull();
 
@@ -133,6 +134,7 @@ describe('EvolutionLogEvidenceService', () => {
 					return spaces as never;
 				},
 			},
+			subscriptionRefreshMs: 0,
 		});
 
 		service.capture(createEvent({ level: 'error', message: 'before space exists' }));
@@ -157,7 +159,37 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(listSpacesCalls).toBe(2);
 	});
 
-	it('adds product scopes for spaces created after a non-empty default subscription cache', () => {
+	it('caches default subscriptions between log events', () => {
+		const firstSpaceId = new SpaceRepository(db as never).createSpace({
+			workspacePath: '/workspace/log-evidence-first',
+			slug: 'log-evidence-first',
+			name: 'Log Evidence First',
+		}).id;
+		let listSpacesCalls = 0;
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			spaceRepo: {
+				listSpaces: () => {
+					listSpacesCalls += 1;
+					return [{ id: firstSpaceId }] as never;
+				},
+			},
+			subscriptionRefreshMs: 60_000,
+		});
+
+		service.capture(createEvent({ level: 'error', message: 'first cached error' }));
+		service.capture(createEvent({ level: 'error', message: 'second cached error' }));
+		service.flush();
+
+		const firstScope = evolutionRepo
+			.listScopes({ spaceId: firstSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(firstScope).toBeTruthy();
+		expect(evolutionRepo.listEvidence(firstScope!.id)).toHaveLength(2);
+		expect(listSpacesCalls).toBe(1);
+	});
+
+	it('refreshes default subscriptions after the refresh interval', () => {
 		const firstSpaceId = new SpaceRepository(db as never).createSpace({
 			workspacePath: '/workspace/log-evidence-first',
 			slug: 'log-evidence-first',
@@ -169,6 +201,7 @@ describe('EvolutionLogEvidenceService', () => {
 			spaceRepo: {
 				listSpaces: () => spaces as never,
 			},
+			subscriptionRefreshMs: 0,
 		});
 
 		service.capture(createEvent({ level: 'error', message: 'first space error' }));
@@ -194,6 +227,82 @@ describe('EvolutionLogEvidenceService', () => {
 			.find((item) => item.policy.logEvidenceProductScope === true);
 		expect(secondScope).toBeTruthy();
 		expect(evolutionRepo.listEvidence(secondScope!.id)).toHaveLength(1);
+	});
+
+	it('drops archived spaces from refreshed default subscriptions', () => {
+		const spaceRepo = new SpaceRepository(db as never);
+		const activeSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/log-evidence-active',
+			slug: 'log-evidence-active',
+			name: 'Log Evidence Active',
+		}).id;
+		const archivedSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/log-evidence-archived',
+			slug: 'log-evidence-archived',
+			name: 'Log Evidence Archived',
+		}).id;
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			spaceRepo,
+			subscriptionRefreshMs: 0,
+		});
+
+		service.capture(createEvent({ level: 'error', message: 'before archive' }));
+		service.flush();
+		const archivedScope = evolutionRepo
+			.listScopes({ spaceId: archivedSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(archivedScope).toBeTruthy();
+		spaceRepo.archiveSpace(archivedSpaceId);
+
+		service.capture(createEvent({ level: 'error', message: 'after archive' }));
+		service.flush();
+
+		const activeScope = evolutionRepo
+			.listScopes({ spaceId: activeSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(activeScope).toBeTruthy();
+		expect(evolutionRepo.listEvidence(activeScope!.id)).toHaveLength(2);
+		expect(evolutionRepo.listEvidence(archivedScope!.id)).toHaveLength(1);
+	});
+
+	it('replaces dynamic scopes when the fixed product scope appears', () => {
+		const spaceRepo = new SpaceRepository(db as never);
+		const dynamicSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/log-evidence-dynamic-fixed',
+			slug: 'log-evidence-dynamic-fixed',
+			name: 'Log Evidence Dynamic Fixed',
+		}).id;
+		const fixedSpaceId = spaceRepo.createSpace({
+			workspacePath: '/workspace/log-evidence-fixed',
+			slug: 'log-evidence-fixed',
+			name: 'Log Evidence Fixed',
+		}).id;
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			spaceRepo,
+			subscriptionRefreshMs: 0,
+		});
+
+		service.capture(createEvent({ level: 'error', message: 'dynamic before fixed' }));
+		service.flush();
+		const dynamicScope = evolutionRepo
+			.listScopes({ spaceId: dynamicSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(dynamicScope).toBeTruthy();
+
+		db.prepare(
+			`INSERT INTO evolution_scopes (
+				id, space_id, space_goal_id, kind, name, objective, parent_scope_id,
+				metric_definitions_json, policy_json, created_at, updated_at
+			) VALUES (?, ?, NULL, 'project', 'Fixed product scope', 'Fixed scope', NULL, '[]', '{}', ?, ?)`
+		).run(PRODUCT_FORGE_SCOPE_ID, fixedSpaceId, Date.now(), Date.now());
+
+		service.capture(createEvent({ level: 'error', message: 'fixed after refresh' }));
+		service.flush();
+
+		expect(evolutionRepo.listEvidence(dynamicScope!.id)).toHaveLength(1);
+		expect(evolutionRepo.listEvidence(PRODUCT_FORGE_SCOPE_ID)).toHaveLength(1);
 	});
 
 	it('classifies process crash events by processEvent metadata', () => {

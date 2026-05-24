@@ -17,6 +17,7 @@ export interface EvolutionLogEvidenceServiceDeps {
 	subscriptions?: LogEvidenceSubscription[];
 	dedupeWindowMs?: number;
 	maxBufferedEvents?: number;
+	subscriptionRefreshMs?: number;
 }
 
 type LogEvidenceRepository = EvolutionRepository & {
@@ -33,12 +34,14 @@ interface BufferedEvent {
 }
 
 const DEFAULT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_SUBSCRIPTION_REFRESH_MS = 30 * 1000;
 const DEFAULT_MAX_BUFFERED_EVENTS = 500;
 const MAX_SAMPLES = 5;
 
 export class EvolutionLogEvidenceService {
 	private buffer: BufferedEvent[] = [];
-	private knownDefaultScopeIds = new Set<string>();
+	private cachedDefaultSubscriptions: LogEvidenceSubscription[] = [];
+	private nextSubscriptionRefreshAt = 0;
 
 	constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
@@ -122,12 +125,16 @@ export class EvolutionLogEvidenceService {
 
 	private getSubscriptions(): LogEvidenceSubscription[] {
 		if (this.deps.subscriptions) return this.deps.subscriptions;
-		const scopes = this.resolveDefaultProductScopes();
-		for (const scopeId of scopes) this.knownDefaultScopeIds.add(scopeId);
-		return [...this.knownDefaultScopeIds].map((scopeId) => ({
-			scopeId,
-			levels: ['warn', 'error', 'fatal'] as StructuredLogLevel[],
-		}));
+		const now = Date.now();
+		if (now >= this.nextSubscriptionRefreshAt) {
+			this.cachedDefaultSubscriptions = this.resolveDefaultProductScopes().map((scopeId) => ({
+				scopeId,
+				levels: ['warn', 'error', 'fatal'] as StructuredLogLevel[],
+			}));
+			this.nextSubscriptionRefreshAt =
+				now + (this.deps.subscriptionRefreshMs ?? DEFAULT_SUBSCRIPTION_REFRESH_MS);
+		}
+		return this.cachedDefaultSubscriptions;
 	}
 
 	private resolveDefaultProductScopes(): string[] {

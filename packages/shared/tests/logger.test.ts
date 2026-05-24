@@ -115,6 +115,26 @@ describe('Logger', () => {
 
 			expect(events).toHaveLength(0);
 		});
+
+		test('keeps console capture installed until every owner restores it', () => {
+			const events: unknown[] = [];
+			subscribeToStructuredLogs((event) => events.push(event));
+			const restoreFirst = installConsoleLogCapture();
+			const restoreSecond = installConsoleLogCapture();
+
+			restoreFirst();
+			console.warn('still captured');
+			restoreSecond();
+			console.warn('not captured');
+			restoreSecond();
+
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({
+				source: 'console',
+				level: 'warn',
+				message: 'still captured',
+			});
+		});
 	});
 
 	describe('configureLogger', () => {
