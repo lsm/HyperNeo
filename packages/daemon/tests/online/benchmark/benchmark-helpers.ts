@@ -129,6 +129,8 @@ export interface BenchmarkCaseOptions {
 	workspacePath: string;
 	prompt: string;
 	mcpServers?: Record<string, { command: string; args: string[] }>;
+	/** Tool names to disable for this case (e.g. built-in tools to force MCP-only usage) */
+	disallowedTools?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +183,7 @@ export async function runBenchmarkCase(
 	daemon: DaemonServerContext,
 	options: BenchmarkCaseOptions
 ): Promise<BenchmarkResult> {
-	const { name, workspacePath, prompt, mcpServers } = options;
+	const { name, workspacePath, prompt, mcpServers, disallowedTools } = options;
 
 	// 1. Create session
 	//
@@ -197,6 +199,7 @@ export async function runBenchmarkCase(
 			provider: 'glm',
 			permissionMode: 'bypassPermissions',
 			...(mcpServers ? { mcpServers } : {}),
+			...(disallowedTools?.length ? { disallowedTools } : {}),
 		},
 	})) as { sessionId: string };
 

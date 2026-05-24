@@ -48,13 +48,36 @@ const WORKTREE =
 
 const CRG_DATA_DIR = process.env.NEOKAI_BENCHMARK_CRG_DATA || '/tmp/neokai-benchmark-crg';
 
-// Per-worktree Graphify output to avoid stale graphs from other repos/commits
+// Use full base64url encoding (no truncation) for collision resistance.
+// Two different worktree paths map to different dirs with negligible probability.
 const GRAPHIFY_OUT =
 	process.env.NEOKAI_BENCHMARK_GRAPHIFY_OUT ||
-	`/tmp/neokai-benchmark-graphify/${Buffer.from(WORKTREE).toString('base64url').slice(0, 32)}`;
+	`/tmp/neokai-benchmark-graphify/${Buffer.from(WORKTREE).toString('base64url')}`;
 
 const CRG_TOOLS =
 	'get_minimal_context_tool,get_review_context_tool,get_impact_radius_tool,query_graph_tool,semantic_search_nodes_tool,list_graph_stats_tool,detect_changes_tool';
+
+// Built-in tools to disable in MCP-only benchmark arms to ensure isolation
+const DISABLED_BUILTINS = [
+	'Read',
+	'Write',
+	'Edit',
+	'Bash',
+	'Grep',
+	'Glob',
+	'WebFetch',
+	'WebSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
+	'NotebookEdit',
+	'TodoWrite',
+	'AskUserQuestion',
+	'EnterPlanMode',
+	'ExitPlanMode',
+	'Skill',
+	'ToolSearch',
+];
 
 const RESULTS_PATH = '/tmp/graph-tool-benchmark-results.json';
 
@@ -71,10 +94,14 @@ function resolveConfig() {
 	// Resolve Graphify python env (same executable used for extraction and MCP serve)
 	// First resolve the binary path via PATH lookup, then read its shebang for the Python interpreter
 	try {
-		const resolvedBin =
-			GRAPHIFY_BIN === 'graphify'
-				? execSync('which graphify', { encoding: 'utf-8' }).trim()
-				: GRAPHIFY_BIN;
+		// Always try PATH resolution first — treat GRAPHIFY_BIN as a command name,
+		// not a file path. Falls back to the literal value for absolute paths.
+		let resolvedBin = GRAPHIFY_BIN;
+		try {
+			resolvedBin = execSync(`which ${GRAPHIFY_BIN}`, { encoding: 'utf-8' }).trim();
+		} catch {
+			// Not on PATH — assume it's an absolute path
+		}
 		const shebang = readFileSync(resolvedBin, 'utf-8')
 			.split('\n')[0]
 			.replace(/^#!\s*/, '')
@@ -237,6 +264,10 @@ describeSkip('Graph Tool Benchmark', () => {
 		// Build tool indexes BEFORE daemon start (avoids transport PONG timeout
 		// during long index builds — default pongTimeout is 45s, builds take ~100s)
 		console.log('Building tool indexes...');
+		// Note: build helpers use Bun.spawnSync internally so they run sequentially
+		// despite the Promise.allSettled wrapper. This is intentional — index builds
+		// are CPU/IO heavy and parallelizing would not improve wall time meaningfully
+		// on a single machine. Keep the allSettled pattern for future async migration.
 		await Promise.allSettled([buildCodeGraph(), buildCRG(), setupGraphify()]);
 		setupAstGrep();
 
@@ -299,6 +330,7 @@ describeSkip('Graph Tool Benchmark', () => {
 					args: ['-y', '@colbymchenry/codegraph', 'mcp'],
 				},
 			},
+			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -327,6 +359,7 @@ describeSkip('Graph Tool Benchmark', () => {
 					],
 				},
 			},
+			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -344,6 +377,7 @@ describeSkip('Graph Tool Benchmark', () => {
 					args: [...graphifyPythonArgs, '-m', 'graphify.serve', join(GRAPHIFY_OUT, 'graph.json')],
 				},
 			},
+			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -361,6 +395,7 @@ describeSkip('Graph Tool Benchmark', () => {
 					args: [astGrepServerPath],
 				},
 			},
+			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
