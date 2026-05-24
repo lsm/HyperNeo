@@ -142,7 +142,6 @@ export function createEvolutionTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_evolution_metric_snapshots_scope_captured ON evolution_metric_snapshots(scope_id, captured_at DESC)`
 	);
 
-<<<<<<< HEAD
 	createSpaceAgentLongHorizonTables(db);
 
 	db.exec(`
@@ -252,7 +251,6 @@ function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
 			`ON space_agent_event_subscriptions(space_id, topic_pattern)`
 	);
-}
 }
 
 function hasTable(db: BunDatabase, tableName: string): boolean {
