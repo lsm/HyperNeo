@@ -2,109 +2,122 @@
 
 **Date:** 2026-05-24
 **Method:** Claude Agent SDK `query()` with GLM provider routing
-**Model:** `glm-4.7`
+**Model:** `glm-5.1`
 **Task:** #394, "Refactor task event source as Layer-2 anti-stuck mechanism"
-**Commit:** `f6ce9b70d`
-**Constraint:** Each arm runs with `tools: []` (no built-in tools), isolated to a single MCP server.
+**Commit:** `af4817ec1`
+**Constraint:** Baseline uses built-in Read/Grep/Glob. MCP arms use `tools: []` (no built-in tools), isolated to a single MCP server with `allowedTools` set.
 
 ## Executive Summary
 
-ast-grep was the only tool the model actually called during the benchmark. CodeGraph and code-review-graph returned zero tool calls — the model produced text-only responses despite MCP servers being attached. Baseline produced the longest, most detailed plan (19,760 chars). Graphify failed to extract (missing `openai` package for ollama backend).
+Three of five arms completed successfully. Baseline and ast-grep produced codebase-grounded plans with active tool use (61 and 75 calls respectively). CodeGraph completed but the model made **zero tool calls** despite `allowedTools: ["mcp__codegraph__*"]` being set — it produced a 71K char response without using any MCP tools. CRG failed during graph build (Python error). Graphify failed during extraction (missing `openai` package).
 
-**Key finding:** GLM-4.7 through the Anthropic-compatible API does not reliably invoke MCP tools when `tools: []` is set. Only ast-grep saw active tool use (27 calls). This suggests either the model needs built-in tools enabled alongside MCP, or GLM's tool-use capability is limited in this routing mode.
-
-**Token reporting:** GLM returns 0 tokens through the Anthropic-compatible usage API. Wall time is the only reliable metric.
+**Key finding:** GLM-5.1 with `allowedTools` correctly auto-approves ast-grep MCP tools (75 calls) but does not call CodeGraph tools (0 calls). This suggests the issue is specific to how CodeGraph's MCP server exposes tools, not a general GLM limitation. The baseline with built-in tools works as expected (61 calls: Read 34, Grep 20, Glob 7).
 
 ## Results
 
 | Case | Wall Time (s) | Tokens | Tool Calls | Response Length |
 |------|--------------|--------|------------|-----------------|
-| baseline (text-only) | 58.3 | 0 | 0 | 19,760 |
-| CodeGraph | 12.8 | 0 | 0 | 179 |
-| code-review-graph | 33.8 | 0 | 0 | 14,981 |
+| baseline (Read/Grep/Glob) | 284.2 | 75,444 | 61 | 17,643 |
+| CodeGraph | 271.4 | 19,027 | 0 | 71,429 |
+| code-review-graph | FAIL | — | — | — |
 | Graphify | FAIL | — | — | — |
-| ast-grep | 71.7 | 0 | 27 | 9,937 |
+| ast-grep | 379.4 | 83,064 | 75 | 16,927 |
 
-### Tool Call Breakdown (ast-grep)
+### Tool Call Breakdown
+
+**Baseline (built-in tools):**
 
 | Tool | Calls |
 |------|-------|
-| `ast_grep_search` | 18 |
-| `ast_grep_search_multiple` | 8 |
-| `ast_grep_scan` | 1 |
+| `Read` | 34 |
+| `Grep` | 20 |
+| `Glob` | 7 |
+
+**ast-grep (MCP):**
+
+| Tool | Calls |
+|------|-------|
+| `mcp__ast-grep__ast_grep_search` | 47 |
+| `mcp__ast-grep__ast_grep_scan` | 22 |
+| `mcp__ast-grep__ast_grep_search_multiple` | 6 |
+
+**CodeGraph:** 0 tool calls.
 
 ### Index Build Times
 
 | Tool | Build Time |
 |------|-----------|
-| CodeGraph | 4.0s |
-| code-review-graph | 113.1s |
-| Graphify | FAILED (missing `openai` package) |
-| ast-grep (resolve) | 4.3s |
+| CodeGraph | 16.2s |
+| code-review-graph | FAIL (Python traceback) |
+| Graphify | FAIL (missing `openai` package) |
+| ast-grep (resolve) | 4.6s |
 
 ## Detailed Analysis
 
-### Baseline (text-only)
+### Baseline (built-in Read/Grep/Glob)
 
-- **Response:** 19,760 chars — longest and most detailed response
-- **Quality:** Produced a comprehensive plan with architecture diagrams, phase breakdowns, interface definitions, migration strategy, risk analysis, and estimated LOC
-- **Key files identified:** Generic path guesses (`src/space/runtime/task_agent.ts`) — none matched actual NeoKai paths
-- **Assessment:** Best prose quality but no actual codebase grounding. Generic "agent runtime" architecture rather than NeoKai-specific.
+- **Response:** 17,643 chars (final answer only, excludes interim narration)
+- **Tool calls:** 61 — Read (34), Grep (20), Glob (7)
+- **Tokens:** 75,444 — highest token usage across all arms
+- **Quality:** The model actively explored the codebase using built-in file tools, reading files and searching for patterns. Response is grounded in actual NeoKai paths found through exploration.
+- **Assessment:** Strong baseline. The model demonstrated effective use of built-in tools to understand the codebase before producing a plan. Most expensive in tokens but most thorough exploration.
 
 ### CodeGraph
 
-- **Response:** 179 chars — shortest response by far
-- **Tool calls:** 0 — model did not use CodeGraph MCP tools at all
-- **Quality:** Produced only a brief "Let me explore the codebase" message, suggesting the session terminated early or the model couldn't figure out how to use the tools
-- **Assessment:** Unusable in this configuration. The model needs guidance on tool usage or built-in tools enabled alongside CodeGraph.
-
-### code-review-graph
-
-- **Response:** 14,981 chars — second longest
-- **Tool calls:** 0 — model did not use CRG MCP tools
-- **Quality:** Despite not calling tools, produced a detailed plan. However, it hallucinated tool calls in XML format (`<read_file>`, `<search_files>`) that weren't actually executed
-- **Key files identified:** Generic guesses (`src/agents/space/agent.ts`, `src/tasks/agent.ts`) — not actual NeoKai paths
-- **Assessment:** Model produced reasonable generic content but fabricated exploration steps. No actual codebase grounding.
+- **Response:** 71,429 chars — longest response by far
+- **Tool calls:** 0 — model did not use any CodeGraph MCP tools despite `allowedTools: ["mcp__codegraph__*"]`
+- **Tokens:** 19,027 — surprisingly low for such a long response
+- **Quality:** Produced a massive response without calling any tools. The model may have hallucinated knowledge or produced generic architecture content inflated with boilerplate. The 71K chars with only 19K tokens suggests repetitive/templated output.
+- **Assessment:** CodeGraph's MCP server was correctly attached and tools were allowed, but GLM-5.1 chose not to call them. This contrasts with ast-grep where the same model made 75 calls. The issue may be in how CodeGraph presents its tools (descriptions, parameter schemas) or a server startup timing issue.
 
 ### ast-grep
 
-- **Response:** 9,937 chars
-- **Tool calls:** 27 — only tool that was actively used
-- **Quality:** Produced a detailed plan with actual NeoKai file paths (`packages/daemon/src/lib/space/runtime/space-runtime.ts`, `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`, `packages/daemon/src/lib/space/managers/space-task-manager.ts`)
-- **Key files identified:** Correctly identified 6+ actual NeoKai source files
-- **Tool usage pattern:** 18 single-pattern searches, 8 batch searches, 1 YAML rule scan
-- **Assessment:** Only tool that produced codebase-grounded results. The model actively explored and found real files. Response was shorter than baseline but more accurate.
+- **Response:** 16,927 chars (final answer only)
+- **Tool calls:** 75 — `ast_grep_search` (47), `ast_grep_scan` (22), `ast_grep_search_multiple` (6)
+- **Tokens:** 83,064 — highest across all arms
+- **Quality:** Heavy AST-based exploration. The model used pattern search 47 times, YAML rule scan 22 times, and batch search 6 times. Found real NeoKai files through structural pattern matching.
+- **Assessment:** Most active tool use. The model extensively explored the codebase through AST patterns. The `ast_grep_scan` tool saw significant use (22 calls) compared to the previous GLM-4.7 run (1 call), suggesting GLM-5.1 is more willing to use complex tool features.
+
+### code-review-graph
+
+- **Status:** FAILED during graph build
+- **Error:** Python traceback in CRG's `build_or_update_graph` function
+- **Assessment:** Build-time failure, not a runtime issue. The CRG tool itself has a bug or incompatibility with this repo's structure.
 
 ### Graphify
 
-- **Status:** FAILED — extraction requires `openai` Python package even for ollama backend
+- **Status:** FAILED during extraction
 - **Error:** `[graphify] chunk 1/1 failed: Gemini/Kimi/Ollama/OpenAI-compatible extraction requires the openai package. Run: pip install openai`
-- **Assessment:** Needs dependency fix before benchmarking. Build cache was stale (commit mismatch forced rebuild).
+- **Assessment:** Needs `pip install openai` even when using ollama backend.
 
 ## Key Findings
 
-1. **GLM tool-use is unreliable with isolated MCP servers.** CodeGraph and CRG saw zero tool calls despite MCP servers being correctly attached. Only ast-grep worked. This may be a GLM-specific limitation in the Anthropic-compatible API routing.
+1. **GLM-5.1 tool-use works for ast-grep but not CodeGraph.** Both had `allowedTools` set correctly. ast-grep saw 75 calls; CodeGraph saw 0. The issue is specific to CodeGraph's MCP server, not GLM's general tool-use capability.
 
-2. **ast-grep is the only tool that produced grounded results.** It found actual NeoKai file paths and referenced real abstractions. Other arms produced generic plans.
+2. **Baseline is the most cost-effective grounded option.** Built-in Read/Grep/Glob produced a grounded plan with 61 tool calls and 75K tokens. No index build required.
 
-3. **Baseline produces the most detailed prose.** Without tool access, the model compensates with thorough (but ungrounded) architecture analysis.
+3. **CodeGraph produces suspiciously long output without tool use.** 71K chars with 19K tokens is unusual — the response length metric counts only the final answer (not interim narration), suggesting the output is highly repetitive.
 
-4. **Token metrics are unavailable.** GLM's Anthropic-compatible API returns zero usage data. Wall time is the only comparable metric.
+4. **ast-grep scan usage improved dramatically.** GLM-5.1 used `ast_grep_scan` 22 times vs GLM-4.7's 1 time. The model leverages YAML rule scans for complex structural queries.
 
-5. **Build times vary widely.** CodeGraph (4s) and ast-grep (4.3s) are fast. CRG takes ~2 minutes. Graphify extraction failed.
+5. **Build times are reasonable.** CodeGraph (16s) and ast-grep resolve (5s) are fast enough for interactive use.
 
-6. **`ast_grep_scan` was barely used.** Only 1 out of 27 calls used the YAML rule scan. Pattern-based search dominated, suggesting the model prefers simple patterns over complex rules.
+6. **Token reporting works with GLM-5.1.** Unlike GLM-4.7 which returned 0 tokens, GLM-5.1 returns accurate usage data through the Anthropic-compatible API.
 
 ## Recommendations
 
-1. **Re-run with built-in tools enabled** alongside MCP to test whether GLM's tool-use improves with familiar tools available.
+1. **Investigate CodeGraph tool visibility.** Debug why GLM-5.1 calls ast-grep tools but not CodeGraph tools. Check tool names, descriptions, and parameter schemas returned by `tools/list`.
 
-2. **Fix Graphify dependency** and re-run that arm.
+2. **Fix CRG build error** — needs investigation of the Python traceback.
 
-3. **Consider different model** (e.g., Claude Sonnet) as control — GLM's tool-use behavior through the Anthropic-compatible API may not generalize to other providers.
+3. **Install `openai` package** for Graphify and re-run.
 
-4. **ast-grep MCP wrapper is production-ready.** The custom MCP server correctly handles all three tool types and the exit-code-1 edge case.
+4. **Consider Claude Sonnet as control.** Run the same benchmark with Claude Sonnet to establish a baseline for comparison with GLM-5.1's tool-use behavior.
+
+5. **Reduce response length metric bias.** The 71K CodeGraph response deserves manual inspection — it may contain padding that inflates the metric without adding information.
 
 ## Raw Data
 
-Results written to `/tmp/graph-tool-benchmark-results.json` at `2026-05-24T17:30:49.236Z`.
+- Baseline: `/tmp/graph-tool-benchmark-baseline.json`
+- CodeGraph: `/tmp/graph-tool-benchmark-codegraph.json`
+- ast-grep: `/tmp/graph-tool-benchmark-ast-grep.json`
