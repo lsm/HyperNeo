@@ -10,20 +10,21 @@
  *   - npx, uvx, and python available in PATH
  *
  * Run:
- *   cd docs/reports/graph-tool-benchmark
- *   GLM_API_KEY=xxx bun test benchmark-graph-tools.test.ts
+ *   cd packages/daemon
+ *   NEOKAI_BENCHMARK_RUN=1 DB_PATH=/tmp/neokai-bench.db bun test tests/online/benchmark/benchmark-graph-tools.test.ts
  *
  * Run single case:
- *   bun test -t 'CodeGraph' benchmark-graph-tools.test.ts
+ *   bun test -t 'CodeGraph' tests/online/benchmark/benchmark-graph-tools.test.ts
  *
  * This entire suite is `describe.skip` by default — it makes real API calls,
- * takes 10-20 minutes, and requires manual opt-in.
+ * takes 10-20 minutes, and requires manual opt-in via NEOKAI_BENCHMARK_RUN=1.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execSync } from 'node:child_process';
 
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -46,13 +47,32 @@ const WORKTREE =
 	join(import.meta.dir, '..', '..', '..', '..', '..');
 
 const CRG_DATA_DIR = process.env.NEOKAI_BENCHMARK_CRG_DATA || '/tmp/neokai-benchmark-crg';
+
+// Per-worktree Graphify output to avoid stale graphs from other repos/commits
 const GRAPHIFY_OUT =
-	process.env.NEOKAI_BENCHMARK_GRAPHIFY_OUT || '/tmp/neokai-benchmark-graphify/graphify-out';
+	process.env.NEOKAI_BENCHMARK_GRAPHIFY_OUT ||
+	`/tmp/neokai-benchmark-graphify/${Buffer.from(WORKTREE).toString('base64url').slice(0, 32)}`;
 
 const CRG_TOOLS =
 	'get_minimal_context_tool,get_review_context_tool,get_impact_radius_tool,query_graph_tool,semantic_search_nodes_tool,list_graph_stats_tool,detect_changes_tool';
 
 const RESULTS_PATH = '/tmp/graph-tool-benchmark-results.json';
+
+// Resolve the actual commit SHA for reproducible results
+const COMMIT_SHA = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+
+// Resolve Graphify python env (same executable used for extraction and MCP serve)
+const GRAPHIFY_BIN = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BIN || 'graphify';
+let graphifyPython = 'python3';
+try {
+	const shebang = readFileSync(GRAPHIFY_BIN, 'utf-8')
+		.split('\n')[0]
+		.replace(/^#!\s*/, '')
+		.trim();
+	if (shebang) graphifyPython = shebang;
+} catch {
+	// Fall back to python3
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -116,20 +136,42 @@ async function buildCRG() {
 
 async function setupGraphify() {
 	const graphJson = join(GRAPHIFY_OUT, 'graph.json');
-	if (existsSync(graphJson)) {
-		graphifyReady = true;
-		console.log('  Graphify graph already exists, skipping extraction');
-		return;
+
+	// Verify cache belongs to current worktree — delete stale graphs from other repos
+	if (existsSync(graphJson) && existsSync(join(GRAPHIFY_OUT, '.benchmark_worktree'))) {
+		const cachedWorktree = readFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), 'utf-8').trim();
+		if (cachedWorktree !== WORKTREE) {
+			console.log('  Graphify graph is from a different worktree, forcing rebuild...');
+			mkdirSync(GRAPHIFY_OUT, { recursive: true });
+		} else if (existsSync(join(GRAPHIFY_OUT, '.benchmark_commit'))) {
+			// Same worktree — keep cached graph
+			graphifyReady = true;
+			console.log('  Graphify graph already exists for this worktree, skipping extraction');
+			return;
+		}
 	}
+
 	console.log('Extracting Graphify graph...');
 	const start = Date.now();
 	mkdirSync(GRAPHIFY_OUT, { recursive: true });
 	const p = Bun.spawnSync(
-		['graphify', 'extract', WORKTREE, '--out', GRAPHIFY_OUT, '--no-cluster', '--backend', 'ollama'],
+		[
+			GRAPHIFY_BIN,
+			'extract',
+			WORKTREE,
+			'--out',
+			GRAPHIFY_OUT,
+			'--no-cluster',
+			'--backend',
+			'ollama',
+		],
 		{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
 	);
 	const elapsed = Date.now() - start;
 	if (existsSync(graphJson)) {
+		// Tag the cache with worktree + commit for staleness detection
+		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), WORKTREE);
+		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), COMMIT_SHA);
 		graphifyReady = true;
 		console.log(`  Graphify graph extracted in ${(elapsed / 1000).toFixed(1)}s`);
 	} else {
@@ -161,6 +203,7 @@ describeSkip('Graph Tool Benchmark', () => {
 		}
 
 		console.log(`Worktree: ${WORKTREE}`);
+		console.log(`Commit: ${COMMIT_SHA}`);
 
 		// Build tool indexes BEFORE daemon start (avoids transport PONG timeout
 		// during long index builds — default pongTimeout is 45s, builds take ~100s)
@@ -177,7 +220,7 @@ describeSkip('Graph Tool Benchmark', () => {
 	afterAll(async () => {
 		// Write results
 		if (results.length > 0) {
-			const path = writeBenchmarkResults(results, WORKTREE, RESULTS_PATH);
+			const path = writeBenchmarkResults(results, WORKTREE, RESULTS_PATH, COMMIT_SHA);
 			console.log(`\nResults written to ${path}`);
 			// Print summary table
 			console.log('\n=== Benchmark Summary ===');
@@ -205,7 +248,7 @@ describeSkip('Graph Tool Benchmark', () => {
 	// Unseeded round
 	// -----------------------------------------------------------------------
 
-	test('baseline: plain GLM', async () => {
+	test('baseline: plain GLM (text-only)', async () => {
 		const result = await runBenchmarkCase(daemon, {
 			name: 'baseline: plain GLM (text-only)',
 			workspacePath: WORKTREE,
@@ -216,11 +259,11 @@ describeSkip('Graph Tool Benchmark', () => {
 	}, 420_000);
 
 	test('CodeGraph', async () => {
-		if (!codegraphReady) return;
+		if (!codegraphReady) return expect.unreachable('CodeGraph index not built');
 		const result = await runBenchmarkCase(daemon, {
 			name: 'CodeGraph',
 			workspacePath: WORKTREE,
-			prompt: BENCHMARK_PROMPT_TEXT_ONLY,
+			prompt: BENCHMARK_PROMPT_UNSEDED,
 			mcpServers: {
 				codegraph: {
 					command: 'npx',
@@ -233,11 +276,11 @@ describeSkip('Graph Tool Benchmark', () => {
 	}, 420_000);
 
 	test('code-review-graph', async () => {
-		if (!crgReady) return;
+		if (!crgReady) return expect.unreachable('CRG graph not built');
 		const result = await runBenchmarkCase(daemon, {
 			name: 'code-review-graph',
 			workspacePath: WORKTREE,
-			prompt: BENCHMARK_PROMPT_TEXT_ONLY,
+			prompt: BENCHMARK_PROMPT_UNSEDED,
 			mcpServers: {
 				'code-review-graph': {
 					command: 'uvx',
@@ -261,14 +304,14 @@ describeSkip('Graph Tool Benchmark', () => {
 	}, 420_000);
 
 	test('Graphify', async () => {
-		if (!graphifyReady) return;
+		if (!graphifyReady) return expect.unreachable('Graphify graph not extracted');
 		const result = await runBenchmarkCase(daemon, {
 			name: 'Graphify',
 			workspacePath: WORKTREE,
-			prompt: BENCHMARK_PROMPT_TEXT_ONLY,
+			prompt: BENCHMARK_PROMPT_UNSEDED,
 			mcpServers: {
 				graphify: {
-					command: 'python',
+					command: graphifyPython,
 					args: ['-m', 'graphify.serve', join(GRAPHIFY_OUT, 'graph.json')],
 				},
 			},
@@ -278,11 +321,11 @@ describeSkip('Graph Tool Benchmark', () => {
 	}, 420_000);
 
 	test('ast-grep', async () => {
-		if (!astGrepServerPath) return;
+		if (!astGrepServerPath) return expect.unreachable('ast-grep wrapper not created');
 		const result = await runBenchmarkCase(daemon, {
 			name: 'ast-grep',
 			workspacePath: WORKTREE,
-			prompt: BENCHMARK_PROMPT_TEXT_ONLY,
+			prompt: BENCHMARK_PROMPT_UNSEDED,
 			mcpServers: {
 				'ast-grep': {
 					command: 'node',

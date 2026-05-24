@@ -260,11 +260,12 @@ export async function runBenchmarkCase(
 export function writeBenchmarkResults(
 	results: BenchmarkResult[],
 	worktreePath: string,
-	outputPath?: string
+	outputPath?: string,
+	commitSha?: string
 ): string {
 	const output: BenchmarkOutput = {
 		timestamp: new Date().toISOString(),
-		neokaiCommit: 'HEAD',
+		neokaiCommit: commitSha ?? 'unknown',
 		model: 'glm-4.7',
 		worktreePath,
 		results,
