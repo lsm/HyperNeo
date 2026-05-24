@@ -156,15 +156,16 @@ export class EvolutionRepository {
 		return rows.map(rowToEvidence);
 	}
 
-	findEvidenceBySource(scopeId: string, sourceId: string): EvidenceRef[] {
-		const rows = this.db
+	findLatestEvidenceBySource(scopeId: string, sourceId: string): EvidenceRef | null {
+		const row = this.db
 			.prepare(
 				`SELECT * FROM evolution_evidence
 				 WHERE scope_id = ? AND source_id = ?
-				 ORDER BY created_at DESC, id DESC`
+				 ORDER BY created_at DESC, id DESC
+				 LIMIT 1`
 			)
-			.all(scopeId, sourceId) as Record<string, unknown>[];
-		return rows.map(rowToEvidence);
+			.get(scopeId, sourceId) as Record<string, unknown> | undefined;
+		return row ? rowToEvidence(row) : null;
 	}
 
 	createEpisode(params: CreateEvolutionEpisodeParams): EvolutionEpisode {

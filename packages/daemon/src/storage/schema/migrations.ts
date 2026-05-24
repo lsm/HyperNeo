@@ -9653,6 +9653,9 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_evolution_evidence_source ON evolution_evidence(kind, source_id)`
 		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_evolution_evidence_scope_source_created ON evolution_evidence(scope_id, source_id, created_at DESC, id DESC)`
+		);
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}

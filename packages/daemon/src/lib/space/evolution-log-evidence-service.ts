@@ -1,4 +1,9 @@
-import type { EvidenceKind, StructuredLogEvent, StructuredLogLevel } from '@neokai/shared';
+import type {
+	EvidenceKind,
+	EvidenceRef,
+	StructuredLogEvent,
+	StructuredLogLevel,
+} from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 
@@ -21,10 +26,7 @@ export interface EvolutionLogEvidenceServiceDeps {
 }
 
 type LogEvidenceRepository = EvolutionRepository & {
-	findEvidenceBySource?: (
-		scopeId: string,
-		sourceId: string
-	) => ReturnType<EvolutionRepository['listEvidence']>;
+	findLatestEvidenceBySource?: (scopeId: string, sourceId: string) => EvidenceRef | null;
 };
 
 interface BufferedEvent {
@@ -114,13 +116,16 @@ export class EvolutionLogEvidenceService {
 
 	private findExistingEvidence(scopeId: string, sourceId: string, fingerprint: string) {
 		const repo = this.deps.evolutionRepo as LogEvidenceRepository;
-		const candidates = repo.findEvidenceBySource
-			? repo.findEvidenceBySource(scopeId, sourceId)
-			: repo.listEvidence(scopeId).filter((evidence) => evidence.sourceId === sourceId);
-		return candidates.find(
-			(evidence) =>
-				evidence.metadata.autoCaptured === true && evidence.metadata.logFingerprint === fingerprint
-		);
+		const candidate = repo.findLatestEvidenceBySource
+			? repo.findLatestEvidenceBySource(scopeId, sourceId)
+			: repo.listEvidence(scopeId).find((evidence) => evidence.sourceId === sourceId);
+		if (
+			candidate?.metadata.autoCaptured === true &&
+			candidate.metadata.logFingerprint === fingerprint
+		) {
+			return candidate;
+		}
+		return undefined;
 	}
 
 	private getSubscriptions(): LogEvidenceSubscription[] {
@@ -192,13 +197,14 @@ function selectEvidenceKind(event: StructuredLogEvent): EvidenceKind {
 function summarizeLogEvent(event: StructuredLogEvent): string {
 	const stackLine = event.stack?.split('\n').find((line) => line.trim().length > 0);
 	const suffix = stackLine ? ` — ${stackLine.trim()}` : '';
-	return `${event.level.toUpperCase()}: ${event.message}${suffix}`.slice(0, 500);
+	return redactString(`${event.level.toUpperCase()}: ${event.message}${suffix}`).slice(0, 500);
 }
 
 function fingerprintLogEvent(event: StructuredLogEvent): string {
 	const base = [
 		event.level,
 		event.module ?? '',
+		event.metadata.processEvent ?? '',
 		normalizeForFingerprint(event.message),
 		event.stack?.split('\n')[0] ?? '',
 	].join('|');

@@ -59,17 +59,17 @@ describe('EvolutionLogEvidenceService', () => {
 
 	it('deduplicates identical signatures within the window', () => {
 		let listEvidenceCalls = 0;
-		let findEvidenceBySourceCalls = 0;
+		let findLatestEvidenceBySourceCalls = 0;
 		const repo = Object.create(evolutionRepo) as EvolutionRepository & {
-			findEvidenceBySource(scopeId: string, sourceId: string): EvidenceRef[];
+			findLatestEvidenceBySource(scopeId: string, sourceId: string): EvidenceRef | null;
 		};
 		repo.listEvidence = (...args) => {
 			listEvidenceCalls += 1;
 			return evolutionRepo.listEvidence(...args);
 		};
-		repo.findEvidenceBySource = (...args) => {
-			findEvidenceBySourceCalls += 1;
-			return evolutionRepo.findEvidenceBySource(...args);
+		repo.findLatestEvidenceBySource = (...args) => {
+			findLatestEvidenceBySourceCalls += 1;
+			return evolutionRepo.findLatestEvidenceBySource(...args);
 		};
 		const service = new EvolutionLogEvidenceService({
 			evolutionRepo: repo,
@@ -86,7 +86,7 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(evidence[0].kind).toBe('runtime_warning');
 		expect(evidence[0].metadata.count).toBe(2);
 		expect(evidence[0].metadata.samples).toHaveLength(2);
-		expect(findEvidenceBySourceCalls).toBe(2);
+		expect(findLatestEvidenceBySourceCalls).toBe(2);
 		expect(listEvidenceCalls).toBe(0);
 	});
 
@@ -305,6 +305,56 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(evolutionRepo.listEvidence(PRODUCT_FORGE_SCOPE_ID)).toHaveLength(1);
 	});
 
+	it('limits source lookup to the latest matching evidence', () => {
+		evolutionRepo.createEvidence({
+			scopeId,
+			kind: 'daemon_error',
+			sourceId: 'log:manual-old',
+			summary: 'old same source',
+			metadata: { autoCaptured: true, logFingerprint: 'manual-old' },
+			createdAt: 1,
+		});
+		evolutionRepo.createEvidence({
+			scopeId,
+			kind: 'daemon_error',
+			sourceId: 'log:manual-old',
+			summary: 'new same source',
+			metadata: { autoCaptured: true, logFingerprint: 'manual-old' },
+			createdAt: 2,
+		});
+
+		const latest = evolutionRepo.findLatestEvidenceBySource(scopeId, 'log:manual-old');
+
+		expect(latest?.summary).toBe('new same source');
+	});
+
+	it('uses process event metadata in dedupe fingerprints', () => {
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			subscriptions: [{ scopeId, levels: ['fatal'] }],
+			dedupeWindowMs: 60_000,
+		});
+		const stack = 'Error: same crash\n    at crash';
+
+		service.capture(createEvent({ level: 'fatal', message: 'same crash', stack }));
+		service.capture(
+			createEvent({
+				level: 'fatal',
+				message: 'same crash',
+				stack,
+				metadata: { processEvent: 'uncaughtException' },
+			})
+		);
+		service.flush();
+
+		const evidence = evolutionRepo.listEvidence(scopeId);
+		expect(evidence).toHaveLength(2);
+		expect(evidence.map((item) => item.kind).sort()).toEqual([
+			'runtime_crash',
+			'uncaught_exception',
+		]);
+	});
+
 	it('classifies process crash events by processEvent metadata', () => {
 		const service = new EvolutionLogEvidenceService({
 			evolutionRepo,
@@ -341,6 +391,8 @@ describe('EvolutionLogEvidenceService', () => {
 
 		const evidence = evolutionRepo.listEvidence(scopeId);
 		expect(evidence).toHaveLength(1);
+		expect(evidence[0].summary).not.toContain('secret-value');
+		expect(evidence[0].summary).toContain('token=[REDACTED]');
 		expect(JSON.stringify(evidence[0].metadata)).not.toContain('sk-test-secret');
 		expect(JSON.stringify(evidence[0].metadata)).not.toContain('secret-value');
 		expect(JSON.stringify(evidence[0].metadata)).toContain('[REDACTED]');
