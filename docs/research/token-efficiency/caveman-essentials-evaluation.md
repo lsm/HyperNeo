@@ -252,8 +252,8 @@ Recommended approach:
 
 Measure per task pair:
 
-- Output tokens: from SDK result message `usage.output_tokens`.
-- Input tokens: from SDK result message `usage.input_tokens` and context API usage where available.
+- Output tokens: sum `usage.output_tokens` across all SDK result turns in the run, or use equivalent session-level cumulative usage metadata.
+- Input tokens: sum `usage.input_tokens` across all SDK result turns in the run, plus context API usage where available.
 - Wall time: session start/end timestamps if needed.
 - Quality rubric score:
   - Task completed? yes/no
@@ -285,8 +285,8 @@ Run identical tasks in `normal` and `compressed` modes across session types:
 - Use same model/provider and fresh sessions.
 - Run at least one pair each with `thinkingLevel: 'off'` and `thinkingLevel: 'think8k'`; compressed mode may otherwise hide useful visible reasoning when little/no extended thinking is available.
 - Disable unrelated prompt changes.
-- Capture final SDK result messages and assistant text.
-- Compare token counts and rubric scores.
+- Capture every SDK result turn plus final assistant text.
+- Compare cumulative token counts and rubric scores.
 - Record examples where compression harms clarity; refine escape hatch.
 
 ## Token-savings expectations

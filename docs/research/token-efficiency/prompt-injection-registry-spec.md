@@ -148,7 +148,7 @@ CREATE TABLE prompt_injections (
 	enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
 	content TEXT NOT NULL CHECK(length(content) > 0),
 	source_kind TEXT NOT NULL CHECK(source_kind IN (
-		'builtin', 'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
+		'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
 	)),
 	source_ref TEXT,
 	constraints TEXT,
@@ -313,7 +313,7 @@ queryOptions.agents = promptRenderer.applyToAgentPrompts(
 const userPrependEntries = composed.byChannelEntries['user.prepend'];
 ```
 
-Composer must retain per-injection metadata, not only joined strings. `agentPromptEntries` includes explicit `agent.prompt.append` records plus renderer-generated copies of records whose scope has `appliesToSubagents: true`. This lets the renderer target subagents deterministically without copying every parent `system.append` entry.
+Composer must retain per-injection metadata, not only joined strings. Composer owns subagent copy generation: `agentPromptEntries` includes explicit `agent.prompt.append` records plus composer-generated copies of records whose scope has `appliesToSubagents: true`. Renderer consumes `agentPromptEntries` as-is and must not create additional subagent copies. This keeps one component responsible for copy generation and prevents double-appends.
 
 `user.prepend` must not silently no-op. MVP behavior: compose and expose `user.prepend` entries in preview/provenance, but do not allow stored records on that channel until a concrete message-rendering path exists. If enabled later, renderer must prepend it to the first user message submitted to the SDK query stream or to task-init messages before enqueueing.
 
@@ -323,19 +323,19 @@ Support existing NeoKai shapes:
 
 - `undefined` → create append string when needed.
 - `string` → prepend/append joined with double newline.
-- `{ type: 'preset', preset: 'claude_code', append }` → merge into `append`.
+- `{ type: 'preset', preset: 'claude_code', append }` → preserve true prepend semantics by rendering as SDK `systemPrompt` array `[prepend, presetWithAppend]` when prepend content exists; otherwise merge append into `append`. Do not append prepend text after the preset.
 
-Do not expand to SDK `string[]` in MVP unless needed.
+Use SDK `string[]` only when needed to preserve `system.prepend` ordering for preset prompts; otherwise keep existing string/preset shapes.
 
 ### Subagent rendering
 
 Apply `agent.prompt.append` entries to `queryOptions.agents[*].prompt`. Composer must preserve entry scope and source metadata so renderer can distinguish:
 
 - records explicitly authored for `agent.prompt.append`
-- generated subagent copies of `system.append` records with `scope.appliesToSubagents === true`
+- composer-generated subagent copies of `system.append` records with `scope.appliesToSubagents === true`
 - parent-only `system.append` records that must not reach subagents
 
-Reason: SDK subagents do not inherit parent `systemPrompt.append`, and joined channel strings lose the scope metadata required for deterministic subagent targeting.
+Reason: SDK subagents do not inherit parent `systemPrompt.append`, and joined channel strings lose the scope metadata required for deterministic subagent targeting. Renderer only applies entries provided by the composer; it does not inspect `system.append` entries to create its own copies.
 
 Avoid blindly applying all system injections to all subagents. Some layers are parent-only.
 
@@ -382,7 +382,7 @@ Provider emits this only when `effectiveOutputMode === 'compressed'` and not sup
 }
 ```
 
-Subagent behavior is resolved for MVP: compressed output must reach SDK subagents. Renderer should create an `agent.prompt.append` copy when `scope.appliesToSubagents` is true, so subagents receive equivalent output style without relying on parent prompt inheritance.
+Subagent behavior is resolved for MVP: compressed output must reach SDK subagents. Composer should create an `agent.prompt.append` copy when `scope.appliesToSubagents` is true, so subagents receive equivalent output style without relying on parent prompt inheritance. Renderer should only apply composer-provided `agentPromptEntries`.
 
 ## API and UI
 
@@ -471,7 +471,7 @@ Run paired normal/compressed tests across:
 9. Safety/approval destructive operation.
 10. At least one pair each with `thinkingLevel: 'off'` and `'think8k'`.
 
-Record output tokens, input tokens, quality rubric, ambiguity/safety issues. Require >=50% median output-token reduction without quality regression before changing defaults.
+Record cumulative output tokens, cumulative input tokens, quality rubric, ambiguity/safety issues. Sum SDK `usage.input_tokens` / `usage.output_tokens` across all result turns in each run, or use equivalent session-level cumulative usage metadata. Require >=50% median output-token reduction without quality regression before changing defaults.
 
 ## Risks
 
