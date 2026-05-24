@@ -454,12 +454,38 @@ Record output tokens, input tokens, quality rubric, ambiguity/safety issues. Req
 - Hidden behavior. Mitigate with provenance/debug endpoint.
 - SDK changes. Mitigate by keeping renderer isolated from policy/config.
 
-## Open decisions
+## Decisions
 
-1. Should prompt injection records be exposed to users in MVP, or remain built-in/internal until output mode ships?
-2. Should Space default output mode ship with backend core, or wait for Space UI work?
-3. Should `worktree-isolation` move into the generic injection system immediately, or remain existing code until after compressed mode proves the path?
-4. Should workflow runtime contracts become injections later? Likely yes, but not MVP.
+### 1. User-authored prompt injection records
+
+Decision: keep generic user-authored prompt injection records internal/not exposed in MVP.
+
+MVP exposes only typed product controls:
+
+- global output mode default
+- per-session output mode override
+- SpaceAgent output mode override
+- debug preview of applied/suppressed injections
+
+Reason: arbitrary user-authored prompt records create prompt-order, priority, safety, and support risk before the registry has proven behavior. The registry should exist internally as infrastructure first. Expose CRUD for custom prompt injections only after built-ins, provenance, suppression, validation, and debug preview are stable.
+
+### 2. Space default output mode
+
+Decision: do not ship Space-level default in backend core MVP. Start with user-level default, per-session override, and SpaceAgent override.
+
+Reason: Space-level default adds another persistence/UI surface and can surprise users by changing many agents/tasks at once. SpaceAgent override gives enough control for Coder/Reviewer/Research/QA presets while keeping scope explicit. Add `Space.outputMode` later only if users need bulk Space policy after measurement.
+
+### 3. Worktree isolation migration
+
+Decision: keep existing worktree-isolation code path for MVP; do not move it into the registry immediately.
+
+Reason: worktree isolation is safety-critical and already wired in several places, including subagent prompt mutation. Moving it while adding compressed output increases regression risk. The registry should support a future `neokai.worktree-isolation` built-in, but first consumer should be low-risk output style. Migrate worktree isolation later after prompt injection renderer has tests and runtime mileage.
+
+### 4. Workflow runtime contracts
+
+Decision: workflow runtime contracts should become prompt injections later, but not MVP.
+
+Reason: workflow contracts involve gates, channels, terminal actions, and review loop semantics. They are higher priority than output style and carry correctness risk. Keep existing workflow prompt paths until the registry supports priority bands, provenance, and suppression well. Then migrate contracts incrementally so workflow prompt assembly becomes inspectable and reusable.
 
 ## Recommendation
 
