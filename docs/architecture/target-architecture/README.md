@@ -10,6 +10,7 @@
 - [Shared Package Boundaries Design](./shared-package-boundaries.md)
 - [Storage Unit Of Work And Outbox Design](./storage-unit-of-work-and-outbox.md)
 - [Agent Runtime And Provider Compatibility Design](./agent-runtime-and-provider-compatibility.md)
+- [UI Design System Architecture Design](./ui-design-system-architecture.md)
 
 ---
 
@@ -23,6 +24,7 @@ This document is the capstone map for the architecture cleanup. It does not intr
 - Space runtime decomposition as the workflow orchestration boundary.
 - Agent Runtime and provider compatibility as independent execution/model axes.
 - Client stores as read-model caches, not command owners.
+- UI design system boundaries as the frontend component and token authority.
 - Shared package subpaths as the contract and type boundaries.
 - Forge as a first-class Space domain slice.
 
@@ -618,7 +620,16 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Materialized read-model projectors have cursors and idempotent replay behavior when introduced.
 - LiveQuery remains ephemeral and snapshot-backed; missing deltas can be recovered by resubscription.
 
-### 11.8 Legacy Exit Gate
+### 11.8 UI Design System Gate
+
+- `packages/ui` owns canonical reusable primitives, base components, shared tokens, and public demos.
+- `packages/web/src/components/ui` contains product-specific compositions and explicitly temporary compatibility wrappers, not new generic primitives.
+- New feature code imports generic controls from `@neokai/ui` or uses product UI compositions that wrap `@neokai/ui`.
+- `packages/web/src/lib/design-tokens.ts` is either a compatibility facade over `@neokai/ui` tokens or contains only product-specific tokens.
+- Public `@neokai/ui` components have tests and demo/reference coverage.
+- Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
+
+### 11.9 Legacy Exit Gate
 
 - A compatibility surface is allowed only when it has a named target replacement and no new feature depends on its internals.
 - Migrated slices have no direct RPC -> service -> repository shortcut that bypasses fabric/UoW for durable cross-boundary behavior.
