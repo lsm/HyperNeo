@@ -24,19 +24,38 @@ describe('formatAgentMessage', () => {
 		);
 	});
 
-	test('formats space-agent messages with node reply instructions', () => {
+	test('formats long-horizon agent messages with dynamic reply instructions', () => {
 		expect(
 			formatAgentMessage({
 				fromLevel: 'space-agent',
-				fromAgentName: 'Space Agent',
+				fromAgentName: 'coordinator',
 				toLevel: 'node-agent',
 				body: 'Proceed with option A',
+				replyTargetHandle: '@coordinator',
 			})
 		).toBe(
-			'─── Message from Space Agent ───\n\n' +
+			'─── Message from coordinator ───\n\n' +
 				'Proceed with option A\n\n' +
 				'─── Reply ───\n' +
-				'To reply, use: send_message with target "space-agent"'
+				'To reply, use: send_message with target "@coordinator"'
+		);
+	});
+
+	test('formats ad-hoc session messages with session reply instructions', () => {
+		expect(
+			formatAgentMessage({
+				fromLevel: 'session-agent',
+				fromAgentName: 'space-member',
+				toLevel: 'node-agent',
+				body: 'Ad-hoc follow-up',
+				replyToSessionId: 'session-adhoc-42',
+			})
+		).toBe(
+			'─── Message from space-member ───\n\n' +
+				'Ad-hoc follow-up\n\n' +
+				'<reply-routing replyToSessionId="session-adhoc-42" />\n\n' +
+				'─── Reply ───\n' +
+				'To reply, use: send_message with target "@session:session-adhoc-42"'
 		);
 	});
 
@@ -54,7 +73,7 @@ describe('formatAgentMessage', () => {
 	test('appends reply-routing XML footer when replyToSessionId is set (space-agent → node-agent)', () => {
 		const result = formatAgentMessage({
 			fromLevel: 'space-agent',
-			fromAgentName: 'Space Agent',
+			fromAgentName: 'coordinator',
 			toLevel: 'node-agent',
 			body: 'Proceed with option A',
 			replyToSessionId: 'session-adhoc-42',
@@ -66,7 +85,7 @@ describe('formatAgentMessage', () => {
 	test('appends reply-routing XML footer when replyToSessionId is set (space-agent → task-agent)', () => {
 		const result = formatAgentMessage({
 			fromLevel: 'space-agent',
-			fromAgentName: 'Space Agent',
+			fromAgentName: 'coordinator',
 			toLevel: 'task-agent',
 			body: 'Do the thing',
 			taskId: 'task-999',
@@ -91,7 +110,7 @@ describe('formatAgentMessage', () => {
 	test('does not append reply-routing footer when replyToSessionId is null or undefined', () => {
 		const result1 = formatAgentMessage({
 			fromLevel: 'space-agent',
-			fromAgentName: 'Space Agent',
+			fromAgentName: 'coordinator',
 			toLevel: 'node-agent',
 			body: 'No reply routing',
 			replyToSessionId: null,
@@ -100,7 +119,7 @@ describe('formatAgentMessage', () => {
 
 		const result2 = formatAgentMessage({
 			fromLevel: 'space-agent',
-			fromAgentName: 'Space Agent',
+			fromAgentName: 'coordinator',
 			toLevel: 'node-agent',
 			body: 'No reply routing',
 		});

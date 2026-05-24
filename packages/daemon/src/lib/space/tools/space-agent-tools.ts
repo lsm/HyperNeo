@@ -370,10 +370,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			.map((v) => normalizeAgentNameToken(v))
 			.filter((v) => v.length > 0)
 	);
-	const outboundSenderName = myAgentName ?? 'space-agent';
-	const outboundSenderLevel = outboundSenderName === 'task-agent' ? 'task-agent' : 'space-agent';
+	const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
+	const outboundSenderLevel =
+		outboundSenderName === 'task-agent'
+			? 'task-agent'
+			: myAgentName || !mySessionId
+				? 'space-agent'
+				: 'session-agent';
 	const outboundSenderDisplayName =
-		outboundSenderName === 'space-agent' ? 'Space Agent' : outboundSenderName;
+		outboundSenderName === 'space-agent'
+			? (myAgentNameAliases?.[0] ?? outboundSenderName)
+			: outboundSenderName;
+	const outboundReplyTargetHandle = myAgentName
+		? `@${outboundSenderDisplayName}`
+		: mySessionId
+			? `@session:${mySessionId}`
+			: `@${outboundSenderDisplayName}`;
 
 	function requireGoalService() {
 		if (!config.goalService) throw new Error('Goal management not available');
@@ -1570,6 +1582,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskId: task.id,
 							taskNumber: task.taskNumber,
 							replyToSessionId: mySessionId,
+							replyTargetHandle: outboundReplyTargetHandle,
 						}),
 						kind: 'message',
 						workflowRunId: task.workflowRunId,
@@ -1644,6 +1657,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskNumber: task.taskNumber,
 							nodeId: resolved.agentName,
 							replyToSessionId: mySessionId,
+							replyTargetHandle: outboundReplyTargetHandle,
 						}),
 						true
 					);
@@ -1694,6 +1708,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 							taskNumber: task.taskNumber,
 							nodeId: resolved.agentName,
 							replyToSessionId: mySessionId,
+							replyTargetHandle: outboundReplyTargetHandle,
 						}),
 						true
 					);
@@ -1732,6 +1747,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						taskNumber: task.taskNumber,
 						nodeId: resolved.agentName,
 						replyToSessionId: mySessionId,
+						replyTargetHandle: outboundReplyTargetHandle,
 					}),
 				});
 				queuedMessageId = record.id;

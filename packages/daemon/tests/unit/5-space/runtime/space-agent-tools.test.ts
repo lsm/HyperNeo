@@ -3526,17 +3526,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		return created;
 	}
 
-	function spaceAgentToTaskEnvelope(task: SpaceTask, message: string): string {
-		return formatAgentMessage({
-			fromLevel: 'space-agent',
-			fromAgentName: 'Space Agent',
-			toLevel: 'task-agent',
-			body: message,
-			taskId: task.id,
-			taskNumber: task.taskNumber,
-		});
-	}
-
 	function spaceAgentToNodeEnvelope(
 		task: SpaceTask,
 		message: string,
@@ -3544,7 +3533,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 	): string {
 		return formatAgentMessage({
 			fromLevel: 'space-agent',
-			fromAgentName: 'Space Agent',
+			fromAgentName: 'space-agent',
 			toLevel: 'node-agent',
 			body: message,
 			taskId: task.id,
