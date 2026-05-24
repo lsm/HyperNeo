@@ -145,10 +145,10 @@ CREATE TABLE prompt_injections (
 		'global', 'session', 'space', 'space_agent', 'workflow', 'workflow_node', 'task'
 	)),
 	scope_id TEXT,
-	-- scope_id must be NULL only for global records and NOT NULL for every scoped record.
+	-- scope_id must be NULL only for global records and non-empty for every scoped record.
 	CHECK(
 		(scope_type = 'global' AND scope_id IS NULL)
-		OR (scope_type <> 'global' AND scope_id IS NOT NULL)
+		OR (scope_type <> 'global' AND scope_id IS NOT NULL AND length(scope_id) > 0)
 	),
 	record_type TEXT NOT NULL CHECK(record_type IN ('template', 'content', 'suppress')),
 	template_id TEXT,
@@ -169,7 +169,9 @@ CREATE TABLE prompt_injections (
 		'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
 	)),
 	source_ref TEXT,
-	constraints TEXT CHECK(constraints IS NULL OR json_valid(constraints)),
+	constraints TEXT CHECK(
+		constraints IS NULL OR (json_valid(constraints) AND json_type(constraints) = 'object')
+	),
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -350,7 +352,7 @@ Reject or disable invalid records:
 - Missing `id`.
 - Duplicate `id` after provider merge; duplicates are invalid and must not be precedence-resolved in MVP.
 - Unsupported `channel`.
-- `scope_id` missing for any non-global `scope_type`; global records must use `scope_id = NULL`.
+- `scope_id` missing or empty for any non-global `scope_type`; global records must use `scope_id = NULL`.
 - Record payload shape violates `record_type`: template rows must have `template_id` only; content rows must have non-empty `content` only; suppress rows must have `suppresses_template_id` only.
 - `template_id` or `suppresses_template_id` references an unknown built-in.
 - Same `scope_type` + `scope_id` contains more than one enabled row targeting the same template, whether by `template_id` or `suppresses_template_id`.
@@ -383,7 +385,7 @@ Persisted user/config/workflow records are schema-limited to non-protected bands
 - Built-in safety/approval injections must not be suppressible by user-configured output-style injections.
 - Duplicate row IDs are never resolved by priority in MVP. Treat duplicates as invalid, suppress all records with that row ID for the render, log the conflict, and expose it in `suppressed` provenance.
 - Multiple rows may target the same template across different scopes; scope precedence decides which activation/suppression applies.
-- Multiple enabled rows targeting the same template in the same scope are invalid in MVP, even if one activates and one suppresses. Suppress all same-scope conflicting rows for that template, log `same-scope-template-conflict`, and expose them in provenance. Add a repository unique constraint or transactional validation for `(scope_type, scope_id, COALESCE(template_id, suppresses_template_id))` among enabled records if SQLite expression/partial-index support is available.
+- Multiple enabled rows targeting the same template in the same scope are invalid in MVP, even if one activates and one suppresses. Suppress all same-scope conflicting rows for that template, log `same-scope-template-conflict`, and expose them in provenance. Add a repository unique constraint or transactional validation for `(scope_type, COALESCE(scope_id, ''), COALESCE(template_id, suppresses_template_id))` among enabled records if SQLite expression/partial-index support is available; normalizing `scope_id` is required because global rows use `NULL` and SQLite unique indexes treat `NULL` values as distinct.
 
 ### Provenance
 
