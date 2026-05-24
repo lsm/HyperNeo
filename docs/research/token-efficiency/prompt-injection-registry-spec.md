@@ -323,9 +323,9 @@ Support existing NeoKai shapes:
 
 - `undefined` → create append string when needed.
 - `string` → prepend/append joined with double newline.
-- `{ type: 'preset', preset: 'claude_code', append }` → preserve true prepend semantics by rendering as SDK `systemPrompt` array `[prepend, presetWithAppend]` when prepend content exists; otherwise merge append into `append`. Do not append prepend text after the preset.
+- `{ type: 'preset', preset: 'claude_code', append }` → merge `system.append` into `append`. `system.prepend` is not representable with this SDK shape because preset objects cannot be mixed into `string[]`; do not append prepend text after the preset. MVP behavior: suppress `system.prepend` entries for preset prompts with provenance reason `unsupported-with-preset-system-prompt`.
 
-Use SDK `string[]` only when needed to preserve `system.prepend` ordering for preset prompts; otherwise keep existing string/preset shapes.
+Do not expand preset prompts to SDK `string[]` in MVP because doing so would drop Claude Code preset semantics and dynamic sections. If true preset prepend becomes required later, add SDK support or materialize the full preset prompt explicitly before enabling that channel for preset sessions.
 
 ### Subagent rendering
 
