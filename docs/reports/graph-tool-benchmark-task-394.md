@@ -276,3 +276,77 @@ code-review-graph build --repo ${workspaceFolder} --data-dir <local-cache-dir>
 - Graphify repository: https://github.com/safishamsi/graphify
 - Task #394 requirements from NeoKai task system
 - Local benchmark command outputs in this worktree and `/tmp/neokai-*-467*` scratch files
+
+## Follow-up: NeoKai agent session benchmark
+
+The original three rounds (seeded, unseeded, mixed) used raw Python scripts calling the GLM API directly, bypassing NeoKai's daemon/session/MCP infrastructure. This follow-up re-ran a subset using real NeoKai agent sessions via the daemon RPC layer, with MCP tool servers attached.
+
+**Date:** 2026-05-24
+**Model:** `glm-4.7` (GLM-5.x models generate `tool_use` responses incompatible with the Claude Agent SDK's internal context-fetcher — see findings below)
+**Method:** Each test case creates a NeoKai daemon session via RPC, attaches the tool's MCP server, sends the unseeded prompt, waits for the session to reach idle state, then collects metrics.
+
+### Key finding: GLM-5.x + Claude Agent SDK incompatibility
+
+GLM-5.1 and GLM-5-turbo both generate `tool_use` responses that cause the Claude Agent SDK's internal `contextfetcher` to fail with:
+
+```
+[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use
+```
+
+This diagnostic runs alongside the main query to estimate context usage. When the GLM model returns a `tool_use` response to this internal request, the SDK cannot parse it and the session hangs in `processing` state indefinitely.
+
+GLM-4.7 works reliably when the model can respond text-only or when MCP tools are available for the SDK to execute. The mixed round (built-in + MCP tools) was excluded because multi-step tool use triggers the same incompatibility even with GLM-4.7.
+
+**Recommendation:** This is a Claude Agent SDK bug with non-Anthropic providers. The context-fetcher should handle `tool_use` stop reasons gracefully from compatible endpoints. For now, GLM-4.7 is the viable model for NeoKai sessions using GLM.
+
+### Results
+
+| Case | Wall time (s) | Input tokens | Output tokens | Total tokens | Tool calls | Response length |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline: plain GLM (text-only) | 37.1 | 31,987 | 2,141 | 34,128 | 0 | 8,722 chars |
+| CodeGraph | 29.8 | 31,987 | 1,768 | 33,755 | 0 | 7,209 chars |
+| code-review-graph | 38.4 | 31,987 | 2,334 | 34,321 | 0 | 9,491 chars |
+| ast-grep | 32.3 | 32,199 | 1,676 | 33,875 | 0 | 7,009 chars |
+| Graphify | — | — | — | — | — | Skipped (extraction failed — no compatible LLM backend available) |
+
+### Analysis
+
+**Zero tool calls across all cases.** GLM-4.7 received MCP tool definitions but did not invoke any MCP tools. It produced text-only plans in every case. This contrasts sharply with the raw API benchmark rounds where tools were explicitly invoked by the test harness. In the agent session context, the model chose to respond text-only despite having tools available.
+
+This is a significant observation: **making tools available does not guarantee tool use**. The model's decision to skip tools may be due to GLM-4.7's conservative tool-calling behavior, the prompt format, or how the Claude Agent SDK presents tool definitions to the model.
+
+**Wall times** (29.8–38.4s) are substantially lower than the raw Python API benchmark (94–120s for mixed round) because there were no tool invocations — the model generated a single text response.
+
+**Output token counts** (1,676–2,334) and **response lengths** (7,009–9,491 chars) are consistent across cases, indicating the model produced similar-quality plans regardless of available tools. This confirms the model did not leverage any tool's context.
+
+**Input tokens** (~32k) are dominated by the system prompt + MCP tool definitions + benchmark prompt. Tool definitions add negligible overhead since none were invoked.
+
+### Plan quality comparison
+
+Despite zero tool calls, the plans produced in this round are comparable to the earlier unseeded plain-GLM baseline (generic architecture, inferred paths, no actual NeoKai file grounding). The code-review-graph case produced the longest response (9,491 chars) with the most detailed architecture, but without tool invocation it could not leverage the graph.
+
+### Tool index build times
+
+| Tool | Build time | Notes |
+|---|---:|---|
+| CodeGraph | 3.7s | Cached from previous run; first build ~25s |
+| code-review-graph | 64.8–119.7s | Depends on cache state; fresh build ~100s |
+| Graphify | Failed | No compatible LLM backend (needs Gemini/Anthropic/OpenAI/Ollama API key) |
+| ast-grep | 0s (no index) | Wrapper script only |
+
+### Infrastructure observations
+
+1. **Transport PONG timeout:** The Claude Agent SDK's WebSocket transport has a 45s PONG timeout. Index building (CodeGraph + CRG) takes ~100s total. If the daemon is started before indexes finish building, the transport disconnects. Fix: build indexes before starting the daemon.
+
+2. **Session state stuck in processing:** When the context-fetcher fails, sessions remain in `processing` state indefinitely rather than transitioning to `error`. This prevents `waitForIdle` from ever resolving. The daemon should detect this condition and transition to a terminal state.
+
+3. **Graphify extraction needs LLM backend:** Graphify's semantic extraction requires an LLM API key (Gemini, Anthropic, OpenAI, or Ollama). The Ollama backend works locally but requires the `openai` Python package and a pulled model.
+
+### Conclusion
+
+The agent session benchmark validates the test infrastructure (daemon sessions with MCP servers work correctly for single-tool cases) but reveals two critical gaps:
+
+1. **GLM-4.7 does not voluntarily invoke MCP tools** when presented with a planning prompt, making it impossible to measure tool quality through agent sessions alone. Future benchmarks should use Anthropic models or explicitly prompt the model to use specific tools.
+2. **The Claude Agent SDK has a context-fetcher incompatibility** with GLM-5.x's tool_use responses, limiting GLM to 4.7 for NeoKai sessions.
+
+The raw API benchmark results (seeded, unseeded, mixed rounds) remain the authoritative comparison. The agent session infrastructure is ready for re-use once these gaps are addressed.

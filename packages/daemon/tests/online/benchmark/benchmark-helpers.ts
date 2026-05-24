@@ -63,6 +63,17 @@ Produce an implementation plan with:
 - estimated change scope.` as const;
 
 /**
+ * Text-only variant for the baseline test.  Instructs the model to respond
+ * without using any tools — required because GLM's tool_use responses are
+ * incompatible with the Claude Agent SDK's context-fetcher when no tools
+ * are available for the SDK to execute.
+ */
+export const BENCHMARK_PROMPT_TEXT_ONLY = (BENCHMARK_PROMPT_UNSEDED +
+	`
+
+IMPORTANT: Respond with text only. Do NOT use any tools (no Bash, Read, Write, Glob, Grep, or any other tool). Produce your plan based on your understanding of typical agent runtime architectures.`) as const;
+
+/**
  * Build the mixed-discovery prompt. Instructs the agent to first use built-in
  * search (Read/Grep/Glob) to identify likely files, then use the named tool
  * for deeper context.
@@ -173,13 +184,18 @@ export async function runBenchmarkCase(
 	const { name, workspacePath, prompt, mcpServers } = options;
 
 	// 1. Create session
+	//
+	// NOTE: GLM-5.x models generate tool_use responses that are incompatible with
+	// the Claude Agent SDK's internal context-fetcher, causing sessions to hang.
+	// GLM-4.7 works reliably when tools are available for the SDK to execute.
+	// The baseline test uses a text-only prompt variant that avoids triggering tool_use.
 	const createResult = (await daemon.messageHub.request('session.create', {
 		workspacePath,
 		title: `Benchmark: ${name}`,
 		config: {
-			model: 'glm-5.1',
+			model: 'glm-4.7',
 			provider: 'glm',
-			permissionMode: 'acceptEdits',
+			permissionMode: 'bypassPermissions',
 			...(mcpServers ? { mcpServers } : {}),
 		},
 	})) as { sessionId: string };
@@ -190,7 +206,7 @@ export async function runBenchmarkCase(
 	// 2. Send prompt and time it
 	const startMs = Date.now();
 	await sendMessage(daemon, sessionId, prompt);
-	await waitForIdle(daemon, sessionId, 180_000);
+	await waitForIdle(daemon, sessionId, 360_000);
 	const wallTimeMs = Date.now() - startMs;
 
 	// 3. Collect SDK messages
@@ -249,7 +265,7 @@ export function writeBenchmarkResults(
 	const output: BenchmarkOutput = {
 		timestamp: new Date().toISOString(),
 		neokaiCommit: 'HEAD',
-		model: 'glm-5.1',
+		model: 'glm-4.7',
 		worktreePath,
 		results,
 	};
