@@ -522,6 +522,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		eventHub: {
 			publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
 		},
+		onGoalResumed: (goalId, spaceId) => {
+			for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
+				try {
+					syncGoalAutomationSelfNagScheduleForScope({
+						goalRepo: spaceGoalRepo,
+						scheduleService,
+						scope,
+						db: deps.db.getDatabase(),
+					});
+				} catch (err) {
+					log.warn('could not sync self-nag schedule on goal resume', err);
+				}
+			}
+		},
 	});
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows

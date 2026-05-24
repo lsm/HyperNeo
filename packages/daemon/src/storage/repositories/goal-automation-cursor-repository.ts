@@ -97,7 +97,12 @@ export class GoalAutomationCursorRepository {
 						THEN excluded.last_episode_id
 						ELSE goal_automation_cursors.last_episode_id
 					END,
-					last_fired_at = MAX(goal_automation_cursors.last_fired_at, excluded.last_fired_at),
+					last_fired_at = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.last_fired_at
+						ELSE goal_automation_cursors.last_fired_at
+					END,
 					metadata_json = CASE
 						WHEN goal_automation_cursors.last_fired_at IS NULL
 							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at

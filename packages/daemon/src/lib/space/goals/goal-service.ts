@@ -53,6 +53,7 @@ export interface SpaceGoalServiceDeps {
 		publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
 	};
 	goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
+	onGoalResumed?: (goalId: string, spaceId: string) => void;
 }
 
 export class SpaceGoalService {
@@ -174,6 +175,7 @@ export class SpaceGoalService {
 		const updated = this.deps.goalRepo.update(goalId, { status: 'active', nextCheckInAt });
 		if (!updated) throw new Error(`Goal not found: ${goalId}`);
 		this.recordGoalEvent(updated, 'status_changed', goal, updated, context);
+		this.deps.onGoalResumed?.(goalId, goal.spaceId);
 		return updated;
 	}
 

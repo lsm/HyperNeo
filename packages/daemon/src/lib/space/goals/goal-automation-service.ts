@@ -204,8 +204,7 @@ export function selectEvidenceAfterCursor(
 				lastEvidenceCreatedAt === null ||
 				item.createdAt > lastEvidenceCreatedAt ||
 				(item.createdAt === lastEvidenceCreatedAt &&
-					lastEvidenceId !== null &&
-					item.id > lastEvidenceId)
+					(lastEvidenceId === null || item.id > lastEvidenceId))
 		)
 		.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
 		.slice(0, limit);

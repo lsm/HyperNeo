@@ -272,6 +272,8 @@ describe('GoalAutomationService', () => {
 			triggerKind: 'completed_task_threshold',
 			triggerKey: 'threshold:2',
 			lastEvidenceCreatedAt: 20,
+			lastEvidenceId:
+				evolutionRepo.listEvidence(scope.id).find((e) => e.sourceId === second.id)?.id ?? null,
 			lastTaskCompletedAt: null,
 			lastExternalEventId: null,
 			lastEpisodeId: null,
@@ -380,6 +382,7 @@ describe('GoalAutomationService', () => {
 			triggerKind: 'self_nag',
 			triggerKey: 'schedule-1',
 			lastEvidenceCreatedAt: 20,
+			lastEvidenceId: evolutionRepo.listEvidence(scope.id)[0]?.id ?? null,
 			lastTaskCompletedAt: null,
 			lastExternalEventId: null,
 			lastEpisodeId: null,
