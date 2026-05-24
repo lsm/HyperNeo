@@ -286,15 +286,6 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 	for await (const msg of agentQuery) {
 		sdkMessages.push(msg as Record<string, unknown>);
 
-		// Dump system message on first encounter
-		if ((msg as { type?: string }).type === 'system' && sdkMessages.length === 1) {
-			const { writeFileSync: dump } = await import('node:fs');
-			const { join } = await import('node:path');
-			const dumpPath = join('/tmp', `benchmark-system-${name.replace(/[^a-z0-9]/gi, '_')}.json`);
-			dump(dumpPath, JSON.stringify(msg, null, 2));
-			console.log(`  [debug] System message dumped to ${dumpPath}`);
-		}
-
 		if ((msg as { type?: string }).type === 'result') {
 			const result = msg as {
 				subtype?: string;
