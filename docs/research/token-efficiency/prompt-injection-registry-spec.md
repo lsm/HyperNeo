@@ -65,7 +65,7 @@ export type PromptInjectionSourceKind =
 export type PromptInjectionRecordType = 'template' | 'content' | 'suppress';
 
 export interface PromptInjection {
-	/** Unique materialized record ID for this scoped instance. */
+	/** Unique ID for this persisted or materialized record. */
 	id: string;
 	/** Template activation, user-authored content, or suppress-only record. */
 	recordType: PromptInjectionRecordType;
@@ -73,6 +73,8 @@ export interface PromptInjection {
 	templateId?: string;
 	/** Suppression target for suppress-only records. */
 	suppressesTemplateId?: string;
+	/** Persisted activation row that produced this materialized built-in, if any. */
+	activationId?: string;
 	channel: PromptInjectionChannel;
 	priority: number;
 	enabled: boolean;
@@ -117,12 +119,19 @@ Use reverse-DNS-like template IDs for built-ins:
 - `neokai.space-chat.contract` (future migration, not MVP)
 - `neokai.workflow.runtime-contract` (future migration, not MVP)
 
-A scoped activation record still needs its own unique row ID so the same built-in can be enabled at many scopes. Example record IDs:
+A scoped activation record still needs its own unique row ID so the same built-in can be enabled at many scopes. Example persisted record IDs:
 
 - `global.neokai.output-mode.compressed`
 - `space.<spaceId>.neokai.output-mode.compressed`
 - `workflow-node.<workflowId>.<nodeId>.<agentName>.neokai.output-mode.compressed`
 - `user.<uuid>` for user-authored content records
+
+Materialized built-in prompt content must use a separate ID namespace so activation rows and rendered built-in content never collide under duplicate-ID suppression. Recommended format:
+
+- `materialized.<activation-row-id>`
+- `materialized.space.<spaceId>.neokai.output-mode.compressed`
+
+The materialized record keeps `templateId = 'neokai.output-mode.compressed'` and provenance should link back to the activation row ID.
 
 ## Storage
 
@@ -477,12 +486,13 @@ For MVP:
 
 ## Built-in compressed output injection
 
-Provider emits this only when resolver finds an enabled `neokai.output-mode.compressed` activation record that is not suppressed by a narrower or higher-priority applicable record:
+Provider emits this only when resolver finds an enabled `neokai.output-mode.compressed` activation record that is not suppressed by a narrower or higher-priority applicable record. It transforms the activation row into materialized prompt content with a distinct `materialized.*` ID rather than merging both records with the same row ID:
 
 ```json
 {
-	"id": "space.<space-id>.neokai.output-mode.compressed",
+	"id": "materialized.space.<space-id>.neokai.output-mode.compressed",
 	"templateId": "neokai.output-mode.compressed",
+	"activationId": "space.<space-id>.neokai.output-mode.compressed",
 	"channel": "system.append",
 	"priority": 650,
 	"enabled": true,
