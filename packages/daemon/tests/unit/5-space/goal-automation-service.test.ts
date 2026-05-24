@@ -804,6 +804,42 @@ describe('GoalAutomationService', () => {
 				?.lastExternalEventId
 		).toBe('event-2');
 	});
+
+	it('resumes paused schedule with updated cron config', () => {
+		const goal = goalRepo.create({ spaceId, title: 'Resume cron', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Resume cron cadence',
+			objective: 'Update before resume',
+			policy: { automation: { selfNagCronExpression: '0 0 * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
+		const schedule = scheduleService.listSchedules(spaceId, 'active')[0];
+		expect(schedule.cronExpression).toBe('0 0 * * *');
+
+		// Pause the schedule (simulates goal temporarily inactive)
+		scheduleService.pauseSchedule(schedule.id);
+		expect(scheduleService.listSchedules(spaceId, 'paused')).toHaveLength(1);
+
+		// Re-sync with a new cron expression while schedule is paused
+		const updatedScope = evolutionRepo.updateScope(scope.id, {
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		syncGoalAutomationSelfNagScheduleForScope({
+			goalRepo,
+			scheduleService,
+			scope: updatedScope as typeof scope,
+		});
+
+		// Schedule should be active again with the NEW cron expression
+		const active = scheduleService.listSchedules(spaceId, 'active');
+		expect(active).toHaveLength(1);
+		expect(active[0].id).toBe(schedule.id);
+		expect(active[0].cronExpression).toBe('0 * * * *');
+		expect(active[0].nextRunAt).not.toBeNull();
+	});
 });
 
 describe('handleGoalAutomationExecute', () => {
@@ -1445,5 +1481,98 @@ describe('handleGoalAutomationExecute', () => {
 			.filter((item) => item.sourceId === 'event-retry');
 		expect(eventEvidence).toHaveLength(1);
 		expect(eventEvidence[0].createdAt).toBe(80);
+	});
+
+	it('cursor upsert keeps newer state when older job writes late', async () => {
+		const space = spaceRepo.createSpace({
+			slug: 'cursor-race',
+			workspacePath: '/workspace/cursor-race',
+			name: 'Cursor race',
+			description: 'Cursor race test',
+		});
+		const goal = goalRepo.create({ spaceId: space.id, title: 'Race goal', type: 'recurring' });
+		const scope = evolutionRepo.createScope({
+			spaceId: space.id,
+			spaceGoalId: goal.id,
+			kind: 'mission',
+			name: 'Race scope',
+			objective: 'Cursor race',
+			policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+		});
+		evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Early evidence',
+		});
+
+		const payload = {
+			goalId: goal.id,
+			scopeId: scope.id,
+			triggerKind: 'self_nag' as const,
+			triggerKey: 'sched-race',
+			reason: 'self_nag' as const,
+			scheduleId: 'sched-race',
+		};
+		const deps_base = {
+			goalRepo,
+			taskRepo,
+			evolutionRepo,
+			cursorRepo,
+			episodeService: {
+				createFromEvidence: async ({ evidenceIds }: { evidenceIds: string[] }) => ({
+					episode: evolutionRepo.createEpisode({
+						scopeId: scope.id,
+						title: 'Race episode',
+						evidenceIds,
+						outcomeSummary: 'Race outcome',
+						findings: [],
+					}),
+					proposals: [],
+					lessons: [],
+				}),
+			},
+			taskCreatedEventHub: { publish: async () => {} },
+		};
+
+		// First run: normal execution
+		const job1 = createAutomationJob(payload, 'job-1');
+		const result1 = await handleGoalAutomationExecute(job1, deps_base);
+		expect(result1.skipped).toBe(false);
+
+		const cursor1 = cursorRepo.get(goal.id, scope.id, 'self_nag', 'sched-race')!;
+		expect(cursor1).not.toBeNull();
+
+		// Add more evidence and run again: cursor advances
+		evolutionRepo.createEvidence({
+			scopeId: scope.id,
+			kind: 'manual_note',
+			summary: 'Later evidence',
+		});
+		const job2 = createAutomationJob(payload, 'job-2');
+		const result2 = await handleGoalAutomationExecute(job2, deps_base);
+		expect(result2.skipped).toBe(false);
+
+		const cursor2 = cursorRepo.get(goal.id, scope.id, 'self_nag', 'sched-race')!;
+		expect(cursor2.lastFiredAt).toBeGreaterThanOrEqual(cursor1.lastFiredAt!);
+
+		// Simulate old job (job-1) trying to write after job-2 already advanced cursor.
+		// The cursor upsert must NOT regress lastFiredAt.
+		cursorRepo.upsert({
+			spaceId: space.id,
+			goalId: goal.id,
+			scopeId: scope.id,
+			triggerKind: 'self_nag',
+			triggerKey: 'sched-race',
+			lastFiredAt: cursor1.lastFiredAt,
+			lastEvidenceCreatedAt: 1, // stale value
+			metadata: { stale: true },
+		});
+		const afterStale = cursorRepo.get(goal.id, scope.id, 'self_nag', 'sched-race')!;
+		// Stale write must not regress: lastFiredAt stays at job-2's value
+		expect(afterStale.lastFiredAt).toBe(cursor2.lastFiredAt);
+		// Evidence cursor also stays at job-2's value (not regressed to 1)
+		expect(afterStale.lastEvidenceCreatedAt).toBe(cursor2.lastEvidenceCreatedAt);
+		// Metadata stays from job-2's write (stale marker not applied)
+		expect(afterStale.metadata.stale).toBeUndefined();
 	});
 });

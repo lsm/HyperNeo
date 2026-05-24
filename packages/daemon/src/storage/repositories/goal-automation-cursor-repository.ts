@@ -67,13 +67,43 @@ export class GoalAutomationCursorRepository {
 				ON CONFLICT(goal_id, scope_id, trigger_kind, trigger_key) DO UPDATE SET
 					space_id = excluded.space_id,
 					scope_id = excluded.scope_id,
-					last_evidence_created_at = excluded.last_evidence_created_at,
-					last_evidence_id = excluded.last_evidence_id,
-					last_task_completed_at = excluded.last_task_completed_at,
-					last_external_event_id = excluded.last_external_event_id,
-					last_episode_id = excluded.last_episode_id,
-					last_fired_at = excluded.last_fired_at,
-					metadata_json = excluded.metadata_json,
+					last_evidence_created_at = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.last_evidence_created_at
+						ELSE goal_automation_cursors.last_evidence_created_at
+					END,
+					last_evidence_id = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.last_evidence_id
+						ELSE goal_automation_cursors.last_evidence_id
+					END,
+					last_task_completed_at = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.last_task_completed_at
+						ELSE goal_automation_cursors.last_task_completed_at
+					END,
+					last_external_event_id = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.last_external_event_id
+						ELSE goal_automation_cursors.last_external_event_id
+					END,
+					last_episode_id = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.last_episode_id
+						ELSE goal_automation_cursors.last_episode_id
+					END,
+					last_fired_at = MAX(goal_automation_cursors.last_fired_at, excluded.last_fired_at),
+					metadata_json = CASE
+						WHEN goal_automation_cursors.last_fired_at IS NULL
+							OR excluded.last_fired_at >= goal_automation_cursors.last_fired_at
+						THEN excluded.metadata_json
+						ELSE goal_automation_cursors.metadata_json
+					END,
 					updated_at = excluded.updated_at`
 			)
 			.run(
