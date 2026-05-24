@@ -6,388 +6,388 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 
 interface SpaceGoalDialogProps {
-	isOpen: boolean;
-	goal?: SpaceGoal | null;
-	onClose: () => void;
-	onSaved?: (goal: SpaceGoal) => void;
+  isOpen: boolean;
+  goal?: SpaceGoal | null;
+  onClose: () => void;
+  onSaved?: (goal: SpaceGoal) => void;
 }
 
 const TYPE_OPTIONS: { value: SpaceGoalType; label: string }[] = [
-	{ value: 'one_shot', label: 'One-shot' },
-	{ value: 'measurable', label: 'Measurable' },
-	{ value: 'recurring', label: 'Recurring' },
+  { value: 'one_shot', label: 'One-shot' },
+  { value: 'measurable', label: 'Measurable' },
+  { value: 'recurring', label: 'Recurring' },
 ];
 
 const PRIORITY_OPTIONS: { value: SpaceTaskPriority; label: string }[] = [
-	{ value: 'low', label: 'Low' },
-	{ value: 'normal', label: 'Normal' },
-	{ value: 'high', label: 'High' },
-	{ value: 'urgent', label: 'Urgent' },
+  { value: 'low', label: 'Low' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'high', label: 'High' },
+  { value: 'urgent', label: 'Urgent' },
 ];
 
 const COMMON_TIMEZONES = [
-	'UTC',
-	'America/New_York',
-	'America/Los_Angeles',
-	'America/Chicago',
-	'Europe/London',
-	'Europe/Paris',
-	'Europe/Berlin',
-	'Asia/Tokyo',
-	'Asia/Shanghai',
-	'Asia/Singapore',
-	'Australia/Sydney',
-	'Pacific/Auckland',
+  'UTC',
+  'America/New_York',
+  'America/Los_Angeles',
+  'America/Chicago',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Asia/Tokyo',
+  'Asia/Shanghai',
+  'Asia/Singapore',
+  'Australia/Sydney',
+  'Pacific/Auckland',
 ];
 
 function parseLines(value: string): string[] {
-	return value
-		.split('\n')
-		.map((line) => line.trim())
-		.filter(Boolean);
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function parseLabels(value: string): string[] {
-	return value
-		.split(',')
-		.map((label) => label.trim())
-		.filter(Boolean);
+  return value
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean);
 }
 
 function formatMetricValue(value: SpaceGoalMetrics[string]): string {
-	if (value === null) return 'null';
-	if (typeof value === 'string') return JSON.stringify(value);
-	return String(value ?? '');
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  return String(value ?? '');
 }
 
 function isMetricScalar(value: unknown): value is SpaceGoalMetrics[string] {
-	return (
-		value === null ||
-		typeof value === 'string' ||
-		typeof value === 'number' ||
-		typeof value === 'boolean'
-	);
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
 }
 
 function parseMetrics(value: string): SpaceGoalMetrics {
-	const metrics: SpaceGoalMetrics = {};
-	for (const line of parseLines(value)) {
-		const [rawKey, ...rest] = line.split(':');
-		const key = rawKey?.trim();
-		if (!key) continue;
-		const rawValue = rest.join(':').trim();
-		try {
-			const parsed = JSON.parse(rawValue) as unknown;
-			metrics[key] = isMetricScalar(parsed) ? parsed : rawValue;
-		} catch {
-			metrics[key] = rawValue;
-		}
-	}
-	return metrics;
+  const metrics: SpaceGoalMetrics = {};
+  for (const line of parseLines(value)) {
+    const [rawKey, ...rest] = line.split(':');
+    const key = rawKey?.trim();
+    if (!key) continue;
+    const rawValue = rest.join(':').trim();
+    try {
+      const parsed = JSON.parse(rawValue) as unknown;
+      metrics[key] = isMetricScalar(parsed) ? parsed : rawValue;
+    } catch {
+      metrics[key] = rawValue;
+    }
+  }
+  return metrics;
 }
 
 function formatMetrics(metrics: SpaceGoalMetrics): string {
-	return Object.entries(metrics)
-		.map(([key, value]) => `${key}: ${formatMetricValue(value)}`)
-		.join('\n');
+  return Object.entries(metrics)
+    .map(([key, value]) => `${key}: ${formatMetricValue(value)}`)
+    .join('\n');
 }
 
 export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDialogProps) {
-	const [title, setTitle] = useState('');
-	const [description, setDescription] = useState('');
-	const [type, setType] = useState<SpaceGoalType>('one_shot');
-	const [priority, setPriority] = useState<SpaceTaskPriority>('normal');
-	const [summary, setSummary] = useState('');
-	const [progress, setProgress] = useState('0');
-	const [labels, setLabels] = useState('');
-	const [metrics, setMetrics] = useState('');
-	const [nextSteps, setNextSteps] = useState('');
-	const [preferredWorkflowId, setPreferredWorkflowId] = useState('');
-	const [autoTriggerNext, setAutoTriggerNext] = useState(false);
-	const [checkInCronExpression, setCheckInCronExpression] = useState('');
-	const [checkInTimezone, setCheckInTimezone] = useState('UTC');
-	const [triggerImmediately, setTriggerImmediately] = useState(false);
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [type, setType] = useState<SpaceGoalType>('one_shot');
+  const [priority, setPriority] = useState<SpaceTaskPriority>('normal');
+  const [summary, setSummary] = useState('');
+  const [progress, setProgress] = useState('0');
+  const [labels, setLabels] = useState('');
+  const [metrics, setMetrics] = useState('');
+  const [nextSteps, setNextSteps] = useState('');
+  const [preferredWorkflowId, setPreferredWorkflowId] = useState('');
+  const [autoTriggerNext, setAutoTriggerNext] = useState(false);
+  const [checkInCronExpression, setCheckInCronExpression] = useState('');
+  const [checkInTimezone, setCheckInTimezone] = useState('UTC');
+  const [triggerImmediately, setTriggerImmediately] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-	const isEditing = Boolean(goal);
-	const workflows = spaceStore.workflows.value.filter((workflow) => !workflow.disabled);
+  const isEditing = Boolean(goal);
+  const workflows = spaceStore.workflows.value.filter((workflow) => !workflow.disabled);
 
-	useEffect(() => {
-		if (!isOpen) return;
-		setTitle(goal?.title ?? '');
-		setDescription(goal?.description ?? '');
-		setType(goal?.type ?? 'one_shot');
-		setPriority(goal?.priority ?? 'normal');
-		setSummary(goal?.summary ?? '');
-		setProgress(String(goal?.progress ?? 0));
-		setLabels(goal?.labels.join(', ') ?? '');
-		setMetrics(goal ? formatMetrics(goal.metrics) : '');
-		setNextSteps(goal?.nextSteps.join('\n') ?? '');
-		setPreferredWorkflowId(goal?.preferredWorkflowId ?? '');
-		setAutoTriggerNext(goal?.autoTriggerNext ?? false);
-		setCheckInCronExpression('');
-		setCheckInTimezone('UTC');
-		setTriggerImmediately(false);
-		setError(null);
-	}, [isOpen, goal?.id]);
+  useEffect(() => {
+    if (!isOpen) return;
+    setTitle(goal?.title ?? '');
+    setDescription(goal?.description ?? '');
+    setType(goal?.type ?? 'one_shot');
+    setPriority(goal?.priority ?? 'normal');
+    setSummary(goal?.summary ?? '');
+    setProgress(String(goal?.progress ?? 0));
+    setLabels(goal?.labels.join(', ') ?? '');
+    setMetrics(goal ? formatMetrics(goal.metrics) : '');
+    setNextSteps(goal?.nextSteps.join('\n') ?? '');
+    setPreferredWorkflowId(goal?.preferredWorkflowId ?? '');
+    setAutoTriggerNext(goal?.autoTriggerNext ?? false);
+    setCheckInCronExpression('');
+    setCheckInTimezone('UTC');
+    setTriggerImmediately(false);
+    setError(null);
+  }, [isOpen, goal?.id]);
 
-	const parsedProgress = useMemo(() => {
-		const next = Number(progress);
-		if (!Number.isFinite(next)) return null;
-		return Math.max(0, Math.min(100, Math.round(next)));
-	}, [progress]);
+  const parsedProgress = useMemo(() => {
+    const next = Number(progress);
+    if (!Number.isFinite(next)) return null;
+    return Math.max(0, Math.min(100, Math.round(next)));
+  }, [progress]);
 
-	const handleSubmit = async (event: Event) => {
-		event.preventDefault();
-		if (!title.trim()) {
-			setError('Goal title is required');
-			return;
-		}
-		if (parsedProgress === null) {
-			setError('Progress must be a number');
-			return;
-		}
+  const handleSubmit = async (event: Event) => {
+    event.preventDefault();
+    if (!title.trim()) {
+      setError('Goal title is required');
+      return;
+    }
+    if (parsedProgress === null) {
+      setError('Progress must be a number');
+      return;
+    }
 
-		try {
-			setSubmitting(true);
-			setError(null);
-			const payload = {
-				title: title.trim(),
-				description: description.trim(),
-				type,
-				priority,
-				labels: parseLabels(labels),
-				metrics: parseMetrics(metrics),
-				summary: summary.trim(),
-				progress: parsedProgress,
-				nextSteps: parseLines(nextSteps),
-				preferredWorkflowId: preferredWorkflowId || null,
-				autoTriggerNext,
-			};
-			const saved = goal
-				? await spaceStore.updateGoal(goal.id, payload)
-				: await spaceStore.createGoal({
-						...payload,
-						checkInCronExpression: checkInCronExpression.trim() || null,
-						checkInTimezone,
-						triggerImmediately,
-					});
-			toast.success(`Goal "${saved.title}" ${goal ? 'updated' : 'created'}`);
-			onSaved?.(saved);
-			onClose();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to save goal');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+    try {
+      setSubmitting(true);
+      setError(null);
+      const payload = {
+        title: title.trim(),
+        description: description.trim(),
+        type,
+        priority,
+        labels: parseLabels(labels),
+        metrics: parseMetrics(metrics),
+        summary: summary.trim(),
+        progress: parsedProgress,
+        nextSteps: parseLines(nextSteps),
+        preferredWorkflowId: preferredWorkflowId || null,
+        autoTriggerNext,
+      };
+      const saved = goal
+        ? await spaceStore.updateGoal(goal.id, payload)
+        : await spaceStore.createGoal({
+            ...payload,
+            checkInCronExpression: checkInCronExpression.trim() || null,
+            checkInTimezone,
+            triggerImmediately,
+          });
+      toast.success(`Goal "${saved.title}" ${goal ? 'updated' : 'created'}`);
+      onSaved?.(saved);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save goal');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	return (
-		<Modal
-			isOpen={isOpen}
-			onClose={onClose}
-			title={isEditing ? 'Edit Goal' : 'Create Goal'}
-			size="lg"
-		>
-			<form onSubmit={handleSubmit} class="space-y-4">
-				{error && (
-					<div class="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-400">
-						{error}
-					</div>
-				)}
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={isEditing ? 'Edit Goal' : 'Create Goal'}
+      size="lg"
+    >
+      <form onSubmit={handleSubmit} class="space-y-4">
+        {error && (
+          <div class="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-400">
+            {error}
+          </div>
+        )}
 
-				<div>
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-200">
-							Title<span class="ml-1 text-red-400">*</span>
-						</span>
-						<input
-							type="text"
-							value={title}
-							onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
-							placeholder="Keep release train healthy"
-							class="w-full rounded-lg border border-dark-600 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-						/>
-					</label>
-				</div>
+        <div>
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-200">
+              Title<span class="ml-1 text-red-400">*</span>
+            </span>
+            <input
+              type="text"
+              value={title}
+              onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+              placeholder="Keep release train healthy"
+              class="w-full rounded-lg border border-dark-600 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+        </div>
 
-				<div>
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-300">Description</span>
-						<textarea
-							value={description}
-							onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-							rows={3}
-							placeholder="What should agents keep driving toward?"
-							class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-						/>
-					</label>
-				</div>
+        <div>
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-300">Description</span>
+            <textarea
+              value={description}
+              onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+              rows={3}
+              placeholder="What should agents keep driving toward?"
+              class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+        </div>
 
-				<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-300">Type</span>
-						<select
-							value={type}
-							onChange={(e) => setType((e.target as HTMLSelectElement).value as SpaceGoalType)}
-							class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-						>
-							{TYPE_OPTIONS.map((option) => (
-								<option key={option.value} value={option.value}>
-									{option.label}
-								</option>
-							))}
-						</select>
-					</label>
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-300">Priority</span>
-						<select
-							value={priority}
-							onChange={(e) =>
-								setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
-							}
-							class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-						>
-							{PRIORITY_OPTIONS.map((option) => (
-								<option key={option.value} value={option.value}>
-									{option.label}
-								</option>
-							))}
-						</select>
-					</label>
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-300">Progress</span>
-						<input
-							type="number"
-							min={0}
-							max={100}
-							value={progress}
-							onInput={(e) => setProgress((e.target as HTMLInputElement).value)}
-							class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-						/>
-					</label>
-				</div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-300">Type</span>
+            <select
+              value={type}
+              onChange={(e) => setType((e.target as HTMLSelectElement).value as SpaceGoalType)}
+              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            >
+              {TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-300">Priority</span>
+            <select
+              value={priority}
+              onChange={(e) =>
+                setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
+              }
+              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            >
+              {PRIORITY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-300">Progress</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={progress}
+              onInput={(e) => setProgress((e.target as HTMLInputElement).value)}
+              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+        </div>
 
-				<label class="block">
-					<span class="mb-1.5 block text-sm font-medium text-gray-300">Preferred workflow</span>
-					<select
-						value={preferredWorkflowId}
-						onChange={(e) => setPreferredWorkflowId((e.target as HTMLSelectElement).value)}
-						class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-					>
-						<option value="">Auto-select workflow</option>
-						{workflows.map((workflow) => (
-							<option key={workflow.id} value={workflow.id}>
-								{workflow.name}
-							</option>
-						))}
-					</select>
-				</label>
+        <label class="block">
+          <span class="mb-1.5 block text-sm font-medium text-gray-300">Preferred workflow</span>
+          <select
+            value={preferredWorkflowId}
+            onChange={(e) => setPreferredWorkflowId((e.target as HTMLSelectElement).value)}
+            class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">Auto-select workflow</option>
+            {workflows.map((workflow) => (
+              <option key={workflow.id} value={workflow.id}>
+                {workflow.name}
+              </option>
+            ))}
+          </select>
+        </label>
 
-				<label class="block">
-					<span class="mb-1.5 block text-sm font-medium text-gray-300">Summary</span>
-					<textarea
-						value={summary}
-						onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
-						rows={2}
-						placeholder="Rolling state summary"
-						class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-					/>
-				</label>
+        <label class="block">
+          <span class="mb-1.5 block text-sm font-medium text-gray-300">Summary</span>
+          <textarea
+            value={summary}
+            onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
+            rows={2}
+            placeholder="Rolling state summary"
+            class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+          />
+        </label>
 
-				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-300">Labels</span>
-						<input
-							value={labels}
-							onInput={(e) => setLabels((e.target as HTMLInputElement).value)}
-							placeholder="release, health"
-							class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-						/>
-					</label>
-					<label class="block">
-						<span class="mb-1.5 block text-sm font-medium text-gray-300">Metrics</span>
-						<textarea
-							value={metrics}
-							onInput={(e) => setMetrics((e.target as HTMLTextAreaElement).value)}
-							rows={2}
-							placeholder={'build_health: green\nopen_bugs: 3'}
-							class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-						/>
-					</label>
-				</div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-300">Labels</span>
+            <input
+              value={labels}
+              onInput={(e) => setLabels((e.target as HTMLInputElement).value)}
+              placeholder="release, health"
+              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+          <label class="block">
+            <span class="mb-1.5 block text-sm font-medium text-gray-300">Metrics</span>
+            <textarea
+              value={metrics}
+              onInput={(e) => setMetrics((e.target as HTMLTextAreaElement).value)}
+              rows={2}
+              placeholder={'build_health: green\nopen_bugs: 3'}
+              class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+        </div>
 
-				<label class="block">
-					<span class="mb-1.5 block text-sm font-medium text-gray-300">Next steps</span>
-					<textarea
-						value={nextSteps}
-						onInput={(e) => setNextSteps((e.target as HTMLTextAreaElement).value)}
-						rows={3}
-						placeholder="One next step per line"
-						class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-					/>
-				</label>
+        <label class="block">
+          <span class="mb-1.5 block text-sm font-medium text-gray-300">Next steps</span>
+          <textarea
+            value={nextSteps}
+            onInput={(e) => setNextSteps((e.target as HTMLTextAreaElement).value)}
+            rows={3}
+            placeholder="One next step per line"
+            class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+          />
+        </label>
 
-				<label class="flex items-center gap-2 text-sm text-gray-300">
-					<input
-						type="checkbox"
-						checked={autoTriggerNext}
-						onChange={(e) => setAutoTriggerNext((e.target as HTMLInputElement).checked)}
-						class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-600"
-					/>
-					Auto-trigger next task when current task finishes
-				</label>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+          <input
+            type="checkbox"
+            checked={autoTriggerNext}
+            onChange={(e) => setAutoTriggerNext((e.target as HTMLInputElement).checked)}
+            class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-600"
+          />
+          Auto-trigger next task when current task finishes
+        </label>
 
-				{!isEditing && (
-					<div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
-						<p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Check-in</p>
-						<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-							<label class="block">
-								<span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
-								<input
-									value={checkInCronExpression}
-									onInput={(e) => setCheckInCronExpression((e.target as HTMLInputElement).value)}
-									placeholder="@daily or 0 9 * * 1"
-									class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-								/>
-							</label>
-							<label class="block">
-								<span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
-								<select
-									value={checkInTimezone}
-									onChange={(e) => setCheckInTimezone((e.target as HTMLSelectElement).value)}
-									class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-								>
-									{COMMON_TIMEZONES.map((timezone) => (
-										<option key={timezone} value={timezone}>
-											{timezone}
-										</option>
-									))}
-								</select>
-							</label>
-						</div>
-						<label class="flex items-center gap-2 text-sm text-gray-300">
-							<input
-								type="checkbox"
-								checked={triggerImmediately}
-								onChange={(e) => setTriggerImmediately((e.target as HTMLInputElement).checked)}
-								class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-600"
-							/>
-							Create first task immediately
-						</label>
-					</div>
-				)}
+        {!isEditing && (
+          <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Check-in</p>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label class="block">
+                <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
+                <input
+                  value={checkInCronExpression}
+                  onInput={(e) => setCheckInCronExpression((e.target as HTMLInputElement).value)}
+                  placeholder="@daily or 0 9 * * 1"
+                  class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
+                <select
+                  value={checkInTimezone}
+                  onChange={(e) => setCheckInTimezone((e.target as HTMLSelectElement).value)}
+                  class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                >
+                  {COMMON_TIMEZONES.map((timezone) => (
+                    <option key={timezone} value={timezone}>
+                      {timezone}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+              <input
+                type="checkbox"
+                checked={triggerImmediately}
+                onChange={(e) => setTriggerImmediately((e.target as HTMLInputElement).checked)}
+                class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-600"
+              />
+              Create first task immediately
+            </label>
+          </div>
+        )}
 
-				<div class="flex gap-3 pt-1">
-					<Button type="button" variant="secondary" onClick={onClose} fullWidth>
-						Cancel
-					</Button>
-					<Button type="submit" loading={submitting} fullWidth>
-						{isEditing ? 'Save Goal' : 'Create Goal'}
-					</Button>
-				</div>
-			</form>
-		</Modal>
-	);
+        <div class="flex gap-3 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose} fullWidth>
+            Cancel
+          </Button>
+          <Button type="submit" loading={submitting} fullWidth>
+            {isEditing ? 'Save Goal' : 'Create Goal'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }

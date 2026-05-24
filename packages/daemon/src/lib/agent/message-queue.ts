@@ -17,7 +17,7 @@ import { generateUUID } from '@neokai/shared';
  * Check if content is a tool_result content block
  */
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
-	return content.type === 'tool_result' && 'tool_use_id' in content;
+  return content.type === 'tool_result' && 'tool_use_id' in content;
 }
 
 /**
@@ -25,13 +25,13 @@ function isToolResultContent(content: MessageContent): content is ToolResultCont
  * Returns the tool_use_id from a tool_result block if present, otherwise null
  */
 function extractParentToolUseId(content: string | MessageContent[]): string | null {
-	if (typeof content === 'string') {
-		return null;
-	}
+  if (typeof content === 'string') {
+    return null;
+  }
 
-	// Look for a tool_result block in the content
-	const toolResult = content.find(isToolResultContent);
-	return toolResult?.tool_use_id ?? null;
+  // Look for a tool_result block in the content
+  const toolResult = content.find(isToolResultContent);
+  return toolResult?.tool_use_id ?? null;
 }
 
 /**
@@ -44,267 +44,267 @@ const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
  * Queued message waiting to be sent to Claude
  */
 interface QueuedMessage {
-	id: string;
-	content: string | MessageContent[];
-	timestamp: string;
-	queuedAt: number; // Timestamp when message was queued (for timeout detection)
-	resolve: (messageId: string) => void;
-	reject: (error: Error) => void;
-	internal?: boolean; // If true, don't save to DB or emit to client
-	timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
+  id: string;
+  content: string | MessageContent[];
+  timestamp: string;
+  queuedAt: number; // Timestamp when message was queued (for timeout detection)
+  resolve: (messageId: string) => void;
+  reject: (error: Error) => void;
+  internal?: boolean; // If true, don't save to DB or emit to client
+  timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
 }
 
 export class MessageQueue {
-	private queue: QueuedMessage[] = [];
-	private waiters: Array<() => void> = [];
-	private running: boolean = false;
+  private queue: QueuedMessage[] = [];
+  private waiters: Array<() => void> = [];
+  private running: boolean = false;
 
-	// Generation counter to detect stale queries
-	// When incrementing, old generators will skip yielding messages
-	private generation: number = 0;
+  // Generation counter to detect stale queries
+  // When incrementing, old generators will skip yielding messages
+  private generation: number = 0;
 
-	/**
-	 * Callback fired when the generator yields a message to the SDK.
-	 * Used to broadcast the message to UI and update DB timestamp at yield time
-	 * (the moment the SDK actually receives the message in the conversation).
-	 */
-	onMessageYielded?: (messageId: string, sentAt: number) => void;
+  /**
+   * Callback fired when the generator yields a message to the SDK.
+   * Used to broadcast the message to UI and update DB timestamp at yield time
+   * (the moment the SDK actually receives the message in the conversation).
+   */
+  onMessageYielded?: (messageId: string, sentAt: number) => void;
 
-	private wakeWaiters(): void {
-		this.waiters.forEach((waiter) => waiter());
-		this.waiters = [];
-	}
+  private wakeWaiters(): void {
+    this.waiters.forEach((waiter) => waiter());
+    this.waiters = [];
+  }
 
-	/**
-	 * Enqueue a message to be sent to Claude via the streaming query
-	 */
-	async enqueue(content: string | MessageContent[], internal: boolean = false): Promise<string> {
-		const messageId = generateUUID();
-		await this.enqueueWithId(messageId, content, internal);
-		return messageId;
-	}
+  /**
+   * Enqueue a message to be sent to Claude via the streaming query
+   */
+  async enqueue(content: string | MessageContent[], internal: boolean = false): Promise<string> {
+    const messageId = generateUUID();
+    await this.enqueueWithId(messageId, content, internal);
+    return messageId;
+  }
 
-	/**
-	 * Enqueue a message with a pre-generated ID
-	 * Used when caller needs the ID before the message is processed (e.g., for state tracking)
-	 *
-	 * Includes timeout detection: if the SDK doesn't consume the message within
-	 * MESSAGE_QUEUE_TIMEOUT_MS, the promise is rejected with a timeout error.
-	 * This prevents the session from getting stuck in 'queued' state indefinitely.
-	 */
-	async enqueueWithId(
-		messageId: string,
-		content: string | MessageContent[],
-		internal: boolean = false
-	): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const queuedMessage: QueuedMessage = {
-				id: messageId,
-				content,
-				timestamp: new Date().toISOString(),
-				queuedAt: Date.now(),
-				resolve: () => {
-					// Clear timeout when message is successfully consumed
-					if (queuedMessage.timeoutId) {
-						clearTimeout(queuedMessage.timeoutId);
-					}
-					resolve();
-				},
-				reject: (error: Error) => {
-					// Clear timeout on rejection
-					if (queuedMessage.timeoutId) {
-						clearTimeout(queuedMessage.timeoutId);
-					}
-					reject(error);
-				},
-				internal,
-			};
+  /**
+   * Enqueue a message with a pre-generated ID
+   * Used when caller needs the ID before the message is processed (e.g., for state tracking)
+   *
+   * Includes timeout detection: if the SDK doesn't consume the message within
+   * MESSAGE_QUEUE_TIMEOUT_MS, the promise is rejected with a timeout error.
+   * This prevents the session from getting stuck in 'queued' state indefinitely.
+   */
+  async enqueueWithId(
+    messageId: string,
+    content: string | MessageContent[],
+    internal: boolean = false
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const queuedMessage: QueuedMessage = {
+        id: messageId,
+        content,
+        timestamp: new Date().toISOString(),
+        queuedAt: Date.now(),
+        resolve: () => {
+          // Clear timeout when message is successfully consumed
+          if (queuedMessage.timeoutId) {
+            clearTimeout(queuedMessage.timeoutId);
+          }
+          resolve();
+        },
+        reject: (error: Error) => {
+          // Clear timeout on rejection
+          if (queuedMessage.timeoutId) {
+            clearTimeout(queuedMessage.timeoutId);
+          }
+          reject(error);
+        },
+        internal,
+      };
 
-			// Set up timeout to detect stuck messages
-			// If SDK doesn't consume the message in time, reject with timeout error
-			queuedMessage.timeoutId = setTimeout(() => {
-				// Remove from queue if still present
-				const index = this.queue.indexOf(queuedMessage);
-				if (index !== -1) {
-					this.queue.splice(index, 1);
-					const timeoutError = new Error(
-						`Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
-							`This usually indicates an SDK internal error. Please try again or create a new session.`
-					);
-					timeoutError.name = 'MessageQueueTimeoutError';
-					queuedMessage.reject(timeoutError);
-				}
-			}, MESSAGE_QUEUE_TIMEOUT_MS);
+      // Set up timeout to detect stuck messages
+      // If SDK doesn't consume the message in time, reject with timeout error
+      queuedMessage.timeoutId = setTimeout(() => {
+        // Remove from queue if still present
+        const index = this.queue.indexOf(queuedMessage);
+        if (index !== -1) {
+          this.queue.splice(index, 1);
+          const timeoutError = new Error(
+            `Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
+              `This usually indicates an SDK internal error. Please try again or create a new session.`
+          );
+          timeoutError.name = 'MessageQueueTimeoutError';
+          queuedMessage.reject(timeoutError);
+        }
+      }, MESSAGE_QUEUE_TIMEOUT_MS);
 
-			this.queue.push(queuedMessage);
+      this.queue.push(queuedMessage);
 
-			// Wake up any waiting message generators
-			this.wakeWaiters();
-		});
-	}
+      // Wake up any waiting message generators
+      this.wakeWaiters();
+    });
+  }
 
-	/**
-	 * Clear all pending messages (used during interrupt)
-	 * Also cleans up any pending timeouts
-	 */
-	clear(): void {
-		// Clear timeouts and reject all pending messages
-		for (const msg of this.queue) {
-			if (msg.timeoutId) {
-				clearTimeout(msg.timeoutId);
-			}
-			msg.reject(new Error('Interrupted by user'));
-		}
-		this.queue = [];
-	}
+  /**
+   * Clear all pending messages (used during interrupt)
+   * Also cleans up any pending timeouts
+   */
+  clear(): void {
+    // Clear timeouts and reject all pending messages
+    for (const msg of this.queue) {
+      if (msg.timeoutId) {
+        clearTimeout(msg.timeoutId);
+      }
+      msg.reject(new Error('Interrupted by user'));
+    }
+    this.queue = [];
+  }
 
-	/**
-	 * Remove a single pending message before the SDK consumes it.
-	 *
-	 * Returns false when the message is already gone from the in-memory queue
-	 * (usually because it was consumed, timed out, or was only persisted for replay).
-	 */
-	remove(messageId: string): boolean {
-		const index = this.queue.findIndex((msg) => msg.id === messageId);
-		if (index === -1) {
-			return false;
-		}
+  /**
+   * Remove a single pending message before the SDK consumes it.
+   *
+   * Returns false when the message is already gone from the in-memory queue
+   * (usually because it was consumed, timed out, or was only persisted for replay).
+   */
+  remove(messageId: string): boolean {
+    const index = this.queue.findIndex((msg) => msg.id === messageId);
+    if (index === -1) {
+      return false;
+    }
 
-		const [msg] = this.queue.splice(index, 1);
-		if (msg.timeoutId) {
-			clearTimeout(msg.timeoutId);
-		}
-		msg.resolve(messageId);
-		return true;
-	}
+    const [msg] = this.queue.splice(index, 1);
+    if (msg.timeoutId) {
+      clearTimeout(msg.timeoutId);
+    }
+    msg.resolve(messageId);
+    return true;
+  }
 
-	/**
-	 * Get queue size (for monitoring)
-	 */
-	size(): number {
-		return this.queue.length;
-	}
+  /**
+   * Get queue size (for monitoring)
+   */
+  size(): number {
+    return this.queue.length;
+  }
 
-	/**
-	 * Start the message queue (allows messages to be yielded)
-	 * Increments generation to invalidate old generators
-	 */
-	start(): void {
-		this.running = true;
-		// Increment generation when starting - this invalidates any old generators
-		this.generation++;
-		this.wakeWaiters();
-	}
+  /**
+   * Start the message queue (allows messages to be yielded)
+   * Increments generation to invalidate old generators
+   */
+  start(): void {
+    this.running = true;
+    // Increment generation when starting - this invalidates any old generators
+    this.generation++;
+    this.wakeWaiters();
+  }
 
-	/**
-	 * Get the current generation counter
-	 * Generators should check this to detect if they're stale
-	 */
-	getGeneration(): number {
-		return this.generation;
-	}
+  /**
+   * Get the current generation counter
+   * Generators should check this to detect if they're stale
+   */
+  getGeneration(): number {
+    return this.generation;
+  }
 
-	/**
-	 * Stop the message queue (prevents new messages from being yielded)
-	 */
-	stop(): void {
-		this.running = false;
-		// Wake up any waiting generators so they can exit
-		this.wakeWaiters();
-	}
+  /**
+   * Stop the message queue (prevents new messages from being yielded)
+   */
+  stop(): void {
+    this.running = false;
+    // Wake up any waiting generators so they can exit
+    this.wakeWaiters();
+  }
 
-	/**
-	 * Check if queue is running
-	 */
-	isRunning(): boolean {
-		return this.running;
-	}
+  /**
+   * Check if queue is running
+   */
+  isRunning(): boolean {
+    return this.running;
+  }
 
-	/**
-	 * AsyncGenerator that yields messages continuously from the queue
-	 * This is the heart of streaming input mode!
-	 *
-	 * Returns an object with the message and a callback to mark it as sent.
-	 * The callback resolves the promise returned by enqueue().
-	 *
-	 * IMPORTANT: This generator checks the generation counter to detect stale queries.
-	 * When the queue is stopped and restarted, the generation increments and old
-	 * generators will exit early instead of consuming messages meant for the new query.
-	 */
-	async *messageGenerator(
-		sessionId: string
-	): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
-		// Capture the generation at the time this generator was created
-		const myGeneration = this.generation;
+  /**
+   * AsyncGenerator that yields messages continuously from the queue
+   * This is the heart of streaming input mode!
+   *
+   * Returns an object with the message and a callback to mark it as sent.
+   * The callback resolves the promise returned by enqueue().
+   *
+   * IMPORTANT: This generator checks the generation counter to detect stale queries.
+   * When the queue is stopped and restarted, the generation increments and old
+   * generators will exit early instead of consuming messages meant for the new query.
+   */
+  async *messageGenerator(
+    sessionId: string
+  ): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
+    // Capture the generation at the time this generator was created
+    const myGeneration = this.generation;
 
-		while (this.running) {
-			// CRITICAL: Check if this generator is stale (generation has changed)
-			// This prevents old query generators from consuming messages after interrupt
-			if (this.generation !== myGeneration) {
-				// This generator is stale - exit without consuming any more messages
-				break;
-			}
+    while (this.running) {
+      // CRITICAL: Check if this generator is stale (generation has changed)
+      // This prevents old query generators from consuming messages after interrupt
+      if (this.generation !== myGeneration) {
+        // This generator is stale - exit without consuming any more messages
+        break;
+      }
 
-			const queuedMessage = await this.waitForNextMessage();
+      const queuedMessage = await this.waitForNextMessage();
 
-			if (!queuedMessage) {
-				break;
-			}
+      if (!queuedMessage) {
+        break;
+      }
 
-			// Double-check generation after waiting (in case it changed while we were waiting)
-			if (this.generation !== myGeneration) {
-				// Generation changed while waiting - put message back and exit
-				this.queue.unshift(queuedMessage);
-				break;
-			}
+      // Double-check generation after waiting (in case it changed while we were waiting)
+      if (this.generation !== myGeneration) {
+        // Generation changed while waiting - put message back and exit
+        this.queue.unshift(queuedMessage);
+        break;
+      }
 
-			// Extract parent_tool_use_id from tool_result content blocks
-			// This is required when responding to AskUserQuestion and other tool calls
-			const parentToolUseId = extractParentToolUseId(queuedMessage.content);
+      // Extract parent_tool_use_id from tool_result content blocks
+      // This is required when responding to AskUserQuestion and other tool calls
+      const parentToolUseId = extractParentToolUseId(queuedMessage.content);
 
-			// Prepare the SDK user message
-			const sdkUserMessage: SDKUserMessage & { internal?: boolean } = {
-				type: 'user' as const,
-				uuid: queuedMessage.id as UUID,
-				session_id: sessionId,
-				parent_tool_use_id: parentToolUseId,
-				message: {
-					role: 'user' as const,
-					content:
-						typeof queuedMessage.content === 'string'
-							? [{ type: 'text' as const, text: queuedMessage.content }]
-							: queuedMessage.content,
-				},
-				internal: queuedMessage.internal,
-			};
+      // Prepare the SDK user message
+      const sdkUserMessage: SDKUserMessage & { internal?: boolean } = {
+        type: 'user' as const,
+        uuid: queuedMessage.id as UUID,
+        session_id: sessionId,
+        parent_tool_use_id: parentToolUseId,
+        message: {
+          role: 'user' as const,
+          content:
+            typeof queuedMessage.content === 'string'
+              ? [{ type: 'text' as const, text: queuedMessage.content }]
+              : queuedMessage.content,
+        },
+        internal: queuedMessage.internal,
+      };
 
-			// Fire callback at yield time for non-internal messages
-			// This is T_consumed - when the SDK actually receives the message
-			if (!queuedMessage.internal && this.onMessageYielded) {
-				this.onMessageYielded(queuedMessage.id, Date.now());
-			}
+      // Fire callback at yield time for non-internal messages
+      // This is T_consumed - when the SDK actually receives the message
+      if (!queuedMessage.internal && this.onMessageYielded) {
+        this.onMessageYielded(queuedMessage.id, Date.now());
+      }
 
-			// Yield message with callback
-			yield {
-				message: sdkUserMessage,
-				onSent: () => queuedMessage.resolve(queuedMessage.id),
-			};
-		}
-	}
+      // Yield message with callback
+      yield {
+        message: sdkUserMessage,
+        onSent: () => queuedMessage.resolve(queuedMessage.id),
+      };
+    }
+  }
 
-	/**
-	 * Wait for the next message to be enqueued
-	 */
-	private async waitForNextMessage(): Promise<QueuedMessage | null> {
-		while (this.running && this.queue.length === 0) {
-			// Wait for message to be enqueued
-			await new Promise<void>((resolve) => {
-				this.waiters.push(resolve);
-			});
+  /**
+   * Wait for the next message to be enqueued
+   */
+  private async waitForNextMessage(): Promise<QueuedMessage | null> {
+    while (this.running && this.queue.length === 0) {
+      // Wait for message to be enqueued
+      await new Promise<void>((resolve) => {
+        this.waiters.push(resolve);
+      });
 
-			if (!this.running) return null;
-		}
+      if (!this.running) return null;
+    }
 
-		return this.queue.shift() || null;
-	}
+    return this.queue.shift() || null;
+  }
 }

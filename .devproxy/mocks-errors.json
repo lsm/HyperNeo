@@ -1,383 +1,383 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
-	"mocks": [
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger rate limit"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 429,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "retry-after",
-						"value": "30"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-limit",
-						"value": "50"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-remaining",
-						"value": "0"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-reset",
-						"value": "2024-01-01T00:00:30Z"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (429)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "rate_limit_error",
-						"message": "Rate limit exceeded. Please wait before sending more requests."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger server error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 500,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (500)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "api_error",
-						"message": "Internal server error. Please try again later."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger overloaded error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 529,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "retry-after",
-						"value": "60"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (529)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "overloaded_error",
-						"message": "Overloaded. Please wait a while and try again."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger invalid request"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 400,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (400)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "invalid_request_error",
-						"message": "Invalid request: missing required field 'model'"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger authentication error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 401,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (401)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "authentication_error",
-						"message": "Invalid API key. Please check your credentials."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger permission error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 403,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (403)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "permission_error",
-						"message": "Permission denied. You do not have access to this resource."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger not found error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 404,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (404)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "not_found_error",
-						"message": "Resource not found."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger context length error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 400,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (context)"
-					}
-				],
-				"body": {
-					"type": "error",
-					"error": {
-						"type": "invalid_request_error",
-						"message": "messages: total token count exceeds the limit of 200000 tokens for this model. Please reduce the length of the messages or conversation history."
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger tool error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (tool_error)"
-					}
-				],
-				"body": {
-					"id": "msg_error_tool",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I encountered an error while executing the tool."
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 20,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "trigger max turns error"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-errors.json (max_turns)"
-					}
-				],
-				"body": {
-					"id": "msg_error_max_turns",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I apologize, but I've reached the maximum number of allowed turns for this conversation."
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 30,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		}
-	]
+  "$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
+  "mocks": [
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger rate limit"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 429,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "retry-after",
+            "value": "30"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-limit",
+            "value": "50"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-remaining",
+            "value": "0"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-reset",
+            "value": "2024-01-01T00:00:30Z"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (429)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "rate_limit_error",
+            "message": "Rate limit exceeded. Please wait before sending more requests."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger server error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 500,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (500)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "api_error",
+            "message": "Internal server error. Please try again later."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger overloaded error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 529,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "retry-after",
+            "value": "60"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (529)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "overloaded_error",
+            "message": "Overloaded. Please wait a while and try again."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger invalid request"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 400,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (400)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "Invalid request: missing required field 'model'"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger authentication error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 401,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (401)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "authentication_error",
+            "message": "Invalid API key. Please check your credentials."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger permission error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 403,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (403)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "permission_error",
+            "message": "Permission denied. You do not have access to this resource."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger not found error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 404,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (404)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "not_found_error",
+            "message": "Resource not found."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger context length error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 400,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (context)"
+          }
+        ],
+        "body": {
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "messages: total token count exceeds the limit of 200000 tokens for this model. Please reduce the length of the messages or conversation history."
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger tool error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (tool_error)"
+          }
+        ],
+        "body": {
+          "id": "msg_error_tool",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I encountered an error while executing the tool."
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "trigger max turns error"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-errors.json (max_turns)"
+          }
+        ],
+        "body": {
+          "id": "msg_error_max_turns",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I apologize, but I've reached the maximum number of allowed turns for this conversation."
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -31,12 +31,12 @@ import { useSignal, useSignalEffect } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
 
 export interface UseInputDraftResult {
-	/** Current content value */
-	content: string;
-	/** Update the content (triggers debounced save) */
-	setContent: (content: string) => void;
-	/** Clear the content and draft */
-	clear: () => void;
+  /** Current content value */
+  content: string;
+  /** Update the content (triggers debounced save) */
+  setContent: (content: string) => void;
+  /** Clear the content and draft */
+  clear: () => void;
 }
 
 /**
@@ -49,143 +49,143 @@ export interface UseInputDraftResult {
  * @param debounceMs - Debounce delay for saving (default: 250ms)
  */
 export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraftResult {
-	// Use signal for content to prevent lost keystrokes during signal-triggered re-renders
-	const contentSignal = useSignal('');
-	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const prevSessionIdRef = useRef<string | null>(null);
+  // Use signal for content to prevent lost keystrokes during signal-triggered re-renders
+  const contentSignal = useSignal('');
+  const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevSessionIdRef = useRef<string | null>(null);
 
-	// Load draft on session change
-	useEffect(() => {
-		// Clear content immediately when sessionId changes
-		if (!sessionId) {
-			contentSignal.value = '';
-			return;
-		}
+  // Load draft on session change
+  useEffect(() => {
+    // Clear content immediately when sessionId changes
+    if (!sessionId) {
+      contentSignal.value = '';
+      return;
+    }
 
-		// Clear content immediately to prevent showing stale draft
-		contentSignal.value = '';
+    // Clear content immediately to prevent showing stale draft
+    contentSignal.value = '';
 
-		const loadDraft = async () => {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+    const loadDraft = async () => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
 
-			try {
-				const response = await hub.request<{
-					session: { metadata?: { inputDraft?: string } };
-				}>('session.get', { sessionId });
-				const draft = response.session?.metadata?.inputDraft;
-				if (draft) {
-					contentSignal.value = draft;
-				}
-			} catch {
-				// Ignore errors loading draft
-			}
-		};
+      try {
+        const response = await hub.request<{
+          session: { metadata?: { inputDraft?: string } };
+        }>('session.get', { sessionId });
+        const draft = response.session?.metadata?.inputDraft;
+        if (draft) {
+          contentSignal.value = draft;
+        }
+      } catch {
+        // Ignore errors loading draft
+      }
+    };
 
-		loadDraft();
-	}, [sessionId, contentSignal]);
+    loadDraft();
+  }, [sessionId, contentSignal]);
 
-	// Save draft with debouncing - uses useSignalEffect to react to signal changes
-	useSignalEffect(() => {
-		const content = contentSignal.value;
+  // Save draft with debouncing - uses useSignalEffect to react to signal changes
+  useSignalEffect(() => {
+    const content = contentSignal.value;
 
-		// Skip save logic entirely when there is no session — draft is ephemeral.
-		if (!sessionId) return;
-		// Clear existing timeout
-		if (draftSaveTimeoutRef.current) {
-			clearTimeout(draftSaveTimeoutRef.current);
-			draftSaveTimeoutRef.current = null;
-		}
+    // Skip save logic entirely when there is no session — draft is ephemeral.
+    if (!sessionId) return;
+    // Clear existing timeout
+    if (draftSaveTimeoutRef.current) {
+      clearTimeout(draftSaveTimeoutRef.current);
+      draftSaveTimeoutRef.current = null;
+    }
 
-		// If sessionId changed, flush the previous session's draft immediately
-		if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
-			const prevSessionId = prevSessionIdRef.current;
-			const trimmedContent = content.trim();
+    // If sessionId changed, flush the previous session's draft immediately
+    if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
+      const prevSessionId = prevSessionIdRef.current;
+      const trimmedContent = content.trim();
 
-			const hub = connectionManager.getHubIfConnected();
-			if (hub) {
-				hub
-					.request('session.update', {
-						sessionId: prevSessionId,
-						metadata: {
-							inputDraft: trimmedContent || null,
-						},
-					})
-					.catch(() => {
-						/* ignore flush errors */
-					});
-			}
-		}
-		prevSessionIdRef.current = sessionId;
+      const hub = connectionManager.getHubIfConnected();
+      if (hub) {
+        hub
+          .request('session.update', {
+            sessionId: prevSessionId,
+            metadata: {
+              inputDraft: trimmedContent || null,
+            },
+          })
+          .catch(() => {
+            /* ignore flush errors */
+          });
+      }
+    }
+    prevSessionIdRef.current = sessionId;
 
-		const trimmedContent = content.trim();
+    const trimmedContent = content.trim();
 
-		// Empty content: save immediately to clear draft
-		if (trimmedContent === '') {
-			const hub = connectionManager.getHubIfConnected();
-			if (hub) {
-				hub
-					.request('session.update', {
-						sessionId,
-						metadata: {
-							inputDraft: null,
-						},
-					})
-					.catch(() => {
-						/* ignore clear errors */
-					});
-			}
-			return;
-		}
+    // Empty content: save immediately to clear draft
+    if (trimmedContent === '') {
+      const hub = connectionManager.getHubIfConnected();
+      if (hub) {
+        hub
+          .request('session.update', {
+            sessionId,
+            metadata: {
+              inputDraft: null,
+            },
+          })
+          .catch(() => {
+            /* ignore clear errors */
+          });
+      }
+      return;
+    }
 
-		// Non-empty content: debounce save
-		draftSaveTimeoutRef.current = setTimeout(async () => {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+    // Non-empty content: debounce save
+    draftSaveTimeoutRef.current = setTimeout(async () => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
 
-			try {
-				await hub.request('session.update', {
-					sessionId,
-					metadata: {
-						inputDraft: trimmedContent,
-					},
-				});
-			} catch {
-				// Ignore draft save errors
-			}
-		}, debounceMs);
+      try {
+        await hub.request('session.update', {
+          sessionId,
+          metadata: {
+            inputDraft: trimmedContent,
+          },
+        });
+      } catch {
+        // Ignore draft save errors
+      }
+    }, debounceMs);
 
-		return () => {
-			if (draftSaveTimeoutRef.current) {
-				clearTimeout(draftSaveTimeoutRef.current);
-				draftSaveTimeoutRef.current = null;
-			}
-		};
-	});
+    return () => {
+      if (draftSaveTimeoutRef.current) {
+        clearTimeout(draftSaveTimeoutRef.current);
+        draftSaveTimeoutRef.current = null;
+      }
+    };
+  });
 
-	// Stable setter that updates the signal
-	const setContent = useCallback(
-		(newContent: string) => {
-			contentSignal.value = newContent;
-		},
-		[contentSignal]
-	);
+  // Stable setter that updates the signal
+  const setContent = useCallback(
+    (newContent: string) => {
+      contentSignal.value = newContent;
+    },
+    [contentSignal]
+  );
 
-	// Stable clear function
-	const clear = useCallback(() => {
-		contentSignal.value = '';
-	}, [contentSignal]);
+  // Stable clear function
+  const clear = useCallback(() => {
+    contentSignal.value = '';
+  }, [contentSignal]);
 
-	// Return the current signal value as content
-	// useMemo ensures we return a consistent object reference when only content changes
-	return useMemo(
-		() => ({
-			get content() {
-				return contentSignal.value;
-			},
-			setContent,
-			clear,
-		}),
-		[contentSignal, setContent, clear]
-	);
+  // Return the current signal value as content
+  // useMemo ensures we return a consistent object reference when only content changes
+  return useMemo(
+    () => ({
+      get content() {
+        return contentSignal.value;
+      },
+      setContent,
+      clear,
+    }),
+    [contentSignal, setContent, clear]
+  );
 }

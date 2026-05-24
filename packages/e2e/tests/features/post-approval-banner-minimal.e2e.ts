@@ -48,165 +48,165 @@ const SINGLE_LINE_MAX_HEIGHT_PX = 44;
 // ─── Infrastructure helpers (RPC — beforeEach / afterEach only) ────────────────
 
 interface Fixture {
-	spaceId: string;
-	taskId: string;
+  spaceId: string;
+  taskId: string;
 }
 
 async function createBlockedTaskFixture(
-	page: Page,
-	blockReason: 'execution_failed' | 'human_input_requested'
+  page: Page,
+  blockReason: 'execution_failed' | 'human_input_requested'
 ): Promise<Fixture> {
-	await waitForWebSocketConnected(page);
-	const workspaceRoot = await getWorkspaceRoot(page);
-	const wsPath = createUniqueSpaceDir(
-		workspaceRoot,
-		`banner-minimal-${blockReason.replace(/_/g, '-')}`
-	);
+  await waitForWebSocketConnected(page);
+  const workspaceRoot = await getWorkspaceRoot(page);
+  const wsPath = createUniqueSpaceDir(
+    workspaceRoot,
+    `banner-minimal-${blockReason.replace(/_/g, '-')}`
+  );
 
-	return page.evaluate(
-		async ({ wsPath, blockReason }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
+  return page.evaluate(
+    async ({ wsPath, blockReason }) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) throw new Error('MessageHub not available');
 
-			const space = (await hub.request('space.create', {
-				name: `E2E Banner Minimal ${Date.now()}`,
-				workspacePath: wsPath,
-			})) as { id: string };
+      const space = (await hub.request('space.create', {
+        name: `E2E Banner Minimal ${Date.now()}`,
+        workspacePath: wsPath,
+      })) as { id: string };
 
-			// Standalone task (no workflow run) so the gate-pending banner
-			// path is unreachable — we want deterministic TaskBlockedBanner.
-			const task = (await hub.request('spaceTask.create', {
-				spaceId: space.id,
-				title: 'Banner geometry probe',
-				description: '',
-			})) as { id: string };
+      // Standalone task (no workflow run) so the gate-pending banner
+      // path is unreachable — we want deterministic TaskBlockedBanner.
+      const task = (await hub.request('spaceTask.create', {
+        spaceId: space.id,
+        title: 'Banner geometry probe',
+        description: '',
+      })) as { id: string };
 
-			// Transition through in_progress so the `open → blocked` path is
-			// legal. The blockReason is stamped alongside.
-			await hub.request('spaceTask.update', {
-				spaceId: space.id,
-				taskId: task.id,
-				status: 'in_progress',
-			});
-			await hub.request('spaceTask.update', {
-				spaceId: space.id,
-				taskId: task.id,
-				status: 'blocked',
-				blockReason,
-				result: blockReason === 'execution_failed' ? 'Process exited with code 1' : null,
-			});
+      // Transition through in_progress so the `open → blocked` path is
+      // legal. The blockReason is stamped alongside.
+      await hub.request('spaceTask.update', {
+        spaceId: space.id,
+        taskId: task.id,
+        status: 'in_progress',
+      });
+      await hub.request('spaceTask.update', {
+        spaceId: space.id,
+        taskId: task.id,
+        status: 'blocked',
+        blockReason,
+        result: blockReason === 'execution_failed' ? 'Process exited with code 1' : null,
+      });
 
-			return { spaceId: space.id, taskId: task.id };
-		},
-		{ wsPath, blockReason }
-	);
+      return { spaceId: space.id, taskId: task.id };
+    },
+    { wsPath, blockReason }
+  );
 }
 
 async function deleteSpace(page: Page, spaceId: string): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup.
-	}
+  if (!spaceId) return;
+  try {
+    await page.evaluate(async (id) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) return;
+      await hub.request('space.delete', { id });
+    }, spaceId);
+  } catch {
+    // Best-effort cleanup.
+  }
 }
 
 async function assertOneBanner(page: Page): Promise<void> {
-	// Count banners with the well-known test IDs. Exactly one should be
-	// present. We check each testid individually so the assertion message
-	// tells us which pair conflicts on regression.
-	const counts = await page.evaluate(() => {
-		const q = (id: string) => document.querySelectorAll(`[data-testid="${id}"]`).length;
-		return {
-			taskBlockedBanner: q('task-blocked-banner'),
-			pendingGateBanner: q('pending-gate-banner'),
-			pendingTaskCompletionBanner: q('pending-task-completion-banner'),
-			pendingPostApprovalBanner: q('pending-post-approval-banner'),
-		};
-	});
-	const total =
-		counts.taskBlockedBanner +
-		counts.pendingGateBanner +
-		counts.pendingTaskCompletionBanner +
-		counts.pendingPostApprovalBanner;
-	expect(total, `expected exactly one banner, got: ${JSON.stringify(counts)}`).toBe(1);
+  // Count banners with the well-known test IDs. Exactly one should be
+  // present. We check each testid individually so the assertion message
+  // tells us which pair conflicts on regression.
+  const counts = await page.evaluate(() => {
+    const q = (id: string) => document.querySelectorAll(`[data-testid="${id}"]`).length;
+    return {
+      taskBlockedBanner: q('task-blocked-banner'),
+      pendingGateBanner: q('pending-gate-banner'),
+      pendingTaskCompletionBanner: q('pending-task-completion-banner'),
+      pendingPostApprovalBanner: q('pending-post-approval-banner'),
+    };
+  });
+  const total =
+    counts.taskBlockedBanner +
+    counts.pendingGateBanner +
+    counts.pendingTaskCompletionBanner +
+    counts.pendingPostApprovalBanner;
+  expect(total, `expected exactly one banner, got: ${JSON.stringify(counts)}`).toBe(1);
 }
 
 async function assertBannerIsSingleLine(page: Page, testId: string): Promise<void> {
-	const banner = page.getByTestId(testId);
-	await expect(banner).toBeVisible({ timeout: 10000 });
-	const box = await banner.boundingBox();
-	expect(box, `banner ${testId} has no bounding box`).not.toBeNull();
-	expect(
-		box!.height,
-		`banner ${testId} rendered ${box!.height}px tall — expected ≤ ${SINGLE_LINE_MAX_HEIGHT_PX}px`
-	).toBeLessThanOrEqual(SINGLE_LINE_MAX_HEIGHT_PX);
+  const banner = page.getByTestId(testId);
+  await expect(banner).toBeVisible({ timeout: 10000 });
+  const box = await banner.boundingBox();
+  expect(box, `banner ${testId} has no bounding box`).not.toBeNull();
+  expect(
+    box!.height,
+    `banner ${testId} rendered ${box!.height}px tall — expected ≤ ${SINGLE_LINE_MAX_HEIGHT_PX}px`
+  ).toBeLessThanOrEqual(SINGLE_LINE_MAX_HEIGHT_PX);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Post-approval banner minimal (single-line rule)', () => {
-	test.use({ viewport: DESKTOP_VIEWPORT });
+  test.use({ viewport: DESKTOP_VIEWPORT });
 
-	let spaceId = '';
+  let spaceId = '';
 
-	test.afterEach(async ({ page }) => {
-		if (spaceId) {
-			await deleteSpace(page, spaceId);
-			spaceId = '';
-		}
-	});
+  test.afterEach(async ({ page }) => {
+    if (spaceId) {
+      await deleteSpace(page, spaceId);
+      spaceId = '';
+    }
+  });
 
-	test('execution_failed banner renders as a single-line red banner with a Resume button', async ({
-		page,
-	}) => {
-		await page.goto('/');
-		const fixture = await createBlockedTaskFixture(page, 'execution_failed');
-		spaceId = fixture.spaceId;
+  test('execution_failed banner renders as a single-line red banner with a Resume button', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const fixture = await createBlockedTaskFixture(page, 'execution_failed');
+    spaceId = fixture.spaceId;
 
-		await page.goto(`/space/${fixture.spaceId}/task/${fixture.taskId}`);
-		await page.waitForURL(`/space/${fixture.spaceId}/task/${fixture.taskId}`, { timeout: 10000 });
+    await page.goto(`/space/${fixture.spaceId}/task/${fixture.taskId}`);
+    await page.waitForURL(`/space/${fixture.spaceId}/task/${fixture.taskId}`, { timeout: 10000 });
 
-		// Exactly one banner — no double-rendering.
-		await assertOneBanner(page);
+    // Exactly one banner — no double-rendering.
+    await assertOneBanner(page);
 
-		// The banner is TaskBlockedBanner with the red tone.
-		const banner = page.getByTestId('task-blocked-banner');
-		await expect(banner).toBeVisible({ timeout: 10000 });
-		await expect(banner).toHaveAttribute('data-tone', 'red');
-		await expect(banner).toHaveAttribute('data-reason', 'execution_failed');
+    // The banner is TaskBlockedBanner with the red tone.
+    const banner = page.getByTestId('task-blocked-banner');
+    await expect(banner).toBeVisible({ timeout: 10000 });
+    await expect(banner).toHaveAttribute('data-tone', 'red');
+    await expect(banner).toHaveAttribute('data-reason', 'execution_failed');
 
-		// Resume is the primary action.
-		await expect(page.getByTestId('task-resume-btn')).toBeVisible({ timeout: 5000 });
+    // Resume is the primary action.
+    await expect(page.getByTestId('task-resume-btn')).toBeVisible({ timeout: 5000 });
 
-		// Height check — the big one.
-		await assertBannerIsSingleLine(page, 'task-blocked-banner');
-	});
+    // Height check — the big one.
+    await assertBannerIsSingleLine(page, 'task-blocked-banner');
+  });
 
-	test('human_input_requested banner renders as a single-line "reply via composer" hint', async ({
-		page,
-	}) => {
-		await page.goto('/');
-		const fixture = await createBlockedTaskFixture(page, 'human_input_requested');
-		spaceId = fixture.spaceId;
+  test('human_input_requested banner renders as a single-line "reply via composer" hint', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const fixture = await createBlockedTaskFixture(page, 'human_input_requested');
+    spaceId = fixture.spaceId;
 
-		await page.goto(`/space/${fixture.spaceId}/task/${fixture.taskId}`);
-		await page.waitForURL(`/space/${fixture.spaceId}/task/${fixture.taskId}`, { timeout: 10000 });
+    await page.goto(`/space/${fixture.spaceId}/task/${fixture.taskId}`);
+    await page.waitForURL(`/space/${fixture.spaceId}/task/${fixture.taskId}`, { timeout: 10000 });
 
-		await assertOneBanner(page);
+    await assertOneBanner(page);
 
-		const banner = page.getByTestId('task-blocked-banner');
-		await expect(banner).toBeVisible({ timeout: 10000 });
-		await expect(banner).toHaveAttribute('data-reason', 'human_input_requested');
+    const banner = page.getByTestId('task-blocked-banner');
+    await expect(banner).toBeVisible({ timeout: 10000 });
+    await expect(banner).toHaveAttribute('data-reason', 'human_input_requested');
 
-		// The minimal variant does NOT expose an inline CTA.
-		await expect(page.getByTestId('task-resume-btn')).toBeHidden();
-		await expect(page.getByTestId('gate-review-btn')).toBeHidden();
+    // The minimal variant does NOT expose an inline CTA.
+    await expect(page.getByTestId('task-resume-btn')).toBeHidden();
+    await expect(page.getByTestId('gate-review-btn')).toBeHidden();
 
-		await assertBannerIsSingleLine(page, 'task-blocked-banner');
-	});
+    await assertBannerIsSingleLine(page, 'task-blocked-banner');
+  });
 });

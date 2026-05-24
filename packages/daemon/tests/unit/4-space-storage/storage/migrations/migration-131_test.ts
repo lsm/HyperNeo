@@ -5,37 +5,37 @@ import { runMigration66, runMigration131 } from '../../../../../src/storage/sche
 let db: Database;
 
 beforeEach(() => {
-	db = new Database(':memory:');
+  db = new Database(':memory:');
 });
 
 afterEach(() => {
-	db.close();
+  db.close();
 });
 
 function tableSql(tableName: string): string {
-	return (
-		db
-			.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`)
-			.get(tableName) as {
-			sql: string;
-		}
-	).sql;
+  return (
+    db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`)
+      .get(tableName) as {
+      sql: string;
+    }
+  ).sql;
 }
 
 describe('Migration 131: remove global Neo schema surface', () => {
-	test('drops neo_activity_log', () => {
-		db.exec(`CREATE TABLE neo_activity_log (id TEXT PRIMARY KEY)`);
+  test('drops neo_activity_log', () => {
+    db.exec(`CREATE TABLE neo_activity_log (id TEXT PRIMARY KEY)`);
 
-		runMigration131(db);
+    runMigration131(db);
 
-		const row = db
-			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'neo_activity_log'`)
-			.get();
-		expect(row).toBeNull();
-	});
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'neo_activity_log'`)
+      .get();
+    expect(row).toBeNull();
+  });
 
-	test('archives legacy neo sessions as workers and removes neo type constraint', () => {
-		db.exec(`
+  test('archives legacy neo sessions as workers and removes neo type constraint', () => {
+    db.exec(`
 			CREATE TABLE sessions (
 				id TEXT PRIMARY KEY,
 				title TEXT NOT NULL,
@@ -60,28 +60,28 @@ describe('Migration 131: remove global Neo schema surface', () => {
 				session_context TEXT
 			)
 		`);
-		db.prepare(
-			`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('neo-session', 'Neo', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'neo');
+    ).run('neo-session', 'Neo', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'neo');
 
-		runMigration131(db);
+    runMigration131(db);
 
-		const row = db
-			.prepare(`SELECT status, type, archived_at FROM sessions WHERE id = ?`)
-			.get('neo-session') as {
-			status: string;
-			type: string;
-			archived_at: string | null;
-		};
-		expect(row.status).toBe('archived');
-		expect(row.type).toBe('worker');
-		expect(row.archived_at).toBeTruthy();
-		expect(tableSql('sessions')).not.toContain("'neo'");
-	});
+    const row = db
+      .prepare(`SELECT status, type, archived_at FROM sessions WHERE id = ?`)
+      .get('neo-session') as {
+      status: string;
+      type: string;
+      archived_at: string | null;
+    };
+    expect(row.status).toBe('archived');
+    expect(row.type).toBe('worker');
+    expect(row.archived_at).toBeTruthy();
+    expect(tableSql('sessions')).not.toContain("'neo'");
+  });
 
-	test('converts neo message origins to null and removes neo origin constraint', () => {
-		db.exec(`
+  test('converts neo message origins to null and removes neo origin constraint', () => {
+    db.exec(`
 			CREATE TABLE sessions (
 				id TEXT PRIMARY KEY,
 				title TEXT NOT NULL,
@@ -121,40 +121,40 @@ describe('Migration 131: remove global Neo schema surface', () => {
 				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 			)
 		`);
-		db.prepare(
-			`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('session-1', 'Session', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'worker');
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin, task_id)
+    ).run('session-1', 'Session', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'worker');
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin, task_id)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('msg-neo', 'session-1', 'user', '{}', '2024-01-01', 'neo', 'task-1');
+    ).run('msg-neo', 'session-1', 'user', '{}', '2024-01-01', 'neo', 'task-1');
 
-		runMigration131(db);
+    runMigration131(db);
 
-		const row = db
-			.prepare(`SELECT origin, task_id FROM sdk_messages WHERE id = ?`)
-			.get('msg-neo') as {
-			origin: string | null;
-			task_id: string | null;
-		};
-		expect(row.origin).toBeNull();
-		expect(row.task_id).toBe('task-1');
-		expect(tableSql('sdk_messages')).not.toContain("'neo'");
-		expect(() => {
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
+    const row = db
+      .prepare(`SELECT origin, task_id FROM sdk_messages WHERE id = ?`)
+      .get('msg-neo') as {
+      origin: string | null;
+      task_id: string | null;
+    };
+    expect(row.origin).toBeNull();
+    expect(row.task_id).toBe('task-1');
+    expect(tableSql('sdk_messages')).not.toContain("'neo'");
+    expect(() => {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
 				 VALUES (?, ?, ?, ?, ?, ?)`
-			).run('msg-new-neo', 'session-1', 'user', '{}', '2024-01-02', 'neo');
-		}).toThrow();
-	});
+      ).run('msg-new-neo', 'session-1', 'user', '{}', '2024-01-02', 'neo');
+    }).toThrow();
+  });
 
-	test('runMigration66 is a no-op when sessions CHECK already lacks neo (post-M131 / fresh tip)', () => {
-		// Reproduces the CI failure on daemon restart: after M131 has rebuilt the
-		// sessions table without 'neo' (and rows for newer types like 'space_chat'
-		// exist), re-running the legacy M66 probe-and-rebuild would copy those rows
-		// into a stale CHECK that does not include 'space_chat' and crash startup.
-		db.exec(`
+  test('runMigration66 is a no-op when sessions CHECK already lacks neo (post-M131 / fresh tip)', () => {
+    // Reproduces the CI failure on daemon restart: after M131 has rebuilt the
+    // sessions table without 'neo' (and rows for newer types like 'space_chat'
+    // exist), re-running the legacy M66 probe-and-rebuild would copy those rows
+    // into a stale CHECK that does not include 'space_chat' and crash startup.
+    db.exec(`
 			CREATE TABLE sessions (
 				id TEXT PRIMARY KEY,
 				title TEXT NOT NULL,
@@ -179,25 +179,25 @@ describe('Migration 131: remove global Neo schema surface', () => {
 				session_context TEXT
 			)
 		`);
-		db.prepare(
-			`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, type)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('space-chat-1', 'Chat', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'space_chat');
+    ).run('space-chat-1', 'Chat', '2024-01-01', '2024-01-01', 'active', '{}', '{}', 'space_chat');
 
-		expect(() => runMigration66(db)).not.toThrow();
+    expect(() => runMigration66(db)).not.toThrow();
 
-		const sql = tableSql('sessions');
-		expect(sql).not.toContain("'neo'");
-		expect(sql).toContain("'space_chat'");
+    const sql = tableSql('sessions');
+    expect(sql).not.toContain("'neo'");
+    expect(sql).toContain("'space_chat'");
 
-		const neoLogExists = db
-			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'neo_activity_log'`)
-			.get();
-		expect(neoLogExists).toBeNull();
+    const neoLogExists = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'neo_activity_log'`)
+      .get();
+    expect(neoLogExists).toBeNull();
 
-		const row = db.prepare(`SELECT type FROM sessions WHERE id = ?`).get('space-chat-1') as {
-			type: string;
-		};
-		expect(row.type).toBe('space_chat');
-	});
+    const row = db.prepare(`SELECT type FROM sessions WHERE id = ?`).get('space-chat-1') as {
+      type: string;
+    };
+    expect(row.type).toBe('space_chat');
+  });
 });

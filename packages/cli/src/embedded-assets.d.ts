@@ -5,8 +5,8 @@
  */
 
 export interface EmbeddedAsset {
-	filePath: string;
-	mimeType: string;
+  filePath: string;
+  mimeType: string;
 }
 
 export declare const embeddedAssets: Map<string, EmbeddedAsset>;

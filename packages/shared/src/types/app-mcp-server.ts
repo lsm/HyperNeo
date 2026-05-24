@@ -27,44 +27,44 @@ export type AppMcpServerSource = 'builtin' | 'user' | 'imported';
  * An MCP server registered at the application level.
  */
 export interface AppMcpServer {
-	/** Unique identifier (UUID) */
-	id: string;
-	/** Human-readable name, unique across the registry */
-	name: string;
-	/** Optional description of what the server provides */
-	description?: string;
-	/** Transport type: stdio, SSE, or HTTP */
-	sourceType: AppMcpServerSourceType;
-	/** Executable command (stdio servers) */
-	command?: string;
-	/** Command arguments (stdio servers) */
-	args?: string[];
-	/**
-	 * Environment variable overrides for the server process (stdio servers).
-	 * Values are non-secret config or reference keys (e.g. "MY_API_KEY" → read from process.env).
-	 */
-	env?: Record<string, string>;
-	/** Server URL (SSE or HTTP servers) */
-	url?: string;
-	/** Additional HTTP headers (SSE or HTTP servers) */
-	headers?: Record<string, string>;
-	/** Whether this server is enabled globally */
-	enabled: boolean;
-	/**
-	 * Where this entry came from. See `AppMcpServerSource`. Always set; defaults
-	 * to `'user'` when omitted from create requests so the existing
-	 * `mcp.registry.create` RPC works without a schema change.
-	 */
-	source: AppMcpServerSource;
-	/**
-	 * Absolute path of the originating `.mcp.json` file for `source='imported'`
-	 * entries. Always undefined for `builtin` and `user` entries.
-	 */
-	sourcePath?: string;
-	/** Unix timestamp (ms) when the record was created */
-	createdAt?: number;
-	/** Unix timestamp (ms) when the record was last updated */
-	updatedAt?: number;
+  /** Unique identifier (UUID) */
+  id: string;
+  /** Human-readable name, unique across the registry */
+  name: string;
+  /** Optional description of what the server provides */
+  description?: string;
+  /** Transport type: stdio, SSE, or HTTP */
+  sourceType: AppMcpServerSourceType;
+  /** Executable command (stdio servers) */
+  command?: string;
+  /** Command arguments (stdio servers) */
+  args?: string[];
+  /**
+   * Environment variable overrides for the server process (stdio servers).
+   * Values are non-secret config or reference keys (e.g. "MY_API_KEY" → read from process.env).
+   */
+  env?: Record<string, string>;
+  /** Server URL (SSE or HTTP servers) */
+  url?: string;
+  /** Additional HTTP headers (SSE or HTTP servers) */
+  headers?: Record<string, string>;
+  /** Whether this server is enabled globally */
+  enabled: boolean;
+  /**
+   * Where this entry came from. See `AppMcpServerSource`. Always set; defaults
+   * to `'user'` when omitted from create requests so the existing
+   * `mcp.registry.create` RPC works without a schema change.
+   */
+  source: AppMcpServerSource;
+  /**
+   * Absolute path of the originating `.mcp.json` file for `source='imported'`
+   * entries. Always undefined for `builtin` and `user` entries.
+   */
+  sourcePath?: string;
+  /** Unix timestamp (ms) when the record was created */
+  createdAt?: number;
+  /** Unix timestamp (ms) when the record was last updated */
+  updatedAt?: number;
 }
 
 /**
@@ -73,8 +73,8 @@ export interface AppMcpServer {
  * `source` defaults to `'user'` if omitted.
  */
 export type CreateAppMcpServerRequest = Omit<AppMcpServer, 'id' | 'enabled' | 'source'> & {
-	enabled?: boolean;
-	source?: AppMcpServerSource;
+  enabled?: boolean;
+  source?: AppMcpServerSource;
 };
 
 /**

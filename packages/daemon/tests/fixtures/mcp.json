@@ -1,8 +1,8 @@
 {
-	"mcpServers": {
-		"dummy-test-server": {
-			"command": "echo",
-			"args": ["test-server"]
-		}
-	}
+  "mcpServers": {
+    "dummy-test-server": {
+      "command": "echo",
+      "args": ["test-server"]
+    }
+  }
 }

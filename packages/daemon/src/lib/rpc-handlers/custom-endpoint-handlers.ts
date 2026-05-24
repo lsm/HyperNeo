@@ -13,9 +13,9 @@ import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
 const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
-	'openai-chat',
-	'anthropic-messages',
-	'ollama-native',
+  'openai-chat',
+  'anthropic-messages',
+  'ollama-native',
 ]);
 
 /**
@@ -24,48 +24,48 @@ const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
  * before persisting and syncing the provider registry.
  */
 export function validateCustomEndpoint(config: CustomEndpointConfig): void {
-	if (!config?.id || typeof config.id !== 'string')
-		throw new Error('Custom endpoint id is required');
-	if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
-		throw new Error(
-			`Custom endpoint id '${config.id}' is invalid (allowed: letters, digits, '.', '_', '-')`
-		);
-	if (config.type !== undefined && !VALID_CUSTOM_ENDPOINT_TYPES.has(config.type)) {
-		throw new Error(
-			`Custom endpoint '${config.id}': type '${config.type}' is invalid (allowed: ${[
-				...VALID_CUSTOM_ENDPOINT_TYPES,
-			].join(', ')})`
-		);
-	}
-	if (!config.name || typeof config.name !== 'string')
-		throw new Error(`Custom endpoint '${config.id}': name is required`);
-	if (!config.baseUrl || typeof config.baseUrl !== 'string')
-		throw new Error(`Custom endpoint '${config.id}': baseUrl is required`);
-	try {
-		const url = new URL(config.baseUrl);
-		if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-			throw new Error('baseUrl must use http:// or https://');
-		}
-	} catch (err) {
-		throw new Error(
-			`Custom endpoint '${config.id}': invalid baseUrl — ${err instanceof Error ? err.message : String(err)}`
-		);
-	}
-	if (!Array.isArray(config.models) || config.models.length === 0)
-		throw new Error(`Custom endpoint '${config.id}': at least one model is required`);
-	const seen = new Set<string>();
-	for (const model of config.models) {
-		if (!model?.id || typeof model.id !== 'string')
-			throw new Error(`Custom endpoint '${config.id}': every model must have an id`);
-		if (seen.has(model.id))
-			throw new Error(`Custom endpoint '${config.id}': duplicate model id '${model.id}'`);
-		seen.add(model.id);
-	}
-	if (config.defaultModelId && !seen.has(config.defaultModelId)) {
-		throw new Error(
-			`Custom endpoint '${config.id}': defaultModelId '${config.defaultModelId}' not in models[]`
-		);
-	}
+  if (!config?.id || typeof config.id !== 'string')
+    throw new Error('Custom endpoint id is required');
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(config.id))
+    throw new Error(
+      `Custom endpoint id '${config.id}' is invalid (allowed: letters, digits, '.', '_', '-')`
+    );
+  if (config.type !== undefined && !VALID_CUSTOM_ENDPOINT_TYPES.has(config.type)) {
+    throw new Error(
+      `Custom endpoint '${config.id}': type '${config.type}' is invalid (allowed: ${[
+        ...VALID_CUSTOM_ENDPOINT_TYPES,
+      ].join(', ')})`
+    );
+  }
+  if (!config.name || typeof config.name !== 'string')
+    throw new Error(`Custom endpoint '${config.id}': name is required`);
+  if (!config.baseUrl || typeof config.baseUrl !== 'string')
+    throw new Error(`Custom endpoint '${config.id}': baseUrl is required`);
+  try {
+    const url = new URL(config.baseUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('baseUrl must use http:// or https://');
+    }
+  } catch (err) {
+    throw new Error(
+      `Custom endpoint '${config.id}': invalid baseUrl — ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (!Array.isArray(config.models) || config.models.length === 0)
+    throw new Error(`Custom endpoint '${config.id}': at least one model is required`);
+  const seen = new Set<string>();
+  for (const model of config.models) {
+    if (!model?.id || typeof model.id !== 'string')
+      throw new Error(`Custom endpoint '${config.id}': every model must have an id`);
+    if (seen.has(model.id))
+      throw new Error(`Custom endpoint '${config.id}': duplicate model id '${model.id}'`);
+    seen.add(model.id);
+  }
+  if (config.defaultModelId && !seen.has(config.defaultModelId)) {
+    throw new Error(
+      `Custom endpoint '${config.id}': defaultModelId '${config.defaultModelId}' not in models[]`
+    );
+  }
 }
 
 /**
@@ -80,35 +80,35 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
  * empty and unregister all custom providers.
  */
 export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefined): void {
-	if (configs === undefined) return;
-	if (configs === null) throw new Error('customEndpoints must be an array, got null');
-	if (!Array.isArray(configs)) throw new Error('customEndpoints must be an array');
-	const ids = new Set<string>();
-	for (const config of configs) {
-		validateCustomEndpoint(config);
-		if (ids.has(config.id)) throw new Error(`Duplicate custom endpoint id '${config.id}'`);
-		ids.add(config.id);
-	}
+  if (configs === undefined) return;
+  if (configs === null) throw new Error('customEndpoints must be an array, got null');
+  if (!Array.isArray(configs)) throw new Error('customEndpoints must be an array');
+  const ids = new Set<string>();
+  for (const config of configs) {
+    validateCustomEndpoint(config);
+    if (ids.has(config.id)) throw new Error(`Duplicate custom endpoint id '${config.id}'`);
+    ids.add(config.id);
+  }
 }
 
 async function persistAndSync(
-	settingsManager: SettingsManager,
-	internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-	endpoints: CustomEndpointConfig[]
+  settingsManager: SettingsManager,
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>,
+  endpoints: CustomEndpointConfig[]
 ): Promise<void> {
-	const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
-	const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-	await syncCustomEndpointProviders(endpoints);
-	// Invalidate the cached global model list so newly added/removed custom
-	// models become discoverable immediately instead of waiting for the TTL
-	// to expire. Without this, model resolution can keep using stale defaults
-	// until the next refresh.
-	const { clearModelsCache } = await import('../model-service.js');
-	clearModelsCache();
-	internalEventBus.publishAsync('settings.updated', {
-		namespaceId: 'global',
-		settings: updated,
-	});
+  const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
+  const { syncCustomEndpointProviders } = await import('../providers/factory.js');
+  await syncCustomEndpointProviders(endpoints);
+  // Invalidate the cached global model list so newly added/removed custom
+  // models become discoverable immediately instead of waiting for the TTL
+  // to expire. Without this, model resolution can keep using stale defaults
+  // until the next refresh.
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache();
+  internalEventBus.publishAsync('settings.updated', {
+    namespaceId: 'global',
+    settings: updated,
+  });
 }
 
 /**
@@ -127,62 +127,62 @@ async function persistAndSync(
  */
 let mutationQueue: Promise<unknown> = Promise.resolve();
 export function withCustomEndpointsLock<T>(fn: () => Promise<T>): Promise<T> {
-	const run = mutationQueue.then(fn, fn);
-	// Swallow errors on the queue tail so one failure doesn't poison the chain.
-	mutationQueue = run.catch(() => {});
-	return run;
+  const run = mutationQueue.then(fn, fn);
+  // Swallow errors on the queue tail so one failure doesn't poison the chain.
+  mutationQueue = run.catch(() => {});
+  return run;
 }
 
 export function registerCustomEndpointHandlers(
-	messageHub: MessageHub,
-	settingsManager: SettingsManager,
-	internalEventBus: InternalEventBus<DaemonInternalEventMap>
+  messageHub: MessageHub,
+  settingsManager: SettingsManager,
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
-	/** List all configured custom endpoints. */
-	messageHub.onRequest('customEndpoints.list', async () => {
-		return { endpoints: settingsManager.getGlobalSettings().customEndpoints ?? [] };
-	});
+  /** List all configured custom endpoints. */
+  messageHub.onRequest('customEndpoints.list', async () => {
+    return { endpoints: settingsManager.getGlobalSettings().customEndpoints ?? [] };
+  });
 
-	/** Add a new custom endpoint. Rejects when the id already exists. */
-	messageHub.onRequest('customEndpoints.add', async (data: { endpoint: CustomEndpointConfig }) => {
-		return withCustomEndpointsLock(async () => {
-			validateCustomEndpoint(data.endpoint);
-			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
-			if (current.some((e) => e.id === data.endpoint.id)) {
-				throw new Error(`Custom endpoint '${data.endpoint.id}' already exists`);
-			}
-			const next = [...current, data.endpoint];
-			await persistAndSync(settingsManager, internalEventBus, next);
-			return { success: true, endpoint: data.endpoint };
-		});
-	});
+  /** Add a new custom endpoint. Rejects when the id already exists. */
+  messageHub.onRequest('customEndpoints.add', async (data: { endpoint: CustomEndpointConfig }) => {
+    return withCustomEndpointsLock(async () => {
+      validateCustomEndpoint(data.endpoint);
+      const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+      if (current.some((e) => e.id === data.endpoint.id)) {
+        throw new Error(`Custom endpoint '${data.endpoint.id}' already exists`);
+      }
+      const next = [...current, data.endpoint];
+      await persistAndSync(settingsManager, internalEventBus, next);
+      return { success: true, endpoint: data.endpoint };
+    });
+  });
 
-	/** Update an existing custom endpoint. Replaces the entry by id. */
-	messageHub.onRequest(
-		'customEndpoints.update',
-		async (data: { endpoint: CustomEndpointConfig }) => {
-			return withCustomEndpointsLock(async () => {
-				validateCustomEndpoint(data.endpoint);
-				const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
-				const index = current.findIndex((e) => e.id === data.endpoint.id);
-				if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
-				const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];
-				await persistAndSync(settingsManager, internalEventBus, next);
-				return { success: true, endpoint: data.endpoint };
-			});
-		}
-	);
+  /** Update an existing custom endpoint. Replaces the entry by id. */
+  messageHub.onRequest(
+    'customEndpoints.update',
+    async (data: { endpoint: CustomEndpointConfig }) => {
+      return withCustomEndpointsLock(async () => {
+        validateCustomEndpoint(data.endpoint);
+        const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+        const index = current.findIndex((e) => e.id === data.endpoint.id);
+        if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
+        const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];
+        await persistAndSync(settingsManager, internalEventBus, next);
+        return { success: true, endpoint: data.endpoint };
+      });
+    }
+  );
 
-	/** Remove a custom endpoint by id. */
-	messageHub.onRequest('customEndpoints.remove', async (data: { id: string }) => {
-		return withCustomEndpointsLock(async () => {
-			const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
-			const next = current.filter((e) => e.id !== data.id);
-			if (next.length === current.length) {
-				throw new Error(`Custom endpoint '${data.id}' not found`);
-			}
-			await persistAndSync(settingsManager, internalEventBus, next);
-			return { success: true };
-		});
-	});
+  /** Remove a custom endpoint by id. */
+  messageHub.onRequest('customEndpoints.remove', async (data: { id: string }) => {
+    return withCustomEndpointsLock(async () => {
+      const current = settingsManager.getGlobalSettings().customEndpoints ?? [];
+      const next = current.filter((e) => e.id !== data.id);
+      if (next.length === current.length) {
+        throw new Error(`Custom endpoint '${data.id}' not found`);
+      }
+      await persistAndSync(settingsManager, internalEventBus, next);
+      return { success: true };
+    });
+  });
 }

@@ -12,11 +12,11 @@ import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } fro
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
-	type ContentBlock,
-	hasRenderableThinking,
-	isTextBlock,
-	isThinkingBlock,
-	isToolUseBlock,
+  type ContentBlock,
+  hasRenderableThinking,
+  isTextBlock,
+  isThinkingBlock,
+  isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
@@ -34,323 +34,323 @@ import { ToolResultCard } from './tools/index.ts';
 type AssistantMessage = Extract<SDKMessage, { type: 'assistant' }>;
 
 interface Props {
-	message: AssistantMessage;
-	toolResultsMap?: Map<string, unknown>;
-	subagentMessagesMap?: Map<string, SDKMessage[]>;
-	// Question handling props for inline QuestionPrompt rendering
-	sessionId?: string;
-	resolvedQuestions?: Map<string, ResolvedQuestion>;
-	pendingQuestion?: PendingUserQuestion | null;
-	onQuestionResolved?: (
-		state: 'submitted' | 'cancelled',
-		responses: QuestionDraftResponse[]
-	) => void;
-	// Rewind mode props
-	rewindMode?: boolean;
-	selectedMessages?: Set<string>;
-	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	/**
-	 * When true, child tool / thinking / subagent blocks in this message are
-	 * each wrapped in <RunningBorder> so the animated arc traces their border.
-	 * Set by the compact task thread renderer for the last non-terminal message.
-	 */
-	isRunning?: boolean;
-	/**
-	 * When true, Task/Agent tool_use blocks are rendered as normal tool cards
-	 * instead of SubagentBlock.
-	 */
-	flattenSubagentTools?: boolean;
+  message: AssistantMessage;
+  toolResultsMap?: Map<string, unknown>;
+  subagentMessagesMap?: Map<string, SDKMessage[]>;
+  // Question handling props for inline QuestionPrompt rendering
+  sessionId?: string;
+  resolvedQuestions?: Map<string, ResolvedQuestion>;
+  pendingQuestion?: PendingUserQuestion | null;
+  onQuestionResolved?: (
+    state: 'submitted' | 'cancelled',
+    responses: QuestionDraftResponse[]
+  ) => void;
+  // Rewind mode props
+  rewindMode?: boolean;
+  selectedMessages?: Set<string>;
+  onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
+  /**
+   * When true, child tool / thinking / subagent blocks in this message are
+   * each wrapped in <RunningBorder> so the animated arc traces their border.
+   * Set by the compact task thread renderer for the last non-terminal message.
+   */
+  isRunning?: boolean;
+  /**
+   * When true, Task/Agent tool_use blocks are rendered as normal tool cards
+   * instead of SubagentBlock.
+   */
+  flattenSubagentTools?: boolean;
 }
 
 export function SDKAssistantMessage({
-	message,
-	toolResultsMap,
-	subagentMessagesMap,
-	sessionId,
-	resolvedQuestions,
-	pendingQuestion,
-	onQuestionResolved,
-	rewindMode,
-	selectedMessages,
-	onMessageCheckboxChange,
-	isRunning,
-	flattenSubagentTools = false,
+  message,
+  toolResultsMap,
+  subagentMessagesMap,
+  sessionId,
+  resolvedQuestions,
+  pendingQuestion,
+  onQuestionResolved,
+  rewindMode,
+  selectedMessages,
+  onMessageCheckboxChange,
+  isRunning,
+  flattenSubagentTools = false,
 }: Props) {
-	const { message: apiMessage } = message;
-	const hasError = 'error' in message && message.error !== undefined;
+  const { message: apiMessage } = message;
+  const hasError = 'error' in message && message.error !== undefined;
 
-	// Extract text content for copy functionality
-	const getTextContent = (): string => {
-		return apiMessage.content
-			.map((block: ContentBlock) => {
-				if (isTextBlock(block)) {
-					return block.text;
-				}
-				return '';
-			})
-			.filter(Boolean)
-			.join('\n');
-	};
+  // Extract text content for copy functionality
+  const getTextContent = (): string => {
+    return apiMessage.content
+      .map((block: ContentBlock) => {
+        if (isTextBlock(block)) {
+          return block.text;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  };
 
-	const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-	useEffect(() => {
-		if (!copied) return;
-		const timer = setTimeout(() => setCopied(false), 1500);
-		return () => clearTimeout(timer);
-	}, [copied]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
-	const handleCopy = async () => {
-		const textContent = getTextContent();
-		const success = await copyToClipboard(textContent);
-		if (success) {
-			setCopied(true);
-		} else {
-			toast.error('Failed to copy message');
-		}
-	};
+  const handleCopy = async () => {
+    const textContent = getTextContent();
+    const success = await copyToClipboard(textContent);
+    if (success) {
+      setCopied(true);
+    } else {
+      toast.error('Failed to copy message');
+    }
+  };
 
-	// Get timestamp from message
-	const getTimestamp = (): string => {
-		// Use the timestamp injected by the database (milliseconds since epoch)
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		const date = messageWithTimestamp.timestamp
-			? new Date(messageWithTimestamp.timestamp)
-			: new Date();
-		return date.toLocaleTimeString([], {
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	};
+  // Get timestamp from message
+  const getTimestamp = (): string => {
+    // Use the timestamp injected by the database (milliseconds since epoch)
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp
+      ? new Date(messageWithTimestamp.timestamp)
+      : new Date();
+    return date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
-	// Get full timestamp for tooltip
-	const getFullTimestamp = (): string => {
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		const date = messageWithTimestamp.timestamp
-			? new Date(messageWithTimestamp.timestamp)
-			: new Date();
-		return date.toLocaleString();
-	};
+  // Get full timestamp for tooltip
+  const getFullTimestamp = (): string => {
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp
+      ? new Date(messageWithTimestamp.timestamp)
+      : new Date();
+    return date.toLocaleString();
+  };
 
-	// Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained.
-	//
-	// Thinking blocks with empty/whitespace payloads (emitted by Opus 4.7 and
-	// other models running with `thinking.display = 'omitted'`) are filtered
-	// out here so the UI doesn't show an empty "Thinking · 0 characters" card.
-	const textBlocks = apiMessage.content.filter((block: ContentBlock) => isTextBlock(block));
-	const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
-	const thinkingBlocks = apiMessage.content.filter(isThinkingBlock).filter(hasRenderableThinking);
+  // Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained.
+  //
+  // Thinking blocks with empty/whitespace payloads (emitted by Opus 4.7 and
+  // other models running with `thinking.display = 'omitted'`) are filtered
+  // out here so the UI doesn't show an empty "Thinking · 0 characters" card.
+  const textBlocks = apiMessage.content.filter((block: ContentBlock) => isTextBlock(block));
+  const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
+  const thinkingBlocks = apiMessage.content.filter(isThinkingBlock).filter(hasRenderableThinking);
 
-	// Get message metadata for E2E tests
-	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+  // Get message metadata for E2E tests
+  const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	// Text block bubble component - extracted for proper checkbox alignment
-	const textBlockBubble =
-		textBlocks.length > 0 ? (
-			<div
-				class={cn(
-					hasError
-						? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-						: messageColors.assistant.background,
-					borderRadius.message.bubble,
-					messageSpacing.assistant.bubble.combined,
-					'space-y-3'
-				)}
-			>
-				{hasError && (
-					<div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-							/>
-						</svg>
-						<span>API Error</span>
-					</div>
-				)}
-				{textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
-					<div
-						key={idx}
-						class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
-					>
-						<MarkdownRenderer
-							content={block.text}
-							class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
-						/>
-					</div>
-				))}
+  // Text block bubble component - extracted for proper checkbox alignment
+  const textBlockBubble =
+    textBlocks.length > 0 ? (
+      <div
+        class={cn(
+          hasError
+            ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+            : messageColors.assistant.background,
+          borderRadius.message.bubble,
+          messageSpacing.assistant.bubble.combined,
+          'space-y-3'
+        )}
+      >
+        {hasError && (
+          <div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+            <span>API Error</span>
+          </div>
+        )}
+        {textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
+          <div
+            key={idx}
+            class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
+          >
+            <MarkdownRenderer
+              content={block.text}
+              class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
+            />
+          </div>
+        ))}
 
-				{/* Parent tool use indicator (for sub-agent messages) */}
-				{message.parent_tool_use_id && (
-					<div class="text-xs text-gray-500 dark:text-gray-400 italic">
-						Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-					</div>
-				)}
-			</div>
-		) : null;
+        {/* Parent tool use indicator (for sub-agent messages) */}
+        {message.parent_tool_use_id && (
+          <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+            Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+          </div>
+        )}
+      </div>
+    ) : null;
 
-	// Actions/toolbar component for text blocks
-	const textBlockActions =
-		textBlocks.length > 0 ? (
-			<div
-				class={cn(
-					'flex items-center',
-					messageSpacing.actions.gap,
-					messageSpacing.actions.marginTop,
-					messageSpacing.actions.padding
-				)}
-			>
-				<Tooltip content={getFullTimestamp()} position="right">
-					<span class="text-xs text-gray-500">{getTimestamp()}</span>
-				</Tooltip>
+  // Actions/toolbar component for text blocks
+  const textBlockActions =
+    textBlocks.length > 0 ? (
+      <div
+        class={cn(
+          'flex items-center',
+          messageSpacing.actions.gap,
+          messageSpacing.actions.marginTop,
+          messageSpacing.actions.padding
+        )}
+      >
+        <Tooltip content={getFullTimestamp()} position="right">
+          <span class="text-xs text-gray-500">{getTimestamp()}</span>
+        </Tooltip>
 
-				<IconButton
-					size="md"
-					onClick={handleCopy}
-					title={copied ? 'Copied!' : 'Copy message'}
-					class={copied ? 'text-green-400' : ''}
-				>
-					{copied ? (
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M5 13l4 4L19 7"
-							/>
-						</svg>
-					) : (
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-							/>
-						</svg>
-					)}
-				</IconButton>
-			</div>
-		) : null;
+        <IconButton
+          size="md"
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy message'}
+          class={copied ? 'text-green-400' : ''}
+        >
+          {copied ? (
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          ) : (
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
+            </svg>
+          )}
+        </IconButton>
+      </div>
+    ) : null;
 
-	// Check if this assistant message has sub-agent children.
-	// If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
-	// Use the memoized parent_tool_use_id map instead of scanning the whole message array so
-	// streaming appends do not invalidate every memoized SDKMessageRenderer row.
-	const hasSubagentChild = message.uuid ? subagentMessagesMap?.has(message.uuid) || false : false;
+  // Check if this assistant message has sub-agent children.
+  // If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
+  // Use the memoized parent_tool_use_id map instead of scanning the whole message array so
+  // streaming appends do not invalidate every memoized SDKMessageRenderer row.
+  const hasSubagentChild = message.uuid ? subagentMessagesMap?.has(message.uuid) || false : false;
 
-	// Checkbox rendering for rewind mode (using shared function)
-	const renderCheckbox = () =>
-		renderRewindCheckbox({
-			rewindMode,
-			messageUuid: message.uuid,
-			onMessageCheckboxChange,
-			selectedMessages,
-			hasSubagentChild,
-		});
+  // Checkbox rendering for rewind mode (using shared function)
+  const renderCheckbox = () =>
+    renderRewindCheckbox({
+      rewindMode,
+      messageUuid: message.uuid,
+      onMessageCheckboxChange,
+      selectedMessages,
+      hasSubagentChild,
+    });
 
-	// Wrap with checkbox if in rewind mode - simpler structure for proper alignment
-	if (rewindMode && message.uuid && onMessageCheckboxChange && !hasSubagentChild) {
-		return (
-			<div
-				class="py-2 space-y-3"
-				data-testid="assistant-message"
-				data-message-role="assistant"
-				data-message-uuid={message.uuid}
-				data-message-timestamp={messageWithTimestamp.timestamp || 0}
-			>
-				{/* Tool use blocks - full width, no checkbox alignment needed */}
-				{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
-					const toolResult = toolResultsMap?.get(block.id);
-					const nestedMessages = subagentMessagesMap?.get(block.id) || [];
-					return (
-						<ToolUseBlock
-							key={`tool-${idx}`}
-							block={block}
-							toolResult={toolResult}
-							nestedMessages={nestedMessages}
-							toolResultsMap={toolResultsMap}
-							sessionId={sessionId}
-							resolvedQuestions={resolvedQuestions}
-							pendingQuestion={pendingQuestion}
-							onQuestionResolved={onQuestionResolved}
-							flattenSubagentTools={flattenSubagentTools}
-						/>
-					);
-				})}
+  // Wrap with checkbox if in rewind mode - simpler structure for proper alignment
+  if (rewindMode && message.uuid && onMessageCheckboxChange && !hasSubagentChild) {
+    return (
+      <div
+        class="py-2 space-y-3"
+        data-testid="assistant-message"
+        data-message-role="assistant"
+        data-message-uuid={message.uuid}
+        data-message-timestamp={messageWithTimestamp.timestamp || 0}
+      >
+        {/* Tool use blocks - full width, no checkbox alignment needed */}
+        {toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
+          const toolResult = toolResultsMap?.get(block.id);
+          const nestedMessages = subagentMessagesMap?.get(block.id) || [];
+          return (
+            <ToolUseBlock
+              key={`tool-${idx}`}
+              block={block}
+              toolResult={toolResult}
+              nestedMessages={nestedMessages}
+              toolResultsMap={toolResultsMap}
+              sessionId={sessionId}
+              resolvedQuestions={resolvedQuestions}
+              pendingQuestion={pendingQuestion}
+              onQuestionResolved={onQuestionResolved}
+              flattenSubagentTools={flattenSubagentTools}
+            />
+          );
+        })}
 
-				{/* Thinking blocks - full width, no checkbox alignment needed */}
-				{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-					<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
-				))}
+        {/* Thinking blocks - full width, no checkbox alignment needed */}
+        {thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
+          <ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
+        ))}
 
-				{/* Text blocks with checkbox - simpler structure for proper alignment */}
-				{textBlockBubble && (
-					<>
-						<div class="flex items-center gap-2">
-							{renderCheckbox()}
-							{textBlockBubble}
-						</div>
-						{textBlockActions}
-					</>
-				)}
-			</div>
-		);
-	}
+        {/* Text blocks with checkbox - simpler structure for proper alignment */}
+        {textBlockBubble && (
+          <>
+            <div class="flex items-center gap-2">
+              {renderCheckbox()}
+              {textBlockBubble}
+            </div>
+            {textBlockActions}
+          </>
+        )}
+      </div>
+    );
+  }
 
-	// Normal mode - original layout
-	//
-	// When isRunning, ALL blocks in this message receive the animated arc so
-	// every block type is visible for debugging/verification. Each component
-	// applies the arc via a wrapper div (not directly on its overflow:hidden
-	// root) so the inset:-2px extension isn't clipped.
-	const messageContent = (
-		<div
-			class="py-2 space-y-3"
-			data-testid="assistant-message"
-			data-message-role="assistant"
-			data-message-uuid={message.uuid}
-			data-message-timestamp={messageWithTimestamp.timestamp || 0}
-		>
-			{/* Tool use blocks - full width like result messages */}
-			{toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
-				const toolResult = toolResultsMap?.get(block.id);
-				const nestedMessages = subagentMessagesMap?.get(block.id) || [];
-				return (
-					<ToolUseBlock
-						key={`tool-${idx}`}
-						block={block}
-						toolResult={toolResult}
-						nestedMessages={nestedMessages}
-						toolResultsMap={toolResultsMap}
-						sessionId={sessionId}
-						resolvedQuestions={resolvedQuestions}
-						pendingQuestion={pendingQuestion}
-						onQuestionResolved={onQuestionResolved}
-						flattenSubagentTools={flattenSubagentTools}
-						isRunning={!!isRunning}
-					/>
-				);
-			})}
+  // Normal mode - original layout
+  //
+  // When isRunning, ALL blocks in this message receive the animated arc so
+  // every block type is visible for debugging/verification. Each component
+  // applies the arc via a wrapper div (not directly on its overflow:hidden
+  // root) so the inset:-2px extension isn't clipped.
+  const messageContent = (
+    <div
+      class="py-2 space-y-3"
+      data-testid="assistant-message"
+      data-message-role="assistant"
+      data-message-uuid={message.uuid}
+      data-message-timestamp={messageWithTimestamp.timestamp || 0}
+    >
+      {/* Tool use blocks - full width like result messages */}
+      {toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
+        const toolResult = toolResultsMap?.get(block.id);
+        const nestedMessages = subagentMessagesMap?.get(block.id) || [];
+        return (
+          <ToolUseBlock
+            key={`tool-${idx}`}
+            block={block}
+            toolResult={toolResult}
+            nestedMessages={nestedMessages}
+            toolResultsMap={toolResultsMap}
+            sessionId={sessionId}
+            resolvedQuestions={resolvedQuestions}
+            pendingQuestion={pendingQuestion}
+            onQuestionResolved={onQuestionResolved}
+            flattenSubagentTools={flattenSubagentTools}
+            isRunning={!!isRunning}
+          />
+        );
+      })}
 
-			{/* Thinking blocks - visible by default with expand/collapse for long content */}
-			{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} isRunning={!!isRunning} />
-			))}
+      {/* Thinking blocks - visible by default with expand/collapse for long content */}
+      {thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
+        <ThinkingBlock key={`thinking-${idx}`} content={block.thinking} isRunning={!!isRunning} />
+      ))}
 
-			{/* Text blocks - bubble + actions */}
-			{textBlockBubble && (
-				<div class="w-full space-y-3">
-					{textBlockBubble}
-					{textBlockActions}
-				</div>
-			)}
-		</div>
-	);
+      {/* Text blocks - bubble + actions */}
+      {textBlockBubble && (
+        <div class="w-full space-y-3">
+          {textBlockBubble}
+          {textBlockActions}
+        </div>
+      )}
+    </div>
+  );
 
-	return messageContent;
+  return messageContent;
 }
 
 /**
@@ -359,178 +359,178 @@ export function SDKAssistantMessage({
  * Renders QuestionPrompt inline for AskUserQuestion tool
  */
 function ToolUseBlock({
-	block,
-	toolResult,
-	nestedMessages,
-	toolResultsMap,
-	sessionId: propSessionId,
-	resolvedQuestions,
-	pendingQuestion,
-	onQuestionResolved,
-	isRunning,
-	flattenSubagentTools = false,
+  block,
+  toolResult,
+  nestedMessages,
+  toolResultsMap,
+  sessionId: propSessionId,
+  resolvedQuestions,
+  pendingQuestion,
+  onQuestionResolved,
+  isRunning,
+  flattenSubagentTools = false,
 }: {
-	block: Extract<ContentBlock, { type: 'tool_use' }>;
-	toolResult?: unknown;
-	nestedMessages?: SDKMessage[];
-	toolResultsMap?: Map<string, unknown>;
-	sessionId?: string;
-	resolvedQuestions?: Map<string, ResolvedQuestion>;
-	pendingQuestion?: PendingUserQuestion | null;
-	onQuestionResolved?: (
-		state: 'submitted' | 'cancelled',
-		responses: QuestionDraftResponse[]
-	) => void;
-	/** When true, wrap this block's outermost visible bordered card in
-	 * <RunningBorder>. Used by the compact task thread renderer to indicate the
-	 * last still-executing event message. */
-	isRunning?: boolean;
-	/** Render Task/Agent tool_use blocks as generic tool cards when true. */
-	flattenSubagentTools?: boolean;
+  block: Extract<ContentBlock, { type: 'tool_use' }>;
+  toolResult?: unknown;
+  nestedMessages?: SDKMessage[];
+  toolResultsMap?: Map<string, unknown>;
+  sessionId?: string;
+  resolvedQuestions?: Map<string, ResolvedQuestion>;
+  pendingQuestion?: PendingUserQuestion | null;
+  onQuestionResolved?: (
+    state: 'submitted' | 'cancelled',
+    responses: QuestionDraftResponse[]
+  ) => void;
+  /** When true, wrap this block's outermost visible bordered card in
+   * <RunningBorder>. Used by the compact task thread renderer to indicate the
+   * last still-executing event message. */
+  isRunning?: boolean;
+  /** Render Task/Agent tool_use blocks as generic tool cards when true. */
+  flattenSubagentTools?: boolean;
 }) {
-	// Extract content and metadata from enhanced toolResult structure
-	const resultData = toolResult as
-		| {
-				content: unknown;
-				messageUuid?: string;
-				sessionId?: string;
-				isOutputRemoved?: boolean;
-		  }
-		| undefined;
-	const content = resultData?.content;
-	const messageUuid = resultData?.messageUuid;
-	const sessionId = resultData?.sessionId || propSessionId;
-	const isOutputRemoved = resultData?.isOutputRemoved || false;
+  // Extract content and metadata from enhanced toolResult structure
+  const resultData = toolResult as
+    | {
+        content: unknown;
+        messageUuid?: string;
+        sessionId?: string;
+        isOutputRemoved?: boolean;
+      }
+    | undefined;
+  const content = resultData?.content;
+  const messageUuid = resultData?.messageUuid;
+  const sessionId = resultData?.sessionId || propSessionId;
+  const isOutputRemoved = resultData?.isOutputRemoved || false;
 
-	// Use SubagentBlock for Task tool (no delete button) unless flatten mode is enabled.
-	// SDK 0.2.76+ renamed the tool from 'Task' to 'Agent', support both for compatibility
-	if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
-		return (
-			<SubagentBlock
-				input={block.input as unknown as AgentInput}
-				output={content}
-				isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-				toolId={block.id}
-				nestedMessages={nestedMessages}
-				toolResultsMap={toolResultsMap}
-				isRunning={isRunning}
-			/>
-		);
-	}
+  // Use SubagentBlock for Task tool (no delete button) unless flatten mode is enabled.
+  // SDK 0.2.76+ renamed the tool from 'Task' to 'Agent', support both for compatibility
+  if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
+    return (
+      <SubagentBlock
+        input={block.input as unknown as AgentInput}
+        output={content}
+        isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
+        toolId={block.id}
+        nestedMessages={nestedMessages}
+        toolResultsMap={toolResultsMap}
+        isRunning={isRunning}
+      />
+    );
+  }
 
-	// Handle AskUserQuestion tool - render tool card AND QuestionPrompt inline
-	if (block.name === 'AskUserQuestion' && sessionId) {
-		const toolUseId = block.id;
-		const resolved = resolvedQuestions?.get(toolUseId);
-		const isPending = pendingQuestion?.toolUseId === toolUseId;
+  // Handle AskUserQuestion tool - render tool card AND QuestionPrompt inline
+  if (block.name === 'AskUserQuestion' && sessionId) {
+    const toolUseId = block.id;
+    const resolved = resolvedQuestions?.get(toolUseId);
+    const isPending = pendingQuestion?.toolUseId === toolUseId;
 
-		// Extract question data from tool input if not available from resolved/pending
-		// This ensures the form is ALWAYS visible, even for old questions
-		const getQuestionData = (): PendingUserQuestion | null => {
-			if (resolved) return resolved.question;
-			if (isPending && pendingQuestion) return pendingQuestion;
+    // Extract question data from tool input if not available from resolved/pending
+    // This ensures the form is ALWAYS visible, even for old questions
+    const getQuestionData = (): PendingUserQuestion | null => {
+      if (resolved) return resolved.question;
+      if (isPending && pendingQuestion) return pendingQuestion;
 
-			// Extract from tool input as fallback
-			const input = block.input as Record<string, unknown>;
-			if (input && typeof input === 'object' && 'questions' in input) {
-				const questions = input.questions as Array<{
-					question: string;
-					header: string;
-					options: Array<{ label: string; description: string }>;
-					multiSelect: boolean;
-				}>;
-				if (Array.isArray(questions)) {
-					return {
-						toolUseId,
-						questions: questions.map((q) => ({
-							question: q.question,
-							header: q.header,
-							options: Array.isArray(q.options) ? q.options : [],
-							multiSelect: q.multiSelect,
-						})),
-						askedAt: Date.now(),
-					};
-				}
-			}
-			return null;
-		};
+      // Extract from tool input as fallback
+      const input = block.input as Record<string, unknown>;
+      if (input && typeof input === 'object' && 'questions' in input) {
+        const questions = input.questions as Array<{
+          question: string;
+          header: string;
+          options: Array<{ label: string; description: string }>;
+          multiSelect: boolean;
+        }>;
+        if (Array.isArray(questions)) {
+          return {
+            toolUseId,
+            questions: questions.map((q) => ({
+              question: q.question,
+              header: q.header,
+              options: Array.isArray(q.options) ? q.options : [],
+              multiSelect: q.multiSelect,
+            })),
+            askedAt: Date.now(),
+          };
+        }
+      }
+      return null;
+    };
 
-		const questionData = getQuestionData();
-		if (!questionData) {
-			// Should never happen, but fail gracefully
-			return (
-				<div>
-					<ToolResultCard
-						toolName={block.name}
-						toolId={block.id}
-						input={block.input}
-						output={content}
-						isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-						variant="default"
-						messageUuid={messageUuid}
-						sessionId={sessionId}
-						isOutputRemoved={isOutputRemoved}
-						isRunning={isRunning}
-					/>
-				</div>
-			);
-		}
+    const questionData = getQuestionData();
+    if (!questionData) {
+      // Should never happen, but fail gracefully
+      return (
+        <div>
+          <ToolResultCard
+            toolName={block.name}
+            toolId={block.id}
+            input={block.input}
+            output={content}
+            isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
+            variant="default"
+            messageUuid={messageUuid}
+            sessionId={sessionId}
+            isOutputRemoved={isOutputRemoved}
+            isRunning={isRunning}
+          />
+        </div>
+      );
+    }
 
-		return (
-			<div>
-				<ToolResultCard
-					toolName={block.name}
-					toolId={block.id}
-					input={block.input}
-					output={content}
-					isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-					variant="default"
-					messageUuid={messageUuid}
-					sessionId={sessionId}
-					isOutputRemoved={isOutputRemoved}
-					isRunning={isRunning}
-				/>
-				{/* Render QuestionPrompt inline - ALWAYS show the form */}
-				{resolved ? (
-					<QuestionPrompt
-						sessionId={sessionId}
-						pendingQuestion={resolved.question}
-						resolvedState={resolved.state}
-						finalResponses={resolved.responses}
-						cancelReason={resolved.cancelReason}
-					/>
-				) : isPending ? (
-					<QuestionPrompt
-						sessionId={sessionId}
-						pendingQuestion={pendingQuestion!}
-						onResolved={onQuestionResolved}
-					/>
-				) : (
-					<QuestionPrompt
-						sessionId={sessionId}
-						pendingQuestion={questionData}
-						resolvedState={'cancelled'}
-						finalResponses={[]}
-					/>
-				)}
-			</div>
-		);
-	}
+    return (
+      <div>
+        <ToolResultCard
+          toolName={block.name}
+          toolId={block.id}
+          input={block.input}
+          output={content}
+          isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
+          variant="default"
+          messageUuid={messageUuid}
+          sessionId={sessionId}
+          isOutputRemoved={isOutputRemoved}
+          isRunning={isRunning}
+        />
+        {/* Render QuestionPrompt inline - ALWAYS show the form */}
+        {resolved ? (
+          <QuestionPrompt
+            sessionId={sessionId}
+            pendingQuestion={resolved.question}
+            resolvedState={resolved.state}
+            finalResponses={resolved.responses}
+            cancelReason={resolved.cancelReason}
+          />
+        ) : isPending ? (
+          <QuestionPrompt
+            sessionId={sessionId}
+            pendingQuestion={pendingQuestion!}
+            onResolved={onQuestionResolved}
+          />
+        ) : (
+          <QuestionPrompt
+            sessionId={sessionId}
+            pendingQuestion={questionData}
+            resolvedState={'cancelled'}
+            finalResponses={[]}
+          />
+        )}
+      </div>
+    );
+  }
 
-	return (
-		<ToolResultCard
-			toolName={block.name}
-			toolId={block.id}
-			input={block.input}
-			output={content}
-			isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
-			variant="default"
-			messageUuid={messageUuid}
-			sessionId={sessionId}
-			isOutputRemoved={isOutputRemoved}
-			isRunning={isRunning}
-		/>
-	);
+  return (
+    <ToolResultCard
+      toolName={block.name}
+      toolId={block.id}
+      input={block.input}
+      output={content}
+      isError={((content as Record<string, unknown>)?.is_error as boolean) || false}
+      variant="default"
+      messageUuid={messageUuid}
+      sessionId={sessionId}
+      isOutputRemoved={isOutputRemoved}
+      isRunning={isRunning}
+    />
+  );
 }
 
 // ============================================================================

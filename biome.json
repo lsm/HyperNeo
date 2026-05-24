@@ -1,72 +1,72 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
-	"formatter": {
-		"enabled": true,
-		"formatWithErrors": false,
-		"indentStyle": "tab",
-		"indentWidth": 2,
-		"lineEnding": "lf",
-		"lineWidth": 100
-	},
-	"javascript": {
-		"formatter": {
-			"quoteStyle": "single",
-			"jsxQuoteStyle": "double",
-			"quoteProperties": "asNeeded",
-			"trailingCommas": "es5",
-			"semicolons": "always",
-			"arrowParentheses": "always",
-			"bracketSpacing": true,
-			"bracketSameLine": false
-		}
-	},
-	"css": {
-		"parser": {
-			"tailwindDirectives": true
-		}
-	},
-	"json": {
-		"formatter": {
-			"trailingCommas": "none"
-		}
-	},
-	"files": {
-		"ignoreUnknown": false,
-		"includes": [
-			"**",
-			"!node_modules",
-			"!**/node_modules",
-			"!dist",
-			"!**/dist",
-			"!.vite",
-			"!*.db",
-			"!*.db-shm",
-			"!*.db-wal",
-			"!*.log",
-			"!.DS_Store",
-			"!.vscode",
-			"!.idea",
-			"!tmp",
-			"!**/tmp",
-			"!bun.lock",
-			"!pnpm-lock.yaml",
-			"!yarn.lock",
-			"!package-lock.json",
-			"!*.tsbuildinfo",
-			"!playwright-report",
-			"!**/playwright-report",
-			"!test-results",
-			"!**/test-results",
-			"!coverage",
-			"!**/coverage",
-			"!**/settings.local.json",
-			"!packages/shared/src/sdk",
-			"!.claude",
-			"!.worktrees",
-			"!**/.worktrees",
-			"!packages/desktop/src-tauri/target",
-			"!packages/desktop/src-tauri/gen",
-			"!packages/desktop/src-tauri/binaries"
-		]
-	}
+  "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineEnding": "lf",
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "double",
+      "quoteProperties": "asNeeded",
+      "trailingCommas": "es5",
+      "semicolons": "always",
+      "arrowParentheses": "always",
+      "bracketSpacing": true,
+      "bracketSameLine": false
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "json": {
+    "formatter": {
+      "trailingCommas": "none"
+    }
+  },
+  "files": {
+    "ignoreUnknown": false,
+    "includes": [
+      "**",
+      "!node_modules",
+      "!**/node_modules",
+      "!dist",
+      "!**/dist",
+      "!.vite",
+      "!*.db",
+      "!*.db-shm",
+      "!*.db-wal",
+      "!*.log",
+      "!.DS_Store",
+      "!.vscode",
+      "!.idea",
+      "!tmp",
+      "!**/tmp",
+      "!bun.lock",
+      "!pnpm-lock.yaml",
+      "!yarn.lock",
+      "!package-lock.json",
+      "!*.tsbuildinfo",
+      "!playwright-report",
+      "!**/playwright-report",
+      "!test-results",
+      "!**/test-results",
+      "!coverage",
+      "!**/coverage",
+      "!**/settings.local.json",
+      "!packages/shared/src/sdk",
+      "!.claude",
+      "!.worktrees",
+      "!**/.worktrees",
+      "!packages/desktop/src-tauri/target",
+      "!packages/desktop/src-tauri/gen",
+      "!packages/desktop/src-tauri/binaries"
+    ]
+  }
 }

@@ -1,454 +1,454 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
-	"mocks": [
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Read the file test.txt"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll read that file for you."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_read_001",
-							"name": "Read",
-							"input": {
-								"file_path": "test.txt"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 35,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"role": "user",
-							"content": [
-								{
-									"type": "tool_result",
-									"tool_use_id": "toolu_read_001",
-									"content": "Hello from test.txt!"
-								}
-							]
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_002",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "The file test.txt contains: \"Hello from test.txt!\""
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 45,
-						"output_tokens": 25,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Write a file called output.txt with content 'test content'"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_003",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll write that file for you."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_write_001",
-							"name": "Write",
-							"input": {
-								"file_path": "output.txt",
-								"content": "test content"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 30,
-						"output_tokens": 40,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "List files in the current directory"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_004",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll list the files for you."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_glob_001",
-							"name": "Glob",
-							"input": {
-								"pattern": "*"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 35,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Run the command echo hello"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_005",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll run that command."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_bash_001",
-							"name": "Bash",
-							"input": {
-								"command": "echo hello",
-								"description": "Echo hello to stdout"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 35,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Search for TODO in all files"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_006",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll search for TODO comments."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_grep_001",
-							"name": "Grep",
-							"input": {
-								"pattern": "TODO",
-								"output_mode": "content"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 35,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "What is git status?"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_007",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll check the git status for you."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_bash_git_001",
-							"name": "Bash",
-							"input": {
-								"command": "git status",
-								"description": "Show git working tree status"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 25,
-						"output_tokens": 35,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Call the MCP tool to create a task"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
-					}
-				],
-				"body": {
-					"id": "msg_tool_mcp_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll create a task using the MCP tool."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_mcp_001",
-							"name": "mcp_tool_call",
-							"input": {
-								"server_name": "planner-tools",
-								"tool_name": "create_task",
-								"arguments": {
-									"title": "Test Task",
-									"description": "A test task created via MCP",
-									"agent": "coder"
-								}
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 35,
-						"output_tokens": 55,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		}
-	]
+  "$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
+  "mocks": [
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Read the file test.txt"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll read that file for you."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_read_001",
+              "name": "Read",
+              "input": {
+                "file_path": "test.txt"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 35,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "toolu_read_001",
+                  "content": "Hello from test.txt!"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_002",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "The file test.txt contains: \"Hello from test.txt!\""
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 45,
+            "output_tokens": 25,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Write a file called output.txt with content 'test content'"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_003",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll write that file for you."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_write_001",
+              "name": "Write",
+              "input": {
+                "file_path": "output.txt",
+                "content": "test content"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "output_tokens": 40,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "List files in the current directory"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_004",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll list the files for you."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_glob_001",
+              "name": "Glob",
+              "input": {
+                "pattern": "*"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 35,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Run the command echo hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_005",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll run that command."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_bash_001",
+              "name": "Bash",
+              "input": {
+                "command": "echo hello",
+                "description": "Echo hello to stdout"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 35,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Search for TODO in all files"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_006",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll search for TODO comments."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_grep_001",
+              "name": "Grep",
+              "input": {
+                "pattern": "TODO",
+                "output_mode": "content"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 35,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "What is git status?"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_007",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll check the git status for you."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_bash_git_001",
+              "name": "Bash",
+              "input": {
+                "command": "git status",
+                "description": "Show git working tree status"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 25,
+            "output_tokens": 35,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Call the MCP tool to create a task"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-tool-use.json"
+          }
+        ],
+        "body": {
+          "id": "msg_tool_mcp_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll create a task using the MCP tool."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_mcp_001",
+              "name": "mcp_tool_call",
+              "input": {
+                "server_name": "planner-tools",
+                "tool_name": "create_task",
+                "arguments": {
+                  "title": "Test Task",
+                  "description": "A test task created via MCP",
+                  "agent": "coder"
+                }
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 35,
+            "output_tokens": 55,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    }
+  ]
 }

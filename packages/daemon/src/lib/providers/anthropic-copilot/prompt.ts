@@ -12,28 +12,28 @@ import type { AnthropicMessage, ContentBlock, TextBlock, ToolResultBlock } from 
 // ---------------------------------------------------------------------------
 
 function extractToolResultText(content: string | TextBlock[] | undefined): string {
-	if (content == null) return '';
-	if (typeof content === 'string') return content;
-	return content.map((b) => b.text).join('\n');
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  return content.map((b) => b.text).join('\n');
 }
 
 function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts: string[]): void {
-	for (const block of blocks) {
-		if (block.type === 'text') {
-			if (!block.text) continue;
-			parts.push(role === 'user' ? `[User]: ${block.text}` : `[Assistant]: ${block.text}`);
-		} else if (block.type === 'thinking') {
-			// Skip thinking blocks — they are internal reasoning, not conversation turns.
-			// The Copilot SDK does not support extended thinking, so these blocks are
-			// never emitted by the model and should not be forwarded to the prompt.
-		} else if (block.type === 'tool_use') {
-			parts.push(`[Assistant called tool ${block.name} with args: ${JSON.stringify(block.input)}]`);
-		} else if (block.type === 'tool_result') {
-			const r = block as ToolResultBlock;
-			const prefix = r.is_error ? '[Tool error for' : '[Tool result for';
-			parts.push(`${prefix} ${r.tool_use_id}]: ${extractToolResultText(r.content)}`);
-		}
-	}
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (!block.text) continue;
+      parts.push(role === 'user' ? `[User]: ${block.text}` : `[Assistant]: ${block.text}`);
+    } else if (block.type === 'thinking') {
+      // Skip thinking blocks — they are internal reasoning, not conversation turns.
+      // The Copilot SDK does not support extended thinking, so these blocks are
+      // never emitted by the model and should not be forwarded to the prompt.
+    } else if (block.type === 'tool_use') {
+      parts.push(`[Assistant called tool ${block.name} with args: ${JSON.stringify(block.input)}]`);
+    } else if (block.type === 'tool_result') {
+      const r = block as ToolResultBlock;
+      const prefix = r.is_error ? '[Tool error for' : '[Tool result for';
+      parts.push(`${prefix} ${r.tool_use_id}]: ${extractToolResultText(r.content)}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -55,15 +55,15 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
  * accounting, no vision content, no extended-thinking blocks).
  */
 export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
-	const parts: string[] = [];
-	for (const msg of messages) {
-		if (typeof msg.content === 'string') {
-			parts.push(msg.role === 'user' ? `[User]: ${msg.content}` : `[Assistant]: ${msg.content}`);
-		} else {
-			formatBlocks(msg.content, msg.role, parts);
-		}
-	}
-	return parts.join('\n\n');
+  const parts: string[] = [];
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      parts.push(msg.role === 'user' ? `[User]: ${msg.content}` : `[Assistant]: ${msg.content}`);
+    } else {
+      formatBlocks(msg.content, msg.role, parts);
+    }
+  }
+  return parts.join('\n\n');
 }
 
 /**
@@ -71,13 +71,13 @@ export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
  * Returns `undefined` when the system message is empty or absent.
  */
 export function extractSystemText(system: string | TextBlock[] | undefined): string | undefined {
-	if (system == null) return undefined;
-	if (typeof system === 'string') return system || undefined;
-	const text = system
-		.filter((b) => b.type === 'text')
-		.map((b) => b.text)
-		.join('\n\n');
-	return text || undefined;
+  if (system == null) return undefined;
+  if (typeof system === 'string') return system || undefined;
+  const text = system
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n\n');
+  return text || undefined;
 }
 
 /**
@@ -85,17 +85,17 @@ export function extractSystemText(system: string | TextBlock[] | undefined): str
  * Used to find which pending conversation a follow-up request belongs to.
  */
 export function extractToolResultIds(messages: AnthropicMessage[]): string[] {
-	const ids: string[] = [];
-	for (const msg of messages) {
-		if (msg.role !== 'user') continue;
-		if (typeof msg.content === 'string') continue;
-		for (const block of msg.content as ContentBlock[]) {
-			if (block.type === 'tool_result') {
-				ids.push((block as ToolResultBlock).tool_use_id);
-			}
-		}
-	}
-	return ids;
+  const ids: string[] = [];
+  for (const msg of messages) {
+    if (msg.role !== 'user') continue;
+    if (typeof msg.content === 'string') continue;
+    for (const block of msg.content as ContentBlock[]) {
+      if (block.type === 'tool_result') {
+        ids.push((block as ToolResultBlock).tool_use_id);
+      }
+    }
+  }
+  return ids;
 }
 
 /**
@@ -103,17 +103,17 @@ export function extractToolResultIds(messages: AnthropicMessage[]): string[] {
  * Returns `false` if not found or flag is absent.
  */
 export function extractToolResultIsError(messages: AnthropicMessage[], toolUseId: string): boolean {
-	for (const msg of messages) {
-		if (msg.role !== 'user') continue;
-		if (typeof msg.content === 'string') continue;
-		for (const block of msg.content as ContentBlock[]) {
-			if (block.type !== 'tool_result') continue;
-			const r = block as ToolResultBlock;
-			if (r.tool_use_id !== toolUseId) continue;
-			return r.is_error === true;
-		}
-	}
-	return false;
+  for (const msg of messages) {
+    if (msg.role !== 'user') continue;
+    if (typeof msg.content === 'string') continue;
+    for (const block of msg.content as ContentBlock[]) {
+      if (block.type !== 'tool_result') continue;
+      const r = block as ToolResultBlock;
+      if (r.tool_use_id !== toolUseId) continue;
+      return r.is_error === true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -121,18 +121,18 @@ export function extractToolResultIsError(messages: AnthropicMessage[], toolUseId
  * Returns `undefined` if not found.
  */
 export function extractToolResultContent(
-	messages: AnthropicMessage[],
-	toolUseId: string
+  messages: AnthropicMessage[],
+  toolUseId: string
 ): string | undefined {
-	for (const msg of messages) {
-		if (msg.role !== 'user') continue;
-		if (typeof msg.content === 'string') continue;
-		for (const block of msg.content as ContentBlock[]) {
-			if (block.type !== 'tool_result') continue;
-			const r = block as ToolResultBlock;
-			if (r.tool_use_id !== toolUseId) continue;
-			return extractToolResultText(r.content);
-		}
-	}
-	return undefined;
+  for (const msg of messages) {
+    if (msg.role !== 'user') continue;
+    if (typeof msg.content === 'string') continue;
+    for (const block of msg.content as ContentBlock[]) {
+      if (block.type !== 'tool_result') continue;
+      const r = block as ToolResultBlock;
+      if (r.tool_use_id !== toolUseId) continue;
+      return extractToolResultText(r.content);
+    }
+  }
+  return undefined;
 }

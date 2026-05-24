@@ -1,41 +1,41 @@
 export type AgentMessageLevel = 'space-agent' | 'task-agent' | 'node-agent' | 'session-agent';
 
 export interface FormatAgentMessageOptions {
-	fromLevel: AgentMessageLevel;
-	fromAgentName: string;
-	toLevel: AgentMessageLevel;
-	body: string;
-	/** Parent task UUID. Required for coordinator reply instructions when known. */
-	taskId?: string | null;
-	/** Space-scoped task number for human-readable context. */
-	taskNumber?: number | null;
-	/** Sender/target node agent name for reply routing. */
-	nodeId?: string | null;
-	/** Agent handle to use in visible reply instructions. */
-	replyTargetHandle?: string | null;
-	/**
-	 * Session ID that should receive the reply when the target agent responds
-	 * via the visible reply instructions. When set, the routing layer delivers
-	 * the reply to this session instead of the default coordinator session.
-	 * Null/undefined means "use default routing".
-	 */
-	replyToSessionId?: string | null;
+  fromLevel: AgentMessageLevel;
+  fromAgentName: string;
+  toLevel: AgentMessageLevel;
+  body: string;
+  /** Parent task UUID. Required for coordinator reply instructions when known. */
+  taskId?: string | null;
+  /** Space-scoped task number for human-readable context. */
+  taskNumber?: number | null;
+  /** Sender/target node agent name for reply routing. */
+  nodeId?: string | null;
+  /** Agent handle to use in visible reply instructions. */
+  replyTargetHandle?: string | null;
+  /**
+   * Session ID that should receive the reply when the target agent responds
+   * via the visible reply instructions. When set, the routing layer delivers
+   * the reply to this session instead of the default coordinator session.
+   * Null/undefined means "use default routing".
+   */
+  replyToSessionId?: string | null;
 }
 
 function taskLabel(taskNumber?: number | null): string {
-	return typeof taskNumber === 'number' ? ` (task #${taskNumber})` : '';
+  return typeof taskNumber === 'number' ? ` (task #${taskNumber})` : '';
 }
 
 function replyTargetSuffix(options: FormatAgentMessageOptions): string {
-	if (options.fromLevel !== 'node-agent') return '';
-	const target = options.nodeId ?? options.fromAgentName;
-	return ` and target node "${target}"`;
+  if (options.fromLevel !== 'node-agent') return '';
+  const target = options.nodeId ?? options.fromAgentName;
+  return ` and target node "${target}"`;
 }
 
 function replyTargetHandle(options: FormatAgentMessageOptions): string {
-	if (options.replyTargetHandle) return options.replyTargetHandle;
-	if (options.fromAgentName === 'space-agent') return '@coordinator';
-	return `@${options.fromAgentName}`;
+  if (options.replyTargetHandle) return options.replyTargetHandle;
+  if (options.fromAgentName === 'space-agent') return '@coordinator';
+  return `@${options.fromAgentName}`;
 }
 
 /**
@@ -45,8 +45,8 @@ function replyTargetHandle(options: FormatAgentMessageOptions): string {
  * instructions.
  */
 function replyRoutingFooter(options: FormatAgentMessageOptions): string {
-	if (!options.replyToSessionId) return '';
-	return `\n\n<reply-routing replyToSessionId="${options.replyToSessionId}" />`;
+  if (!options.replyToSessionId) return '';
+  return `\n\n<reply-routing replyToSessionId="${options.replyToSessionId}" />`;
 }
 
 /**
@@ -62,52 +62,52 @@ function replyRoutingFooter(options: FormatAgentMessageOptions): string {
  * the default coordinator session.
  */
 export function formatAgentMessage(options: FormatAgentMessageOptions): string {
-	const body = options.body;
-	const footer = replyRoutingFooter(options);
+  const body = options.body;
+  const footer = replyRoutingFooter(options);
 
-	if (options.toLevel === 'space-agent') {
-		const task = taskLabel(options.taskNumber);
-		const taskId = options.taskId ? ` with task_id="${options.taskId}"` : '';
-		return (
-			`─── Message from ${options.fromAgentName}${task} ───\n\n` +
-			`${body}\n\n` +
-			`─── Reply ───\n` +
-			`To reply, use: send_message_to_task${taskId}${replyTargetSuffix(options)}${footer}`
-		);
-	}
+  if (options.toLevel === 'space-agent') {
+    const task = taskLabel(options.taskNumber);
+    const taskId = options.taskId ? ` with task_id="${options.taskId}"` : '';
+    return (
+      `─── Message from ${options.fromAgentName}${task} ───\n\n` +
+      `${body}\n\n` +
+      `─── Reply ───\n` +
+      `To reply, use: send_message_to_task${taskId}${replyTargetSuffix(options)}${footer}`
+    );
+  }
 
-	if (options.fromLevel === 'space-agent' || options.fromLevel === 'session-agent') {
-		return (
-			`─── Message from ${options.fromAgentName} ───\n\n` +
-			`${body}${footer}\n\n` +
-			`─── Reply ───\n` +
-			`To reply, use: send_message with target "${replyTargetHandle(options)}"`
-		);
-	}
+  if (options.fromLevel === 'space-agent' || options.fromLevel === 'session-agent') {
+    return (
+      `─── Message from ${options.fromAgentName} ───\n\n` +
+      `${body}${footer}\n\n` +
+      `─── Reply ───\n` +
+      `To reply, use: send_message with target "${replyTargetHandle(options)}"`
+    );
+  }
 
-	if (options.fromLevel === 'node-agent' && options.toLevel === 'node-agent') {
-		return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
-	}
+  if (options.fromLevel === 'node-agent' && options.toLevel === 'node-agent') {
+    return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
+  }
 
-	if (options.fromLevel === 'node-agent' && options.toLevel === 'task-agent') {
-		return (
-			`─── Message from ${options.fromAgentName}${taskLabel(options.taskNumber)} ───\n\n` +
-			`${body}${footer}\n\n` +
-			`─── Reply ───\n` +
-			`To reply, use: send_message with target "${options.fromAgentName}"`
-		);
-	}
+  if (options.fromLevel === 'node-agent' && options.toLevel === 'task-agent') {
+    return (
+      `─── Message from ${options.fromAgentName}${taskLabel(options.taskNumber)} ───\n\n` +
+      `${body}${footer}\n\n` +
+      `─── Reply ───\n` +
+      `To reply, use: send_message with target "${options.fromAgentName}"`
+    );
+  }
 
-	if (options.fromLevel === 'task-agent' && options.toLevel === 'node-agent') {
-		return (
-			`─── Message from task-agent${taskLabel(options.taskNumber)} ───\n\n` +
-			`${body}${footer}\n\n` +
-			`─── Reply ───\n` +
-			`To reply, use: send_message with target "task-agent"`
-		);
-	}
+  if (options.fromLevel === 'task-agent' && options.toLevel === 'node-agent') {
+    return (
+      `─── Message from task-agent${taskLabel(options.taskNumber)} ───\n\n` +
+      `${body}${footer}\n\n` +
+      `─── Reply ───\n` +
+      `To reply, use: send_message with target "task-agent"`
+    );
+  }
 
-	return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
+  return `─── Message from ${options.fromAgentName} ───\n\n${body}${footer}`;
 }
 
 /**
@@ -119,6 +119,6 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
  * content), preventing a forged tag in the message body from controlling routing.
  */
 export function extractReplyToSessionId(message: string): string | null {
-	const match = message.match(/<reply-routing replyToSessionId="([^"]+)" \/>\s*$/);
-	return match ? match[1] : null;
+  const match = message.match(/<reply-routing replyToSessionId="([^"]+)" \/>\s*$/);
+  return match ? match[1] : null;
 }

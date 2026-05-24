@@ -10,8 +10,8 @@
 import type { Database } from 'bun:sqlite';
 
 export function createSpaceAgentSchema(db: Database): void {
-	db.exec(`PRAGMA foreign_keys = ON`);
-	db.exec(`
+  db.exec(`PRAGMA foreign_keys = ON`);
+  db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
 			slug TEXT NOT NULL,
@@ -32,11 +32,11 @@ export function createSpaceAgentSchema(db: Database): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
-	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-	// Keep in sync with space-test-db.ts (post-M116 schema — thinking_level
-	// column added for per-agent thinking overrides).
-	db.exec(`
+  // Keep in sync with space-test-db.ts (post-M116 schema — thinking_level
+  // column added for per-agent thinking overrides).
+  db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -57,9 +57,9 @@ export function createSpaceAgentSchema(db: Database): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
+  db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
 
-	db.exec(`
+  db.exec(`
 		CREATE TABLE sessions (
 			id TEXT PRIMARY KEY,
 			title TEXT NOT NULL,
@@ -84,7 +84,7 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
-	db.exec(`
+  db.exec(`
 		CREATE TABLE sdk_messages (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
@@ -101,7 +101,7 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
-	db.exec(`
+  db.exec(`
 		CREATE TABLE space_workflows (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -125,13 +125,13 @@ export function createSpaceAgentSchema(db: Database): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workflows_handle
 		ON space_workflows(space_id, handle)
 		WHERE handle IS NOT NULL
 	`);
 
-	db.exec(`
+  db.exec(`
 		CREATE TABLE space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
@@ -144,10 +144,10 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
-	// node_executions still required by tests that exercise the repo's
-	// agent-name update path (which used to refresh denormalised labels and
-	// is now a no-op — kept here so the schema parity is obvious).
-	db.exec(`
+  // node_executions still required by tests that exercise the repo's
+  // agent-name update path (which used to refresh denormalised labels and
+  // is now a no-op — kept here so the schema parity is obvious).
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,
 			workflow_run_id TEXT NOT NULL,
@@ -167,29 +167,29 @@ export function createSpaceAgentSchema(db: Database): void {
 }
 
 export function insertSpace(db: Database, id = 'space-1'): void {
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-	).run(id, `/workspace/${id}`, `Space ${id}`, id, now, now);
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, `/workspace/${id}`, `Space ${id}`, id, now, now);
 }
 
 export function insertWorkflow(db: Database, id: string, spaceId: string, name: string): void {
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-	).run(id, spaceId, name, now, now);
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(id, spaceId, name, now, now);
 }
 
 export function insertWorkflowNode(
-	db: Database,
-	id: string,
-	workflowId: string,
-	agentId: string | null
+  db: Database,
+  id: string,
+  workflowId: string,
+  agentId: string | null
 ): void {
-	const now = Date.now();
-	// config stores JSON: { agents?: [{ agentId, name }] }
-	const configJson = agentId ? JSON.stringify({ agents: [{ agentId, name: `Node ${id}` }] }) : null;
-	db.prepare(
-		`INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Node ${id}`, configJson, now, now);
+  const now = Date.now();
+  // config stores JSON: { agents?: [{ agentId, name }] }
+  const configJson = agentId ? JSON.stringify({ agents: [{ agentId, name: `Node ${id}` }] }) : null;
+  db.prepare(
+    `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, workflowId, `Node ${id}`, configJson, now, now);
 }

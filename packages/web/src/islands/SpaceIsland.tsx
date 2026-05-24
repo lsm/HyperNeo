@@ -18,443 +18,443 @@ import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { createSession } from '../lib/api-helpers';
 import {
-	closeOverlayHistory,
-	navigateToSpace,
-	navigateToSpaceSession,
-	navigateToSpaceTask,
-	pushOverlayHistory,
+  closeOverlayHistory,
+  navigateToSpace,
+  navigateToSpaceSession,
+  navigateToSpaceTask,
+  pushOverlayHistory,
 } from '../lib/router';
 import type { SpaceViewMode } from '../lib/signals';
 import {
-	currentSpaceIdSignal,
-	currentSpaceViewModeSignal,
-	spaceOverlayAgentNameSignal,
-	spaceOverlayHighlightMessageIdSignal,
-	spaceOverlayPendingAgentNameSignal,
-	spaceOverlayPendingTaskIdSignal,
-	spaceOverlaySessionIdSignal,
-	spaceOverlayTaskContextSignal,
+  currentSpaceIdSignal,
+  currentSpaceViewModeSignal,
+  spaceOverlayAgentNameSignal,
+  spaceOverlayHighlightMessageIdSignal,
+  spaceOverlayPendingAgentNameSignal,
+  spaceOverlayPendingTaskIdSignal,
+  spaceOverlaySessionIdSignal,
+  spaceOverlayTaskContextSignal,
 } from '../lib/signals';
 import { spaceStore } from '../lib/space-store';
 import { toast } from '../lib/toast';
 import ChatContainer from './ChatContainer';
 
 const SpaceConfigurePage = lazy(() =>
-	import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
+  import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
 );
 const SpaceSessionsPage = lazy(() =>
-	import('../components/space/SpaceSessionsPage').then((m) => ({ default: m.SpaceSessionsPage }))
+  import('../components/space/SpaceSessionsPage').then((m) => ({ default: m.SpaceSessionsPage }))
 );
 const SpaceTasks = lazy(() =>
-	import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
+  import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
 );
 const SpaceGoals = lazy(() =>
-	import('../components/space/SpaceGoals').then((m) => ({ default: m.SpaceGoals }))
+  import('../components/space/SpaceGoals').then((m) => ({ default: m.SpaceGoals }))
 );
 const SpaceForge = lazy(() =>
-	import('../components/space/SpaceForge').then((m) => ({ default: m.SpaceForge }))
+  import('../components/space/SpaceForge').then((m) => ({ default: m.SpaceForge }))
 );
 const SpaceOverview = lazy(() =>
-	import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
+  import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
 );
 const SpaceTaskPane = lazy(() =>
-	import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
+  import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
 );
 
 /** Shared Suspense fallback for lazy-loaded space views. */
 const lazyFallback = (
-	<div class="flex-1 flex items-center justify-center bg-app-content">
-		<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-	</div>
+  <div class="flex-1 flex items-center justify-center bg-app-content">
+    <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+  </div>
 );
 
 interface SpaceIslandProps {
-	spaceId: string;
-	viewMode: SpaceViewMode;
-	sessionViewId?: string | null;
-	taskViewId?: string | null;
+  spaceId: string;
+  viewMode: SpaceViewMode;
+  sessionViewId?: string | null;
+  taskViewId?: string | null;
 }
 
 export default function SpaceIsland({
-	spaceId,
-	viewMode,
-	sessionViewId,
-	taskViewId,
+  spaceId,
+  viewMode,
+  sessionViewId,
+  taskViewId,
 }: SpaceIslandProps) {
-	// Overlay session — shown as a slide-over on top of the current view
-	const overlaySessionId = spaceOverlaySessionIdSignal.value;
-	const overlayAgentName = spaceOverlayAgentNameSignal.value;
-	const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
-	const overlayTaskContext = spaceOverlayTaskContextSignal.value;
-	// Pending-agent overlay — workflow-declared peer that hasn't spawned yet.
-	// When set, renders PendingAgentOverlay; once the daemon spawns the session
-	// (via taskActivity), the overlay hands off to spaceOverlaySessionIdSignal
-	// and the standard AgentOverlayChat takes over.
-	const overlayPendingTaskId = spaceOverlayPendingTaskIdSignal.value;
-	const overlayPendingAgentName = spaceOverlayPendingAgentNameSignal.value;
-	const handleOverlayClose = useCallback(() => {
-		closeOverlayHistory();
-	}, []);
+  // Overlay session — shown as a slide-over on top of the current view
+  const overlaySessionId = spaceOverlaySessionIdSignal.value;
+  const overlayAgentName = spaceOverlayAgentNameSignal.value;
+  const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
+  const overlayTaskContext = spaceOverlayTaskContextSignal.value;
+  // Pending-agent overlay — workflow-declared peer that hasn't spawned yet.
+  // When set, renders PendingAgentOverlay; once the daemon spawns the session
+  // (via taskActivity), the overlay hands off to spaceOverlaySessionIdSignal
+  // and the standard AgentOverlayChat takes over.
+  const overlayPendingTaskId = spaceOverlayPendingTaskIdSignal.value;
+  const overlayPendingAgentName = spaceOverlayPendingAgentNameSignal.value;
+  const handleOverlayClose = useCallback(() => {
+    closeOverlayHistory();
+  }, []);
 
-	// Single overlay element shared across every rendering branch below — keeps
-	// the overlay/pending precedence in one place. Pending takes precedence over
-	// session because pending is cleared as part of pushOverlayHistory, so the
-	// two are never both set at the same time in practice.
-	const overlay =
-		overlayPendingTaskId && overlayPendingAgentName ? (
-			<AgentOverlayChat
-				agentName={overlayPendingAgentName}
-				onClose={handleOverlayClose}
-				pendingAgent={{ taskId: overlayPendingTaskId, agentName: overlayPendingAgentName }}
-			/>
-		) : overlaySessionId ? (
-			<AgentOverlayChat
-				sessionId={overlaySessionId}
-				agentName={overlayAgentName ?? undefined}
-				highlightMessageId={overlayHighlightMessageId ?? undefined}
-				onClose={handleOverlayClose}
-				taskContext={overlayTaskContext}
-			/>
-		) : null;
+  // Single overlay element shared across every rendering branch below — keeps
+  // the overlay/pending precedence in one place. Pending takes precedence over
+  // session because pending is cleared as part of pushOverlayHistory, so the
+  // two are never both set at the same time in practice.
+  const overlay =
+    overlayPendingTaskId && overlayPendingAgentName ? (
+      <AgentOverlayChat
+        agentName={overlayPendingAgentName}
+        onClose={handleOverlayClose}
+        pendingAgent={{ taskId: overlayPendingTaskId, agentName: overlayPendingAgentName }}
+      />
+    ) : overlaySessionId ? (
+      <AgentOverlayChat
+        sessionId={overlaySessionId}
+        agentName={overlayAgentName ?? undefined}
+        highlightMessageId={overlayHighlightMessageId ?? undefined}
+        onClose={handleOverlayClose}
+        taskContext={overlayTaskContext}
+      />
+    ) : null;
 
-	// Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
-	// tests can trigger the overlay programmatically. Opening is purely
-	// client-side signal manipulation — no security concern in exposing this.
-	useEffect(() => {
-		type OverlayApi = { open: (sessionId: string, agentName?: string) => void; close: () => void };
-		const w = window as typeof window & { __neokai_space_overlay?: OverlayApi };
-		w.__neokai_space_overlay = {
-			open(sessionId, agentName) {
-				pushOverlayHistory(sessionId, agentName);
-			},
-			close() {
-				closeOverlayHistory();
-			},
-		};
-		return () => {
-			w.__neokai_space_overlay = undefined;
-		};
-	}, []);
+  // Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
+  // tests can trigger the overlay programmatically. Opening is purely
+  // client-side signal manipulation — no security concern in exposing this.
+  useEffect(() => {
+    type OverlayApi = { open: (sessionId: string, agentName?: string) => void; close: () => void };
+    const w = window as typeof window & { __neokai_space_overlay?: OverlayApi };
+    w.__neokai_space_overlay = {
+      open(sessionId, agentName) {
+        pushOverlayHistory(sessionId, agentName);
+      },
+      close() {
+        closeOverlayHistory();
+      },
+    };
+    return () => {
+      w.__neokai_space_overlay = undefined;
+    };
+  }, []);
 
-	const error = spaceStore.error.value;
-	const [createTaskOpen, setCreateTaskOpen] = useState(false);
-	const [creatingSession, setCreatingSession] = useState(false);
-	const [, setActiveSessionRequestId] = useState<number | null>(null);
+  const error = spaceStore.error.value;
+  const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [, setActiveSessionRequestId] = useState<number | null>(null);
 
-	// For non-session views, show spinner/error while space data loads.
-	// Show spinner if space is not yet loaded and there's no error — this covers
-	// both the initial render (loading=false, space=null) before the useEffect has
-	// called selectSpace and the active-loading state (loading=true, space=null).
-	const space = spaceStore.space.value;
+  // For non-session views, show spinner/error while space data loads.
+  // Show spinner if space is not yet loaded and there's no error — this covers
+  // both the initial render (loading=false, space=null) before the useEffect has
+  // called selectSpace and the active-loading state (loading=true, space=null).
+  const space = spaceStore.space.value;
 
-	useEffect(() => {
-		spaceStore.selectSpace(spaceId).catch(() => {
-			// Error is tracked in spaceStore.error
-		});
-	}, [spaceId]);
+  useEffect(() => {
+    spaceStore.selectSpace(spaceId).catch(() => {
+      // Error is tracked in spaceStore.error
+    });
+  }, [spaceId]);
 
-	// Reset task-dialog state when leaving the Tasks view or switching spaces
-	// so it doesn't reopen unexpectedly.
-	useEffect(() => {
-		if (viewMode !== 'tasks') {
-			setCreateTaskOpen(false);
-		}
-	}, [viewMode]);
-	useEffect(() => {
-		setCreateTaskOpen(false);
-	}, [spaceId]);
+  // Reset task-dialog state when leaving the Tasks view or switching spaces
+  // so it doesn't reopen unexpectedly.
+  useEffect(() => {
+    if (viewMode !== 'tasks') {
+      setCreateTaskOpen(false);
+    }
+  }, [viewMode]);
+  useEffect(() => {
+    setCreateTaskOpen(false);
+  }, [spaceId]);
 
-	// Reset session-creation lock when switching spaces so a stale lock
-	// from space A doesn't block valid creates in space B.
-	useEffect(() => {
-		setCreatingSession(false);
-		setActiveSessionRequestId(null);
-	}, [spaceId]);
+  // Reset session-creation lock when switching spaces so a stale lock
+  // from space A doesn't block valid creates in space B.
+  useEffect(() => {
+    setCreatingSession(false);
+    setActiveSessionRequestId(null);
+  }, [spaceId]);
 
-	const handleTaskPaneClose = useCallback(() => {
-		navigateToSpace(spaceId);
-	}, [spaceId]);
+  const handleTaskPaneClose = useCallback(() => {
+    navigateToSpace(spaceId);
+  }, [spaceId]);
 
-	const handleCreateSession = useCallback(
-		async (e: Event) => {
-			e.stopPropagation();
-			if (creatingSession) return;
-			const requestId = Date.now();
-			setCreatingSession(true);
-			setActiveSessionRequestId(requestId);
-			const originSpaceId = spaceId;
-			const originViewMode = viewMode;
-			try {
-				const response = await createSession({
-					spaceId,
-					workspacePath: space?.workspacePath,
-				});
-				// Only navigate if the user is still in the same space and on the
-				// Sessions view; prevents stale async redirect if they navigated elsewhere.
-				if (
-					currentSpaceIdSignal.value === originSpaceId &&
-					currentSpaceViewModeSignal.value === originViewMode
-				) {
-					navigateToSpaceSession(spaceId, response.sessionId);
-				}
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : 'Failed to create session');
-			} finally {
-				// Only clear the lock if this request is still the active one.
-				// A newer request in another space will have a different requestId.
-				setActiveSessionRequestId((current) => {
-					if (current === requestId) {
-						setCreatingSession(false);
-						return null;
-					}
-					return current;
-				});
-			}
-		},
-		[spaceId, space?.workspacePath, creatingSession, viewMode]
-	);
+  const handleCreateSession = useCallback(
+    async (e: Event) => {
+      e.stopPropagation();
+      if (creatingSession) return;
+      const requestId = Date.now();
+      setCreatingSession(true);
+      setActiveSessionRequestId(requestId);
+      const originSpaceId = spaceId;
+      const originViewMode = viewMode;
+      try {
+        const response = await createSession({
+          spaceId,
+          workspacePath: space?.workspacePath,
+        });
+        // Only navigate if the user is still in the same space and on the
+        // Sessions view; prevents stale async redirect if they navigated elsewhere.
+        if (
+          currentSpaceIdSignal.value === originSpaceId &&
+          currentSpaceViewModeSignal.value === originViewMode
+        ) {
+          navigateToSpaceSession(spaceId, response.sessionId);
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to create session');
+      } finally {
+        // Only clear the lock if this request is still the active one.
+        // A newer request in another space will have a different requestId.
+        setActiveSessionRequestId((current) => {
+          if (current === requestId) {
+            setCreatingSession(false);
+            return null;
+          }
+          return current;
+        });
+      }
+    },
+    [spaceId, space?.workspacePath, creatingSession, viewMode]
+  );
 
-	// Session/agent chat view — render immediately, don't block on space data
-	// ChatContainer's root is already flex-1 flex-col overflow-hidden.
-	// AgentOverlayChat uses a Portal so it doesn't affect layout.
-	if (sessionViewId) {
-		const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
-		return (
-			<>
-				<ChatContainer
-					key={sessionViewId}
-					sessionId={sessionViewId}
-					titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
-				/>
-				{overlay}
-			</>
-		);
-	}
-	if (!space && !error) {
-		return (
-			<div class="flex-1 flex items-center justify-center bg-app-content">
-				<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-			</div>
-		);
-	}
-	if (!space && error) {
-		return (
-			<div class="flex-1 flex items-center justify-center bg-app-content">
-				<div class="text-center max-w-sm">
-					<p class="text-sm text-red-400 mb-2">Failed to load space</p>
-					<p class="text-xs text-gray-600">{error}</p>
-				</div>
-			</div>
-		);
-	}
+  // Session/agent chat view — render immediately, don't block on space data
+  // ChatContainer's root is already flex-1 flex-col overflow-hidden.
+  // AgentOverlayChat uses a Portal so it doesn't affect layout.
+  if (sessionViewId) {
+    const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
+    return (
+      <>
+        <ChatContainer
+          key={sessionViewId}
+          sessionId={sessionViewId}
+          titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
+        />
+        {overlay}
+      </>
+    );
+  }
+  if (!space && !error) {
+    return (
+      <div class="flex-1 flex items-center justify-center bg-app-content">
+        <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (!space && error) {
+    return (
+      <div class="flex-1 flex items-center justify-center bg-app-content">
+        <div class="text-center max-w-sm">
+          <p class="text-sm text-red-400 mb-2">Failed to load space</p>
+          <p class="text-xs text-gray-600">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
-	if (taskViewId) {
-		const tasks = spaceStore.tasks.value;
-		const currentTask = tasks.find((t) => t.id === taskViewId) ?? null;
-		const showInMiddle = currentTask?.status === 'draft' || currentTask?.status === 'open';
-		return (
-			<>
-				<div
-					class="flex-1 flex flex-col overflow-hidden bg-app-content"
-					data-testid="space-task-pane"
-				>
-					<Suspense fallback={lazyFallback}>
-						{showInMiddle ? (
-							<TaskAuxiliaryPanel
-								spaceId={spaceId}
-								taskId={taskViewId}
-								onClose={handleTaskPaneClose}
-							/>
-						) : (
-							<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
-						)}
-					</Suspense>
-				</div>
-				{overlay}
-			</>
-		);
-	}
+  if (taskViewId) {
+    const tasks = spaceStore.tasks.value;
+    const currentTask = tasks.find((t) => t.id === taskViewId) ?? null;
+    const showInMiddle = currentTask?.status === 'draft' || currentTask?.status === 'open';
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-task-pane"
+        >
+          <Suspense fallback={lazyFallback}>
+            {showInMiddle ? (
+              <TaskAuxiliaryPanel
+                spaceId={spaceId}
+                taskId={taskViewId}
+                onClose={handleTaskPaneClose}
+              />
+            ) : (
+              <SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+            )}
+          </Suspense>
+        </div>
+        {overlay}
+      </>
+    );
+  }
 
-	if (viewMode === 'tasks' && space) {
-		return (
-			<>
-				<div
-					class="flex-1 flex flex-col overflow-hidden bg-app-content"
-					data-testid="space-tasks-view"
-				>
-					<SpacePageHeader
-						pageTitle="Tasks"
-						actions={
-							<button
-								type="button"
-								onClick={() => setCreateTaskOpen(true)}
-								class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
-								aria-label="Create task"
-								title="Create task"
-							>
-								<svg
-									class="w-4 h-4"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-									aria-hidden="true"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M12 4v16m8-8H4"
-									/>
-								</svg>
-							</button>
-						}
-					/>
-					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<Suspense fallback={lazyFallback}>
-							<SpaceTasks
-								spaceId={spaceId}
-								onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-							/>
-						</Suspense>
-					</div>
-				</div>
-				<SpaceCreateTaskDialog
-					isOpen={createTaskOpen}
-					onClose={() => setCreateTaskOpen(false)}
-					onCreated={(task) => {
-						// Only navigate if the user is still on the Tasks view of this space;
-						// prevents stale async redirect if they navigated elsewhere.
-						if (
-							currentSpaceViewModeSignal.value === 'tasks' &&
-							currentSpaceIdSignal.value === spaceId
-						) {
-							navigateToSpaceTask(spaceId, task.id);
-						}
-					}}
-				/>
-				{overlay}
-			</>
-		);
-	}
+  if (viewMode === 'tasks' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-tasks-view"
+        >
+          <SpacePageHeader
+            pageTitle="Tasks"
+            actions={
+              <button
+                type="button"
+                onClick={() => setCreateTaskOpen(true)}
+                class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
+                aria-label="Create task"
+                title="Create task"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+              </button>
+            }
+          />
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceTasks
+                spaceId={spaceId}
+                onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+              />
+            </Suspense>
+          </div>
+        </div>
+        <SpaceCreateTaskDialog
+          isOpen={createTaskOpen}
+          onClose={() => setCreateTaskOpen(false)}
+          onCreated={(task) => {
+            // Only navigate if the user is still on the Tasks view of this space;
+            // prevents stale async redirect if they navigated elsewhere.
+            if (
+              currentSpaceViewModeSignal.value === 'tasks' &&
+              currentSpaceIdSignal.value === spaceId
+            ) {
+              navigateToSpaceTask(spaceId, task.id);
+            }
+          }}
+        />
+        {overlay}
+      </>
+    );
+  }
 
-	if (viewMode === 'goals' && space) {
-		return (
-			<>
-				<div
-					class="flex-1 flex flex-col overflow-hidden bg-app-content"
-					data-testid="space-goals-view"
-				>
-					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<Suspense fallback={lazyFallback}>
-							<SpaceGoals spaceId={spaceId} />
-						</Suspense>
-					</div>
-				</div>
-				{overlay}
-			</>
-		);
-	}
+  if (viewMode === 'goals' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-goals-view"
+        >
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceGoals spaceId={spaceId} />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
 
-	if (viewMode === 'forge' && space) {
-		return (
-			<>
-				<div
-					class="flex-1 flex flex-col overflow-hidden bg-app-content"
-					data-testid="space-forge-view"
-				>
-					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<Suspense fallback={lazyFallback}>
-							<SpaceForge spaceId={spaceId} />
-						</Suspense>
-					</div>
-				</div>
-				{overlay}
-			</>
-		);
-	}
+  if (viewMode === 'forge' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-forge-view"
+        >
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceForge spaceId={spaceId} />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
 
-	if (viewMode === 'sessions' && space) {
-		return (
-			<>
-				<div
-					class="flex-1 flex flex-col overflow-hidden bg-app-content"
-					data-testid="space-sessions-view"
-				>
-					<SpacePageHeader
-						pageTitle="Sessions"
-						actions={
-							<button
-								type="button"
-								onClick={handleCreateSession}
-								disabled={creatingSession}
-								class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-								aria-label="Create session"
-								title="Create session"
-							>
-								<svg
-									class="w-4 h-4"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-									aria-hidden="true"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M12 4v16m8-8H4"
-									/>
-								</svg>
-							</button>
-						}
-					/>
-					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<Suspense fallback={lazyFallback}>
-							<SpaceSessionsPage spaceId={spaceId} />
-						</Suspense>
-					</div>
-				</div>
-				{overlay}
-			</>
-		);
-	}
+  if (viewMode === 'sessions' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-sessions-view"
+        >
+          <SpacePageHeader
+            pageTitle="Sessions"
+            actions={
+              <button
+                type="button"
+                onClick={handleCreateSession}
+                disabled={creatingSession}
+                class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Create session"
+                title="Create session"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+              </button>
+            }
+          />
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceSessionsPage spaceId={spaceId} />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
 
-	if (viewMode === 'configure' && space) {
-		return (
-			<>
-				<div
-					class="flex-1 flex flex-col overflow-hidden bg-app-content"
-					data-testid="space-configure-view"
-				>
-					<SpacePageHeader pageTitle="Settings" />
-					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<Suspense fallback={lazyFallback}>
-							<SpaceConfigurePage space={space} />
-						</Suspense>
-					</div>
-				</div>
-				{overlay}
-			</>
-		);
-	}
+  if (viewMode === 'configure' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-configure-view"
+        >
+          <SpacePageHeader pageTitle="Settings" />
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceConfigurePage space={space} />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
 
-	return (
-		<>
-			{overlay}
-			<div
-				class="flex-1 flex flex-col overflow-hidden bg-app-content"
-				data-testid="space-overview-view"
-			>
-				<SpacePageHeader pageTitle="Overview" />
-				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-					<Suspense fallback={lazyFallback}>
-						<SpaceOverview
-							spaceId={spaceId}
-							onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-						/>
-					</Suspense>
-				</div>
-			</div>
-		</>
-	);
+  return (
+    <>
+      {overlay}
+      <div
+        class="flex-1 flex flex-col overflow-hidden bg-app-content"
+        data-testid="space-overview-view"
+      >
+        <SpacePageHeader pageTitle="Overview" />
+        <div class="flex-1 overflow-hidden flex flex-col min-w-0">
+          <Suspense fallback={lazyFallback}>
+            <SpaceOverview
+              spaceId={spaceId}
+              onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+            />
+          </Suspense>
+        </div>
+      </div>
+    </>
+  );
 }

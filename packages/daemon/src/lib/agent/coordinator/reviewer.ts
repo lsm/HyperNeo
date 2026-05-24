@@ -1,11 +1,11 @@
 import type { AgentDefinition } from '@neokai/shared';
 
 export const reviewerAgent: AgentDefinition = {
-	description:
-		'Review code for quality, security, and correctness. Use after code changes to verify they are sound.',
-	tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
-	model: 'opus',
-	prompt: `You are a code reviewer. Your job is to review code changes for correctness, quality, security, and alignment with the original goal.
+  description:
+    'Review code for quality, security, and correctness. Use after code changes to verify they are sound.',
+  tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
+  model: 'opus',
+  prompt: `You are a code reviewer. Your job is to review code changes for correctness, quality, security, and alignment with the original goal.
 
 When given a review task:
 1. Understand the original goal and requirements

@@ -1,460 +1,460 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
-	"mocks": [
-		{
-			"comment": "Room chat agent - simple text response",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"system": {
-						"contains": "chat agent"
-					}
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (chat)"
-					}
-				],
-				"body": {
-					"id": "msg_room_chat",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "Room chat response acknowledged. I'm ready to help with your room tasks."
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 50,
-						"output_tokens": 20,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Planner Phase 1 - Creates plan file",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"system": {
-						"contains": "planner"
-					}
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (planner)"
-					}
-				],
-				"body": {
-					"id": "msg_room_planner_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll examine the codebase and create a plan for this task."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_planner_write_001",
-							"name": "Write",
-							"input": {
-								"file_path": "docs/plans/mock-plan.md",
-								"content": "# Plan: Mock Task\n\n## Overview\n\nThis plan outlines the approach for implementing the mock task.\n\n## Tasks\n\n1. Create utility file\n2. Add tests\n3. Update documentation\n"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 100,
-						"output_tokens": 80,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Planner Phase 2 - After approval, creates tasks",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"contains": "approved"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (planner-approved)"
-					}
-				],
-				"body": {
-					"id": "msg_room_planner_002",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "The plan is approved. Let me merge the PR and create the execution tasks."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_planner_mcp_001",
-							"name": "mcp_tool_call",
-							"input": {
-								"server_name": "planner-tools",
-								"tool_name": "create_task",
-								"arguments": {
-									"title": "Create utility file",
-									"description": "Implement the utility function with proper typing and error handling.",
-									"agent": "coder"
-								}
-							}
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_planner_mcp_002",
-							"name": "mcp_tool_call",
-							"input": {
-								"server_name": "planner-tools",
-								"tool_name": "create_task",
-								"arguments": {
-									"title": "Add tests",
-									"description": "Add unit tests for the utility function.",
-									"agent": "coder",
-									"depends_on": ["task-mock-1"]
-								}
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 150,
-						"output_tokens": 120,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Coder agent - Implements task",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"system": {
-						"contains": "coder"
-					}
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (coder)"
-					}
-				],
-				"body": {
-					"id": "msg_room_coder_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll implement this task by creating the required files."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_coder_write_001",
-							"name": "Write",
-							"input": {
-								"file_path": "src/util.ts",
-								"content": "/**\n * Utility function for common operations\n */\nexport function util(): string {\n\treturn 'ok';\n}\n"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 100,
-						"output_tokens": 80,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Leader agent - Submit for review",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"system": {
-						"contains": "leader"
-					}
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (leader)"
-					}
-				],
-				"body": {
-					"id": "msg_room_leader_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I have reviewed the worker's output. The implementation looks good. I will submit for review."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_leader_mcp_001",
-							"name": "mcp_tool_call",
-							"input": {
-								"server_name": "leader-agent-tools",
-								"tool_name": "submit_for_review",
-								"arguments": {
-									"pr_url": "https://github.com/test/repo/pull/1"
-								}
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 100,
-						"output_tokens": 80,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Leader agent - Complete task after approval",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"contains": "submit_for_review"
-						},
-						{
-							"contains": "approved"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (leader-complete)"
-					}
-				],
-				"body": {
-					"id": "msg_room_leader_002",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "The work has been approved. I will complete the task."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_leader_mcp_002",
-							"name": "mcp_tool_call",
-							"input": {
-								"server_name": "leader-agent-tools",
-								"tool_name": "complete_task",
-								"arguments": {
-									"summary": "Task completed successfully."
-								}
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 150,
-						"output_tokens": 80,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Reviewer agent - Review PR",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"system": {
-						"contains": "reviewer"
-					}
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (reviewer)"
-					}
-				],
-				"body": {
-					"id": "msg_room_reviewer_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'll review this PR and provide feedback."
-						},
-						{
-							"type": "tool_use",
-							"id": "toolu_reviewer_bash_001",
-							"name": "Bash",
-							"input": {
-								"command": "gh pr view 1 --json title,body,files",
-								"description": "Get PR details for review"
-							}
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "tool_use",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 100,
-						"output_tokens": 60,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"comment": "Default room response - matches any room request",
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"system": {
-						"contains": "room"
-					}
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-room.json (default)"
-					}
-				],
-				"body": {
-					"id": "msg_room_default",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "I'm a room agent ready to help with your multi-agent workflow tasks."
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 50,
-						"output_tokens": 25,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		}
-	]
+  "$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
+  "mocks": [
+    {
+      "comment": "Room chat agent - simple text response",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "system": {
+            "contains": "chat agent"
+          }
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (chat)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_chat",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Room chat response acknowledged. I'm ready to help with your room tasks."
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Planner Phase 1 - Creates plan file",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "system": {
+            "contains": "planner"
+          }
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (planner)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_planner_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll examine the codebase and create a plan for this task."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_planner_write_001",
+              "name": "Write",
+              "input": {
+                "file_path": "docs/plans/mock-plan.md",
+                "content": "# Plan: Mock Task\n\n## Overview\n\nThis plan outlines the approach for implementing the mock task.\n\n## Tasks\n\n1. Create utility file\n2. Add tests\n3. Update documentation\n"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 80,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Planner Phase 2 - After approval, creates tasks",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "contains": "approved"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (planner-approved)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_planner_002",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "The plan is approved. Let me merge the PR and create the execution tasks."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_planner_mcp_001",
+              "name": "mcp_tool_call",
+              "input": {
+                "server_name": "planner-tools",
+                "tool_name": "create_task",
+                "arguments": {
+                  "title": "Create utility file",
+                  "description": "Implement the utility function with proper typing and error handling.",
+                  "agent": "coder"
+                }
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_planner_mcp_002",
+              "name": "mcp_tool_call",
+              "input": {
+                "server_name": "planner-tools",
+                "tool_name": "create_task",
+                "arguments": {
+                  "title": "Add tests",
+                  "description": "Add unit tests for the utility function.",
+                  "agent": "coder",
+                  "depends_on": ["task-mock-1"]
+                }
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 150,
+            "output_tokens": 120,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Coder agent - Implements task",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "system": {
+            "contains": "coder"
+          }
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (coder)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_coder_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll implement this task by creating the required files."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_coder_write_001",
+              "name": "Write",
+              "input": {
+                "file_path": "src/util.ts",
+                "content": "/**\n * Utility function for common operations\n */\nexport function util(): string {\n\treturn 'ok';\n}\n"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 80,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Leader agent - Submit for review",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "system": {
+            "contains": "leader"
+          }
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (leader)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_leader_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I have reviewed the worker's output. The implementation looks good. I will submit for review."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_leader_mcp_001",
+              "name": "mcp_tool_call",
+              "input": {
+                "server_name": "leader-agent-tools",
+                "tool_name": "submit_for_review",
+                "arguments": {
+                  "pr_url": "https://github.com/test/repo/pull/1"
+                }
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 80,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Leader agent - Complete task after approval",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "contains": "submit_for_review"
+            },
+            {
+              "contains": "approved"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (leader-complete)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_leader_002",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "The work has been approved. I will complete the task."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_leader_mcp_002",
+              "name": "mcp_tool_call",
+              "input": {
+                "server_name": "leader-agent-tools",
+                "tool_name": "complete_task",
+                "arguments": {
+                  "summary": "Task completed successfully."
+                }
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 150,
+            "output_tokens": 80,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Reviewer agent - Review PR",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "system": {
+            "contains": "reviewer"
+          }
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (reviewer)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_reviewer_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll review this PR and provide feedback."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_reviewer_bash_001",
+              "name": "Bash",
+              "input": {
+                "command": "gh pr view 1 --json title,body,files",
+                "description": "Get PR details for review"
+              }
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 60,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "comment": "Default room response - matches any room request",
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "system": {
+            "contains": "room"
+          }
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-room.json (default)"
+          }
+        ],
+        "body": {
+          "id": "msg_room_default",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'm a room agent ready to help with your multi-agent workflow tasks."
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 50,
+            "output_tokens": 25,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    }
+  ]
 }

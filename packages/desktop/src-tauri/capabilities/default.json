@@ -1,48 +1,48 @@
 {
-	"$schema": "../gen/schemas/desktop-schema.json",
-	"identifier": "default",
-	"description": "enables the default permissions",
-	"windows": ["main"],
-	"remote": {
-		"urls": ["http://localhost:9283/*"]
-	},
-	"permissions": [
-		"core:default",
-		"core:window:allow-close",
-		"core:window:allow-minimize",
-		"core:window:allow-maximize",
-		"core:window:allow-toggle-maximize",
-		"core:window:allow-unmaximize",
-		"core:window:allow-start-dragging",
-		"core:window:allow-show",
-		"core:window:allow-hide",
-		"core:window:allow-set-focus",
-		{
-			"identifier": "shell:allow-spawn",
-			"allow": [
-				{
-					"name": "binaries/neokai",
-					"sidecar": true
-				}
-			]
-		},
-		{
-			"identifier": "shell:allow-execute",
-			"allow": [
-				{
-					"name": "binaries/neokai",
-					"sidecar": true,
-					"args": true
-				}
-			]
-		},
-		"shell:allow-kill",
-		"notification:default",
-		"notification:allow-is-permission-granted",
-		"notification:allow-request-permission",
-		"notification:allow-notify",
-		"global-shortcut:allow-register",
-		"global-shortcut:allow-unregister",
-		"global-shortcut:allow-unregister-all"
-	]
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://localhost:9283/*"]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/neokai",
+          "sidecar": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/neokai",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    "shell:allow-kill",
+    "notification:default",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-unregister-all"
+  ]
 }

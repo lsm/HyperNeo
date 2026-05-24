@@ -1,24 +1,24 @@
 {
-	"name": "@neokai/cli",
-	"version": "0.31.0",
-	"type": "module",
-	"license": "Apache-2.0",
-	"bin": {
-		"kai": "./main.ts"
-	},
-	"scripts": {
-		"dev": "bun run main.ts",
-		"start": "NODE_ENV=production bun run main.ts"
-	},
-	"dependencies": {
-		"@neokai/daemon": "workspace:*",
-		"@neokai/shared": "workspace:*",
-		"hono": "4.12.18",
-		"vite": "8.0.13"
-	},
-	"devDependencies": {
-		"@types/bun": "1.3.14",
-		"playwright": "1.59.1",
-		"v8-to-istanbul": "9.3.0"
-	}
+  "name": "@neokai/cli",
+  "version": "0.31.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "kai": "./main.ts"
+  },
+  "scripts": {
+    "dev": "bun run main.ts",
+    "start": "NODE_ENV=production bun run main.ts"
+  },
+  "dependencies": {
+    "@neokai/daemon": "workspace:*",
+    "@neokai/shared": "workspace:*",
+    "hono": "4.12.18",
+    "vite": "8.0.13"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "playwright": "1.59.1",
+    "v8-to-istanbul": "9.3.0"
+  }
 }

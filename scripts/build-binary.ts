@@ -20,11 +20,11 @@ const ROOT = join(import.meta.dir, '..');
 const OUTPUT_DIR = join(ROOT, 'dist', 'bin');
 
 const ALL_TARGETS = [
-	'bun-darwin-arm64',
-	'bun-darwin-x64',
-	'bun-linux-x64',
-	'bun-linux-arm64',
-	'bun-windows-x64',
+  'bun-darwin-arm64',
+  'bun-darwin-x64',
+  'bun-linux-x64',
+  'bun-linux-arm64',
+  'bun-windows-x64',
 ];
 
 // Parse --target argument
@@ -32,15 +32,15 @@ const targetIdx = process.argv.indexOf('--target');
 const targetArg = targetIdx !== -1 ? process.argv[targetIdx + 1] : null;
 
 if (targetArg && !ALL_TARGETS.includes(targetArg)) {
-	console.error(`Unknown target: ${targetArg}`);
-	console.error(`Valid targets: ${ALL_TARGETS.join(', ')}`);
-	process.exit(1);
+  console.error(`Unknown target: ${targetArg}`);
+  console.error(`Valid targets: ${ALL_TARGETS.join(', ')}`);
+  process.exit(1);
 }
 
 const targets = targetArg ? [targetArg] : ALL_TARGETS;
 
 function run(cmd: string) {
-	execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
+  execSync(cmd, { cwd: ROOT, stdio: 'inherit' });
 }
 
 // Step 1: Build web frontend
@@ -55,12 +55,12 @@ run('bun run scripts/generate-embedded-assets.ts');
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
 for (const target of targets) {
-	const platformArch = target.replace('bun-', '');
-	const outputPath = join(OUTPUT_DIR, `kai-${platformArch}`);
+  const platformArch = target.replace('bun-', '');
+  const outputPath = join(OUTPUT_DIR, `kai-${platformArch}`);
 
-	console.log(`\nStep 3: Compiling binary for ${target}...`);
-	run(`bun build --compile --target=${target} --outfile=${outputPath} packages/cli/prod-entry.ts`);
-	console.log(`  -> ${outputPath}`);
+  console.log(`\nStep 3: Compiling binary for ${target}...`);
+  run(`bun build --compile --target=${target} --outfile=${outputPath} packages/cli/prod-entry.ts`);
+  console.log(`  -> ${outputPath}`);
 }
 
 console.log('\nBuild complete!');

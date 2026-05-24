@@ -26,14 +26,14 @@ export type McpEnablementScopeType = 'space' | 'room' | 'session';
  * do so by that triple.
  */
 export interface McpEnablementOverride {
-	/** The scope at which this override applies. */
-	scopeType: McpEnablementScopeType;
-	/** The ID of the space/room/session this override targets. */
-	scopeId: string;
-	/** The `app_mcp_servers.id` of the registry entry this override affects. */
-	serverId: string;
-	/** `true` = explicitly enabled for this scope; `false` = explicitly disabled. */
-	enabled: boolean;
+  /** The scope at which this override applies. */
+  scopeType: McpEnablementScopeType;
+  /** The ID of the space/room/session this override targets. */
+  scopeId: string;
+  /** The `app_mcp_servers.id` of the registry entry this override affects. */
+  serverId: string;
+  /** `true` = explicitly enabled for this scope; `false` = explicitly disabled. */
+  enabled: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,12 +42,12 @@ export interface McpEnablementOverride {
 
 /** `mcp.enablement.list` — list every override at a given (scopeType, scopeId). */
 export interface McpEnablementListRequest {
-	scopeType: McpEnablementScopeType;
-	scopeId: string;
+  scopeType: McpEnablementScopeType;
+  scopeId: string;
 }
 
 export interface McpEnablementListResponse {
-	overrides: McpEnablementOverride[];
+  overrides: McpEnablementOverride[];
 }
 
 /**
@@ -56,35 +56,35 @@ export interface McpEnablementListResponse {
  * revert to inheritance.
  */
 export interface McpEnablementSetOverrideRequest {
-	scopeType: McpEnablementScopeType;
-	scopeId: string;
-	serverId: string;
-	enabled: boolean;
+  scopeType: McpEnablementScopeType;
+  scopeId: string;
+  serverId: string;
+  enabled: boolean;
 }
 
 export interface McpEnablementSetOverrideResponse {
-	override: McpEnablementOverride;
+  override: McpEnablementOverride;
 }
 
 /** `mcp.enablement.clearOverride` — delete a single (scope, server) override. */
 export interface McpEnablementClearOverrideRequest {
-	scopeType: McpEnablementScopeType;
-	scopeId: string;
-	serverId: string;
+  scopeType: McpEnablementScopeType;
+  scopeId: string;
+  serverId: string;
 }
 
 export interface McpEnablementClearOverrideResponse {
-	deleted: boolean;
+  deleted: boolean;
 }
 
 /** `mcp.enablement.clearScope` — delete every override at a given scope. */
 export interface McpEnablementClearScopeRequest {
-	scopeType: McpEnablementScopeType;
-	scopeId: string;
+  scopeType: McpEnablementScopeType;
+  scopeId: string;
 }
 
 export interface McpEnablementClearScopeResponse {
-	deleted: number;
+  deleted: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,26 +115,26 @@ export type McpEffectiveEnablementSource = 'session' | 'room' | 'space' | 'regis
  * effective enablement for this session, and where that decision came from.
  */
 export interface SessionMcpServerEntry {
-	/** The underlying registry entry — everything the UI needs to render. */
-	server: import('./app-mcp-server.ts').AppMcpServer;
-	/** Whether this server is effectively enabled for the given session. */
-	enabled: boolean;
-	/** Which level of the scope chain decided `enabled`. */
-	source: McpEffectiveEnablementSource;
-	/**
-	 * When `source` is `session`/`room`/`space`, this holds the explicit override
-	 * row that made the decision (so the UI can tell the user "disabled at the
-	 * room level" vs. "this session explicitly enabled it"). Missing when the
-	 * decision is `registry`.
-	 */
-	override?: McpEnablementOverride;
+  /** The underlying registry entry — everything the UI needs to render. */
+  server: import('./app-mcp-server.ts').AppMcpServer;
+  /** Whether this server is effectively enabled for the given session. */
+  enabled: boolean;
+  /** Which level of the scope chain decided `enabled`. */
+  source: McpEffectiveEnablementSource;
+  /**
+   * When `source` is `session`/`room`/`space`, this holds the explicit override
+   * row that made the decision (so the UI can tell the user "disabled at the
+   * room level" vs. "this session explicitly enabled it"). Missing when the
+   * decision is `registry`.
+   */
+  override?: McpEnablementOverride;
 }
 
 /** `session.mcp.list` — per-server effective state for a single session. */
 export interface SessionMcpListRequest {
-	sessionId: string;
+  sessionId: string;
 }
 
 export interface SessionMcpListResponse {
-	entries: SessionMcpServerEntry[];
+  entries: SessionMcpServerEntry[];
 }

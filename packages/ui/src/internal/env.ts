@@ -9,77 +9,77 @@ type HandoffState = 'pending' | 'complete';
  * know when it's safe to use client-only features.
  */
 class Env {
-	current: RenderEnv = this.detect();
-	handoffState: HandoffState = 'pending';
-	currentId = 0;
+  current: RenderEnv = this.detect();
+  handoffState: HandoffState = 'pending';
+  currentId = 0;
 
-	/**
-	 * Set the current environment.
-	 * Resets handoff state and ID counter when environment changes.
-	 */
-	set(env: RenderEnv): void {
-		if (this.current === env) return;
+  /**
+   * Set the current environment.
+   * Resets handoff state and ID counter when environment changes.
+   */
+  set(env: RenderEnv): void {
+    if (this.current === env) return;
 
-		this.handoffState = 'pending';
-		this.currentId = 0;
-		this.current = env;
-	}
+    this.handoffState = 'pending';
+    this.currentId = 0;
+    this.current = env;
+  }
 
-	/**
-	 * Reset to the detected environment.
-	 */
-	reset(): void {
-		this.set(this.detect());
-	}
+  /**
+   * Reset to the detected environment.
+   */
+  reset(): void {
+    this.set(this.detect());
+  }
 
-	/**
-	 * Generate the next unique ID for this environment.
-	 */
-	nextId(): number {
-		return ++this.currentId;
-	}
+  /**
+   * Generate the next unique ID for this environment.
+   */
+  nextId(): number {
+    return ++this.currentId;
+  }
 
-	/**
-	 * True if running on the server.
-	 */
-	get isServer(): boolean {
-		return this.current === 'server';
-	}
+  /**
+   * True if running on the server.
+   */
+  get isServer(): boolean {
+    return this.current === 'server';
+  }
 
-	/**
-	 * True if running in the browser.
-	 */
-	get isClient(): boolean {
-		return this.current === 'client';
-	}
+  /**
+   * True if running in the browser.
+   */
+  get isClient(): boolean {
+    return this.current === 'client';
+  }
 
-	/**
-	 * Detect the current environment based on window/document availability.
-	 */
-	private detect(): RenderEnv {
-		if (typeof window === 'undefined' || typeof document === 'undefined') {
-			return 'server';
-		}
+  /**
+   * Detect the current environment based on window/document availability.
+   */
+  private detect(): RenderEnv {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return 'server';
+    }
 
-		return 'client';
-	}
+    return 'client';
+  }
 
-	/**
-	 * Mark the handoff from server to client as complete.
-	 * Called after hydration finishes.
-	 */
-	handoff(): void {
-		if (this.handoffState === 'pending') {
-			this.handoffState = 'complete';
-		}
-	}
+  /**
+   * Mark the handoff from server to client as complete.
+   * Called after hydration finishes.
+   */
+  handoff(): void {
+    if (this.handoffState === 'pending') {
+      this.handoffState = 'complete';
+    }
+  }
 
-	/**
-	 * True if the handoff from server to client is complete.
-	 */
-	get isHandoffComplete(): boolean {
-		return this.handoffState === 'complete';
-	}
+  /**
+   * True if the handoff from server to client is complete.
+   */
+  get isHandoffComplete(): boolean {
+    return this.handoffState === 'complete';
+  }
 }
 
 /**

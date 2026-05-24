@@ -24,9 +24,9 @@ import type { SpaceWorkflow, SpaceWorkflowSummary } from '../types/space.ts';
  * which keeps them gated unless the workflow author opts in.
  */
 export function isWorkflowAutoClosingAtLevel(
-	wf: SpaceWorkflow | SpaceWorkflowSummary,
-	level: number
+  wf: SpaceWorkflow | SpaceWorkflowSummary,
+  level: number
 ): boolean {
-	const threshold = wf.completionAutonomyLevel ?? 5;
-	return level >= threshold;
+  const threshold = wf.completionAutonomyLevel ?? 5;
+  return level >= threshold;
 }

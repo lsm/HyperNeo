@@ -42,23 +42,23 @@ export const POST_APPROVAL_TASK_AGENT_TARGET = 'task-agent';
  * `SpaceWorkflowManager` without re-normalising.
  */
 export interface PostApprovalValidationInput {
-	/** Optional route to validate. Missing or `undefined` means "no route" → valid. */
-	postApproval?: PostApprovalRoute;
-	/** Workflow nodes — used to collect eligible node-agent target names. */
-	nodes: Array<WorkflowNode | WorkflowNodeInput>;
+  /** Optional route to validate. Missing or `undefined` means "no route" → valid. */
+  postApproval?: PostApprovalRoute;
+  /** Workflow nodes — used to collect eligible node-agent target names. */
+  nodes: Array<WorkflowNode | WorkflowNodeInput>;
 }
 
 export interface PostApprovalRoutesValidationInput {
-	/** Legacy workflow-level route. Missing or `undefined` means no legacy route. */
-	workflowPostApproval?: PostApprovalRoute;
-	/** Workflow nodes carrying optional node-level routes. */
-	nodes: Array<WorkflowNode | WorkflowNodeInput>;
+  /** Legacy workflow-level route. Missing or `undefined` means no legacy route. */
+  workflowPostApproval?: PostApprovalRoute;
+  /** Workflow nodes carrying optional node-level routes. */
+  nodes: Array<WorkflowNode | WorkflowNodeInput>;
 }
 
 /** Discriminated result — cheaper than throwing in hot paths. */
 export type PostApprovalValidationResult =
-	| { ok: true }
-	| { ok: false; error: string; eligibleTargets: string[] };
+  | { ok: true }
+  | { ok: false; error: string; eligibleTargets: string[] };
 
 /**
  * Collect the set of legal `targetAgent` strings for a workflow, in stable
@@ -70,20 +70,20 @@ export type PostApprovalValidationResult =
  * time warning path may want to surface the list to the user/LLM.
  */
 export function collectEligiblePostApprovalTargets(
-	nodes: Array<WorkflowNode | WorkflowNodeInput>
+  nodes: Array<WorkflowNode | WorkflowNodeInput>
 ): string[] {
-	const targets: string[] = [POST_APPROVAL_TASK_AGENT_TARGET];
-	const seen = new Set<string>(targets);
-	for (const node of nodes) {
-		const agents = node.agents ?? [];
-		for (const agent of agents) {
-			const name = typeof agent?.name === 'string' ? agent.name.trim() : '';
-			if (!name || seen.has(name)) continue;
-			seen.add(name);
-			targets.push(name);
-		}
-	}
-	return targets;
+  const targets: string[] = [POST_APPROVAL_TASK_AGENT_TARGET];
+  const seen = new Set<string>(targets);
+  for (const node of nodes) {
+    const agents = node.agents ?? [];
+    for (const agent of agents) {
+      const name = typeof agent?.name === 'string' ? agent.name.trim() : '';
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      targets.push(name);
+    }
+  }
+  return targets;
 }
 
 /**
@@ -102,37 +102,37 @@ export function collectEligiblePostApprovalTargets(
  * not known until an approval signal actually fires).
  */
 export function validatePostApproval(
-	input: PostApprovalValidationInput
+  input: PostApprovalValidationInput
 ): PostApprovalValidationResult {
-	const route = input.postApproval;
-	if (!route) {
-		return { ok: true };
-	}
+  const route = input.postApproval;
+  if (!route) {
+    return { ok: true };
+  }
 
-	const targetAgent = typeof route.targetAgent === 'string' ? route.targetAgent.trim() : '';
-	const eligible = collectEligiblePostApprovalTargets(input.nodes);
+  const targetAgent = typeof route.targetAgent === 'string' ? route.targetAgent.trim() : '';
+  const eligible = collectEligiblePostApprovalTargets(input.nodes);
 
-	if (!targetAgent) {
-		return {
-			ok: false,
-			error:
-				`postApproval.targetAgent must be a non-empty string; ` +
-				`eligible targets: ${eligible.map((t) => `"${t}"`).join(', ')}`,
-			eligibleTargets: eligible,
-		};
-	}
+  if (!targetAgent) {
+    return {
+      ok: false,
+      error:
+        `postApproval.targetAgent must be a non-empty string; ` +
+        `eligible targets: ${eligible.map((t) => `"${t}"`).join(', ')}`,
+      eligibleTargets: eligible,
+    };
+  }
 
-	if (eligible.includes(targetAgent)) {
-		return { ok: true };
-	}
+  if (eligible.includes(targetAgent)) {
+    return { ok: true };
+  }
 
-	return {
-		ok: false,
-		error:
-			`postApproval.targetAgent "${targetAgent}" does not match any node agent or the ` +
-			`orchestration Task Agent; eligible targets: ${eligible.map((t) => `"${t}"`).join(', ')}`,
-		eligibleTargets: eligible,
-	};
+  return {
+    ok: false,
+    error:
+      `postApproval.targetAgent "${targetAgent}" does not match any node agent or the ` +
+      `orchestration Task Agent; eligible targets: ${eligible.map((t) => `"${t}"`).join(', ')}`,
+    eligibleTargets: eligible,
+  };
 }
 
 /**
@@ -143,25 +143,25 @@ export function validatePostApproval(
  * this helper to validate both shapes against the same eligible target set.
  */
 export function validatePostApprovalRoutes(
-	input: PostApprovalRoutesValidationInput
+  input: PostApprovalRoutesValidationInput
 ): PostApprovalValidationResult {
-	const workflowResult = validatePostApproval({
-		postApproval: input.workflowPostApproval,
-		nodes: input.nodes,
-	});
-	if (!workflowResult.ok) return workflowResult;
+  const workflowResult = validatePostApproval({
+    postApproval: input.workflowPostApproval,
+    nodes: input.nodes,
+  });
+  if (!workflowResult.ok) return workflowResult;
 
-	for (const node of input.nodes) {
-		const route = node.postApproval;
-		if (!route) continue;
-		const result = validatePostApproval({ postApproval: route, nodes: input.nodes });
-		if (!result.ok) {
-			return {
-				...result,
-				error: `node "${node.name}" ${result.error}`,
-			};
-		}
-	}
+  for (const node of input.nodes) {
+    const route = node.postApproval;
+    if (!route) continue;
+    const result = validatePostApproval({ postApproval: route, nodes: input.nodes });
+    if (!result.ok) {
+      return {
+        ...result,
+        error: `node "${node.name}" ${result.error}`,
+      };
+    }
+  }
 
-	return { ok: true };
+  return { ok: true };
 }

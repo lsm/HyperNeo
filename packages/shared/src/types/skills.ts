@@ -19,11 +19,11 @@ export type SkillSourceType = 'builtin' | 'plugin' | 'mcp_server';
  * The `type` discriminator enables safe JSON round-tripping from SQLite.
  */
 export interface BuiltinSkillConfig {
-	type: 'builtin';
-	/** The slash-command name (e.g. "update-config", "claude-api"). */
-	commandName: string;
-	/** Restrict this built-in skill to sessions scoped to a Space. */
-	spaceOnly?: boolean;
+  type: 'builtin';
+  /** The slash-command name (e.g. "update-config", "claude-api"). */
+  commandName: string;
+  /** Restrict this built-in skill to sessions scoped to a Space. */
+  spaceOnly?: boolean;
 }
 
 /**
@@ -31,9 +31,9 @@ export interface BuiltinSkillConfig {
  * The `type` discriminator enables safe JSON round-tripping from SQLite.
  */
 export interface PluginSkillConfig {
-	type: 'plugin';
-	/** Absolute path to the plugin directory on disk. */
-	pluginPath: string;
+  type: 'plugin';
+  /** Absolute path to the plugin directory on disk. */
+  pluginPath: string;
 }
 
 /**
@@ -42,9 +42,9 @@ export interface PluginSkillConfig {
  * The `type` discriminator enables safe JSON round-tripping from SQLite.
  */
 export interface McpServerSkillConfig {
-	type: 'mcp_server';
-	/** UUID of the corresponding `app_mcp_servers` row. */
-	appMcpServerId: string;
+  type: 'mcp_server';
+  /** UUID of the corresponding `app_mcp_servers` row. */
+  appMcpServerId: string;
 }
 
 /** Discriminated union of all possible skill configurations. */
@@ -58,28 +58,28 @@ export type SkillValidationStatus = 'pending' | 'valid' | 'invalid' | 'unknown';
  * Skills can originate from built-in commands, local plugins, or MCP servers.
  */
 export interface AppSkill {
-	/** Unique identifier (UUID). */
-	id: string;
-	/** Internal unique name (slug-style, e.g. "web-search"). Immutable after creation. */
-	name: string;
-	/** Human-readable display name shown in the UI. */
-	displayName: string;
-	/** Short description of what the skill does (used for agent discovery). */
-	description: string;
-	/** Where the skill comes from. Immutable after creation. */
-	sourceType: SkillSourceType;
-	/** Source-type-specific configuration. */
-	config: AppSkillConfig;
-	/** Whether this skill is globally enabled. */
-	enabled: boolean;
-	/** True when the skill is shipped with NeoKai and cannot be deleted. */
-	builtIn: boolean;
-	/**
-	 * Current validation state (set by the async validation job — not user-editable).
-	 */
-	validationStatus: SkillValidationStatus;
-	/** Unix timestamp (ms) when the record was created. Consistent with other NeoKai tables. */
-	createdAt: number;
+  /** Unique identifier (UUID). */
+  id: string;
+  /** Internal unique name (slug-style, e.g. "web-search"). Immutable after creation. */
+  name: string;
+  /** Human-readable display name shown in the UI. */
+  displayName: string;
+  /** Short description of what the skill does (used for agent discovery). */
+  description: string;
+  /** Where the skill comes from. Immutable after creation. */
+  sourceType: SkillSourceType;
+  /** Source-type-specific configuration. */
+  config: AppSkillConfig;
+  /** Whether this skill is globally enabled. */
+  enabled: boolean;
+  /** True when the skill is shipped with NeoKai and cannot be deleted. */
+  builtIn: boolean;
+  /**
+   * Current validation state (set by the async validation job — not user-editable).
+   */
+  validationStatus: SkillValidationStatus;
+  /** Unix timestamp (ms) when the record was created. Consistent with other NeoKai tables. */
+  createdAt: number;
 }
 
 /**
@@ -95,10 +95,10 @@ export type CreateSkillParams = Omit<AppSkill, 'id' | 'createdAt' | 'builtIn'>;
  * - `validationStatus` is managed by the async validation job
  */
 export interface UpdateSkillParams {
-	displayName?: string;
-	description?: string;
-	enabled?: boolean;
-	config?: AppSkillConfig;
+  displayName?: string;
+  description?: string;
+  enabled?: boolean;
+  config?: AppSkillConfig;
 }
 
 /**
@@ -106,18 +106,18 @@ export interface UpdateSkillParams {
  * specific runtime session.
  */
 export interface SkillEnablementOverride {
-	skillId: string;
-	enabled: boolean;
+  skillId: string;
+  enabled: boolean;
 }
 
 /**
  * Params for the skill.installFromGit RPC handler.
  */
 export interface InstallSkillFromGitParams {
-	/** GitHub tree/blob URL or raw content URL for the skill directory or file. */
-	repoUrl: string;
-	/** Name to register the skill under (also used as the command file name). */
-	commandName: string;
+  /** GitHub tree/blob URL or raw content URL for the skill directory or file. */
+  repoUrl: string;
+  /** Name to register the skill under (also used as the command file name). */
+  commandName: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,15 +126,15 @@ export interface InstallSkillFromGitParams {
 
 /** Returns true when `config` is a {@link BuiltinSkillConfig}. */
 export function isBuiltinSkillConfig(config: AppSkillConfig): config is BuiltinSkillConfig {
-	return config.type === 'builtin';
+  return config.type === 'builtin';
 }
 
 /** Returns true when `config` is a {@link PluginSkillConfig}. */
 export function isPluginSkillConfig(config: AppSkillConfig): config is PluginSkillConfig {
-	return config.type === 'plugin';
+  return config.type === 'plugin';
 }
 
 /** Returns true when `config` is a {@link McpServerSkillConfig}. */
 export function isMcpServerSkillConfig(config: AppSkillConfig): config is McpServerSkillConfig {
-	return config.type === 'mcp_server';
+  return config.type === 'mcp_server';
 }

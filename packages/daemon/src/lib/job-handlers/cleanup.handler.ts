@@ -5,17 +5,17 @@ const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const NEXT_RUN_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export function createCleanupHandler(jobQueue: JobQueueRepository) {
-	return async (_job: Job): Promise<{ deletedJobs: number; nextRunAt: number }> => {
-		const deletedJobs = jobQueue.cleanup(Date.now() - DEFAULT_MAX_AGE_MS);
+  return async (_job: Job): Promise<{ deletedJobs: number; nextRunAt: number }> => {
+    const deletedJobs = jobQueue.cleanup(Date.now() - DEFAULT_MAX_AGE_MS);
 
-		const nextRunAt = Date.now() + NEXT_RUN_DELAY_MS;
+    const nextRunAt = Date.now() + NEXT_RUN_DELAY_MS;
 
-		// Self-schedule: only enqueue next cleanup if none is already pending
-		const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 1 });
-		if (pending.length === 0) {
-			jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: nextRunAt });
-		}
+    // Self-schedule: only enqueue next cleanup if none is already pending
+    const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 1 });
+    if (pending.length === 0) {
+      jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: nextRunAt });
+    }
 
-		return { deletedJobs, nextRunAt };
-	};
+    return { deletedJobs, nextRunAt };
+  };
 }

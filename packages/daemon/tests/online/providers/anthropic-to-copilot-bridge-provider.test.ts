@@ -42,10 +42,10 @@ import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import {
-	sendMessage,
-	waitForIdle,
-	waitForSdkMessages,
-	interrupt,
+  sendMessage,
+  waitForIdle,
+  waitForSdkMessages,
+  interrupt,
 } from '../../helpers/daemon-actions';
 import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
@@ -58,78 +58,78 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 type SseEvent = { event: string; data: Record<string, unknown> };
 
 function parseSseEvents(text: string): SseEvent[] {
-	const events: SseEvent[] = [];
-	for (const chunk of text.split('\n\n')) {
-		if (!chunk.trim()) continue;
-		let eventName = '';
-		let dataStr = '';
-		for (const line of chunk.split('\n')) {
-			if (line.startsWith('event: ')) eventName = line.slice(7).trim();
-			else if (line.startsWith('data: ')) dataStr = line.slice(6);
-		}
-		if (!eventName || !dataStr) continue;
-		try {
-			events.push({ event: eventName, data: JSON.parse(dataStr) as Record<string, unknown> });
-		} catch {
-			// ignore unparseable lines
-		}
-	}
-	return events;
+  const events: SseEvent[] = [];
+  for (const chunk of text.split('\n\n')) {
+    if (!chunk.trim()) continue;
+    let eventName = '';
+    let dataStr = '';
+    for (const line of chunk.split('\n')) {
+      if (line.startsWith('event: ')) eventName = line.slice(7).trim();
+      else if (line.startsWith('data: ')) dataStr = line.slice(6);
+    }
+    if (!eventName || !dataStr) continue;
+    try {
+      events.push({ event: eventName, data: JSON.parse(dataStr) as Record<string, unknown> });
+    } catch {
+      // ignore unparseable lines
+    }
+  }
+  return events;
 }
 
 /** Return the input_tokens from the message_start event, or 0 if not found. */
 function getInputTokens(events: SseEvent[]): number {
-	for (const e of events) {
-		if (e.event === 'message_start') {
-			const msg = (e.data as { message?: { usage?: { input_tokens?: number } } }).message;
-			return msg?.usage?.input_tokens ?? 0;
-		}
-	}
-	return 0;
+  for (const e of events) {
+    if (e.event === 'message_start') {
+      const msg = (e.data as { message?: { usage?: { input_tokens?: number } } }).message;
+      return msg?.usage?.input_tokens ?? 0;
+    }
+  }
+  return 0;
 }
 
 /** Return the output_tokens from the message_delta event, or 0 if not found. */
 function getOutputTokens(events: SseEvent[]): number {
-	for (const e of events) {
-		if (e.event === 'message_delta') {
-			const usage = (e.data as { usage?: { output_tokens?: number } }).usage;
-			return usage?.output_tokens ?? 0;
-		}
-	}
-	return 0;
+  for (const e of events) {
+    if (e.event === 'message_delta') {
+      const usage = (e.data as { usage?: { output_tokens?: number } }).usage;
+      return usage?.output_tokens ?? 0;
+    }
+  }
+  return 0;
 }
 
 /** POST to the bridge /v1/messages endpoint, return parsed SSE events. */
 async function callCopilotBridge(
-	bridgeUrl: string,
-	messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-	model: string,
-	system?: string
+  bridgeUrl: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  model: string,
+  system?: string
 ): Promise<SseEvent[]> {
-	const response = await fetch(`${bridgeUrl}/v1/messages`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			model,
-			messages,
-			stream: true,
-			max_tokens: 256,
-			...(system ? { system } : {}),
-		}),
-	});
-	if (!response.ok) {
-		throw new Error(`Bridge HTTP ${response.status}: ${await response.text()}`);
-	}
-	const events = parseSseEvents(await response.text());
-	// Detect Anthropic SSE error events and surface them as descriptive test failures.
-	const errorEvent = events.find((e) => e.event === 'error');
-	if (errorEvent) {
-		const err = (errorEvent.data as { error?: { type?: string; message?: string } }).error;
-		throw new Error(
-			`Copilot bridge returned SSE error: ${err?.type ?? 'unknown'} — ${err?.message ?? '(no message)'}`
-		);
-	}
-	return events;
+  const response = await fetch(`${bridgeUrl}/v1/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      max_tokens: 256,
+      ...(system ? { system } : {}),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Bridge HTTP ${response.status}: ${await response.text()}`);
+  }
+  const events = parseSseEvents(await response.text());
+  // Detect Anthropic SSE error events and surface them as descriptive test failures.
+  const errorEvent = events.find((e) => e.event === 'error');
+  if (errorEvent) {
+    const err = (errorEvent.data as { error?: { type?: string; message?: string } }).error;
+    throw new Error(
+      `Copilot bridge returned SSE error: ${err?.type ?? 'unknown'} — ${err?.message ?? '(no message)'}`
+    );
+  }
+  return events;
 }
 
 /** Per-turn idle timeout. The Copilot API can take 60-90 s per turn. */
@@ -157,7 +157,7 @@ const TEST_TIMEOUT = IDLE_TIMEOUT + 30_000;
  *   the Copilot model choosing to call the tool.
  */
 function makeMcpServerScript(uniqueToken: string, toolsListedFlag: string): string {
-	return /* js */ `
+  return /* js */ `
 const rl = require('readline').createInterface({ input: process.stdin, terminal: false });
 rl.on('line', (line) => {
   let msg;
@@ -198,29 +198,29 @@ function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
 // ---------------------------------------------------------------------------
 
 function extractAssistantText(msg: Record<string, unknown>): string {
-	const message = msg.message as { content?: unknown };
-	if (!message?.content) return '';
-	if (typeof message.content === 'string') return message.content;
-	if (Array.isArray(message.content)) {
-		return message.content
-			.filter((b: unknown) => (b as { type?: string }).type === 'text')
-			.map((b: unknown) => (b as { text?: string }).text ?? '')
-			.join('');
-	}
-	return '';
+  const message = msg.message as { content?: unknown };
+  if (!message?.content) return '';
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter((b: unknown) => (b as { type?: string }).type === 'text')
+      .map((b: unknown) => (b as { text?: string }).text ?? '')
+      .join('');
+  }
+  return '';
 }
 
 /** Returns true if any assistant message contains a tool_use block with the given name. */
 function hasToolUseBlock(sdkMessages: Array<Record<string, unknown>>, toolName?: string): boolean {
-	return sdkMessages.some((m) => {
-		const msg = m as { type?: string; message?: { content?: unknown[] } };
-		if (msg.type !== 'assistant' || !Array.isArray(msg.message?.content)) return false;
-		return msg.message.content.some((b: unknown) => {
-			const block = b as { type?: string; name?: string };
-			if (block.type !== 'tool_use') return false;
-			return toolName === undefined || block.name === toolName;
-		});
-	});
+  return sdkMessages.some((m) => {
+    const msg = m as { type?: string; message?: { content?: unknown[] } };
+    if (msg.type !== 'assistant' || !Array.isArray(msg.message?.content)) return false;
+    return msg.message.content.some((b: unknown) => {
+      const block = b as { type?: string; name?: string };
+      if (block.type !== 'tool_use') return false;
+      return toolName === undefined || block.name === toolName;
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -228,402 +228,402 @@ function hasToolUseBlock(sdkMessages: Array<Record<string, unknown>>, toolName?:
 // ---------------------------------------------------------------------------
 
 describe('AnthropicToCopilotBridgeProvider (Online)', () => {
-	let daemon: DaemonServerContext;
-	/**
-	 * Always 'gpt-5-mini' — the free-tier Copilot model used for all CI tests.
-	 * beforeAll hard-fails if this model is not present in the account's model list.
-	 */
-	let testModelId: string;
+  let daemon: DaemonServerContext;
+  /**
+   * Always 'gpt-5-mini' — the free-tier Copilot model used for all CI tests.
+   * beforeAll hard-fails if this model is not present in the account's model list.
+   */
+  let testModelId: string;
 
-	beforeAll(async () => {
-		daemon = await createDaemonServer();
+  beforeAll(async () => {
+    daemon = await createDaemonServer();
 
-		// Hard-fail if credentials are absent or invalid — per CLAUDE.md policy.
-		// isAvailable() checks all runtime auth sources (env vars, auth.json, gh CLI, hosts.yml).
-		const copilotProvider = new AnthropicToCopilotBridgeProvider();
-		if (!(await copilotProvider.isAvailable())) {
-			throw new Error(
-				'anthropic-copilot provider is not available. ' +
-					'Set COPILOT_GITHUB_TOKEN to a fine-grained PAT (not a classic ghp_ PAT) with ' +
-					'Copilot access, or use the OAuth login flow. ' +
-					'See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token'
-			);
-		}
+    // Hard-fail if credentials are absent or invalid — per CLAUDE.md policy.
+    // isAvailable() checks all runtime auth sources (env vars, auth.json, gh CLI, hosts.yml).
+    const copilotProvider = new AnthropicToCopilotBridgeProvider();
+    if (!(await copilotProvider.isAvailable())) {
+      throw new Error(
+        'anthropic-copilot provider is not available. ' +
+          'Set COPILOT_GITHUB_TOKEN to a fine-grained PAT (not a classic ghp_ PAT) with ' +
+          'Copilot access, or use the OAuth login flow. ' +
+          'See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token'
+      );
+    }
 
-		// Call models.list to start the embedded Anthropic server (mirrors production
-		// flow where the UI always fetches models before creating a session).
-		const modelsResult = (await daemon.messageHub.request('models.list', {})) as {
-			models: Array<{ id: string; provider: string }>;
-		};
-		const copilotModels = modelsResult.models.filter((m) => m.provider === 'anthropic-copilot');
-		if (copilotModels.length === 0) {
-			throw new Error(
-				'No anthropic-copilot models returned by models.list — ' +
-					'authentication succeeded but the embedded server failed to start.'
-			);
-		}
+    // Call models.list to start the embedded Anthropic server (mirrors production
+    // flow where the UI always fetches models before creating a session).
+    const modelsResult = (await daemon.messageHub.request('models.list', {})) as {
+      models: Array<{ id: string; provider: string }>;
+    };
+    const copilotModels = modelsResult.models.filter((m) => m.provider === 'anthropic-copilot');
+    if (copilotModels.length === 0) {
+      throw new Error(
+        'No anthropic-copilot models returned by models.list — ' +
+          'authentication succeeded but the embedded server failed to start.'
+      );
+    }
 
-		// Hard-fail if gpt-5-mini is not available.
-		// gpt-5-mini is the designated CI model: it is free (0x cost) for all Copilot
-		// subscribers, so it must always be present.  A missing gpt-5-mini means the
-		// account's Copilot plan has changed and the CI secret / plan needs attention.
-		const miniModel = copilotModels.find((m) => m.id === 'gpt-5-mini');
-		if (!miniModel) {
-			throw new Error(
-				`gpt-5-mini is not in the anthropic-copilot model list. ` +
-					`Available models: ${copilotModels.map((m) => m.id).join(', ')}. ` +
-					`gpt-5-mini must be present — it is the designated free-tier CI model. ` +
-					`Check that the Copilot account/plan still includes gpt-5-mini.`
-			);
-		}
-		testModelId = 'gpt-5-mini';
-	}, SETUP_TIMEOUT);
+    // Hard-fail if gpt-5-mini is not available.
+    // gpt-5-mini is the designated CI model: it is free (0x cost) for all Copilot
+    // subscribers, so it must always be present.  A missing gpt-5-mini means the
+    // account's Copilot plan has changed and the CI secret / plan needs attention.
+    const miniModel = copilotModels.find((m) => m.id === 'gpt-5-mini');
+    if (!miniModel) {
+      throw new Error(
+        `gpt-5-mini is not in the anthropic-copilot model list. ` +
+          `Available models: ${copilotModels.map((m) => m.id).join(', ')}. ` +
+          `gpt-5-mini must be present — it is the designated free-tier CI model. ` +
+          `Check that the Copilot account/plan still includes gpt-5-mini.`
+      );
+    }
+    testModelId = 'gpt-5-mini';
+  }, SETUP_TIMEOUT);
 
-	afterAll(async () => {
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
-	}, SETUP_TIMEOUT);
+  afterAll(async () => {
+    if (daemon) {
+      daemon.kill('SIGTERM');
+      await daemon.waitForExit();
+    }
+  }, SETUP_TIMEOUT);
 
-	// -------------------------------------------------------------------------
-	// 1. Basic conversation
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 1. Basic conversation
+  // -------------------------------------------------------------------------
 
-	test(
-		'basic conversation: model responds correctly',
-		async () => {
-			const MAX_ATTEMPTS = 2;
-			const PER_ATTEMPT_TIMEOUT = 60_000;
+  test(
+    'basic conversation: model responds correctly',
+    async () => {
+      const MAX_ATTEMPTS = 2;
+      const PER_ATTEMPT_TIMEOUT = 60_000;
 
-			for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-				const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
-				mkdirSync(workspacePath, { recursive: true });
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
+        mkdirSync(workspacePath, { recursive: true });
 
-				const { sessionId } = (await daemon.messageHub.request('session.create', {
-					workspacePath,
-					title: 'Copilot Anthropic Basic Test',
-					config: { model: testModelId, permissionMode: 'acceptEdits' },
-				})) as { sessionId: string };
-				daemon.trackSession(sessionId);
+        const { sessionId } = (await daemon.messageHub.request('session.create', {
+          workspacePath,
+          title: 'Copilot Anthropic Basic Test',
+          config: { model: testModelId, permissionMode: 'acceptEdits' },
+        })) as { sessionId: string };
+        daemon.trackSession(sessionId);
 
-				await sendMessage(daemon, sessionId, 'What is 6+7? Reply with just the number.');
+        await sendMessage(daemon, sessionId, 'What is 6+7? Reply with just the number.');
 
-				try {
-					await waitForIdle(daemon, sessionId, PER_ATTEMPT_TIMEOUT);
-				} catch (error) {
-					if (attempt < MAX_ATTEMPTS) {
-						// Interrupt stuck session and retry with a fresh one
-						try {
-							await interrupt(daemon, sessionId);
-						} catch {
-							/* ignore */
-						}
-						continue;
-					}
-					throw error;
-				}
+        try {
+          await waitForIdle(daemon, sessionId, PER_ATTEMPT_TIMEOUT);
+        } catch (error) {
+          if (attempt < MAX_ATTEMPTS) {
+            // Interrupt stuck session and retry with a fresh one
+            try {
+              await interrupt(daemon, sessionId);
+            } catch {
+              /* ignore */
+            }
+            continue;
+          }
+          throw error;
+        }
 
-				const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-					minCount: 1,
-					timeout: 10_000, // Messages should be ready shortly after idle
-				});
-				const assistantMessages = sdkMessages.filter(
-					(m) => (m as { type?: string }).type === 'assistant'
-				);
-				expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
+        const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+          minCount: 1,
+          timeout: 10_000, // Messages should be ready shortly after idle
+        });
+        const assistantMessages = sdkMessages.filter(
+          (m) => (m as { type?: string }).type === 'assistant'
+        );
+        expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
 
-				const text = assistantMessages
-					.map((m) => extractAssistantText(m as Record<string, unknown>))
-					.join('');
-				expect(text).toContain('13');
-				return; // Success, exit retry loop
-			}
-		},
-		// Budget: attempt1 timeout (60s) + overhead (~5s) + attempt2 idle (60s)
-		// + sdkMessages (10s) = ~135s. 150s TEST_TIMEOUT provides margin.
-		TEST_TIMEOUT
-	);
+        const text = assistantMessages
+          .map((m) => extractAssistantText(m as Record<string, unknown>))
+          .join('');
+        expect(text).toContain('13');
+        return; // Success, exit retry loop
+      }
+    },
+    // Budget: attempt1 timeout (60s) + overhead (~5s) + attempt2 idle (60s)
+    // + sdkMessages (10s) = ~135s. 150s TEST_TIMEOUT provides margin.
+    TEST_TIMEOUT
+  );
 
-	// -------------------------------------------------------------------------
-	// 2. Tool use via the bridge
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 2. Tool use via the bridge
+  // -------------------------------------------------------------------------
 
-	test(
-		'tool use: bridge routes tool_use/tool_result correctly',
-		async () => {
-			// Create a workspace with a known file the model will read.
-			const workspacePath = join(TMP_DIR, `copilot-anthropic-tool-${Date.now()}`);
-			mkdirSync(workspacePath, { recursive: true });
-			writeFileSync(join(workspacePath, 'answer.txt'), 'The secret number is 42.');
+  test(
+    'tool use: bridge routes tool_use/tool_result correctly',
+    async () => {
+      // Create a workspace with a known file the model will read.
+      const workspacePath = join(TMP_DIR, `copilot-anthropic-tool-${Date.now()}`);
+      mkdirSync(workspacePath, { recursive: true });
+      writeFileSync(join(workspacePath, 'answer.txt'), 'The secret number is 42.');
 
-			const { sessionId } = (await daemon.messageHub.request('session.create', {
-				workspacePath,
-				title: 'Copilot Anthropic Tool-Use Test',
-				config: { model: testModelId, permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-			daemon.trackSession(sessionId);
+      const { sessionId } = (await daemon.messageHub.request('session.create', {
+        workspacePath,
+        title: 'Copilot Anthropic Tool-Use Test',
+        config: { model: testModelId, permissionMode: 'acceptEdits' },
+      })) as { sessionId: string };
+      daemon.trackSession(sessionId);
 
-			await sendMessage(
-				daemon,
-				sessionId,
-				'Read the file answer.txt in the current directory and tell me the exact content.'
-			);
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+      await sendMessage(
+        daemon,
+        sessionId,
+        'Read the file answer.txt in the current directory and tell me the exact content.'
+      );
+      await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-				minCount: 1,
-				timeout: IDLE_TIMEOUT,
-			});
+      const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+        minCount: 1,
+        timeout: IDLE_TIMEOUT,
+      });
 
-			// At least one tool_use block proves the bridge fired.
-			expect(hasToolUseBlock(sdkMessages)).toBe(true);
+      // At least one tool_use block proves the bridge fired.
+      expect(hasToolUseBlock(sdkMessages)).toBe(true);
 
-			// The response text should contain the file content.
-			const text = sdkMessages
-				.filter((m) => (m as { type?: string }).type === 'assistant')
-				.map((m) => extractAssistantText(m as Record<string, unknown>))
-				.join('');
-			// "secret" proves the actual file content was received (not a coincidental "42")
-			expect(text).toContain('secret');
-			expect(text).toContain('42');
-		},
-		TEST_TIMEOUT
-	);
+      // The response text should contain the file content.
+      const text = sdkMessages
+        .filter((m) => (m as { type?: string }).type === 'assistant')
+        .map((m) => extractAssistantText(m as Record<string, unknown>))
+        .join('');
+      // "secret" proves the actual file content was received (not a coincidental "42")
+      expect(text).toContain('secret');
+      expect(text).toContain('42');
+    },
+    TEST_TIMEOUT
+  );
 
-	// -------------------------------------------------------------------------
-	// 3. Custom MCP tool
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 3. Custom MCP tool
+  // -------------------------------------------------------------------------
 
-	test(
-		'custom MCP: programmatically registered server is discovered and exposed to the model',
-		async () => {
-			const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
-			mkdirSync(workspacePath, { recursive: true });
+  test(
+    'custom MCP: programmatically registered server is discovered and exposed to the model',
+    async () => {
+      const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
+      mkdirSync(workspacePath, { recursive: true });
 
-			const uniqueToken = `tok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const uniqueToken = `tok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-			// Flag file written by the MCP server when the Agent SDK calls tools/list.
-			// Its existence is the primary assertion: it proves the SDK registered
-			// the MCP server, spawned the subprocess, and fetched the tool list —
-			// meaning get_answer was included in the tools array sent to the Copilot
-			// HTTP server (i.e. the MCP bridge is wired up correctly).
-			const toolsListedFlag = join(workspacePath, '.mcp-tools-listed');
+      // Flag file written by the MCP server when the Agent SDK calls tools/list.
+      // Its existence is the primary assertion: it proves the SDK registered
+      // the MCP server, spawned the subprocess, and fetched the tool list —
+      // meaning get_answer was included in the tools array sent to the Copilot
+      // HTTP server (i.e. the MCP bridge is wired up correctly).
+      const toolsListedFlag = join(workspacePath, '.mcp-tools-listed');
 
-			// Write the minimal MCP server to disk. Pre-M1 this would be registered
-			// by dropping a `.mcp.json` alongside it, but M1
-			// (docs/plans/unify-mcp-config-model/00-overview.md) forces
-			// `settingSources: []` and `strictMcpConfig: true` on every session so
-			// the SDK no longer auto-loads project `.mcp.json`. Instead we pass
-			// the server programmatically via `config.mcpServers`, which is what
-			// the registry/resolver will do once M3 lands.
-			const mcpServerPath = join(workspacePath, 'test-mcp-server.js');
-			writeFileSync(mcpServerPath, makeMcpServerScript(uniqueToken, toolsListedFlag));
+      // Write the minimal MCP server to disk. Pre-M1 this would be registered
+      // by dropping a `.mcp.json` alongside it, but M1
+      // (docs/plans/unify-mcp-config-model/00-overview.md) forces
+      // `settingSources: []` and `strictMcpConfig: true` on every session so
+      // the SDK no longer auto-loads project `.mcp.json`. Instead we pass
+      // the server programmatically via `config.mcpServers`, which is what
+      // the registry/resolver will do once M3 lands.
+      const mcpServerPath = join(workspacePath, 'test-mcp-server.js');
+      writeFileSync(mcpServerPath, makeMcpServerScript(uniqueToken, toolsListedFlag));
 
-			const { sessionId } = (await daemon.messageHub.request('session.create', {
-				workspacePath,
-				title: 'Copilot Anthropic MCP Test',
-				config: {
-					model: testModelId,
-					permissionMode: 'acceptEdits',
-					mcpServers: {
-						'test-answer-server': {
-							command: 'node',
-							args: [mcpServerPath],
-						},
-					},
-				},
-			})) as { sessionId: string };
-			daemon.trackSession(sessionId);
+      const { sessionId } = (await daemon.messageHub.request('session.create', {
+        workspacePath,
+        title: 'Copilot Anthropic MCP Test',
+        config: {
+          model: testModelId,
+          permissionMode: 'acceptEdits',
+          mcpServers: {
+            'test-answer-server': {
+              command: 'node',
+              args: [mcpServerPath],
+            },
+          },
+        },
+      })) as { sessionId: string };
+      daemon.trackSession(sessionId);
 
-			await sendMessage(
-				daemon,
-				sessionId,
-				'Call the get_answer tool and report the exact token it returns. ' +
-					'You MUST use the tool — do not guess or invent a value. ' +
-					'Reply with only the token string, nothing else.'
-			);
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+      await sendMessage(
+        daemon,
+        sessionId,
+        'Call the get_answer tool and report the exact token it returns. ' +
+          'You MUST use the tool — do not guess or invent a value. ' +
+          'Reply with only the token string, nothing else.'
+      );
+      await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			// PRIMARY assertion: the Agent SDK initialised the MCP server.
-			// The MCP server writes the flag when it receives a tools/list request,
-			// which precedes the first model inference.  By the time waitForIdle
-			// returns the flag should already exist, but we poll for up to 5 s to
-			// absorb any OS file-visibility latency on slow CI runners.
-			const flagDeadline = Date.now() + 5_000;
-			while (!existsSync(toolsListedFlag) && Date.now() < flagDeadline) {
-				await new Promise((r) => setTimeout(r, 100));
-			}
-			expect(existsSync(toolsListedFlag)).toBe(true);
+      // PRIMARY assertion: the Agent SDK initialised the MCP server.
+      // The MCP server writes the flag when it receives a tools/list request,
+      // which precedes the first model inference.  By the time waitForIdle
+      // returns the flag should already exist, but we poll for up to 5 s to
+      // absorb any OS file-visibility latency on slow CI runners.
+      const flagDeadline = Date.now() + 5_000;
+      while (!existsSync(toolsListedFlag) && Date.now() < flagDeadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(existsSync(toolsListedFlag)).toBe(true);
 
-			// SECONDARY assertion (informational): if the Copilot model chose to call
-			// get_answer, its response must contain the unique token.  We do not assert
-			// hasToolUseBlock here because GPT-4o-based Copilot models do not reliably
-			// call tools on explicit instruction — that is a model-behaviour difference
-			// from Claude, not a bridge defect.  The primary assertion above already
-			// proves the tool was exposed; whether the model uses it is out of scope.
-			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-				minCount: 1,
-				timeout: IDLE_TIMEOUT,
-			});
-			if (hasToolUseBlock(sdkMessages, 'get_answer')) {
-				const text = sdkMessages
-					.filter((m) => (m as { type?: string }).type === 'assistant')
-					.map((m) => extractAssistantText(m as Record<string, unknown>))
-					.join('');
-				expect(text).toContain(uniqueToken);
-			}
-		},
-		TEST_TIMEOUT
-	);
+      // SECONDARY assertion (informational): if the Copilot model chose to call
+      // get_answer, its response must contain the unique token.  We do not assert
+      // hasToolUseBlock here because GPT-4o-based Copilot models do not reliably
+      // call tools on explicit instruction — that is a model-behaviour difference
+      // from Claude, not a bridge defect.  The primary assertion above already
+      // proves the tool was exposed; whether the model uses it is out of scope.
+      const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+        minCount: 1,
+        timeout: IDLE_TIMEOUT,
+      });
+      if (hasToolUseBlock(sdkMessages, 'get_answer')) {
+        const text = sdkMessages
+          .filter((m) => (m as { type?: string }).type === 'assistant')
+          .map((m) => extractAssistantText(m as Record<string, unknown>))
+          .join('');
+        expect(text).toContain(uniqueToken);
+      }
+    },
+    TEST_TIMEOUT
+  );
 
-	// -------------------------------------------------------------------------
-	// 4. Models list includes Copilot models
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 4. Models list includes Copilot models
+  // -------------------------------------------------------------------------
 
-	test('models list: anthropic-copilot models are present when authenticated', async () => {
-		// testModelId is set in beforeAll from the models.list call — if we reach here,
-		// the embedded server is running and at least one copilot model was returned.
-		expect(testModelId).toBeTruthy();
-	});
+  test('models list: anthropic-copilot models are present when authenticated', async () => {
+    // testModelId is set in beforeAll from the models.list call — if we reach here,
+    // the embedded server is running and at least one copilot model was returned.
+    expect(testModelId).toBeTruthy();
+  });
 
-	// -------------------------------------------------------------------------
-	// 5. Explicit provider session creation
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 5. Explicit provider session creation
+  // -------------------------------------------------------------------------
 
-	test(
-		'provider session: session.create with explicit config.provider uses copilot backend',
-		async () => {
-			const workspacePath = join(TMP_DIR, `copilot-provider-session-${Date.now()}`);
-			mkdirSync(workspacePath, { recursive: true });
+  test(
+    'provider session: session.create with explicit config.provider uses copilot backend',
+    async () => {
+      const workspacePath = join(TMP_DIR, `copilot-provider-session-${Date.now()}`);
+      mkdirSync(workspacePath, { recursive: true });
 
-			// Create session with explicit provider — this is the key assertion:
-			// passing config.provider:'anthropic-copilot' must route to the copilot
-			// backend regardless of whether the model ID is ambiguous.
-			const { sessionId } = (await daemon.messageHub.request('session.create', {
-				workspacePath,
-				title: 'Copilot Explicit Provider Test',
-				config: {
-					model: testModelId,
-					provider: 'anthropic-copilot',
-					permissionMode: 'acceptEdits',
-				},
-			})) as { sessionId: string };
-			daemon.trackSession(sessionId);
+      // Create session with explicit provider — this is the key assertion:
+      // passing config.provider:'anthropic-copilot' must route to the copilot
+      // backend regardless of whether the model ID is ambiguous.
+      const { sessionId } = (await daemon.messageHub.request('session.create', {
+        workspacePath,
+        title: 'Copilot Explicit Provider Test',
+        config: {
+          model: testModelId,
+          provider: 'anthropic-copilot',
+          permissionMode: 'acceptEdits',
+        },
+      })) as { sessionId: string };
+      daemon.trackSession(sessionId);
 
-			// Query the session metadata to confirm the stored provider is 'anthropic-copilot'.
-			const { session } = (await daemon.messageHub.request('session.get', {
-				sessionId,
-			})) as { session: { config?: { provider?: string } } };
-			expect(session.config?.provider).toBe('anthropic-copilot');
+      // Query the session metadata to confirm the stored provider is 'anthropic-copilot'.
+      const { session } = (await daemon.messageHub.request('session.get', {
+        sessionId,
+      })) as { session: { config?: { provider?: string } } };
+      expect(session.config?.provider).toBe('anthropic-copilot');
 
-			// Send a message and verify the copilot backend responds.
-			// sendMessage() already polls until processing starts, so waitForIdle()
-			// will not resolve against the pre-send idle state.
-			await sendMessage(daemon, sessionId, 'Reply with exactly: COPILOT_OK');
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+      // Send a message and verify the copilot backend responds.
+      // sendMessage() already polls until processing starts, so waitForIdle()
+      // will not resolve against the pre-send idle state.
+      await sendMessage(daemon, sessionId, 'Reply with exactly: COPILOT_OK');
+      await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			// waitForIdle may resolve on a brief idle between Copilot retry cycles
-			// before the assistant message is persisted. Use a long timeout so we
-			// keep polling until the real response arrives.
-			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-				minCount: 1,
-				timeout: IDLE_TIMEOUT,
-			});
-			const text = sdkMessages
-				.filter((m) => (m as { type?: string }).type === 'assistant')
-				.map((m) => extractAssistantText(m as Record<string, unknown>))
-				.join('');
-			// The model must echo the token back -- a bare truthiness check would pass
-			// even for error messages or refusals from a wrong backend.
-			expect(text.toUpperCase()).toContain('COPILOT_OK');
-		},
-		TEST_TIMEOUT
-	);
+      // waitForIdle may resolve on a brief idle between Copilot retry cycles
+      // before the assistant message is persisted. Use a long timeout so we
+      // keep polling until the real response arrives.
+      const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+        minCount: 1,
+        timeout: IDLE_TIMEOUT,
+      });
+      const text = sdkMessages
+        .filter((m) => (m as { type?: string }).type === 'assistant')
+        .map((m) => extractAssistantText(m as Record<string, unknown>))
+        .join('');
+      // The model must echo the token back -- a bare truthiness check would pass
+      // even for error messages or refusals from a wrong backend.
+      expect(text.toUpperCase()).toContain('COPILOT_OK');
+    },
+    TEST_TIMEOUT
+  );
 
-	// -------------------------------------------------------------------------
-	// 6. Error envelope — invalid request returns Anthropic JSON error format
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 6. Error envelope — invalid request returns Anthropic JSON error format
+  // -------------------------------------------------------------------------
 
-	test(
-		'error envelope: stream:false returns Anthropic JSON error envelope',
-		async () => {
-			// Instantiate the provider directly to access the bridge URL without
-			// routing through the daemon session lifecycle.
-			const directProvider = new AnthropicToCopilotBridgeProvider();
-			const bridgeUrl = await directProvider.ensureServerStarted();
+  test(
+    'error envelope: stream:false returns Anthropic JSON error envelope',
+    async () => {
+      // Instantiate the provider directly to access the bridge URL without
+      // routing through the daemon session lifecycle.
+      const directProvider = new AnthropicToCopilotBridgeProvider();
+      const bridgeUrl = await directProvider.ensureServerStarted();
 
-			try {
-				// The copilot bridge requires stream:true — explicitly setting stream:false
-				// triggers an immediate 400 invalid_request_error (no API call needed).
-				const response = await fetch(`${bridgeUrl}/v1/messages`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						model: testModelId,
-						messages: [{ role: 'user', content: 'hi' }],
-						max_tokens: 16,
-						stream: false,
-					}),
-				});
+      try {
+        // The copilot bridge requires stream:true — explicitly setting stream:false
+        // triggers an immediate 400 invalid_request_error (no API call needed).
+        const response = await fetch(`${bridgeUrl}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: testModelId,
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 16,
+            stream: false,
+          }),
+        });
 
-				expect(response.status).toBe(400);
-				const body = (await response.json()) as {
-					type?: string;
-					error?: { type?: string; message?: string };
-				};
-				// Must be Anthropic JSON error envelope: { type:'error', error:{type,message} }
-				expect(body.type).toBe('error');
-				expect(body.error?.type).toBe('invalid_request_error');
-				expect(typeof body.error?.message).toBe('string');
-			} finally {
-				await directProvider.shutdown();
-			}
-		},
-		SETUP_TIMEOUT
-	);
+        expect(response.status).toBe(400);
+        const body = (await response.json()) as {
+          type?: string;
+          error?: { type?: string; message?: string };
+        };
+        // Must be Anthropic JSON error envelope: { type:'error', error:{type,message} }
+        expect(body.type).toBe('error');
+        expect(body.error?.type).toBe('invalid_request_error');
+        expect(typeof body.error?.message).toBe('string');
+      } finally {
+        await directProvider.shutdown();
+      }
+    },
+    SETUP_TIMEOUT
+  );
 
-	// -------------------------------------------------------------------------
-	// 7. Token usage — session metadata has non-zero input_tokens and output_tokens
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // 7. Token usage — session metadata has non-zero input_tokens and output_tokens
+  // -------------------------------------------------------------------------
 
-	test(
-		'token usage: session metadata contains non-zero input_tokens and output_tokens',
-		async () => {
-			// Route through the daemon session lifecycle (uses the existing Copilot
-			// provider that was already warmed up in beforeAll).  Creating a fresh
-			// AnthropicToCopilotBridgeProvider here would spin up a new CopilotClient
-			// subprocess whose first createSession call lists models, which can return
-			// 429 after the preceding tests have exhausted the rate limit window.
-			const workspacePath = join(TMP_DIR, `copilot-token-usage-${Date.now()}`);
-			mkdirSync(workspacePath, { recursive: true });
+  test(
+    'token usage: session metadata contains non-zero input_tokens and output_tokens',
+    async () => {
+      // Route through the daemon session lifecycle (uses the existing Copilot
+      // provider that was already warmed up in beforeAll).  Creating a fresh
+      // AnthropicToCopilotBridgeProvider here would spin up a new CopilotClient
+      // subprocess whose first createSession call lists models, which can return
+      // 429 after the preceding tests have exhausted the rate limit window.
+      const workspacePath = join(TMP_DIR, `copilot-token-usage-${Date.now()}`);
+      mkdirSync(workspacePath, { recursive: true });
 
-			const { sessionId } = (await daemon.messageHub.request('session.create', {
-				workspacePath,
-				title: 'Copilot Token Usage Test',
-				config: { model: testModelId, permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-			daemon.trackSession(sessionId);
+      const { sessionId } = (await daemon.messageHub.request('session.create', {
+        workspacePath,
+        title: 'Copilot Token Usage Test',
+        config: { model: testModelId, permissionMode: 'acceptEdits' },
+      })) as { sessionId: string };
+      daemon.trackSession(sessionId);
 
-			await sendMessage(daemon, sessionId, 'Say hello in one sentence.');
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+      await sendMessage(daemon, sessionId, 'Say hello in one sentence.');
+      await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			// Wait for SDK messages to be persisted — consistent with other tests that
-			// also use waitForSdkMessages before querying session state.
-			await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
+      // Wait for SDK messages to be persisted — consistent with other tests that
+      // also use waitForSdkMessages before querying session state.
+      await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
 
-			// Token counts are accumulated in session metadata by the SDK message handler.
-			// The Copilot bridge emits heuristic input/output counts via SSE (input from
-			// prompt length, output from response character count), which the Claude Agent
-			// SDK processes and stores in the assistant message's usage field, then
-			// persists to session.metadata.inputTokens/outputTokens.
-			const { session } = (await daemon.messageHub.request('session.get', {
-				sessionId,
-			})) as { session: { metadata?: { inputTokens?: number; outputTokens?: number } } };
+      // Token counts are accumulated in session metadata by the SDK message handler.
+      // The Copilot bridge emits heuristic input/output counts via SSE (input from
+      // prompt length, output from response character count), which the Claude Agent
+      // SDK processes and stores in the assistant message's usage field, then
+      // persists to session.metadata.inputTokens/outputTokens.
+      const { session } = (await daemon.messageHub.request('session.get', {
+        sessionId,
+      })) as { session: { metadata?: { inputTokens?: number; outputTokens?: number } } };
 
-			expect(session.metadata?.inputTokens ?? 0).toBeGreaterThan(0);
-			expect(session.metadata?.outputTokens ?? 0).toBeGreaterThan(0);
-		},
-		TEST_TIMEOUT
-	);
+      expect(session.metadata?.inputTokens ?? 0).toBeGreaterThan(0);
+      expect(session.metadata?.outputTokens ?? 0).toBeGreaterThan(0);
+    },
+    TEST_TIMEOUT
+  );
 });

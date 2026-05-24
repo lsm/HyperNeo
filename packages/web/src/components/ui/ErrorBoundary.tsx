@@ -1,13 +1,13 @@
 import { Component, type ComponentChildren, type ErrorInfo, type VNode } from 'preact';
 
 export interface ErrorBoundaryProps {
-	children: ComponentChildren;
-	fallback?: VNode;
-	onError?: (error: unknown, errorInfo: ErrorInfo) => void;
+  children: ComponentChildren;
+  fallback?: VNode;
+  onError?: (error: unknown, errorInfo: ErrorInfo) => void;
 }
 
 export interface ErrorBoundaryState {
-	hasError: boolean;
+  hasError: boolean;
 }
 
 /**
@@ -17,38 +17,38 @@ export interface ErrorBoundaryState {
  * after a deploy) without crashing the entire component tree.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-	state: ErrorBoundaryState = { hasError: false };
+  state: ErrorBoundaryState = { hasError: false };
 
-	static getDerivedStateFromError(): ErrorBoundaryState {
-		return { hasError: true };
-	}
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
 
-	componentDidCatch(error: unknown, errorInfo: ErrorInfo): void {
-		this.props.onError?.(error, errorInfo);
-	}
+  componentDidCatch(error: unknown, errorInfo: ErrorInfo): void {
+    this.props.onError?.(error, errorInfo);
+  }
 
-	handleRetry = (): void => {
-		this.setState({ hasError: false });
-	};
+  handleRetry = (): void => {
+    this.setState({ hasError: false });
+  };
 
-	render() {
-		if (this.state.hasError) {
-			if (this.props.fallback) {
-				return this.props.fallback;
-			}
-			return (
-				<div class="flex flex-col items-center justify-center h-full gap-3 p-4">
-					<p class="text-sm text-gray-400">Failed to load component</p>
-					<button
-						type="button"
-						class="text-sm text-blue-400 hover:text-blue-300 underline"
-						onClick={this.handleRetry}
-					>
-						Retry
-					</button>
-				</div>
-			);
-		}
-		return this.props.children;
-	}
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div class="flex flex-col items-center justify-center h-full gap-3 p-4">
+          <p class="text-sm text-gray-400">Failed to load component</p>
+          <button
+            type="button"
+            class="text-sm text-blue-400 hover:text-blue-300 underline"
+            onClick={this.handleRetry}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }

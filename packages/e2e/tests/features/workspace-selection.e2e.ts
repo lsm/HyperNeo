@@ -17,70 +17,70 @@ import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, cleanupTestSession } from '../helpers/wait-helpers';
 
 test.describe('New Session modal', () => {
-	let createdSessionIds: string[] = [];
+  let createdSessionIds: string[] = [];
 
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		await waitForWebSocketConnected(page);
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await waitForWebSocketConnected(page);
 
-		// Wait for lobby to be fully loaded
-		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
-			timeout: 15000,
-		});
-		createdSessionIds = [];
-	});
+    // Wait for lobby to be fully loaded
+    await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    createdSessionIds = [];
+  });
 
-	test.afterEach(async ({ page }) => {
-		for (const sessionId of createdSessionIds) {
-			try {
-				await cleanupTestSession(page, sessionId);
-			} catch {
-				// Cleanup failure is non-critical
-			}
-		}
-		createdSessionIds = [];
-	});
+  test.afterEach(async ({ page }) => {
+    for (const sessionId of createdSessionIds) {
+      try {
+        await cleanupTestSession(page, sessionId);
+      } catch {
+        // Cleanup failure is non-critical
+      }
+    }
+    createdSessionIds = [];
+  });
 
-	test('New Session modal appears when clicking the button', async ({ page }) => {
-		// Click the "New Session" button in the lobby header
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+  test('New Session modal appears when clicking the button', async ({ page }) => {
+    // Click the "New Session" button in the lobby header
+    await page.getByRole('button', { name: 'New Session', exact: true }).click();
 
-		// The modal should appear with title "New Session"
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
-		await expect(
-			page.getByRole('dialog').getByRole('heading', { name: 'New Session' })
-		).toBeVisible();
+    // The modal should appear with title "New Session"
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.getByRole('dialog').getByRole('heading', { name: 'New Session' })
+    ).toBeVisible();
 
-		// Create Session button should be enabled
-		await expect(
-			page.getByRole('dialog').getByRole('button', { name: 'Create Session' })
-		).toBeEnabled();
+    // Create Session button should be enabled
+    await expect(
+      page.getByRole('dialog').getByRole('button', { name: 'Create Session' })
+    ).toBeEnabled();
 
-		// Close the modal
-		await page.keyboard.press('Escape');
-		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
-	});
+    // Close the modal
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+  });
 
-	test('Session can be created without a workspace path', async ({ page }) => {
-		// Open the New Session modal
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+  test('Session can be created without a workspace path', async ({ page }) => {
+    // Open the New Session modal
+    await page.getByRole('button', { name: 'New Session', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
-		// Submit button should be enabled
-		const submitButton = page.getByRole('dialog').getByRole('button', { name: 'Create Session' });
-		await expect(submitButton).toBeEnabled();
+    // Submit button should be enabled
+    const submitButton = page.getByRole('dialog').getByRole('button', { name: 'Create Session' });
+    await expect(submitButton).toBeEnabled();
 
-		// Click "Create Session"
-		await submitButton.click();
+    // Click "Create Session"
+    await submitButton.click();
 
-		// Should navigate to a session
-		await expect(page).not.toHaveURL('/', { timeout: 10000 });
+    // Should navigate to a session
+    await expect(page).not.toHaveURL('/', { timeout: 10000 });
 
-		// Extract session ID from URL for cleanup
-		const url = page.url();
-		const sessionIdMatch = url.match(/\/session\/([^/?#]+)/);
-		if (sessionIdMatch) {
-			createdSessionIds.push(sessionIdMatch[1]);
-		}
-	});
+    // Extract session ID from URL for cleanup
+    const url = page.url();
+    const sessionIdMatch = url.match(/\/session\/([^/?#]+)/);
+    if (sessionIdMatch) {
+      createdSessionIds.push(sessionIdMatch[1]);
+    }
+  });
 });

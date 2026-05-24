@@ -25,26 +25,26 @@ export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 2.0;
 
 function clampScale(s: number): number {
-	return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 }
 
 function getTouchDistance(touches: TouchList): number {
-	const first = touches[0];
-	const second = touches[1];
-	const dx = second.clientX - first.clientX;
-	const dy = second.clientY - first.clientY;
-	return Math.hypot(dx, dy);
+  const first = touches[0];
+  const second = touches[1];
+  const dx = second.clientX - first.clientX;
+  const dy = second.clientY - first.clientY;
+  return Math.hypot(dx, dy);
 }
 
 function getTouchMidpoint(touches: TouchList, rect: DOMRect): { x: number; y: number } {
-	const first = touches[0];
-	const second = touches[1];
-	const clientX = (first.clientX + second.clientX) / 2;
-	const clientY = (first.clientY + second.clientY) / 2;
-	return {
-		x: clientX - rect.left,
-		y: clientY - rect.top,
-	};
+  const first = touches[0];
+  const second = touches[1];
+  const clientX = (first.clientX + second.clientX) / 2;
+  const clientY = (first.clientY + second.clientY) / 2;
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  };
 }
 
 /**
@@ -58,404 +58,404 @@ function getTouchMidpoint(touches: TouchList, rect: DOMRect): { x: number; y: nu
  * @param cursorY   Cursor Y relative to the canvas container
  */
 export function applyWheelEvent(
-	vp: ViewportState,
-	deltaX: number,
-	deltaY: number,
-	isZoom: boolean,
-	cursorX = 0,
-	cursorY = 0
+  vp: ViewportState,
+  deltaX: number,
+  deltaY: number,
+  isZoom: boolean,
+  cursorX = 0,
+  cursorY = 0
 ): ViewportState {
-	if (isZoom) {
-		const zoomFactor = 1 - deltaY * 0.005;
-		const newScale = clampScale(vp.scale * zoomFactor);
-		// Adjust offset so the point under the cursor stays fixed
-		const newOffsetX = cursorX - (cursorX - vp.offsetX) * (newScale / vp.scale);
-		const newOffsetY = cursorY - (cursorY - vp.offsetY) * (newScale / vp.scale);
-		return { offsetX: newOffsetX, offsetY: newOffsetY, scale: newScale };
-	}
-	// Two-finger scroll — pan
-	return { ...vp, offsetX: vp.offsetX - deltaX, offsetY: vp.offsetY - deltaY };
+  if (isZoom) {
+    const zoomFactor = 1 - deltaY * 0.005;
+    const newScale = clampScale(vp.scale * zoomFactor);
+    // Adjust offset so the point under the cursor stays fixed
+    const newOffsetX = cursorX - (cursorX - vp.offsetX) * (newScale / vp.scale);
+    const newOffsetY = cursorY - (cursorY - vp.offsetY) * (newScale / vp.scale);
+    return { offsetX: newOffsetX, offsetY: newOffsetY, scale: newScale };
+  }
+  // Two-finger scroll — pan
+  return { ...vp, offsetX: vp.offsetX - deltaX, offsetY: vp.offsetY - deltaY };
 }
 
 interface VisualCanvasProps {
-	children?: ComponentChildren;
-	viewportState: ViewportState;
-	onViewportChange: (state: ViewportState) => void;
-	/** Called when the canvas background is clicked (not on a child node). */
-	onBackgroundClick?: () => void;
-	/** Render prop for injecting SVG edge content. Receives current viewport state. */
-	edgeLayer?: (viewport: ViewportState) => ComponentChildren;
-	/** Node positions used by the fit-to-view toolbar button. */
-	nodes?: NodePosition;
-	/** Whether to show the zoom/fit toolbar overlay. Defaults to true. */
-	showToolbar?: boolean;
-	/**
-	 * Optional external ref to the canvas container element.
-	 * When provided, coordinate calculations (e.g. for ghost edges) use the same
-	 * element that VisualCanvas uses internally, avoiding any bounding-rect drift
-	 * if an outer wrapper gains padding/borders in future.
-	 */
-	containerRef?: RefObject<HTMLDivElement>;
+  children?: ComponentChildren;
+  viewportState: ViewportState;
+  onViewportChange: (state: ViewportState) => void;
+  /** Called when the canvas background is clicked (not on a child node). */
+  onBackgroundClick?: () => void;
+  /** Render prop for injecting SVG edge content. Receives current viewport state. */
+  edgeLayer?: (viewport: ViewportState) => ComponentChildren;
+  /** Node positions used by the fit-to-view toolbar button. */
+  nodes?: NodePosition;
+  /** Whether to show the zoom/fit toolbar overlay. Defaults to true. */
+  showToolbar?: boolean;
+  /**
+   * Optional external ref to the canvas container element.
+   * When provided, coordinate calculations (e.g. for ghost edges) use the same
+   * element that VisualCanvas uses internally, avoiding any bounding-rect drift
+   * if an outer wrapper gains padding/borders in future.
+   */
+  containerRef?: RefObject<HTMLDivElement>;
 }
 
 export function VisualCanvas({
-	children,
-	viewportState,
-	onViewportChange,
-	onBackgroundClick,
-	edgeLayer,
-	nodes = {},
-	showToolbar = true,
-	containerRef: externalContainerRef,
+  children,
+  viewportState,
+  onViewportChange,
+  onBackgroundClick,
+  edgeLayer,
+  nodes = {},
+  showToolbar = true,
+  containerRef: externalContainerRef,
 }: VisualCanvasProps) {
-	const internalContainerRef = useRef<HTMLDivElement>(null);
-	// Use externally-provided ref when available so callers can do their own
-	// coordinate math against the exact same element VisualCanvas uses.
-	const containerRef = externalContainerRef ?? internalContainerRef;
-	const transformRef = useRef<HTMLDivElement>(null);
-	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
+  const internalContainerRef = useRef<HTMLDivElement>(null);
+  // Use externally-provided ref when available so callers can do their own
+  // coordinate math against the exact same element VisualCanvas uses.
+  const containerRef = externalContainerRef ?? internalContainerRef;
+  const transformRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 
-	const contentBounds = useMemo(() => {
-		const entries = Object.values(nodes);
-		if (entries.length === 0) {
-			return {
-				width: containerSize.width,
-				height: containerSize.height,
-			};
-		}
+  const contentBounds = useMemo(() => {
+    const entries = Object.values(nodes);
+    if (entries.length === 0) {
+      return {
+        width: containerSize.width,
+        height: containerSize.height,
+      };
+    }
 
-		let maxX = 0;
-		let maxY = 0;
-		for (const node of entries) {
-			maxX = Math.max(maxX, node.x + node.width);
-			maxY = Math.max(maxY, node.y + node.height);
-		}
+    let maxX = 0;
+    let maxY = 0;
+    for (const node of entries) {
+      maxX = Math.max(maxX, node.x + node.width);
+      maxY = Math.max(maxY, node.y + node.height);
+    }
 
-		const CONTENT_PADDING = 120;
-		return {
-			width: Math.max(containerSize.width, maxX + CONTENT_PADDING),
-			height: Math.max(containerSize.height, maxY + CONTENT_PADDING),
-		};
-	}, [nodes, containerSize.height, containerSize.width]);
+    const CONTENT_PADDING = 120;
+    return {
+      width: Math.max(containerSize.width, maxX + CONTENT_PADDING),
+      height: Math.max(containerSize.height, maxY + CONTENT_PADDING),
+    };
+  }, [nodes, containerSize.height, containerSize.width]);
 
-	// Track spacebar state for pan-drag mode
-	const spacebarDown = useRef(false);
-	// Track drag state
-	const dragState = useRef<{
-		startX: number;
-		startY: number;
-		originOffsetX: number;
-		originOffsetY: number;
-	} | null>(null);
-	// Track whether a spacebar-drag actually moved the canvas (suppress background click)
-	const didDrag = useRef(false);
+  // Track spacebar state for pan-drag mode
+  const spacebarDown = useRef(false);
+  // Track drag state
+  const dragState = useRef<{
+    startX: number;
+    startY: number;
+    originOffsetX: number;
+    originOffsetY: number;
+  } | null>(null);
+  // Track whether a spacebar-drag actually moved the canvas (suppress background click)
+  const didDrag = useRef(false);
 
-	// Track one-finger touch pan gesture
-	const touchPanState = useRef<{
-		touchId: number;
-		startX: number;
-		startY: number;
-		originOffsetX: number;
-		originOffsetY: number;
-	} | null>(null);
+  // Track one-finger touch pan gesture
+  const touchPanState = useRef<{
+    touchId: number;
+    startX: number;
+    startY: number;
+    originOffsetX: number;
+    originOffsetY: number;
+  } | null>(null);
 
-	// Track active pinch-zoom gesture (two-finger touch)
-	const pinchState = useRef<{
-		initialDistance: number;
-		initialScale: number;
-		initialCanvasX: number;
-		initialCanvasY: number;
-	} | null>(null);
+  // Track active pinch-zoom gesture (two-finger touch)
+  const pinchState = useRef<{
+    initialDistance: number;
+    initialScale: number;
+    initialCanvasX: number;
+    initialCanvasY: number;
+  } | null>(null);
 
-	// Keep a ref to the latest viewport so event handlers don't stale-close over it
-	const viewportRef = useRef(viewportState);
-	viewportRef.current = viewportState;
+  // Keep a ref to the latest viewport so event handlers don't stale-close over it
+  const viewportRef = useRef(viewportState);
+  viewportRef.current = viewportState;
 
-	// ---- Track container size for toolbar fit-to-view ----
-	useEffect(() => {
-		const el = containerRef.current;
-		if (!el) return;
-		const obs = new ResizeObserver((entries) => {
-			const entry = entries[0];
-			if (entry) {
-				setContainerSize({
-					width: entry.contentRect.width,
-					height: entry.contentRect.height,
-				});
-			}
-		});
-		obs.observe(el);
-		// Set initial size
-		setContainerSize({ width: el.clientWidth, height: el.clientHeight });
-		return () => obs.disconnect();
-	}, []);
+  // ---- Track container size for toolbar fit-to-view ----
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setContainerSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    obs.observe(el);
+    // Set initial size
+    setContainerSize({ width: el.clientWidth, height: el.clientHeight });
+    return () => obs.disconnect();
+  }, []);
 
-	// ---- Wheel handler (pan + zoom) ----
-	// Registered via onWheel JSX prop so Preact attaches it as a non-passive
-	// listener, which lets us call e.preventDefault() to suppress browser
-	// scroll/pinch-zoom behaviour.
-	const handleWheel = useCallback(
-		(e: WheelEvent) => {
-			e.preventDefault();
-			const vp = viewportRef.current;
-			const rect = containerRef.current?.getBoundingClientRect();
-			const cursorX = e.clientX - (rect?.left ?? 0);
-			const cursorY = e.clientY - (rect?.top ?? 0);
-			onViewportChange(applyWheelEvent(vp, e.deltaX, e.deltaY, e.ctrlKey, cursorX, cursorY));
-		},
-		[onViewportChange]
-	);
+  // ---- Wheel handler (pan + zoom) ----
+  // Registered via onWheel JSX prop so Preact attaches it as a non-passive
+  // listener, which lets us call e.preventDefault() to suppress browser
+  // scroll/pinch-zoom behaviour.
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      e.preventDefault();
+      const vp = viewportRef.current;
+      const rect = containerRef.current?.getBoundingClientRect();
+      const cursorX = e.clientX - (rect?.left ?? 0);
+      const cursorY = e.clientY - (rect?.top ?? 0);
+      onViewportChange(applyWheelEvent(vp, e.deltaX, e.deltaY, e.ctrlKey, cursorX, cursorY));
+    },
+    [onViewportChange]
+  );
 
-	// ---- Spacebar listeners ----
-	useEffect(() => {
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.code === 'Space' && !e.repeat) {
-				// Don't capture space when focused on an input/textarea
-				const tag = (e.target as HTMLElement)?.tagName;
-				if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-				e.preventDefault(); // prevent browser "scroll down" default
-				spacebarDown.current = true;
-				if (containerRef.current) {
-					containerRef.current.style.cursor = 'grab';
-				}
-			}
-		};
-		const onKeyUp = (e: KeyboardEvent) => {
-			if (e.code === 'Space') {
-				spacebarDown.current = false;
-				dragState.current = null;
-				if (containerRef.current) {
-					containerRef.current.style.cursor = '';
-				}
-			}
-		};
-		window.addEventListener('keydown', onKeyDown);
-		window.addEventListener('keyup', onKeyUp);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-			window.removeEventListener('keyup', onKeyUp);
-		};
-	}, []);
+  // ---- Spacebar listeners ----
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat) {
+        // Don't capture space when focused on an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        e.preventDefault(); // prevent browser "scroll down" default
+        spacebarDown.current = true;
+        if (containerRef.current) {
+          containerRef.current.style.cursor = 'grab';
+        }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        spacebarDown.current = false;
+        dragState.current = null;
+        if (containerRef.current) {
+          containerRef.current.style.cursor = '';
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
 
-	// ---- Mouse drag for spacebar+click pan ----
-	const handleMouseDown = useCallback((e: MouseEvent) => {
-		if (e.button !== 0) return;
+  // ---- Mouse drag for spacebar+click pan ----
+  const handleMouseDown = useCallback((e: MouseEvent) => {
+    if (e.button !== 0) return;
 
-		const target = e.target as HTMLElement | null;
-		const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
-		const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
-		const shouldPan = spacebarDown.current || isBackgroundSurface || isPanSurface;
-		if (!shouldPan) return;
+    const target = e.target as HTMLElement | null;
+    const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
+    const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
+    const shouldPan = spacebarDown.current || isBackgroundSurface || isPanSurface;
+    if (!shouldPan) return;
 
-		e.preventDefault();
-		didDrag.current = false;
-		dragState.current = {
-			startX: e.clientX,
-			startY: e.clientY,
-			originOffsetX: viewportRef.current.offsetX,
-			originOffsetY: viewportRef.current.offsetY,
-		};
-		if (containerRef.current) {
-			containerRef.current.style.cursor = 'grabbing';
-		}
-	}, []);
+    e.preventDefault();
+    didDrag.current = false;
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originOffsetX: viewportRef.current.offsetX,
+      originOffsetY: viewportRef.current.offsetY,
+    };
+    if (containerRef.current) {
+      containerRef.current.style.cursor = 'grabbing';
+    }
+  }, []);
 
-	const handleMouseMove = useCallback(
-		(e: MouseEvent) => {
-			if (!dragState.current) return;
-			didDrag.current = true;
-			const dx = e.clientX - dragState.current.startX;
-			const dy = e.clientY - dragState.current.startY;
-			onViewportChange({
-				...viewportRef.current,
-				offsetX: dragState.current.originOffsetX + dx,
-				offsetY: dragState.current.originOffsetY + dy,
-			});
-		},
-		[onViewportChange]
-	);
+  const handleMouseMove = useCallback(
+    (e: MouseEvent) => {
+      if (!dragState.current) return;
+      didDrag.current = true;
+      const dx = e.clientX - dragState.current.startX;
+      const dy = e.clientY - dragState.current.startY;
+      onViewportChange({
+        ...viewportRef.current,
+        offsetX: dragState.current.originOffsetX + dx,
+        offsetY: dragState.current.originOffsetY + dy,
+      });
+    },
+    [onViewportChange]
+  );
 
-	const handleMouseUp = useCallback(() => {
-		if (!dragState.current) return;
-		dragState.current = null;
-		if (containerRef.current) {
-			containerRef.current.style.cursor = spacebarDown.current ? 'grab' : '';
-		}
-	}, []);
+  const handleMouseUp = useCallback(() => {
+    if (!dragState.current) return;
+    dragState.current = null;
+    if (containerRef.current) {
+      containerRef.current.style.cursor = spacebarDown.current ? 'grab' : '';
+    }
+  }, []);
 
-	useEffect(() => {
-		window.addEventListener('mousemove', handleMouseMove);
-		window.addEventListener('mouseup', handleMouseUp);
-		return () => {
-			window.removeEventListener('mousemove', handleMouseMove);
-			window.removeEventListener('mouseup', handleMouseUp);
-		};
-	}, [handleMouseMove, handleMouseUp]);
+  useEffect(() => {
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleMouseMove, handleMouseUp]);
 
-	// ---- Touch gestures (mobile Safari / iPhone) ----
-	const handleTouchStart = useCallback((e: TouchEvent) => {
-		if (e.touches.length >= 2) {
-			touchPanState.current = null;
-			const rect = containerRef.current?.getBoundingClientRect();
-			if (!rect) return;
-			const distance = getTouchDistance(e.touches);
-			if (distance <= 0) return;
-			const midpoint = getTouchMidpoint(e.touches, rect);
-			const vp = viewportRef.current;
-			pinchState.current = {
-				initialDistance: distance,
-				initialScale: vp.scale,
-				initialCanvasX: (midpoint.x - vp.offsetX) / vp.scale,
-				initialCanvasY: (midpoint.y - vp.offsetY) / vp.scale,
-			};
-			e.preventDefault();
-			return;
-		}
+  // ---- Touch gestures (mobile Safari / iPhone) ----
+  const handleTouchStart = useCallback((e: TouchEvent) => {
+    if (e.touches.length >= 2) {
+      touchPanState.current = null;
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const distance = getTouchDistance(e.touches);
+      if (distance <= 0) return;
+      const midpoint = getTouchMidpoint(e.touches, rect);
+      const vp = viewportRef.current;
+      pinchState.current = {
+        initialDistance: distance,
+        initialScale: vp.scale,
+        initialCanvasX: (midpoint.x - vp.offsetX) / vp.scale,
+        initialCanvasY: (midpoint.y - vp.offsetY) / vp.scale,
+      };
+      e.preventDefault();
+      return;
+    }
 
-		pinchState.current = null;
-		if (e.touches.length !== 1) return;
-		const target = e.target as HTMLElement | null;
-		const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
-		const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
-		if (!isBackgroundSurface && !isPanSurface) return;
-		const touch = e.touches[0];
-		touchPanState.current = {
-			touchId: touch.identifier,
-			startX: touch.clientX,
-			startY: touch.clientY,
-			originOffsetX: viewportRef.current.offsetX,
-			originOffsetY: viewportRef.current.offsetY,
-		};
-		didDrag.current = false;
-		e.preventDefault();
-	}, []);
+    pinchState.current = null;
+    if (e.touches.length !== 1) return;
+    const target = e.target as HTMLElement | null;
+    const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
+    const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
+    if (!isBackgroundSurface && !isPanSurface) return;
+    const touch = e.touches[0];
+    touchPanState.current = {
+      touchId: touch.identifier,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      originOffsetX: viewportRef.current.offsetX,
+      originOffsetY: viewportRef.current.offsetY,
+    };
+    didDrag.current = false;
+    e.preventDefault();
+  }, []);
 
-	const handleTouchMove = useCallback(
-		(e: TouchEvent) => {
-			const pinch = pinchState.current;
-			if (pinch && e.touches.length >= 2) {
-				const rect = containerRef.current?.getBoundingClientRect();
-				if (!rect) return;
-				const distance = getTouchDistance(e.touches);
-				if (distance <= 0) return;
-				const midpoint = getTouchMidpoint(e.touches, rect);
-				const nextScale = clampScale(pinch.initialScale * (distance / pinch.initialDistance));
-				onViewportChange({
-					offsetX: midpoint.x - pinch.initialCanvasX * nextScale,
-					offsetY: midpoint.y - pinch.initialCanvasY * nextScale,
-					scale: nextScale,
-				});
-				e.preventDefault();
-				return;
-			}
+  const handleTouchMove = useCallback(
+    (e: TouchEvent) => {
+      const pinch = pinchState.current;
+      if (pinch && e.touches.length >= 2) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const distance = getTouchDistance(e.touches);
+        if (distance <= 0) return;
+        const midpoint = getTouchMidpoint(e.touches, rect);
+        const nextScale = clampScale(pinch.initialScale * (distance / pinch.initialDistance));
+        onViewportChange({
+          offsetX: midpoint.x - pinch.initialCanvasX * nextScale,
+          offsetY: midpoint.y - pinch.initialCanvasY * nextScale,
+          scale: nextScale,
+        });
+        e.preventDefault();
+        return;
+      }
 
-			const pan = touchPanState.current;
-			if (!pan || e.touches.length !== 1) return;
-			const touch = Array.from(e.touches).find((t) => t.identifier === pan.touchId) ?? e.touches[0];
-			const dx = touch.clientX - pan.startX;
-			const dy = touch.clientY - pan.startY;
-			didDrag.current = true;
-			onViewportChange({
-				...viewportRef.current,
-				offsetX: pan.originOffsetX + dx,
-				offsetY: pan.originOffsetY + dy,
-			});
-			e.preventDefault();
-		},
-		[onViewportChange]
-	);
+      const pan = touchPanState.current;
+      if (!pan || e.touches.length !== 1) return;
+      const touch = Array.from(e.touches).find((t) => t.identifier === pan.touchId) ?? e.touches[0];
+      const dx = touch.clientX - pan.startX;
+      const dy = touch.clientY - pan.startY;
+      didDrag.current = true;
+      onViewportChange({
+        ...viewportRef.current,
+        offsetX: pan.originOffsetX + dx,
+        offsetY: pan.originOffsetY + dy,
+      });
+      e.preventDefault();
+    },
+    [onViewportChange]
+  );
 
-	const handleTouchEnd = useCallback((e: TouchEvent) => {
-		if (e.touches.length < 2) {
-			pinchState.current = null;
-		}
-		if (e.touches.length === 0) {
-			touchPanState.current = null;
-		}
-	}, []);
+  const handleTouchEnd = useCallback((e: TouchEvent) => {
+    if (e.touches.length < 2) {
+      pinchState.current = null;
+    }
+    if (e.touches.length === 0) {
+      touchPanState.current = null;
+    }
+  }, []);
 
-	// ---- Background click: fires when clicking the canvas outside of child nodes ----
-	// Child nodes should call e.stopPropagation() to prevent this from firing.
-	const handleContainerClick = useCallback(
-		(e: MouseEvent) => {
-			// Suppress if a spacebar-drag just finished
-			if (didDrag.current) {
-				didDrag.current = false;
-				return;
-			}
-			// Use refs instead of data-testid so this works correctly in production
-			// (where data-testid attributes may be stripped by build tooling).
-			const target = e.target as HTMLElement;
-			const isBackground = target === containerRef.current || target === transformRef.current;
-			if (isBackground) {
-				onBackgroundClick?.();
-			}
-		},
-		[onBackgroundClick]
-	);
+  // ---- Background click: fires when clicking the canvas outside of child nodes ----
+  // Child nodes should call e.stopPropagation() to prevent this from firing.
+  const handleContainerClick = useCallback(
+    (e: MouseEvent) => {
+      // Suppress if a spacebar-drag just finished
+      if (didDrag.current) {
+        didDrag.current = false;
+        return;
+      }
+      // Use refs instead of data-testid so this works correctly in production
+      // (where data-testid attributes may be stripped by build tooling).
+      const target = e.target as HTMLElement;
+      const isBackground = target === containerRef.current || target === transformRef.current;
+      if (isBackground) {
+        onBackgroundClick?.();
+      }
+    },
+    [onBackgroundClick]
+  );
 
-	const transform = `translate(${viewportState.offsetX}px, ${viewportState.offsetY}px) scale(${viewportState.scale})`;
+  const transform = `translate(${viewportState.offsetX}px, ${viewportState.offsetY}px) scale(${viewportState.scale})`;
 
-	return (
-		<div
-			ref={containerRef}
-			class="visual-canvas-container"
-			style={{
-				overflow: 'hidden',
-				width: '100%',
-				height: '100%',
-				position: 'relative',
-				touchAction: 'none',
-			}}
-			onMouseDown={handleMouseDown}
-			onWheel={handleWheel}
-			onTouchStart={handleTouchStart}
-			onTouchMove={handleTouchMove}
-			onTouchEnd={handleTouchEnd}
-			onTouchCancel={handleTouchEnd}
-			onClick={handleContainerClick}
-			data-testid="visual-canvas"
-		>
-			<div
-				ref={transformRef}
-				class="visual-canvas-transform"
-				style={{
-					transform,
-					transformOrigin: '0 0',
-					position: 'absolute',
-					top: 0,
-					left: 0,
-					width: `${contentBounds.width}px`,
-					height: `${contentBounds.height}px`,
-				}}
-				data-testid="visual-canvas-transform"
-			>
-				<svg
-					class="visual-canvas-edge-layer"
-					style={{
-						position: 'absolute',
-						top: 0,
-						left: 0,
-						width: '100%',
-						height: '100%',
-						pointerEvents: 'none',
-						overflow: 'visible',
-					}}
-					data-testid="visual-canvas-svg"
-				>
-					{edgeLayer?.(viewportState)}
-				</svg>
-				{children}
-			</div>
-			{showToolbar && (
-				<CanvasToolbar
-					viewport={viewportState}
-					nodes={nodes}
-					viewportWidth={containerSize.width}
-					viewportHeight={containerSize.height}
-					onViewportChange={onViewportChange}
-				/>
-			)}
-		</div>
-	);
+  return (
+    <div
+      ref={containerRef}
+      class="visual-canvas-container"
+      style={{
+        overflow: 'hidden',
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        touchAction: 'none',
+      }}
+      onMouseDown={handleMouseDown}
+      onWheel={handleWheel}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+      onClick={handleContainerClick}
+      data-testid="visual-canvas"
+    >
+      <div
+        ref={transformRef}
+        class="visual-canvas-transform"
+        style={{
+          transform,
+          transformOrigin: '0 0',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: `${contentBounds.width}px`,
+          height: `${contentBounds.height}px`,
+        }}
+        data-testid="visual-canvas-transform"
+      >
+        <svg
+          class="visual-canvas-edge-layer"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            overflow: 'visible',
+          }}
+          data-testid="visual-canvas-svg"
+        >
+          {edgeLayer?.(viewportState)}
+        </svg>
+        {children}
+      </div>
+      {showToolbar && (
+        <CanvasToolbar
+          viewport={viewportState}
+          nodes={nodes}
+          viewportWidth={containerSize.width}
+          viewportHeight={containerSize.height}
+          onViewportChange={onViewportChange}
+        />
+      )}
+    </div>
+  );
 }

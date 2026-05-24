@@ -19,20 +19,20 @@
  */
 
 import {
-	type AnthropicContentBlockImage,
-	type AnthropicContentBlockText,
-	type AnthropicContentBlockToolResult,
-	type AnthropicContentBlockToolUse,
-	type AnthropicRequest,
-	contentBlockStartTextSSE,
-	contentBlockStartToolUseSSE,
-	contentBlockStopSSE,
-	errorSSE,
-	inputJsonDeltaSSE,
-	messageDeltaSSE,
-	messageStartSSE,
-	messageStopSSE,
-	textDeltaSSE,
+  type AnthropicContentBlockImage,
+  type AnthropicContentBlockText,
+  type AnthropicContentBlockToolResult,
+  type AnthropicContentBlockToolUse,
+  type AnthropicRequest,
+  contentBlockStartTextSSE,
+  contentBlockStartToolUseSSE,
+  contentBlockStopSSE,
+  errorSSE,
+  inputJsonDeltaSSE,
+  messageDeltaSSE,
+  messageStartSSE,
+  messageStopSSE,
+  textDeltaSSE,
 } from '../provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
@@ -41,39 +41,39 @@ import { Logger } from '../../logger.js';
 const logger = new Logger('openai-chat-bridge-server');
 
 export type OpenAIChatBridgeServer = {
-	port: number;
-	stop(): void;
+  port: number;
+  stop(): void;
 };
 
 export type OpenAIChatBridgeConfig = {
-	/** Upstream OpenAI-compatible base URL. The bridge appends `/chat/completions`. */
-	baseUrl: string;
-	/** Optional bearer token for `Authorization: Bearer ...` header. */
-	apiKey?: string;
-	/** Extra headers attached to every upstream request. */
-	headers?: Record<string, string>;
-	/** Override fetch (used by tests). */
-	fetchImpl?: typeof fetch;
-	/** Whether the active model supports tool use. Tools are dropped when false. */
-	toolUseSupported?: boolean;
-	/** Whether the active model supports vision. Images are dropped when false. */
-	visionSupported?: boolean;
-	/**
-	 * Whether the active model supports extended thinking / reasoning. When
-	 * true, the bridge maps `AnthropicRequest.thinking` to OpenAI
-	 * `reasoning_effort` so the upstream actually sees the request.
-	 */
-	thinkingSupported?: boolean;
-	/** Max context window for the active model (used in usage events). */
-	modelContextWindow?: number;
-	/**
-	 * Whether the upstream accepts `stream_options: { include_usage: true }`.
-	 * Off by default because many strict OpenAI-compatible backends reject
-	 * unknown request fields with HTTP 400/422 before any generation. When
-	 * false the bridge still produces usage events using a token estimator
-	 * — accuracy degrades but the endpoint remains usable.
-	 */
-	streamUsageSupported?: boolean;
+  /** Upstream OpenAI-compatible base URL. The bridge appends `/chat/completions`. */
+  baseUrl: string;
+  /** Optional bearer token for `Authorization: Bearer ...` header. */
+  apiKey?: string;
+  /** Extra headers attached to every upstream request. */
+  headers?: Record<string, string>;
+  /** Override fetch (used by tests). */
+  fetchImpl?: typeof fetch;
+  /** Whether the active model supports tool use. Tools are dropped when false. */
+  toolUseSupported?: boolean;
+  /** Whether the active model supports vision. Images are dropped when false. */
+  visionSupported?: boolean;
+  /**
+   * Whether the active model supports extended thinking / reasoning. When
+   * true, the bridge maps `AnthropicRequest.thinking` to OpenAI
+   * `reasoning_effort` so the upstream actually sees the request.
+   */
+  thinkingSupported?: boolean;
+  /** Max context window for the active model (used in usage events). */
+  modelContextWindow?: number;
+  /**
+   * Whether the upstream accepts `stream_options: { include_usage: true }`.
+   * Off by default because many strict OpenAI-compatible backends reject
+   * unknown request fields with HTTP 400/422 before any generation. When
+   * false the bridge still produces usage events using a token estimator
+   * — accuracy degrades but the endpoint remains usable.
+   */
+  streamUsageSupported?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -82,76 +82,76 @@ export type OpenAIChatBridgeConfig = {
 
 type OpenAIChatTextPart = { type: 'text'; text: string };
 type OpenAIChatImagePart = {
-	type: 'image_url';
-	image_url: { url: string; detail?: 'low' | 'high' | 'auto' };
+  type: 'image_url';
+  image_url: { url: string; detail?: 'low' | 'high' | 'auto' };
 };
 type OpenAIChatContentPart = OpenAIChatTextPart | OpenAIChatImagePart;
 
 type OpenAIChatMessage =
-	| { role: 'system'; content: string }
-	| { role: 'user'; content: string | OpenAIChatContentPart[] }
-	| {
-			role: 'assistant';
-			content: string | null;
-			tool_calls?: Array<{
-				id: string;
-				type: 'function';
-				function: { name: string; arguments: string };
-			}>;
-	  }
-	| { role: 'tool'; content: string; tool_call_id: string };
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | OpenAIChatContentPart[] }
+  | {
+      role: 'assistant';
+      content: string | null;
+      tool_calls?: Array<{
+        id: string;
+        type: 'function';
+        function: { name: string; arguments: string };
+      }>;
+    }
+  | { role: 'tool'; content: string; tool_call_id: string };
 
 type OpenAIChatTool = {
-	type: 'function';
-	function: {
-		name: string;
-		description?: string;
-		parameters: Record<string, unknown>;
-	};
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+  };
 };
 
 type OpenAIChatRequest = {
-	model: string;
-	messages: OpenAIChatMessage[];
-	tools?: OpenAIChatTool[];
-	tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
-	max_tokens?: number;
-	stream: true;
-	stream_options?: { include_usage: boolean };
-	/**
-	 * Maps from Anthropic `thinking.budget_tokens`. Forwarded only when the
-	 * caller declared the model `thinkingSupported`. Most OpenAI-compatible
-	 * endpoints either honour this (o-series, modern reasoning models) or
-	 * ignore unknown fields silently.
-	 */
-	reasoning_effort?: 'low' | 'medium' | 'high';
+  model: string;
+  messages: OpenAIChatMessage[];
+  tools?: OpenAIChatTool[];
+  tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
+  max_tokens?: number;
+  stream: true;
+  stream_options?: { include_usage: boolean };
+  /**
+   * Maps from Anthropic `thinking.budget_tokens`. Forwarded only when the
+   * caller declared the model `thinkingSupported`. Most OpenAI-compatible
+   * endpoints either honour this (o-series, modern reasoning models) or
+   * ignore unknown fields silently.
+   */
+  reasoning_effort?: 'low' | 'medium' | 'high';
 };
 
 type OpenAIChatStreamChoice = {
-	index?: number;
-	delta?: {
-		role?: string;
-		content?: string | null;
-		tool_calls?: Array<{
-			index?: number;
-			id?: string;
-			type?: 'function';
-			function?: { name?: string; arguments?: string };
-		}>;
-	};
-	finish_reason?: string | null;
+  index?: number;
+  delta?: {
+    role?: string;
+    content?: string | null;
+    tool_calls?: Array<{
+      index?: number;
+      id?: string;
+      type?: 'function';
+      function?: { name?: string; arguments?: string };
+    }>;
+  };
+  finish_reason?: string | null;
 };
 
 type OpenAIChatStreamChunk = {
-	id?: string;
-	object?: string;
-	choices?: OpenAIChatStreamChoice[];
-	usage?: {
-		prompt_tokens?: number;
-		completion_tokens?: number;
-		total_tokens?: number;
-	};
-	error?: { message?: string; type?: string };
+  id?: string;
+  object?: string;
+  choices?: OpenAIChatStreamChoice[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  error?: { message?: string; type?: string };
 };
 
 // ---------------------------------------------------------------------------
@@ -159,49 +159,49 @@ type OpenAIChatStreamChunk = {
 // ---------------------------------------------------------------------------
 
 function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
-	return new Response(createAnthropicErrorBody(type, message), {
-		status,
-		headers: { 'Content-Type': 'application/json' },
-	});
+  return new Response(createAnthropicErrorBody(type, message), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 function mapUpstreamStatus(status: number): AnthropicErrorType {
-	if (status === 401 || status === 403) return 'authentication_error';
-	if (status === 404) return 'not_found_error';
-	if (status === 413) return 'request_too_large';
-	if (status === 429) return 'rate_limit_error';
-	if (status >= 500) return 'api_error';
-	return 'invalid_request_error';
+  if (status === 401 || status === 403) return 'authentication_error';
+  if (status === 404) return 'not_found_error';
+  if (status === 413) return 'request_too_large';
+  if (status === 429) return 'rate_limit_error';
+  if (status >= 500) return 'api_error';
+  return 'invalid_request_error';
 }
 
 function estimateOutputTokens(text: string): number {
-	return Math.max(1, Math.ceil(text.length / 4));
+  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 function genMessageId(): string {
-	return `msg_oai_${Math.random().toString(36).slice(2, 14)}`;
+  return `msg_oai_${Math.random().toString(36).slice(2, 14)}`;
 }
 
 function genToolUseId(): string {
-	return `toolu_oai_${Math.random().toString(36).slice(2, 14)}`;
+  return `toolu_oai_${Math.random().toString(36).slice(2, 14)}`;
 }
 
 function imageBlockToImageUrl(block: AnthropicContentBlockImage): string {
-	if (block.source.type === 'url') return block.source.url;
-	return `data:${block.source.media_type};base64,${block.source.data}`;
+  if (block.source.type === 'url') return block.source.url;
+  return `data:${block.source.media_type};base64,${block.source.data}`;
 }
 
 function toolResultToText(result: AnthropicContentBlockToolResult): string {
-	if (typeof result.content === 'string') return result.content;
-	return result.content
-		.map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
-		.join('\n');
+  if (typeof result.content === 'string') return result.content;
+  return result.content
+    .map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
+    .join('\n');
 }
 
 function extractSystemText(system: AnthropicRequest['system']): string {
-	if (!system) return '';
-	if (typeof system === 'string') return system;
-	return system.map((b) => b.text).join('\n');
+  if (!system) return '';
+  if (typeof system === 'string') return system;
+  return system.map((b) => b.text).join('\n');
 }
 
 /**
@@ -211,141 +211,141 @@ function extractSystemText(system: AnthropicRequest['system']): string {
  * supported.
  */
 function toOpenAIMessages(body: AnthropicRequest, visionSupported: boolean): OpenAIChatMessage[] {
-	const out: OpenAIChatMessage[] = [];
-	const system = extractSystemText(body.system);
-	if (system) out.push({ role: 'system', content: system });
+  const out: OpenAIChatMessage[] = [];
+  const system = extractSystemText(body.system);
+  if (system) out.push({ role: 'system', content: system });
 
-	for (const message of body.messages) {
-		const content = message.content;
-		if (typeof content === 'string') {
-			out.push({ role: message.role, content });
-			continue;
-		}
+  for (const message of body.messages) {
+    const content = message.content;
+    if (typeof content === 'string') {
+      out.push({ role: message.role, content });
+      continue;
+    }
 
-		if (message.role === 'assistant') {
-			const textParts = content
-				.filter((b): b is AnthropicContentBlockText => b.type === 'text')
-				.map((b) => b.text)
-				.join('\n');
-			const toolUses = content.filter(
-				(b): b is AnthropicContentBlockToolUse => b.type === 'tool_use'
-			);
-			out.push({
-				role: 'assistant',
-				content: textParts || (toolUses.length > 0 ? null : ''),
-				...(toolUses.length > 0
-					? {
-							tool_calls: toolUses.map((u) => ({
-								id: u.id,
-								type: 'function' as const,
-								function: {
-									name: u.name,
-									arguments: JSON.stringify(u.input ?? {}),
-								},
-							})),
-						}
-					: {}),
-			});
-			continue;
-		}
+    if (message.role === 'assistant') {
+      const textParts = content
+        .filter((b): b is AnthropicContentBlockText => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n');
+      const toolUses = content.filter(
+        (b): b is AnthropicContentBlockToolUse => b.type === 'tool_use'
+      );
+      out.push({
+        role: 'assistant',
+        content: textParts || (toolUses.length > 0 ? null : ''),
+        ...(toolUses.length > 0
+          ? {
+              tool_calls: toolUses.map((u) => ({
+                id: u.id,
+                type: 'function' as const,
+                function: {
+                  name: u.name,
+                  arguments: JSON.stringify(u.input ?? {}),
+                },
+              })),
+            }
+          : {}),
+      });
+      continue;
+    }
 
-		// User role: may contain text, images, tool_result blocks. Emit any
-		// tool_result as its own `tool` message; the remainder as one user
-		// message with mixed content parts.
-		const toolResults = content.filter(
-			(b): b is AnthropicContentBlockToolResult => b.type === 'tool_result'
-		);
-		const userParts: OpenAIChatContentPart[] = [];
-		for (const block of content) {
-			if (block.type === 'text') {
-				userParts.push({ type: 'text', text: block.text });
-			} else if (block.type === 'image' && visionSupported) {
-				userParts.push({ type: 'image_url', image_url: { url: imageBlockToImageUrl(block) } });
-			}
-		}
-		for (const result of toolResults) {
-			out.push({
-				role: 'tool',
-				content: toolResultToText(result),
-				tool_call_id: result.tool_use_id,
-			});
-		}
-		if (userParts.length > 0) {
-			// If only text, collapse to string for endpoints that don't accept arrays.
-			const onlyText = userParts.every((p) => p.type === 'text');
-			if (onlyText) {
-				const joined = userParts.map((p) => (p as OpenAIChatTextPart).text).join('\n');
-				if (joined) out.push({ role: 'user', content: joined });
-			} else {
-				out.push({ role: 'user', content: userParts });
-			}
-		}
-	}
+    // User role: may contain text, images, tool_result blocks. Emit any
+    // tool_result as its own `tool` message; the remainder as one user
+    // message with mixed content parts.
+    const toolResults = content.filter(
+      (b): b is AnthropicContentBlockToolResult => b.type === 'tool_result'
+    );
+    const userParts: OpenAIChatContentPart[] = [];
+    for (const block of content) {
+      if (block.type === 'text') {
+        userParts.push({ type: 'text', text: block.text });
+      } else if (block.type === 'image' && visionSupported) {
+        userParts.push({ type: 'image_url', image_url: { url: imageBlockToImageUrl(block) } });
+      }
+    }
+    for (const result of toolResults) {
+      out.push({
+        role: 'tool',
+        content: toolResultToText(result),
+        tool_call_id: result.tool_use_id,
+      });
+    }
+    if (userParts.length > 0) {
+      // If only text, collapse to string for endpoints that don't accept arrays.
+      const onlyText = userParts.every((p) => p.type === 'text');
+      if (onlyText) {
+        const joined = userParts.map((p) => (p as OpenAIChatTextPart).text).join('\n');
+        if (joined) out.push({ role: 'user', content: joined });
+      } else {
+        out.push({ role: 'user', content: userParts });
+      }
+    }
+  }
 
-	return out;
+  return out;
 }
 
 function toOpenAITools(body: AnthropicRequest): OpenAIChatTool[] | undefined {
-	if (!body.tools || body.tools.length === 0) return undefined;
-	return body.tools.map((tool) => ({
-		type: 'function',
-		function: {
-			name: tool.name,
-			...(tool.description ? { description: tool.description } : {}),
-			parameters: tool.input_schema,
-		},
-	}));
+  if (!body.tools || body.tools.length === 0) return undefined;
+  return body.tools.map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      ...(tool.description ? { description: tool.description } : {}),
+      parameters: tool.input_schema,
+    },
+  }));
 }
 
 function toOpenAIToolChoice(body: AnthropicRequest): OpenAIChatRequest['tool_choice'] {
-	if (!body.tool_choice) return undefined;
-	switch (body.tool_choice.type) {
-		case 'auto':
-			return 'auto';
-		case 'none':
-			return 'none';
-		case 'any':
-			return 'required';
-		case 'tool':
-			return { type: 'function', function: { name: body.tool_choice.name } };
-		default:
-			return undefined;
-	}
+  if (!body.tool_choice) return undefined;
+  switch (body.tool_choice.type) {
+    case 'auto':
+      return 'auto';
+    case 'none':
+      return 'none';
+    case 'any':
+      return 'required';
+    case 'tool':
+      return { type: 'function', function: { name: body.tool_choice.name } };
+    default:
+      return undefined;
+  }
 }
 
 function buildChatRequest(
-	body: AnthropicRequest,
-	model: string,
-	toolUseSupported: boolean,
-	visionSupported: boolean,
-	thinkingSupported: boolean,
-	streamUsageSupported = false
+  body: AnthropicRequest,
+  model: string,
+  toolUseSupported: boolean,
+  visionSupported: boolean,
+  thinkingSupported: boolean,
+  streamUsageSupported = false
 ): OpenAIChatRequest {
-	const request: OpenAIChatRequest = {
-		model,
-		messages: toOpenAIMessages(body, visionSupported),
-		stream: true,
-	};
-	// `stream_options` is opt-in. Strict OpenAI-compatible backends reject
-	// unknown request fields with HTTP 400/422, which would break the entire
-	// endpoint. The bridge still emits usage events via a token estimator when
-	// the upstream doesn't echo `usage` chunks, so omitting this field only
-	// degrades accuracy, not availability.
-	if (streamUsageSupported) {
-		request.stream_options = { include_usage: true };
-	}
-	if (body.max_tokens && body.max_tokens > 0) request.max_tokens = body.max_tokens;
-	if (toolUseSupported) {
-		const tools = toOpenAITools(body);
-		if (tools) request.tools = tools;
-		const choice = toOpenAIToolChoice(body);
-		if (choice) request.tool_choice = choice;
-	}
-	if (thinkingSupported) {
-		const effort = thinkingToReasoningEffort(body.thinking);
-		if (effort) request.reasoning_effort = effort;
-	}
-	return request;
+  const request: OpenAIChatRequest = {
+    model,
+    messages: toOpenAIMessages(body, visionSupported),
+    stream: true,
+  };
+  // `stream_options` is opt-in. Strict OpenAI-compatible backends reject
+  // unknown request fields with HTTP 400/422, which would break the entire
+  // endpoint. The bridge still emits usage events via a token estimator when
+  // the upstream doesn't echo `usage` chunks, so omitting this field only
+  // degrades accuracy, not availability.
+  if (streamUsageSupported) {
+    request.stream_options = { include_usage: true };
+  }
+  if (body.max_tokens && body.max_tokens > 0) request.max_tokens = body.max_tokens;
+  if (toolUseSupported) {
+    const tools = toOpenAITools(body);
+    if (tools) request.tools = tools;
+    const choice = toOpenAIToolChoice(body);
+    if (choice) request.tool_choice = choice;
+  }
+  if (thinkingSupported) {
+    const effort = thinkingToReasoningEffort(body.thinking);
+    if (effort) request.reasoning_effort = effort;
+  }
+  return request;
 }
 
 /**
@@ -355,18 +355,18 @@ function buildChatRequest(
  * granularity is lost.
  */
 function thinkingToReasoningEffort(
-	thinking: AnthropicRequest['thinking']
+  thinking: AnthropicRequest['thinking']
 ): 'low' | 'medium' | 'high' | undefined {
-	if (!thinking) return undefined;
-	if (thinking.type === 'adaptive') return 'medium';
-	if (thinking.type === 'enabled') {
-		const budget = thinking.budget_tokens;
-		if (!Number.isFinite(budget) || budget <= 0) return undefined;
-		if (budget < 4000) return 'low';
-		if (budget < 16000) return 'medium';
-		return 'high';
-	}
-	return undefined;
+  if (!thinking) return undefined;
+  if (thinking.type === 'adaptive') return 'medium';
+  if (thinking.type === 'enabled') {
+    const budget = thinking.budget_tokens;
+    if (!Number.isFinite(budget) || budget <= 0) return undefined;
+    if (budget < 4000) return 'low';
+    if (budget < 16000) return 'medium';
+    return 'high';
+  }
+  return undefined;
 }
 
 /**
@@ -386,22 +386,22 @@ function thinkingToReasoningEffort(
  * the `URL` API.
  */
 export function buildChatCompletionsUrl(input: string): string {
-	const trimmed = input.trim();
-	let parsed: URL;
-	try {
-		parsed = new URL(trimmed);
-	} catch (err) {
-		throw new Error(
-			`Custom endpoint baseUrl is not a valid URL: ${err instanceof Error ? err.message : String(err)}`
-		);
-	}
-	// Strip trailing slashes from the path, then any trailing `/chat/completions`,
-	// then re-add a single `/chat/completions` suffix. This keeps `?api-version=...`
-	// and any other query string intact since we only mutate `pathname`.
-	let path = parsed.pathname.replace(/\/+$/, '');
-	path = path.replace(/\/chat\/completions$/i, '');
-	parsed.pathname = `${path}/chat/completions`;
-	return parsed.toString();
+  const trimmed = input.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch (err) {
+    throw new Error(
+      `Custom endpoint baseUrl is not a valid URL: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  // Strip trailing slashes from the path, then any trailing `/chat/completions`,
+  // then re-add a single `/chat/completions` suffix. This keeps `?api-version=...`
+  // and any other query string intact since we only mutate `pathname`.
+  let path = parsed.pathname.replace(/\/+$/, '');
+  path = path.replace(/\/chat\/completions$/i, '');
+  parsed.pathname = `${path}/chat/completions`;
+  return parsed.toString();
 }
 
 /**
@@ -410,41 +410,41 @@ export function buildChatCompletionsUrl(input: string): string {
  * URL-aware builder so query strings are preserved consistently.
  */
 export function normaliseChatBaseUrl(input: string): string {
-	const full = buildChatCompletionsUrl(input);
-	// Strip the `/chat/completions` suffix that buildChatCompletionsUrl just
-	// added, leaving the base prefix (with any query string preserved).
-	const parsed = new URL(full);
-	parsed.pathname = parsed.pathname.replace(/\/chat\/completions$/i, '');
-	return parsed.toString().replace(/\/$/, '');
+  const full = buildChatCompletionsUrl(input);
+  // Strip the `/chat/completions` suffix that buildChatCompletionsUrl just
+  // added, leaving the base prefix (with any query string preserved).
+  const parsed = new URL(full);
+  parsed.pathname = parsed.pathname.replace(/\/chat\/completions$/i, '');
+  return parsed.toString().replace(/\/$/, '');
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
-	try {
-		const parsed = JSON.parse(text) as unknown;
-		return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: undefined;
-	} catch {
-		return undefined;
-	}
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseUpstreamError(status: number, text: string): string {
-	const parsed = parseJsonObject(text);
-	const error = parsed?.error;
-	if (error && typeof error === 'object' && !Array.isArray(error)) {
-		const message = (error as Record<string, unknown>).message;
-		if (typeof message === 'string' && message) return message;
-	}
-	return text || `Upstream API request failed with status ${status}`;
+  const parsed = parseJsonObject(text);
+  const error = parsed?.error;
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return text || `Upstream API request failed with status ${status}`;
 }
 
 /** Parse a single SSE `data:` payload (possibly multi-line, already joined). */
 function parseSseDataPayload(data: string): OpenAIChatStreamChunk | null {
-	const trimmed = data.trim();
-	if (!trimmed || trimmed === '[DONE]') return null;
-	const parsed = parseJsonObject(trimmed);
-	return parsed ? (parsed as OpenAIChatStreamChunk) : null;
+  const trimmed = data.trim();
+  if (!trimmed || trimmed === '[DONE]') return null;
+  const parsed = parseJsonObject(trimmed);
+  return parsed ? (parsed as OpenAIChatStreamChunk) : null;
 }
 
 /**
@@ -461,46 +461,46 @@ function parseSseDataPayload(data: string): OpenAIChatStreamChunk | null {
  * are ignored — we only consume Chat Completions data frames.
  */
 function joinSseDataLines(block: string): string | null {
-	const parts: string[] = [];
-	for (const rawLine of block.split(/\r?\n/)) {
-		if (!rawLine.startsWith('data:')) continue;
-		// Per the spec, a single space immediately after the colon is stripped;
-		// anything else is preserved.
-		let value = rawLine.slice('data:'.length);
-		if (value.startsWith(' ')) value = value.slice(1);
-		parts.push(value);
-	}
-	return parts.length === 0 ? null : parts.join('\n');
+  const parts: string[] = [];
+  for (const rawLine of block.split(/\r?\n/)) {
+    if (!rawLine.startsWith('data:')) continue;
+    // Per the spec, a single space immediately after the colon is stripped;
+    // anything else is preserved.
+    let value = rawLine.slice('data:'.length);
+    if (value.startsWith(' ')) value = value.slice(1);
+    parts.push(value);
+  }
+  return parts.length === 0 ? null : parts.join('\n');
 }
 
 /** Read an OpenAI Chat Completions SSE stream as chunks. */
 async function* readChatStream(
-	body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>
 ): AsyncGenerator<OpenAIChatStreamChunk> {
-	const reader = body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = '';
-	while (true) {
-		const { value, done } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-		const blocks = buffer.split(/\r?\n\r?\n/);
-		buffer = blocks.pop() ?? '';
-		for (const block of blocks) {
-			const payload = joinSseDataLines(block);
-			if (payload === null) continue;
-			const chunk = parseSseDataPayload(payload);
-			if (chunk) yield chunk;
-		}
-	}
-	buffer += decoder.decode();
-	if (buffer.length > 0) {
-		const payload = joinSseDataLines(buffer);
-		if (payload !== null) {
-			const chunk = parseSseDataPayload(payload);
-			if (chunk) yield chunk;
-		}
-	}
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? '';
+    for (const block of blocks) {
+      const payload = joinSseDataLines(block);
+      if (payload === null) continue;
+      const chunk = parseSseDataPayload(payload);
+      if (chunk) yield chunk;
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.length > 0) {
+    const payload = joinSseDataLines(buffer);
+    if (payload !== null) {
+      const chunk = parseSseDataPayload(payload);
+      if (chunk) yield chunk;
+    }
+  }
 }
 
 /**
@@ -508,345 +508,345 @@ async function* readChatStream(
  * Messages SSE events. Handles incremental tool_calls accumulation.
  */
 async function streamChatToAnthropic(params: {
-	upstreamResponse: Response;
-	controller: ReadableStreamDefaultController<Uint8Array>;
-	model: string;
-	inputTokens: number;
-	modelContextWindow?: number;
+  upstreamResponse: Response;
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  model: string;
+  inputTokens: number;
+  modelContextWindow?: number;
 }): Promise<void> {
-	const { upstreamResponse, controller, model, inputTokens, modelContextWindow } = params;
-	const encoder = new TextEncoder();
-	const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
-	const messageId = genMessageId();
-	let started = false;
-	let textOpen = false;
-	let textBlockIndex = -1;
-	let nextBlockIndex = 0;
-	let heuristicOutputText = '';
-	let finalPromptTokens: number | undefined;
-	let finalCompletionTokens: number | undefined;
-	let finishReason: string | null = null;
-	type PendingToolCall = {
-		blockIndex: number;
-		/**
-		 * Upstream `tool_calls[].id` if seen, else empty string until we
-		 * synthesize one at stream end. We MUST NOT open the Anthropic
-		 * tool_use block before this is known (or finalised) — otherwise
-		 * the client sees one id but the model's follow-up `tool` message
-		 * references a different upstream id, and OpenAI-compatible
-		 * backends reject the continuation via `tool_call_id` validation.
-		 */
-		id: string;
-		name: string;
-		argumentsText: string;
-		opened: boolean;
-	};
-	const pendingByIdx = new Map<number, PendingToolCall>();
-	const emittedIds = new Set<string>();
+  const { upstreamResponse, controller, model, inputTokens, modelContextWindow } = params;
+  const encoder = new TextEncoder();
+  const send = (chunk: string) => controller.enqueue(encoder.encode(chunk));
+  const messageId = genMessageId();
+  let started = false;
+  let textOpen = false;
+  let textBlockIndex = -1;
+  let nextBlockIndex = 0;
+  let heuristicOutputText = '';
+  let finalPromptTokens: number | undefined;
+  let finalCompletionTokens: number | undefined;
+  let finishReason: string | null = null;
+  type PendingToolCall = {
+    blockIndex: number;
+    /**
+     * Upstream `tool_calls[].id` if seen, else empty string until we
+     * synthesize one at stream end. We MUST NOT open the Anthropic
+     * tool_use block before this is known (or finalised) — otherwise
+     * the client sees one id but the model's follow-up `tool` message
+     * references a different upstream id, and OpenAI-compatible
+     * backends reject the continuation via `tool_call_id` validation.
+     */
+    id: string;
+    name: string;
+    argumentsText: string;
+    opened: boolean;
+  };
+  const pendingByIdx = new Map<number, PendingToolCall>();
+  const emittedIds = new Set<string>();
 
-	const ensureStarted = () => {
-		if (started) return;
-		started = true;
-		send(messageStartSSE(messageId, model, inputTokens, modelContextWindow));
-	};
+  const ensureStarted = () => {
+    if (started) return;
+    started = true;
+    send(messageStartSSE(messageId, model, inputTokens, modelContextWindow));
+  };
 
-	const closeTextBlock = () => {
-		if (!textOpen) return;
-		send(contentBlockStopSSE(textBlockIndex));
-		textOpen = false;
-	};
+  const closeTextBlock = () => {
+    if (!textOpen) return;
+    send(contentBlockStopSSE(textBlockIndex));
+    textOpen = false;
+  };
 
-	const openToolCall = (call: PendingToolCall) => {
-		if (call.opened) return;
-		ensureStarted();
-		closeTextBlock();
-		call.blockIndex = nextBlockIndex++;
-		send(contentBlockStartToolUseSSE(call.blockIndex, call.id, call.name));
-		call.opened = true;
-	};
+  const openToolCall = (call: PendingToolCall) => {
+    if (call.opened) return;
+    ensureStarted();
+    closeTextBlock();
+    call.blockIndex = nextBlockIndex++;
+    send(contentBlockStartToolUseSSE(call.blockIndex, call.id, call.name));
+    call.opened = true;
+  };
 
-	const finishToolCall = (call: PendingToolCall) => {
-		if (!call.opened) return;
-		// Emit the (possibly accumulated) JSON args once, then close. Endpoints
-		// stream arguments in fragments; we buffer until completion to avoid
-		// emitting partial JSON deltas with stale partial_json strings that
-		// would not parse downstream.
-		send(inputJsonDeltaSSE(call.blockIndex, call.argumentsText || '{}'));
-		send(contentBlockStopSSE(call.blockIndex));
-		emittedIds.add(call.id);
-	};
+  const finishToolCall = (call: PendingToolCall) => {
+    if (!call.opened) return;
+    // Emit the (possibly accumulated) JSON args once, then close. Endpoints
+    // stream arguments in fragments; we buffer until completion to avoid
+    // emitting partial JSON deltas with stale partial_json strings that
+    // would not parse downstream.
+    send(inputJsonDeltaSSE(call.blockIndex, call.argumentsText || '{}'));
+    send(contentBlockStopSSE(call.blockIndex));
+    emittedIds.add(call.id);
+  };
 
-	try {
-		if (!upstreamResponse.body) throw new Error('Upstream returned empty stream body');
+  try {
+    if (!upstreamResponse.body) throw new Error('Upstream returned empty stream body');
 
-		let sawAnyChunk = false;
-		for await (const chunk of readChatStream(upstreamResponse.body)) {
-			sawAnyChunk = true;
-			if (chunk.error?.message) throw new Error(chunk.error.message);
-			if (chunk.usage) {
-				finalPromptTokens = chunk.usage.prompt_tokens ?? finalPromptTokens;
-				finalCompletionTokens = chunk.usage.completion_tokens ?? finalCompletionTokens;
-			}
-			const choice = chunk.choices?.[0];
-			if (!choice) continue;
-			if (choice.finish_reason) finishReason = choice.finish_reason;
+    let sawAnyChunk = false;
+    for await (const chunk of readChatStream(upstreamResponse.body)) {
+      sawAnyChunk = true;
+      if (chunk.error?.message) throw new Error(chunk.error.message);
+      if (chunk.usage) {
+        finalPromptTokens = chunk.usage.prompt_tokens ?? finalPromptTokens;
+        finalCompletionTokens = chunk.usage.completion_tokens ?? finalCompletionTokens;
+      }
+      const choice = chunk.choices?.[0];
+      if (!choice) continue;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
 
-			const delta = choice.delta;
-			if (!delta) continue;
+      const delta = choice.delta;
+      if (!delta) continue;
 
-			if (typeof delta.content === 'string' && delta.content.length > 0) {
-				ensureStarted();
-				if (!textOpen) {
-					textBlockIndex = nextBlockIndex++;
-					send(contentBlockStartTextSSE(textBlockIndex));
-					textOpen = true;
-				}
-				send(textDeltaSSE(textBlockIndex, delta.content));
-				heuristicOutputText += delta.content;
-			}
+      if (typeof delta.content === 'string' && delta.content.length > 0) {
+        ensureStarted();
+        if (!textOpen) {
+          textBlockIndex = nextBlockIndex++;
+          send(contentBlockStartTextSSE(textBlockIndex));
+          textOpen = true;
+        }
+        send(textDeltaSSE(textBlockIndex, delta.content));
+        heuristicOutputText += delta.content;
+      }
 
-			if (delta.tool_calls) {
-				for (const tc of delta.tool_calls) {
-					const idx = tc.index ?? 0;
-					let pending = pendingByIdx.get(idx);
-					if (!pending) {
-						pending = {
-							blockIndex: -1,
-							// Don't synthesize here — wait for upstream id; if none
-							// arrives by stream end we synthesize once in the flush
-							// pass below. Opening the block with a placeholder and
-							// then overwriting `pending.id` would leak a bogus id
-							// to the client that no follow-up `tool` message can
-							// match.
-							id: tc.id ?? '',
-							name: tc.function?.name ?? '',
-							argumentsText: '',
-							opened: false,
-						};
-						pendingByIdx.set(idx, pending);
-					} else {
-						// First non-empty upstream id wins; subsequent chunks
-						// generally repeat it but we keep the first to be safe.
-						if (tc.id && !pending.id) pending.id = tc.id;
-						if (tc.function?.name) pending.name = tc.function.name;
-					}
-					if (tc.function?.arguments) pending.argumentsText += tc.function.arguments;
-					// Open only when BOTH name and upstream id are known so the
-					// client sees the same id the model will reference later.
-					if (pending.name && pending.id && !pending.opened) {
-						openToolCall(pending);
-					}
-				}
-			}
-		}
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          let pending = pendingByIdx.get(idx);
+          if (!pending) {
+            pending = {
+              blockIndex: -1,
+              // Don't synthesize here — wait for upstream id; if none
+              // arrives by stream end we synthesize once in the flush
+              // pass below. Opening the block with a placeholder and
+              // then overwriting `pending.id` would leak a bogus id
+              // to the client that no follow-up `tool` message can
+              // match.
+              id: tc.id ?? '',
+              name: tc.function?.name ?? '',
+              argumentsText: '',
+              opened: false,
+            };
+            pendingByIdx.set(idx, pending);
+          } else {
+            // First non-empty upstream id wins; subsequent chunks
+            // generally repeat it but we keep the first to be safe.
+            if (tc.id && !pending.id) pending.id = tc.id;
+            if (tc.function?.name) pending.name = tc.function.name;
+          }
+          if (tc.function?.arguments) pending.argumentsText += tc.function.arguments;
+          // Open only when BOTH name and upstream id are known so the
+          // client sees the same id the model will reference later.
+          if (pending.name && pending.id && !pending.opened) {
+            openToolCall(pending);
+          }
+        }
+      }
+    }
 
-		if (!sawAnyChunk) {
-			// Upstream returned 200 but the body contained no SSE `data:` chunks
-			// (e.g. a non-streaming endpoint that ignored `stream: true` and
-			// returned a one-shot JSON object, or a misconfigured proxy that
-			// stripped the SSE framing). Fail loudly instead of emitting an
-			// empty `end_turn` that hides the incompatibility from the user.
-			throw new Error(
-				'Upstream returned a non-SSE 200 response. Check that the endpoint supports streaming Chat Completions and that any proxy preserves text/event-stream framing.'
-			);
-		}
+    if (!sawAnyChunk) {
+      // Upstream returned 200 but the body contained no SSE `data:` chunks
+      // (e.g. a non-streaming endpoint that ignored `stream: true` and
+      // returned a one-shot JSON object, or a misconfigured proxy that
+      // stripped the SSE framing). Fail loudly instead of emitting an
+      // empty `end_turn` that hides the incompatibility from the user.
+      throw new Error(
+        'Upstream returned a non-SSE 200 response. Check that the endpoint supports streaming Chat Completions and that any proxy preserves text/event-stream framing.'
+      );
+    }
 
-		ensureStarted();
-		// Flush any tool calls that received a name but never closed via finish_reason.
-		for (const call of pendingByIdx.values()) {
-			if (!call.opened && call.name) {
-				// No upstream id ever arrived — synthesize one so we can still
-				// emit a valid Anthropic tool_use block. Backends that strictly
-				// validate `tool_call_id` will already be unhappy with this
-				// stream, but emitting *something* is better than dropping the
-				// call entirely.
-				if (!call.id) call.id = genToolUseId();
-				openToolCall(call);
-			}
-			if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
-		}
+    ensureStarted();
+    // Flush any tool calls that received a name but never closed via finish_reason.
+    for (const call of pendingByIdx.values()) {
+      if (!call.opened && call.name) {
+        // No upstream id ever arrived — synthesize one so we can still
+        // emit a valid Anthropic tool_use block. Backends that strictly
+        // validate `tool_call_id` will already be unhappy with this
+        // stream, but emitting *something* is better than dropping the
+        // call entirely.
+        if (!call.id) call.id = genToolUseId();
+        openToolCall(call);
+      }
+      if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
+    }
 
-		closeTextBlock();
+    closeTextBlock();
 
-		const stopReason: 'tool_use' | 'max_tokens' | 'end_turn' =
-			emittedIds.size > 0 || finishReason === 'tool_calls'
-				? 'tool_use'
-				: finishReason === 'length'
-					? 'max_tokens'
-					: 'end_turn';
+    const stopReason: 'tool_use' | 'max_tokens' | 'end_turn' =
+      emittedIds.size > 0 || finishReason === 'tool_calls'
+        ? 'tool_use'
+        : finishReason === 'length'
+          ? 'max_tokens'
+          : 'end_turn';
 
-		send(
-			messageDeltaSSE(stopReason, {
-				inputTokens: finalPromptTokens ?? inputTokens,
-				outputTokens: finalCompletionTokens ?? estimateOutputTokens(heuristicOutputText),
-				modelContextWindow,
-			})
-		);
-		send(messageStopSSE());
-	} catch (error) {
-		logger.warn(
-			'openai-chat-bridge: streaming failed:',
-			error instanceof Error ? error.message : String(error)
-		);
-		send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
-		send(messageStopSSE());
-	} finally {
-		try {
-			controller.close();
-		} catch {
-			// Already closed.
-		}
-	}
+    send(
+      messageDeltaSSE(stopReason, {
+        inputTokens: finalPromptTokens ?? inputTokens,
+        outputTokens: finalCompletionTokens ?? estimateOutputTokens(heuristicOutputText),
+        modelContextWindow,
+      })
+    );
+    send(messageStopSSE());
+  } catch (error) {
+    logger.warn(
+      'openai-chat-bridge: streaming failed:',
+      error instanceof Error ? error.message : String(error)
+    );
+    send(errorSSE('api_error', error instanceof Error ? error.message : 'OpenAI stream failed'));
+    send(messageStopSSE());
+  } finally {
+    try {
+      controller.close();
+    } catch {
+      // Already closed.
+    }
+  }
 }
 
 export function createOpenAIChatBridgeServer(
-	config: OpenAIChatBridgeConfig
+  config: OpenAIChatBridgeConfig
 ): OpenAIChatBridgeServer {
-	const fetchImpl = config.fetchImpl ?? fetch;
-	const chatCompletionsUrl = buildChatCompletionsUrl(config.baseUrl);
-	const toolUseSupported = config.toolUseSupported ?? true;
-	const visionSupported = config.visionSupported ?? false;
-	const thinkingSupported = config.thinkingSupported ?? false;
-	const streamUsageSupported = config.streamUsageSupported ?? false;
-	const modelContextWindow = config.modelContextWindow;
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const chatCompletionsUrl = buildChatCompletionsUrl(config.baseUrl);
+  const toolUseSupported = config.toolUseSupported ?? true;
+  const visionSupported = config.visionSupported ?? false;
+  const thinkingSupported = config.thinkingSupported ?? false;
+  const streamUsageSupported = config.streamUsageSupported ?? false;
+  const modelContextWindow = config.modelContextWindow;
 
-	const server = Bun.serve({
-		// Bind to loopback so other local users cannot probe the ephemeral port
-		// and reach this bridge with the configured upstream API key. The SDK
-		// connects via ANTHROPIC_BASE_URL=http://127.0.0.1:<port>.
-		hostname: '127.0.0.1',
-		port: 0,
-		idleTimeout: 0,
-		async fetch(req: Request): Promise<Response> {
-			const url = new URL(req.url);
+  const server = Bun.serve({
+    // Bind to loopback so other local users cannot probe the ephemeral port
+    // and reach this bridge with the configured upstream API key. The SDK
+    // connects via ANTHROPIC_BASE_URL=http://127.0.0.1:<port>.
+    hostname: '127.0.0.1',
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req: Request): Promise<Response> {
+      const url = new URL(req.url);
 
-			if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
+      if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
 
-			if (url.pathname === '/v1/models' && req.method === 'GET') {
-				return new Response(
-					JSON.stringify({
-						data: [{ id: 'default', type: 'model', display_name: 'Custom OpenAI Endpoint' }],
-					}),
-					{ headers: { 'Content-Type': 'application/json' } }
-				);
-			}
+      if (url.pathname === '/v1/models' && req.method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            data: [{ id: 'default', type: 'model', display_name: 'Custom OpenAI Endpoint' }],
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
 
-			if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
-				try {
-					const body = (await req.json()) as AnthropicRequest;
-					return new Response(
-						JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
-						{ headers: { 'Content-Type': 'application/json' } }
-					);
-				} catch {
-					return sendJsonError(400, 'invalid_request_error', 'Bad Request');
-				}
-			}
+      if (url.pathname === '/v1/messages/count_tokens' && req.method === 'POST') {
+        try {
+          const body = (await req.json()) as AnthropicRequest;
+          return new Response(
+            JSON.stringify({ input_tokens: estimateAnthropicInputTokens(body) }),
+            { headers: { 'Content-Type': 'application/json' } }
+          );
+        } catch {
+          return sendJsonError(400, 'invalid_request_error', 'Bad Request');
+        }
+      }
 
-			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
-				return sendJsonError(501, 'api_error', 'Not implemented');
-			}
+      if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
+        return sendJsonError(501, 'api_error', 'Not implemented');
+      }
 
-			let body: AnthropicRequest;
-			try {
-				body = (await req.json()) as AnthropicRequest;
-			} catch {
-				return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
-			}
+      let body: AnthropicRequest;
+      try {
+        body = (await req.json()) as AnthropicRequest;
+      } catch {
+        return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+      }
 
-			if (!body.model || !Array.isArray(body.messages)) {
-				return sendJsonError(
-					400,
-					'invalid_request_error',
-					'Missing required fields: model and messages'
-				);
-			}
-			if (body.stream === false) {
-				return sendJsonError(
-					400,
-					'invalid_request_error',
-					'Only streaming responses are supported'
-				);
-			}
+      if (!body.model || !Array.isArray(body.messages)) {
+        return sendJsonError(
+          400,
+          'invalid_request_error',
+          'Missing required fields: model and messages'
+        );
+      }
+      if (body.stream === false) {
+        return sendJsonError(
+          400,
+          'invalid_request_error',
+          'Only streaming responses are supported'
+        );
+      }
 
-			const chatRequest = buildChatRequest(
-				body,
-				body.model,
-				toolUseSupported,
-				visionSupported,
-				thinkingSupported,
-				streamUsageSupported
-			);
-			const inputTokens = estimateAnthropicInputTokens(body);
+      const chatRequest = buildChatRequest(
+        body,
+        body.model,
+        toolUseSupported,
+        visionSupported,
+        thinkingSupported,
+        streamUsageSupported
+      );
+      const inputTokens = estimateAnthropicInputTokens(body);
 
-			let upstreamResponse: Response;
-			try {
-				upstreamResponse = await fetchImpl(chatCompletionsUrl, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-						...config.headers,
-					},
-					body: JSON.stringify(chatRequest),
-				});
-			} catch (error) {
-				return sendJsonError(
-					502,
-					'api_error',
-					error instanceof Error ? error.message : 'Upstream API request failed'
-				);
-			}
+      let upstreamResponse: Response;
+      try {
+        upstreamResponse = await fetchImpl(chatCompletionsUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+            ...config.headers,
+          },
+          body: JSON.stringify(chatRequest),
+        });
+      } catch (error) {
+        return sendJsonError(
+          502,
+          'api_error',
+          error instanceof Error ? error.message : 'Upstream API request failed'
+        );
+      }
 
-			if (!upstreamResponse.ok) {
-				const text = await upstreamResponse.text();
-				return sendJsonError(
-					upstreamResponse.status,
-					mapUpstreamStatus(upstreamResponse.status),
-					parseUpstreamError(upstreamResponse.status, text)
-				);
-			}
+      if (!upstreamResponse.ok) {
+        const text = await upstreamResponse.text();
+        return sendJsonError(
+          upstreamResponse.status,
+          mapUpstreamStatus(upstreamResponse.status),
+          parseUpstreamError(upstreamResponse.status, text)
+        );
+      }
 
-			const stream = new ReadableStream<Uint8Array>({
-				start(controller) {
-					void streamChatToAnthropic({
-						upstreamResponse,
-						controller,
-						model: body.model,
-						inputTokens,
-						...(modelContextWindow !== undefined ? { modelContextWindow } : {}),
-					});
-				},
-			});
-			return new Response(stream, {
-				headers: {
-					'Content-Type': 'text/event-stream',
-					'Cache-Control': 'no-cache',
-					Connection: 'keep-alive',
-				},
-			});
-		},
-	});
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          void streamChatToAnthropic({
+            upstreamResponse,
+            controller,
+            model: body.model,
+            inputTokens,
+            ...(modelContextWindow !== undefined ? { modelContextWindow } : {}),
+          });
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      });
+    },
+  });
 
-	const port = server.port;
-	if (typeof port !== 'number')
-		throw new Error('OpenAI chat bridge server did not bind to a TCP port');
-	logger.info(`openai-chat-bridge: HTTP server listening on port ${port}`);
+  const port = server.port;
+  if (typeof port !== 'number')
+    throw new Error('OpenAI chat bridge server did not bind to a TCP port');
+  logger.info(`openai-chat-bridge: HTTP server listening on port ${port}`);
 
-	return {
-		port,
-		stop: () => server.stop(true),
-	};
+  return {
+    port,
+    stop: () => server.stop(true),
+  };
 }
 
 // Exports for testing.
 export const _openAIChatBridgeTesting = {
-	toOpenAIMessages,
-	toOpenAITools,
-	toOpenAIToolChoice,
-	buildChatRequest,
-	streamChatToAnthropic,
-	normaliseChatBaseUrl,
-	buildChatCompletionsUrl,
-	thinkingToReasoningEffort,
+  toOpenAIMessages,
+  toOpenAITools,
+  toOpenAIToolChoice,
+  buildChatRequest,
+  streamChatToAnthropic,
+  normaliseChatBaseUrl,
+  buildChatCompletionsUrl,
+  thinkingToReasoningEffort,
 };

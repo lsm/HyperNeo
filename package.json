@@ -1,35 +1,35 @@
 {
-	"name": "neokai",
-	"private": true,
-	"license": "Apache-2.0",
-	"type": "module",
-	"packageManager": "bun@1.3.13",
-	"workspaces": [
-		"packages/*"
-	],
-	"scripts": {
-		"test": "echo \"Error: This is a monorepo. Do not run 'bun test', 'bun run test', or 'npm test' from the root.\" && echo \"\" && echo \"For daemon unit shards: ./scripts/test-daemon.sh\" && echo \"For targeted daemon tests: cd packages/daemon && bun\" \"test ./tests/unit/some-test.test.ts\" && echo \"For web tests: cd packages/web && bunx vitest run\" && echo \"For e2e tests: make run-e2e TEST=tests/features/foo.e2e.ts\" && echo \"See CLAUDE.md for more details.\" && exit 1",
-		"dev": "make dev",
-		"lint": "oxlint .",
-		"lint:fix": "oxlint --fix .",
-		"format": "biome format --write .",
-		"format:check": "biome format .",
-		"typecheck": "tsc --build --noEmit",
-		"knip": "knip --include files,dependencies,exports --no-config-hints",
-		"knip:all": "knip",
-		"check:session-guards": "./scripts/check-session-deletion-callers.sh",
-		"check": "bun run lint && bun run typecheck && bun run knip && bun run check:session-guards",
-		"db:maintain-message-search": "bun run scripts/maintain-message-search-db.ts",
-		"test:proxy:start": "./scripts/dev-proxy.sh start",
-		"test:proxy:stop": "./scripts/dev-proxy.sh stop",
-		"test:proxy:status": "./scripts/dev-proxy.sh status",
-		"test:proxy:restart": "./scripts/dev-proxy.sh restart"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "2.4.15",
-		"@testing-library/preact": "3.2.4",
-		"knip": "6.13.1",
-		"oxlint": "1.64.0",
-		"typescript": "6.0.3"
-	}
+  "name": "neokai",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "bun@1.3.13",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "echo \"Error: This is a monorepo. Do not run 'bun test', 'bun run test', or 'npm test' from the root.\" && echo \"\" && echo \"For daemon unit shards: ./scripts/test-daemon.sh\" && echo \"For targeted daemon tests: cd packages/daemon && bun\" \"test ./tests/unit/some-test.test.ts\" && echo \"For web tests: cd packages/web && bunx vitest run\" && echo \"For e2e tests: make run-e2e TEST=tests/features/foo.e2e.ts\" && echo \"See CLAUDE.md for more details.\" && exit 1",
+    "dev": "make dev",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "typecheck": "tsc --build --noEmit",
+    "knip": "knip --include files,dependencies,exports --no-config-hints",
+    "knip:all": "knip",
+    "check:session-guards": "./scripts/check-session-deletion-callers.sh",
+    "check": "bun run lint && bun run typecheck && bun run knip && bun run check:session-guards",
+    "db:maintain-message-search": "bun run scripts/maintain-message-search-db.ts",
+    "test:proxy:start": "./scripts/dev-proxy.sh start",
+    "test:proxy:stop": "./scripts/dev-proxy.sh stop",
+    "test:proxy:status": "./scripts/dev-proxy.sh status",
+    "test:proxy:restart": "./scripts/dev-proxy.sh restart"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.15",
+    "@testing-library/preact": "3.2.4",
+    "knip": "6.13.1",
+    "oxlint": "1.64.0",
+    "typescript": "6.0.3"
+  }
 }

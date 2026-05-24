@@ -1,23 +1,23 @@
 import { useCallback, useRef } from 'preact/hooks';
 
 export function useTextValue(ref: { current: HTMLElement | null }): () => string {
-	const cacheRef = useRef<string>('');
+  const cacheRef = useRef<string>('');
 
-	return useCallback(() => {
-		const el = ref.current;
-		if (!el) return '';
+  return useCallback(() => {
+    const el = ref.current;
+    if (!el) return '';
 
-		// Walk the DOM tree and collect text nodes
-		const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-		let text = '';
-		let node = walker.nextNode();
-		while (node !== null) {
-			text += node.textContent;
-			node = walker.nextNode();
-		}
+    // Walk the DOM tree and collect text nodes
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    let text = '';
+    let node = walker.nextNode();
+    while (node !== null) {
+      text += node.textContent;
+      node = walker.nextNode();
+    }
 
-		const trimmed = text.trim().toLowerCase();
-		cacheRef.current = trimmed;
-		return trimmed;
-	}, [ref]);
+    const trimmed = text.trim().toLowerCase();
+    cacheRef.current = trimmed;
+    return trimmed;
+  }, [ref]);
 }

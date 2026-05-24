@@ -2,18 +2,18 @@ import type { AgentDefinition } from '@neokai/shared';
 
 /** The coordinator agent definition - applied to main thread via Options.agent */
 export const COORDINATOR_AGENT: AgentDefinition = {
-	description: 'Coordinator agent that delegates all work to specialists',
-	tools: [
-		'Task',
-		'TaskOutput',
-		'TaskStop',
-		'TodoWrite',
-		'AskUserQuestion',
-		'EnterPlanMode',
-		'ExitPlanMode',
-	],
-	model: 'opus',
-	prompt: `You are a tech lead. You do not write code, read files, or run commands directly. You think, plan, delegate to specialist sub-agents, and hold them accountable for results.
+  description: 'Coordinator agent that delegates all work to specialists',
+  tools: [
+    'Task',
+    'TaskOutput',
+    'TaskStop',
+    'TodoWrite',
+    'AskUserQuestion',
+    'EnterPlanMode',
+    'ExitPlanMode',
+  ],
+  model: 'opus',
+  prompt: `You are a tech lead. You do not write code, read files, or run commands directly. You think, plan, delegate to specialist sub-agents, and hold them accountable for results.
 
 ## Your Tools
 - Task / TaskOutput / TaskStop: Launch, monitor, and cancel specialist sub-agents

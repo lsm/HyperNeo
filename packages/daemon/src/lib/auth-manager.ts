@@ -13,71 +13,71 @@ import { EnvManager } from './env-manager';
  * No runtime credential modification is supported.
  */
 export class AuthManager {
-	private envManager: EnvManager;
+  private envManager: EnvManager;
 
-	constructor(db?: Database, config?: Config, envPath?: string) {
-		// db and config kept for backward compatibility but not used
-		this.envManager = new EnvManager(envPath);
-	}
+  constructor(db?: Database, config?: Config, envPath?: string) {
+    // db and config kept for backward compatibility but not used
+    this.envManager = new EnvManager(envPath);
+  }
 
-	/**
-	 * Initialize auth manager
-	 */
-	async initialize(): Promise<void> {
-		// Nothing to initialize - all auth comes from env vars
-	}
+  /**
+   * Initialize auth manager
+   */
+  async initialize(): Promise<void> {
+    // Nothing to initialize - all auth comes from env vars
+  }
 
-	/**
-	 * Get current authentication status
-	 */
-	async getAuthStatus(): Promise<AuthStatus> {
-		// Check for OAuth token in env (highest priority)
-		const oauthToken = this.envManager.getOAuthToken();
-		if (oauthToken) {
-			return {
-				method: 'oauth_token',
-				isAuthenticated: true,
-				source: 'env',
-				user: {
-					// Long-lived token from env (valid for 1 year)
-				},
-			};
-		}
+  /**
+   * Get current authentication status
+   */
+  async getAuthStatus(): Promise<AuthStatus> {
+    // Check for OAuth token in env (highest priority)
+    const oauthToken = this.envManager.getOAuthToken();
+    if (oauthToken) {
+      return {
+        method: 'oauth_token',
+        isAuthenticated: true,
+        source: 'env',
+        user: {
+          // Long-lived token from env (valid for 1 year)
+        },
+      };
+    }
 
-		// Check for API key in env
-		const apiKey = this.envManager.getApiKey();
-		if (apiKey) {
-			return {
-				method: 'api_key',
-				isAuthenticated: true,
-				source: 'env',
-			};
-		}
+    // Check for API key in env
+    const apiKey = this.envManager.getApiKey();
+    if (apiKey) {
+      return {
+        method: 'api_key',
+        isAuthenticated: true,
+        source: 'env',
+      };
+    }
 
-		// No authentication configured
-		return {
-			method: 'none',
-			isAuthenticated: false,
-			source: 'env',
-		};
-	}
+    // No authentication configured
+    return {
+      method: 'none',
+      isAuthenticated: false,
+      source: 'env',
+    };
+  }
 
-	/**
-	 * Get current API key (for use in agent sessions)
-	 */
-	async getCurrentApiKey(): Promise<string | null> {
-		// Priority 1: OAuth token from env
-		const oauthToken = this.envManager.getOAuthToken();
-		if (oauthToken) {
-			return oauthToken;
-		}
+  /**
+   * Get current API key (for use in agent sessions)
+   */
+  async getCurrentApiKey(): Promise<string | null> {
+    // Priority 1: OAuth token from env
+    const oauthToken = this.envManager.getOAuthToken();
+    if (oauthToken) {
+      return oauthToken;
+    }
 
-		// Priority 2: API key from env
-		const apiKey = this.envManager.getApiKey();
-		if (apiKey) {
-			return apiKey;
-		}
+    // Priority 2: API key from env
+    const apiKey = this.envManager.getApiKey();
+    if (apiKey) {
+      return apiKey;
+    }
 
-		return null;
-	}
+    return null;
+  }
 }

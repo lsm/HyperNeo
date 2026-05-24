@@ -20,86 +20,86 @@ const RUN_TASK_LOOKUP_TIMEOUT_MS = 20000;
 const RUN_TASK_LOOKUP_INTERVAL_MS = 250;
 
 async function createSpaceWithRun(
-	page: Parameters<typeof waitForWebSocketConnected>[0]
+  page: Parameters<typeof waitForWebSocketConnected>[0]
 ): Promise<{ spaceId: string; runId: string }> {
-	await waitForWebSocketConnected(page);
-	const workspaceRoot = await getWorkspaceRoot(page);
-	// Use a unique subdirectory to avoid conflicts with other parallel tests
-	// (workspace_path has a UNIQUE constraint in the DB).
-	const wsPath = createUniqueSpaceDir(workspaceRoot, 'happy-path');
+  await waitForWebSocketConnected(page);
+  const workspaceRoot = await getWorkspaceRoot(page);
+  // Use a unique subdirectory to avoid conflicts with other parallel tests
+  // (workspace_path has a UNIQUE constraint in the DB).
+  const wsPath = createUniqueSpaceDir(workspaceRoot, 'happy-path');
 
-	return page.evaluate(
-		async ({ wsPath }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
+  return page.evaluate(
+    async ({ wsPath }) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) throw new Error('MessageHub not available');
 
-			const spaceRes = (await hub.request('space.create', {
-				name: `E2E Task-First ${Date.now()}`,
-				workspacePath: wsPath,
-			})) as { id: string };
+      const spaceRes = (await hub.request('space.create', {
+        name: `E2E Task-First ${Date.now()}`,
+        workspacePath: wsPath,
+      })) as { id: string };
 
-			const runRes = (await hub.request('spaceWorkflowRun.start', {
-				spaceId: spaceRes.id,
-				title: 'E2E: Task-first runtime flow',
-				description: 'Validate task thread lifecycle for workflow-backed tasks.',
-			})) as { run: { id: string } };
+      const runRes = (await hub.request('spaceWorkflowRun.start', {
+        spaceId: spaceRes.id,
+        title: 'E2E: Task-first runtime flow',
+        description: 'Validate task thread lifecycle for workflow-backed tasks.',
+      })) as { run: { id: string } };
 
-			return { spaceId: spaceRes.id, runId: runRes.run.id };
-		},
-		{ wsPath }
-	);
+      return { spaceId: spaceRes.id, runId: runRes.run.id };
+    },
+    { wsPath }
+  );
 }
 
 async function cancelRun(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	runId: string
+  page: Parameters<typeof waitForWebSocketConnected>[0],
+  runId: string
 ): Promise<void> {
-	try {
-		await page.evaluate(async (rid) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('spaceWorkflowRun.cancel', { id: rid });
-		}, runId);
-	} catch {
-		// best-effort cleanup
-	}
+  try {
+    await page.evaluate(async (rid) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) return;
+      await hub.request('spaceWorkflowRun.cancel', { id: rid });
+    }, runId);
+  } catch {
+    // best-effort cleanup
+  }
 }
 
 async function getRunTaskId(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string,
-	runId: string
+  page: Parameters<typeof waitForWebSocketConnected>[0],
+  spaceId: string,
+  runId: string
 ): Promise<string> {
-	await page.waitForFunction(
-		async ({ sid, rid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return false;
-			const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
-				id: string;
-				workflowRunId?: string;
-			}>;
-			return tasks.some((t) => t.workflowRunId === rid);
-		},
-		{ sid: spaceId, rid: runId },
-		{ timeout: RUN_TASK_LOOKUP_TIMEOUT_MS, polling: RUN_TASK_LOOKUP_INTERVAL_MS }
-	);
+  await page.waitForFunction(
+    async ({ sid, rid }) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) return false;
+      const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
+        id: string;
+        workflowRunId?: string;
+      }>;
+      return tasks.some((t) => t.workflowRunId === rid);
+    },
+    { sid: spaceId, rid: runId },
+    { timeout: RUN_TASK_LOOKUP_TIMEOUT_MS, polling: RUN_TASK_LOOKUP_INTERVAL_MS }
+  );
 
-	const taskId = await page.evaluate(
-		async ({ sid, rid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
-				id: string;
-				workflowRunId?: string;
-			}>;
-			const match = tasks.find((t) => t.workflowRunId === rid);
-			return match?.id ?? '';
-		},
-		{ sid: spaceId, rid: runId }
-	);
+  const taskId = await page.evaluate(
+    async ({ sid, rid }) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) throw new Error('MessageHub not available');
+      const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
+        id: string;
+        workflowRunId?: string;
+      }>;
+      const match = tasks.find((t) => t.workflowRunId === rid);
+      return match?.id ?? '';
+    },
+    { sid: spaceId, rid: runId }
+  );
 
-	if (!taskId) throw new Error(`No task found for run ${runId}`);
-	return taskId;
+  if (!taskId) throw new Error(`No task found for run ${runId}`);
+  return taskId;
 }
 
 /**
@@ -110,145 +110,145 @@ async function getRunTaskId(
  * hub.request() will throw "Not connected to transport".
  */
 async function gotoAndWaitForConnection(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	url: string
+  page: Parameters<typeof waitForWebSocketConnected>[0],
+  url: string
 ): Promise<void> {
-	await page.goto(url);
-	await waitForWebSocketConnected(page);
+  await page.goto(url);
+  await waitForWebSocketConnected(page);
 }
 
 test.describe('Space Happy Path Pipeline (Task-First)', () => {
-	test.use({ viewport: DESKTOP_VIEWPORT });
+  test.use({ viewport: DESKTOP_VIEWPORT });
 
-	let spaceId = '';
-	let runId = '';
+  let spaceId = '';
+  let runId = '';
 
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		const ids = await createSpaceWithRun(page);
-		spaceId = ids.spaceId;
-		runId = ids.runId;
-	});
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    const ids = await createSpaceWithRun(page);
+    spaceId = ids.spaceId;
+    runId = ids.runId;
+  });
 
-	test.afterEach(async ({ page }) => {
-		// Navigate back to root and wait for connection before cleanup RPC calls.
-		// The page may be on a space sub-route where the WebSocket is disconnected
-		// (e.g. due to navigation or test failure), so we need a connected hub.
-		try {
-			await page.goto('/');
-			await waitForWebSocketConnected(page, 5000);
-		} catch {
-			// If navigation/connection fails, cleanup below will be best-effort
-		}
+  test.afterEach(async ({ page }) => {
+    // Navigate back to root and wait for connection before cleanup RPC calls.
+    // The page may be on a space sub-route where the WebSocket is disconnected
+    // (e.g. due to navigation or test failure), so we need a connected hub.
+    try {
+      await page.goto('/');
+      await waitForWebSocketConnected(page, 5000);
+    } catch {
+      // If navigation/connection fails, cleanup below will be best-effort
+    }
 
-		if (runId) {
-			await cancelRun(page, runId);
-			runId = '';
-		}
-		if (spaceId) {
-			await deleteSpaceViaRpc(page, spaceId);
-			spaceId = '';
-		}
-	});
+    if (runId) {
+      await cancelRun(page, runId);
+      runId = '';
+    }
+    if (spaceId) {
+      await deleteSpaceViaRpc(page, spaceId);
+      spaceId = '';
+    }
+  });
 
-	test('seeded agents/workflows are present and Plan Review node carries 4 reviewer slots', async ({
-		page,
-	}) => {
-		// Navigate to the space configure view where Agents/Workflows tabs are available.
-		await gotoAndWaitForConnection(page, `/space/${spaceId}/configure`);
-		await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
+  test('seeded agents/workflows are present and Plan Review node carries 4 reviewer slots', async ({
+    page,
+  }) => {
+    // Navigate to the space configure view where Agents/Workflows tabs are available.
+    await gotoAndWaitForConnection(page, `/space/${spaceId}/configure`);
+    await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
 
-		// Agents tab is the default active tab in SpaceConfigurePage.
-		await expect(page.getByTestId('space-configure-tab-agents')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('General', { exact: true }).first()).toBeVisible({ timeout: 5000 });
-		await expect(page.getByText('Research', { exact: true }).first()).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(page.getByText('Reviewer', { exact: true }).first()).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    // Agents tab is the default active tab in SpaceConfigurePage.
+    await expect(page.getByTestId('space-configure-tab-agents')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('General', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Research', { exact: true }).first()).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.getByText('Reviewer', { exact: true }).first()).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 
-		await page.getByTestId('space-configure-tab-workflows').click();
-		await expect(page.getByText('Plan & Decompose Workflow', { exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+    await page.getByTestId('space-configure-tab-workflows').click();
+    await expect(page.getByText('Plan & Decompose Workflow', { exact: true })).toBeVisible({
+      timeout: 5000,
+    });
 
-		const reviewSlotCount = await page.evaluate(async () => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const sid = window.location.pathname.split('/')[2];
-			// list returns summaries — fetch full detail to read nodes
-			const list = (await hub.request('spaceWorkflow.list', { spaceId: sid })) as {
-				workflows: Array<{ id: string; name: string }>;
-			};
-			const planDecompose = list.workflows.find((w) => w.name === 'Plan & Decompose Workflow');
-			if (!planDecompose) return 0;
-			const detail = (await hub.request('spaceWorkflow.get', {
-				spaceId: sid,
-				id: planDecompose.id,
-			})) as {
-				workflow: { nodes: Array<{ name: string; agents?: Array<{ name: string }> }> } | null;
-			};
-			const reviewNode = detail.workflow?.nodes.find((n) => n.name === 'Plan Review');
-			return reviewNode?.agents?.length ?? 0;
-		});
-		expect(reviewSlotCount).toBe(4);
-	});
+    const reviewSlotCount = await page.evaluate(async () => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) throw new Error('MessageHub not available');
+      const sid = window.location.pathname.split('/')[2];
+      // list returns summaries — fetch full detail to read nodes
+      const list = (await hub.request('spaceWorkflow.list', { spaceId: sid })) as {
+        workflows: Array<{ id: string; name: string }>;
+      };
+      const planDecompose = list.workflows.find((w) => w.name === 'Plan & Decompose Workflow');
+      if (!planDecompose) return 0;
+      const detail = (await hub.request('spaceWorkflow.get', {
+        spaceId: sid,
+        id: planDecompose.id,
+      })) as {
+        workflow: { nodes: Array<{ name: string; agents?: Array<{ name: string }> }> } | null;
+      };
+      const reviewNode = detail.workflow?.nodes.find((n) => n.name === 'Plan Review');
+      return reviewNode?.agents?.length ?? 0;
+    });
+    expect(reviewSlotCount).toBe(4);
+  });
 
-	test('workflow run task opens task route and shows thread activity', async ({ page }) => {
-		const taskId = await getRunTaskId(page, spaceId, runId);
+  test('workflow run task opens task route and shows thread activity', async ({ page }) => {
+    const taskId = await getRunTaskId(page, spaceId, runId);
 
-		await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
-		await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
+    await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+    await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
 
-		// Ensure session exists, then inject one human message so the thread has deterministic activity.
-		await page.evaluate(
-			async ({ sid, tid }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('MessageHub not available');
-				await hub.request('space.task.ensureAgentSession', { spaceId: sid, taskId: tid });
-				await hub.request('space.task.sendMessage', {
-					spaceId: sid,
-					taskId: tid,
-					message: 'E2E ping: continue the task and report status.',
-				});
-			},
-			{ sid: spaceId, tid: taskId }
-		);
+    // Ensure session exists, then inject one human message so the thread has deterministic activity.
+    await page.evaluate(
+      async ({ sid, tid }) => {
+        const hub = window.__messageHub || window.appState?.messageHub;
+        if (!hub?.request) throw new Error('MessageHub not available');
+        await hub.request('space.task.ensureAgentSession', { spaceId: sid, taskId: tid });
+        await hub.request('space.task.sendMessage', {
+          spaceId: sid,
+          taskId: tid,
+          message: 'E2E ping: continue the task and report status.',
+        });
+      },
+      { sid: spaceId, tid: taskId }
+    );
 
-		await expect(page.getByTestId('space-task-event-row').first()).toBeVisible({ timeout: 15000 });
-	});
+    await expect(page.getByTestId('space-task-event-row').first()).toBeVisible({ timeout: 15000 });
+  });
 
-	test('task completion is reflected in task pane', async ({ page }) => {
-		const taskId = await getRunTaskId(page, spaceId, runId);
+  test('task completion is reflected in task pane', async ({ page }) => {
+    const taskId = await getRunTaskId(page, spaceId, runId);
 
-		await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+    await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await page.evaluate(
-			async ({ sid, tid }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('MessageHub not available');
-				const current = (await hub.request('spaceTask.get', {
-					spaceId: sid,
-					taskId: tid,
-				})) as { status: string };
-				if (current.status === 'pending') {
-					await hub.request('spaceTask.update', {
-						spaceId: sid,
-						taskId: tid,
-						status: 'in_progress',
-					});
-				}
-				await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
-			},
-			{ sid: spaceId, tid: taskId }
-		);
+    await page.evaluate(
+      async ({ sid, tid }) => {
+        const hub = window.__messageHub || window.appState?.messageHub;
+        if (!hub?.request) throw new Error('MessageHub not available');
+        const current = (await hub.request('spaceTask.get', {
+          spaceId: sid,
+          taskId: tid,
+        })) as { status: string };
+        if (current.status === 'pending') {
+          await hub.request('spaceTask.update', {
+            spaceId: sid,
+            taskId: tid,
+            status: 'in_progress',
+          });
+        }
+        await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
+      },
+      { sid: spaceId, tid: taskId }
+    );
 
-		await expect(page.getByText('Done', { exact: true }).first()).toBeVisible({ timeout: 5000 });
-	});
+    await expect(page.getByText('Done', { exact: true }).first()).toBeVisible({ timeout: 5000 });
+  });
 });

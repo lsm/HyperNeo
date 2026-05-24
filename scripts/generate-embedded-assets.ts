@@ -17,59 +17,59 @@ const SKILLS_DIR = join(ROOT, 'packages/skills');
 const OUTPUT_FILE = join(ROOT, 'packages/cli/src/embedded-assets.ts');
 
 const MIME_TYPES: Record<string, string> = {
-	'.html': 'text/html; charset=utf-8',
-	'.js': 'application/javascript; charset=utf-8',
-	'.css': 'text/css; charset=utf-8',
-	'.json': 'application/json; charset=utf-8',
-	'.svg': 'image/svg+xml',
-	'.png': 'image/png',
-	'.jpg': 'image/jpeg',
-	'.jpeg': 'image/jpeg',
-	'.gif': 'image/gif',
-	'.ico': 'image/x-icon',
-	'.webp': 'image/webp',
-	'.woff': 'font/woff',
-	'.woff2': 'font/woff2',
-	'.ttf': 'font/ttf',
-	'.eot': 'application/vnd.ms-fontobject',
-	'.txt': 'text/plain; charset=utf-8',
-	'.xml': 'application/xml',
-	'.webmanifest': 'application/manifest+json',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml',
+  '.webmanifest': 'application/manifest+json',
 };
 
 // File extensions to skip (not needed in the binary)
 const SKIP_EXTENSIONS = new Set(['.map']);
 
 function sanitizeIdentifier(relativePath: string): string {
-	return (
-		'asset_' +
-		relativePath
-			.replace(/[^a-zA-Z0-9]/g, '_')
-			.replace(/_+/g, '_')
-			.replace(/^_|_$/g, '')
-	);
+  return (
+    'asset_' +
+    relativePath
+      .replace(/[^a-zA-Z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '')
+  );
 }
 
 function walkDir(dir: string): string[] {
-	const files: string[] = [];
-	for (const entry of readdirSync(dir)) {
-		const full = join(dir, entry);
-		if (statSync(full).isDirectory()) {
-			files.push(...walkDir(full));
-		} else {
-			files.push(full);
-		}
-	}
-	return files;
+  const files: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      files.push(...walkDir(full));
+    } else {
+      files.push(full);
+    }
+  }
+  return files;
 }
 
 // Verify dist directory exists
 try {
-	statSync(DIST_DIR);
+  statSync(DIST_DIR);
 } catch {
-	console.error(`Error: ${DIST_DIR} does not exist.`);
-	console.error('Run "cd packages/web && bun run build" first.');
-	process.exit(1);
+  console.error(`Error: ${DIST_DIR} does not exist.`);
+  console.error('Run "cd packages/web && bun run build" first.');
+  process.exit(1);
 }
 
 // Scan dist directory
@@ -79,22 +79,22 @@ const mapEntries: string[] = [];
 let skipped = 0;
 
 for (const absPath of allFiles) {
-	const relPath = relative(DIST_DIR, absPath);
-	const ext = extname(relPath);
+  const relPath = relative(DIST_DIR, absPath);
+  const ext = extname(relPath);
 
-	// Skip source maps and other unnecessary files
-	if (SKIP_EXTENSIONS.has(ext)) {
-		skipped++;
-		continue;
-	}
+  // Skip source maps and other unnecessary files
+  if (SKIP_EXTENSIONS.has(ext)) {
+    skipped++;
+    continue;
+  }
 
-	const urlPath = '/' + relPath.replace(/\\/g, '/');
-	const id = sanitizeIdentifier(relPath);
-	const mime = MIME_TYPES[ext] || 'application/octet-stream';
-	const importPath = '../../web/dist/' + relPath.replace(/\\/g, '/');
+  const urlPath = '/' + relPath.replace(/\\/g, '/');
+  const id = sanitizeIdentifier(relPath);
+  const mime = MIME_TYPES[ext] || 'application/octet-stream';
+  const importPath = '../../web/dist/' + relPath.replace(/\\/g, '/');
 
-	imports.push(`import ${id} from '${importPath}' with { type: 'file' };`);
-	mapEntries.push(`\t['${urlPath}', { filePath: ${id}, mimeType: '${mime}' }],`);
+  imports.push(`import ${id} from '${importPath}' with { type: 'file' };`);
+  mapEntries.push(`\t['${urlPath}', { filePath: ${id}, mimeType: '${mime}' }],`);
 }
 
 // Scan packages/skills/ recursively for built-in skill files
@@ -103,28 +103,28 @@ const skillMapEntries: string[] = [];
 
 let skillsExist = false;
 try {
-	statSync(SKILLS_DIR);
-	skillsExist = true;
+  statSync(SKILLS_DIR);
+  skillsExist = true;
 } catch {
-	// packages/skills dir not present — skip
+  // packages/skills dir not present — skip
 }
 
 if (skillsExist) {
-	const skillFiles = walkDir(SKILLS_DIR);
-	for (const absPath of skillFiles) {
-		const relPath = relative(SKILLS_DIR, absPath).replace(/\\/g, '/');
-		// Sanitize for use as a JS identifier
-		const varName =
-			'skill_' +
-			relPath
-				.replace(/[^a-zA-Z0-9]/g, '_')
-				.replace(/_+/g, '_')
-				.replace(/^_|_$/, '');
-		// Import path relative to packages/cli/src/ → ../../skills/<relPath>
-		const importPath = `'../../skills/${relPath}' with { type: 'file' }`;
-		skillImports.push(`import ${varName} from ${importPath};`);
-		skillMapEntries.push(`\t['${relPath}', ${varName}],`);
-	}
+  const skillFiles = walkDir(SKILLS_DIR);
+  for (const absPath of skillFiles) {
+    const relPath = relative(SKILLS_DIR, absPath).replace(/\\/g, '/');
+    // Sanitize for use as a JS identifier
+    const varName =
+      'skill_' +
+      relPath
+        .replace(/[^a-zA-Z0-9]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/, '');
+    // Import path relative to packages/cli/src/ → ../../skills/<relPath>
+    const importPath = `'../../skills/${relPath}' with { type: 'file' }`;
+    skillImports.push(`import ${varName} from ${importPath};`);
+    skillMapEntries.push(`\t['${relPath}', ${varName}],`);
+  }
 }
 
 const output = `// AUTO-GENERATED by scripts/generate-embedded-assets.ts -- DO NOT EDIT
@@ -148,5 +148,5 @@ ${skillMapEntries.join('\n')}
 
 writeFileSync(OUTPUT_FILE, output);
 console.log(
-	`Generated ${OUTPUT_FILE} with ${mapEntries.length} embedded assets (${skipped} source maps skipped), ${skillMapEntries.length} built-in skill files`
+  `Generated ${OUTPUT_FILE} with ${mapEntries.length} embedded assets (${skipped} source maps skipped), ${skillMapEntries.length} built-in skill files`
 );

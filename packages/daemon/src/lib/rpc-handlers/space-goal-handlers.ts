@@ -3,105 +3,105 @@ import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goa
 import type { SpaceManager } from '../space/managers/space-manager';
 
 export interface SpaceGoalHandlerDeps {
-	goalService: SpaceGoalService;
-	spaceManager: SpaceManager;
+  goalService: SpaceGoalService;
+  spaceManager: SpaceManager;
 }
 
 export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHandlerDeps): void {
-	const { goalService, spaceManager } = deps;
+  const { goalService, spaceManager } = deps;
 
-	async function requireSpace(spaceId: string) {
-		if (!spaceId) throw new Error('spaceId is required');
-		const space = await spaceManager.getSpace(spaceId);
-		if (!space) throw new Error(`Space not found: ${spaceId}`);
-		return space;
-	}
+  async function requireSpace(spaceId: string) {
+    if (!spaceId) throw new Error('spaceId is required');
+    const space = await spaceManager.getSpace(spaceId);
+    if (!space) throw new Error(`Space not found: ${spaceId}`);
+    return space;
+  }
 
-	function requireGoalInSpace(goalId: string, spaceId: string) {
-		if (!goalId) throw new Error('goalId is required');
-		const goal = goalService.getGoal(goalId);
-		if (!goal || goal.spaceId !== spaceId) throw new Error(`Goal not found: ${goalId}`);
-		return goal;
-	}
+  function requireGoalInSpace(goalId: string, spaceId: string) {
+    if (!goalId) throw new Error('goalId is required');
+    const goal = goalService.getGoal(goalId);
+    if (!goal || goal.spaceId !== spaceId) throw new Error(`Goal not found: ${goalId}`);
+    return goal;
+  }
 
-	messageHub.onRequest('spaceGoal.create', async (data) => {
-		const params = data as Parameters<SpaceGoalService['createGoal']>[0];
-		await requireSpace(params.spaceId);
-		return { goal: goalService.createGoal(params, { source: 'rpc' }) };
-	});
+  messageHub.onRequest('spaceGoal.create', async (data) => {
+    const params = data as Parameters<SpaceGoalService['createGoal']>[0];
+    await requireSpace(params.spaceId);
+    return { goal: goalService.createGoal(params, { source: 'rpc' }) };
+  });
 
-	messageHub.onRequest('spaceGoal.list', async (data) => {
-		const params = data as {
-			spaceId: string;
-			status?: SpaceGoalStatus;
-			includeArchived?: boolean;
-			label?: string;
-			search?: string;
-		};
-		await requireSpace(params.spaceId);
-		return { goals: goalService.listGoals(params) };
-	});
+  messageHub.onRequest('spaceGoal.list', async (data) => {
+    const params = data as {
+      spaceId: string;
+      status?: SpaceGoalStatus;
+      includeArchived?: boolean;
+      label?: string;
+      search?: string;
+    };
+    await requireSpace(params.spaceId);
+    return { goals: goalService.listGoals(params) };
+  });
 
-	messageHub.onRequest('spaceGoal.get', async (data) => {
-		const params = data as { spaceId: string; goalId: string };
-		await requireSpace(params.spaceId);
-		return { goal: requireGoalInSpace(params.goalId, params.spaceId) };
-	});
+  messageHub.onRequest('spaceGoal.get', async (data) => {
+    const params = data as { spaceId: string; goalId: string };
+    await requireSpace(params.spaceId);
+    return { goal: requireGoalInSpace(params.goalId, params.spaceId) };
+  });
 
-	messageHub.onRequest('spaceGoal.update', async (data) => {
-		const params = data as { spaceId: string; goalId: string } & Parameters<
-			SpaceGoalService['updateGoal']
-		>[1];
-		await requireSpace(params.spaceId);
-		requireGoalInSpace(params.goalId, params.spaceId);
-		const updates: PublicSpaceGoalUpdateParams = {
-			title: params.title,
-			description: params.description,
-			status: params.status,
-			type: params.type,
-			priority: params.priority,
-			labels: params.labels,
-			metrics: params.metrics,
-			summary: params.summary,
-			progress: params.progress,
-			nextSteps: params.nextSteps,
-			preferredWorkflowId: params.preferredWorkflowId,
-			autoTriggerNext: params.autoTriggerNext,
-		};
-		return { goal: goalService.updateGoal(params.goalId, updates, { source: 'rpc' }) };
-	});
+  messageHub.onRequest('spaceGoal.update', async (data) => {
+    const params = data as { spaceId: string; goalId: string } & Parameters<
+      SpaceGoalService['updateGoal']
+    >[1];
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    const updates: PublicSpaceGoalUpdateParams = {
+      title: params.title,
+      description: params.description,
+      status: params.status,
+      type: params.type,
+      priority: params.priority,
+      labels: params.labels,
+      metrics: params.metrics,
+      summary: params.summary,
+      progress: params.progress,
+      nextSteps: params.nextSteps,
+      preferredWorkflowId: params.preferredWorkflowId,
+      autoTriggerNext: params.autoTriggerNext,
+    };
+    return { goal: goalService.updateGoal(params.goalId, updates, { source: 'rpc' }) };
+  });
 
-	messageHub.onRequest('spaceGoal.pause', async (data) => {
-		const params = data as { spaceId: string; goalId: string };
-		await requireSpace(params.spaceId);
-		requireGoalInSpace(params.goalId, params.spaceId);
-		return { goal: goalService.pauseGoal(params.goalId, { source: 'rpc' }) };
-	});
+  messageHub.onRequest('spaceGoal.pause', async (data) => {
+    const params = data as { spaceId: string; goalId: string };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    return { goal: goalService.pauseGoal(params.goalId, { source: 'rpc' }) };
+  });
 
-	messageHub.onRequest('spaceGoal.resume', async (data) => {
-		const params = data as { spaceId: string; goalId: string };
-		await requireSpace(params.spaceId);
-		requireGoalInSpace(params.goalId, params.spaceId);
-		return { goal: goalService.resumeGoal(params.goalId, { source: 'rpc' }) };
-	});
+  messageHub.onRequest('spaceGoal.resume', async (data) => {
+    const params = data as { spaceId: string; goalId: string };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    return { goal: goalService.resumeGoal(params.goalId, { source: 'rpc' }) };
+  });
 
-	messageHub.onRequest('spaceGoal.createImmediateTask', async (data) => {
-		const params = data as { spaceId: string; goalId: string };
-		await requireSpace(params.spaceId);
-		requireGoalInSpace(params.goalId, params.spaceId);
-		return goalService.createImmediateTask(params.goalId, { source: 'rpc' });
-	});
+  messageHub.onRequest('spaceGoal.createImmediateTask', async (data) => {
+    const params = data as { spaceId: string; goalId: string };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    return goalService.createImmediateTask(params.goalId, { source: 'rpc' });
+  });
 
-	messageHub.onRequest('spaceGoal.listEvents', async (data) => {
-		const params = data as {
-			spaceId: string;
-			goalId: string;
-			limit?: number;
-			before?: number;
-			beforeId?: string;
-		};
-		await requireSpace(params.spaceId);
-		requireGoalInSpace(params.goalId, params.spaceId);
-		return { events: goalService.listGoalEvents(params.goalId, params) };
-	});
+  messageHub.onRequest('spaceGoal.listEvents', async (data) => {
+    const params = data as {
+      spaceId: string;
+      goalId: string;
+      limit?: number;
+      before?: number;
+      beforeId?: string;
+    };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    return { events: goalService.listGoalEvents(params.goalId, params) };
+  });
 }

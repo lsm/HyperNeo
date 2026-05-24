@@ -16,191 +16,191 @@ type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
-	hub: MessageHub;
-	handlers: Map<string, RequestHandler>;
+  hub: MessageHub;
+  handlers: Map<string, RequestHandler>;
 } {
-	const handlers = new Map<string, RequestHandler>();
+  const handlers = new Map<string, RequestHandler>();
 
-	const hub = {
-		onRequest: mock((method: string, handler: RequestHandler) => {
-			handlers.set(method, handler);
-			return () => handlers.delete(method);
-		}),
-		onEvent: mock(() => () => {}),
-		request: mock(async () => {}),
-		event: mock(() => {}),
-		joinChannel: mock(async () => {}),
-		leaveChannel: mock(async () => {}),
-		isConnected: mock(() => true),
-		getState: mock(() => 'connected' as const),
-		onConnection: mock(() => () => {}),
-		onMessage: mock(() => () => {}),
-		cleanup: mock(() => {}),
-		registerTransport: mock(() => () => {}),
-		registerRouter: mock(() => {}),
-		getRouter: mock(() => null),
-		getPendingCallCount: mock(() => 0),
-	} as unknown as MessageHub;
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    onEvent: mock(() => () => {}),
+    request: mock(async () => {}),
+    event: mock(() => {}),
+    joinChannel: mock(async () => {}),
+    leaveChannel: mock(async () => {}),
+    isConnected: mock(() => true),
+    getState: mock(() => 'connected' as const),
+    onConnection: mock(() => () => {}),
+    onMessage: mock(() => () => {}),
+    cleanup: mock(() => {}),
+    registerTransport: mock(() => () => {}),
+    registerRouter: mock(() => {}),
+    getRouter: mock(() => null),
+    getPendingCallCount: mock(() => 0),
+  } as unknown as MessageHub;
 
-	return { hub, handlers };
+  return { hub, handlers };
 }
 
 // Helper to create a mock AgentSession with slash commands
 function createMockAgentSession(): {
-	agentSession: AgentSession;
-	mocks: {
-		getSlashCommands: ReturnType<typeof mock>;
-	};
+  agentSession: AgentSession;
+  mocks: {
+    getSlashCommands: ReturnType<typeof mock>;
+  };
 } {
-	const mocks = {
-		getSlashCommands: mock(async () => [
-			{ name: '/help', description: 'Show available commands' },
-			{ name: '/clear', description: 'Clear the conversation' },
-			{ name: '/model', description: 'Switch the model' },
-			{ name: '/export', description: 'Export conversation' },
-		]),
-	};
+  const mocks = {
+    getSlashCommands: mock(async () => [
+      { name: '/help', description: 'Show available commands' },
+      { name: '/clear', description: 'Clear the conversation' },
+      { name: '/model', description: 'Switch the model' },
+      { name: '/export', description: 'Export conversation' },
+    ]),
+  };
 
-	const agentSession = {
-		...mocks,
-	} as unknown as AgentSession;
+  const agentSession = {
+    ...mocks,
+  } as unknown as AgentSession;
 
-	return { agentSession, mocks };
+  return { agentSession, mocks };
 }
 
 // Helper to create mock SessionManager
 function createMockSessionManager(): {
-	sessionManager: SessionManager;
-	getSessionAsyncMock: ReturnType<typeof mock>;
+  sessionManager: SessionManager;
+  getSessionAsyncMock: ReturnType<typeof mock>;
 } {
-	const { agentSession } = createMockAgentSession();
+  const { agentSession } = createMockAgentSession();
 
-	const getSessionAsyncMock = mock(async () => agentSession);
+  const getSessionAsyncMock = mock(async () => agentSession);
 
-	const sessionManager = {
-		getSessionAsync: getSessionAsyncMock,
-	} as unknown as SessionManager;
+  const sessionManager = {
+    getSessionAsync: getSessionAsyncMock,
+  } as unknown as SessionManager;
 
-	return { sessionManager, getSessionAsyncMock };
+  return { sessionManager, getSessionAsyncMock };
 }
 
 describe('Command RPC Handlers', () => {
-	let messageHubData: ReturnType<typeof createMockMessageHub>;
-	let sessionManagerData: ReturnType<typeof createMockSessionManager>;
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let sessionManagerData: ReturnType<typeof createMockSessionManager>;
 
-	beforeEach(() => {
-		messageHubData = createMockMessageHub();
-		sessionManagerData = createMockSessionManager();
+  beforeEach(() => {
+    messageHubData = createMockMessageHub();
+    sessionManagerData = createMockSessionManager();
 
-		// Setup handlers with mocked dependencies
-		setupCommandHandlers(messageHubData.hub, sessionManagerData.sessionManager);
-	});
+    // Setup handlers with mocked dependencies
+    setupCommandHandlers(messageHubData.hub, sessionManagerData.sessionManager);
+  });
 
-	afterEach(() => {
-		mock.restore();
-	});
+  afterEach(() => {
+    mock.restore();
+  });
 
-	describe('commands.list', () => {
-		it('returns list of slash commands', async () => {
-			const handler = messageHubData.handlers.get('commands.list');
-			expect(handler).toBeDefined();
+  describe('commands.list', () => {
+    it('returns list of slash commands', async () => {
+      const handler = messageHubData.handlers.get('commands.list');
+      expect(handler).toBeDefined();
 
-			const result = (await handler!({ sessionId: 'session-123' }, {})) as {
-				commands: Array<{ name: string; description: string }>;
-			};
+      const result = (await handler!({ sessionId: 'session-123' }, {})) as {
+        commands: Array<{ name: string; description: string }>;
+      };
 
-			expect(result.commands).toBeDefined();
-			expect(Array.isArray(result.commands)).toBe(true);
-			expect(result.commands).toHaveLength(4);
-		});
+      expect(result.commands).toBeDefined();
+      expect(Array.isArray(result.commands)).toBe(true);
+      expect(result.commands).toHaveLength(4);
+    });
 
-		it('returns commands with correct structure', async () => {
-			const handler = messageHubData.handlers.get('commands.list');
-			expect(handler).toBeDefined();
+    it('returns commands with correct structure', async () => {
+      const handler = messageHubData.handlers.get('commands.list');
+      expect(handler).toBeDefined();
 
-			const result = (await handler!({ sessionId: 'session-123' }, {})) as {
-				commands: Array<{ name: string; description: string }>;
-			};
+      const result = (await handler!({ sessionId: 'session-123' }, {})) as {
+        commands: Array<{ name: string; description: string }>;
+      };
 
-			expect(result.commands[0]).toHaveProperty('name');
-			expect(result.commands[0]).toHaveProperty('description');
-			expect(result.commands[0].name).toBe('/help');
-		});
+      expect(result.commands[0]).toHaveProperty('name');
+      expect(result.commands[0]).toHaveProperty('description');
+      expect(result.commands[0].name).toBe('/help');
+    });
 
-		it('throws error when session not found', async () => {
-			const handler = messageHubData.handlers.get('commands.list');
-			expect(handler).toBeDefined();
+    it('throws error when session not found', async () => {
+      const handler = messageHubData.handlers.get('commands.list');
+      expect(handler).toBeDefined();
 
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
-				'Session not found'
-			);
-		});
+      await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+        'Session not found'
+      );
+    });
 
-		it('calls getSlashCommands on agent session', async () => {
-			const handler = messageHubData.handlers.get('commands.list');
-			expect(handler).toBeDefined();
+    it('calls getSlashCommands on agent session', async () => {
+      const handler = messageHubData.handlers.get('commands.list');
+      expect(handler).toBeDefined();
 
-			const { mocks } = createMockAgentSession();
-			const customSessionManagerData = createMockSessionManager();
+      const { mocks } = createMockAgentSession();
+      const customSessionManagerData = createMockSessionManager();
 
-			// Create a new agent session with specific mock
-			const { agentSession } = createMockAgentSession();
-			customSessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+      // Create a new agent session with specific mock
+      const { agentSession } = createMockAgentSession();
+      customSessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
 
-			const newHubData = createMockMessageHub();
-			setupCommandHandlers(newHubData.hub, customSessionManagerData.sessionManager);
+      const newHubData = createMockMessageHub();
+      setupCommandHandlers(newHubData.hub, customSessionManagerData.sessionManager);
 
-			const newHandler = newHubData.handlers.get('commands.list');
-			await newHandler!({ sessionId: 'session-123' }, {});
+      const newHandler = newHubData.handlers.get('commands.list');
+      await newHandler!({ sessionId: 'session-123' }, {});
 
-			expect(
-				(agentSession as unknown as { getSlashCommands: ReturnType<typeof mock> }).getSlashCommands
-			).toHaveBeenCalled();
-		});
+      expect(
+        (agentSession as unknown as { getSlashCommands: ReturnType<typeof mock> }).getSlashCommands
+      ).toHaveBeenCalled();
+    });
 
-		it('handles empty command list', async () => {
-			const handler = messageHubData.handlers.get('commands.list');
-			expect(handler).toBeDefined();
+    it('handles empty command list', async () => {
+      const handler = messageHubData.handlers.get('commands.list');
+      expect(handler).toBeDefined();
 
-			const { agentSession, mocks } = createMockAgentSession();
-			mocks.getSlashCommands.mockResolvedValueOnce([]);
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.getSlashCommands.mockResolvedValueOnce([]);
 
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			const result = (await handler!({ sessionId: 'session-123' }, {})) as {
-				commands: unknown[];
-			};
+      const result = (await handler!({ sessionId: 'session-123' }, {})) as {
+        commands: unknown[];
+      };
 
-			expect(result.commands).toEqual([]);
-		});
+      expect(result.commands).toEqual([]);
+    });
 
-		it('handles commands with different structures', async () => {
-			const handler = messageHubData.handlers.get('commands.list');
-			expect(handler).toBeDefined();
+    it('handles commands with different structures', async () => {
+      const handler = messageHubData.handlers.get('commands.list');
+      expect(handler).toBeDefined();
 
-			const { agentSession, mocks } = createMockAgentSession();
-			mocks.getSlashCommands.mockResolvedValueOnce([
-				{ name: '/custom1', description: 'Custom command 1' },
-				{ name: '/custom2', description: 'Custom command 2', category: 'utility' },
-			]);
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.getSlashCommands.mockResolvedValueOnce([
+        { name: '/custom1', description: 'Custom command 1' },
+        { name: '/custom2', description: 'Custom command 2', category: 'utility' },
+      ]);
 
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			const result = (await handler!({ sessionId: 'session-123' }, {})) as {
-				commands: Array<{ name: string; description: string }>;
-			};
+      const result = (await handler!({ sessionId: 'session-123' }, {})) as {
+        commands: Array<{ name: string; description: string }>;
+      };
 
-			expect(result.commands).toHaveLength(2);
-			expect(result.commands[0].name).toBe('/custom1');
-			expect(result.commands[1].name).toBe('/custom2');
-		});
-	});
+      expect(result.commands).toHaveLength(2);
+      expect(result.commands[0].name).toBe('/custom1');
+      expect(result.commands[1].name).toBe('/custom2');
+    });
+  });
 
-	describe('handler registration', () => {
-		it('registers commands.list handler', () => {
-			expect(messageHubData.handlers.has('commands.list')).toBe(true);
-		});
-	});
+  describe('handler registration', () => {
+    it('registers commands.list handler', () => {
+      expect(messageHubData.handlers.has('commands.list')).toBe(true);
+    });
+  });
 });

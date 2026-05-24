@@ -17,17 +17,17 @@
  */
 
 import type {
-	ChatMessage,
-	MessageDeliveryMode,
-	MessageImage,
-	QuestionDraftResponse,
-	ResolvedQuestion,
-	SessionFeatures,
+  ChatMessage,
+  MessageDeliveryMode,
+  MessageImage,
+  QuestionDraftResponse,
+  ResolvedQuestion,
+  SessionFeatures,
 } from '@neokai/shared';
 import {
-	DEFAULT_LOBBY_FEATURES,
-	DEFAULT_WORKER_FEATURES,
-	normalizeThinkingLevel,
+  DEFAULT_LOBBY_FEATURES,
+  DEFAULT_WORKER_FEATURES,
+  normalizeThinkingLevel,
 } from '@neokai/shared';
 import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
@@ -64,9 +64,9 @@ import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import {
-	clearOverlayHighlightMessageId,
-	navigateToSettings,
-	replaceOverlayHistory,
+  clearOverlayHighlightMessageId,
+  navigateToSettings,
+  replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
@@ -78,1638 +78,1638 @@ import type { StructuredError } from '../types/error.ts';
 import { ErrorCategory } from '../types/error.ts';
 
 export async function sendChatContainerMessage({
-	content,
-	images,
-	deliveryMode,
-	onSendOverride,
-	sendMessage,
-	setLocalError,
+  content,
+  images,
+  deliveryMode,
+  onSendOverride,
+  sendMessage,
+  setLocalError,
 }: {
-	content: string;
-	images?: MessageImage[];
-	deliveryMode: MessageDeliveryMode;
-	onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
-	sendMessage: (
-		content: string,
-		images?: MessageImage[],
-		deliveryMode?: MessageDeliveryMode
-	) => Promise<boolean>;
-	setLocalError: (message: string | null) => void;
+  content: string;
+  images?: MessageImage[];
+  deliveryMode: MessageDeliveryMode;
+  onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
+  sendMessage: (
+    content: string,
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
+  ) => Promise<boolean>;
+  setLocalError: (message: string | null) => void;
 }): Promise<boolean> {
-	if (onSendOverride) {
-		// Task-agent overlays don't support deferred / queued sends yet — those are
-		// scoped to the regular session path, where the daemon owns the
-		// "deferred until idle" replay logic. Fail loudly so the caller's draft
-		// is preserved instead of silently dropping the user's message.
-		if (deliveryMode !== 'immediate') {
-			toast.error('Queued sends are not supported for task agent messages yet.');
-			return false;
-		}
-		try {
-			setLocalError(null);
-			sessionStore.clearError();
-			return await onSendOverride(content, images);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			setLocalError(message);
-			return false;
-		}
-	}
+  if (onSendOverride) {
+    // Task-agent overlays don't support deferred / queued sends yet — those are
+    // scoped to the regular session path, where the daemon owns the
+    // "deferred until idle" replay logic. Fail loudly so the caller's draft
+    // is preserved instead of silently dropping the user's message.
+    if (deliveryMode !== 'immediate') {
+      toast.error('Queued sends are not supported for task agent messages yet.');
+      return false;
+    }
+    try {
+      setLocalError(null);
+      sessionStore.clearError();
+      return await onSendOverride(content, images);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLocalError(message);
+      return false;
+    }
+  }
 
-	return await sendMessage(content, images, deliveryMode);
+  return await sendMessage(content, images, deliveryMode);
 }
 
 interface ChatContainerProps {
-	sessionId: string;
-	readonly?: boolean;
-	/**
-	 * When provided, the header's left slot renders a back-arrow button that
-	 * invokes this callback instead of the default mobile-menu button. Used
-	 * by `AgentOverlayChat` (the agent slide-over) to collapse the wrapper
-	 * header into a single `ChatHeader` with a back affordance.
-	 */
-	onBack?: () => void;
-	/**
-	 * Optional message UUID to scroll into view + briefly highlight when the
-	 * container mounts (or when this prop changes). Used by the agent overlay
-	 * slide-over so opening "this message" from the minimal thread feed lands
-	 * the user on the exact turn they clicked instead of the session tail.
-	 *
-	 * The highlighted row is matched by `data-message-id` on the wrapper div
-	 * around each `SDKMessageRenderer`. When absent, behavior is unchanged.
-	 */
-	highlightMessageId?: string;
-	titleOverride?: string;
-	/**
-	 * When set, renders a "pending agent" state instead of loading from
-	 * sessionStore. The agent has been declared in the workflow but has not yet
-	 * spawned a session. The user can type a first message; on send, the daemon
-	 * activates the agent. Once the live session appears in `taskActivity`, the
-	 * component calls `replaceOverlayHistory` to seamlessly transition to the
-	 * normal chat view.
-	 */
-	pendingAgent?: { taskId: string; agentName: string } | null;
-	/** Optional send override used by workflow node-agent overlays. */
-	onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
+  sessionId: string;
+  readonly?: boolean;
+  /**
+   * When provided, the header's left slot renders a back-arrow button that
+   * invokes this callback instead of the default mobile-menu button. Used
+   * by `AgentOverlayChat` (the agent slide-over) to collapse the wrapper
+   * header into a single `ChatHeader` with a back affordance.
+   */
+  onBack?: () => void;
+  /**
+   * Optional message UUID to scroll into view + briefly highlight when the
+   * container mounts (or when this prop changes). Used by the agent overlay
+   * slide-over so opening "this message" from the minimal thread feed lands
+   * the user on the exact turn they clicked instead of the session tail.
+   *
+   * The highlighted row is matched by `data-message-id` on the wrapper div
+   * around each `SDKMessageRenderer`. When absent, behavior is unchanged.
+   */
+  highlightMessageId?: string;
+  titleOverride?: string;
+  /**
+   * When set, renders a "pending agent" state instead of loading from
+   * sessionStore. The agent has been declared in the workflow but has not yet
+   * spawned a session. The user can type a first message; on send, the daemon
+   * activates the agent. Once the live session appears in `taskActivity`, the
+   * component calls `replaceOverlayHistory` to seamlessly transition to the
+   * normal chat view.
+   */
+  pendingAgent?: { taskId: string; agentName: string } | null;
+  /** Optional send override used by workflow node-agent overlays. */
+  onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
 }
 
 export default function ChatContainer({
-	sessionId,
-	readonly = false,
-	onBack,
-	highlightMessageId,
-	titleOverride,
-	pendingAgent,
-	onSendOverride,
+  sessionId,
+  readonly = false,
+  onBack,
+  highlightMessageId,
+  titleOverride,
+  pendingAgent,
+  onSendOverride,
 }: ChatContainerProps) {
-	// ========================================
-	// Refs
-	// ========================================
-	const messagesEndRef = useRef<HTMLDivElement>(null);
-	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	// Store scroll position info to restore after older messages are loaded
-	const scrollPositionRestoreRef = useRef<{
-		oldScrollHeight: number;
-		oldScrollTop: number;
-		shouldRestore: boolean;
-	} | null>(null);
-
-	// Ref for tracking resolving questions (sync updates, prevents form disappearance during transition)
-	const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
-	const pendingMessageVisibilityChecksRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-		new Map()
-	);
-
-	// ========================================
-	// Pending Agent State (workflow agent not yet spawned)
-	// ========================================
-	const [pendingContent, setPendingContent] = useState('');
-	const [pendingSubmitting, setPendingSubmitting] = useState(false);
-	const [pendingWaitingForSession, setPendingWaitingForSession] = useState(false);
-	const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
-	const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
-
-	// Watch taskActivity for the live session matching this pending agent.
-	const pendingLiveMember = useMemo(() => {
-		if (!pendingAgent) return undefined;
-		const members = spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? [];
-		return members.find(
-			(m) => m.kind === 'node_agent' && m.role === pendingAgent.agentName && m.sessionId
-		);
-	}, [pendingAgent, spaceStore.taskActivity.value]);
-
-	// When a live session appears, hand off to the standard session-mode overlay.
-	useEffect(() => {
-		if (pendingLiveMember?.sessionId && pendingAgent) {
-			replaceOverlayHistory(
-				pendingLiveMember.sessionId,
-				pendingLiveMember.label || pendingAgent.agentName,
-				undefined,
-				{
-					taskId: pendingAgent.taskId,
-					agentName: pendingAgent.agentName,
-					...(pendingLiveMember.nodeExecution?.nodeExecutionId
-						? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
-						: {}),
-				}
-			);
-		}
-	}, [pendingLiveMember, pendingAgent]);
-
-	// Autofocus the pending composer on mount
-	useEffect(() => {
-		if (pendingAgent) {
-			pendingTextareaRef.current?.focus();
-		}
-	}, [pendingAgent]);
-
-	const handlePendingSend = useCallback(async () => {
-		if (!pendingAgent) return;
-		const trimmed = pendingContent.trim();
-		if (!trimmed || pendingSubmitting) return;
-		setPendingSubmitting(true);
-		setPendingErrorMessage(null);
-		try {
-			const result = await spaceStore.activateTaskNodeAgent(
-				pendingAgent.taskId,
-				pendingAgent.agentName,
-				trimmed
-			);
-			setPendingContent('');
-			if (result.sessionId) {
-				const matchingLiveMember =
-					(spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? []).find(
-						(m) =>
-							m.kind === 'node_agent' &&
-							m.role === pendingAgent.agentName &&
-							m.sessionId === result.sessionId
-					) ?? null;
-				replaceOverlayHistory(result.sessionId, pendingAgent.agentName, undefined, {
-					taskId: pendingAgent.taskId,
-					agentName: pendingAgent.agentName,
-					...(matchingLiveMember?.nodeExecution?.nodeExecutionId
-						? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
-						: {}),
-				});
-			} else {
-				setPendingWaitingForSession(true);
-			}
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			setPendingErrorMessage(`Failed to start ${pendingAgent.agentName}: ${msg}`);
-		} finally {
-			setPendingSubmitting(false);
-		}
-	}, [pendingAgent, pendingContent, pendingSubmitting]);
-
-	const handlePendingKeyDown = useCallback(
-		(e: KeyboardEvent) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
-				e.preventDefault();
-				void handlePendingSend();
-			}
-		},
-		[handlePendingSend]
-	);
-
-	// ========================================
-	// Local State (pagination, autoScroll)
-	// ========================================
-	const [loadingOlder, setLoadingOlder] = useState(false);
-	// Initialize hasMoreMessages from sessionStore (inferred from initial load count)
-	// This avoids an expensive COUNT query on every session load
-	const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
-	const [isInitialLoad, setIsInitialLoad] = useState(true);
-	const [loadTimedOut, setLoadTimedOut] = useState(false);
-	const [localError, setLocalError] = useState<string | null>(null);
-	const [autoScroll, setAutoScroll] = useState(true);
-	const [coordinatorMode, setCoordinatorMode] = useState(true);
-	const [sandboxEnabled, setSandboxEnabled] = useState(true);
-	const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
-	const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
-	const [searchLoadTarget, setSearchLoadTarget] = useState<SearchMessageLoadTarget | null>(null);
-
-	// Track resolved questions to keep showing them in disabled state
-	// Map of toolUseId -> resolved question data
-	// Initialized from session metadata and synced when session updates
-	const [resolvedQuestions, setResolvedQuestions] = useState<Map<string, ResolvedQuestion>>(
-		new Map()
-	);
-
-	// Rewind mode state
-	const [rewindMode, setRewindMode] = useState(false);
-	const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
-	const [rewindModeChoice, setRewindModeChoice] = useState<'files' | 'conversation' | 'both'>(
-		'both'
-	);
-
-	// Per-message rewind state
-	const [rewindTargetUuid, setRewindTargetUuid] = useState<string | null>(null);
-	const [isRewinding, setIsRewinding] = useState(false);
-
-	// Worktree choice modal state
-	const [showWorktreeChoice, setShowWorktreeChoice] = useState(false);
-	const [pendingWorktreeMode, setPendingWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
-
-	// Inline workspace selector state (for sessions created without a workspace)
-	const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false);
-
-	// Reactive State from sessionStore (via useSignalEffect for re-renders)
-	// Moved here before callbacks that depend on it
-	const [messages, setMessages] = useState<ChatMessage[]>([]);
-	const [session, setSession] = useState(sessionStore.sessionInfo.value);
-
-	// ========================================
-	// Modals
-	// ========================================
-	const deleteModal = useModal();
-	const toolsModal = useModal();
-	const infoModal = useModal();
-	const errorDialog = useModal();
-	const rewindConfirmModal = useModal();
-	const selectiveRewindModal = useModal();
-
-	// ========================================
-	// Rewind handler
-	// ========================================
-	const handleRewindClick = useCallback(
-		(uuid: string) => {
-			setRewindTargetUuid(uuid);
-			setRewindModeChoice('both');
-			rewindConfirmModal.open();
-		},
-		[rewindConfirmModal]
-	);
-
-	const handleRewindConfirm = useCallback(async () => {
-		if (!rewindTargetUuid) return;
-
-		setIsRewinding(true);
-		try {
-			const { result } = await import('../lib/api-helpers.ts').then((m) =>
-				m.executeRewind(sessionId, rewindTargetUuid, rewindModeChoice)
-			);
-
-			if (result.success) {
-				toast.success(
-					`Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
-						result.filesChanged?.length || 0
-					} files restored`
-				);
-				// Refresh session state to ensure data consistency
-				await sessionStore.refresh();
-			} else {
-				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
-			}
-		} catch (err) {
-			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-		} finally {
-			setIsRewinding(false);
-			setRewindTargetUuid(null);
-			rewindConfirmModal.close();
-		}
-	}, [rewindTargetUuid, sessionId, rewindModeChoice, rewindConfirmModal]);
-
-	const handleRewindCancel = useCallback(() => {
-		setRewindTargetUuid(null);
-		rewindConfirmModal.close();
-	}, [rewindConfirmModal]);
-
-	// Rewind mode handlers
-	const handleEnterRewindMode = useCallback(() => {
-		setRewindMode(true);
-		setSelectedMessages(new Set());
-	}, []);
-
-	const handleExitRewindMode = useCallback(() => {
-		setRewindMode(false);
-		setSelectedMessages(new Set());
-	}, []);
-
-	const handleMessageCheckboxChange = useCallback(
-		(messageId: string, checked: boolean) => {
-			const newSelected = new Set(selectedMessages);
-
-			if (checked) {
-				// Find message index and select all messages from this point onward
-				const messageIndex = messages.findIndex((m) => m.uuid === messageId);
-				for (let i = messageIndex; i < messages.length; i++) {
-					if (messages[i].uuid) {
-						newSelected.add(messages[i].uuid!);
-					}
-				}
-			} else {
-				// Unselect this message and all after it
-				const messageIndex = messages.findIndex((m) => m.uuid === messageId);
-				for (let i = messageIndex; i < messages.length; i++) {
-					if (messages[i].uuid) {
-						newSelected.delete(messages[i].uuid!);
-					}
-				}
-			}
-
-			setSelectedMessages(newSelected);
-		},
-		[selectedMessages, messages]
-	);
-
-	const handleRewindSelection = useCallback(() => {
-		if (selectedMessages.size === 0) return;
-		setRewindModeChoice('both'); // reset to default
-		selectiveRewindModal.open();
-	}, [selectedMessages, selectiveRewindModal]);
-
-	const handleSelectiveRewindConfirm = useCallback(async () => {
-		if (selectedMessages.size === 0) return;
-
-		setIsRewinding(true);
-		try {
-			const { result } = await import('../lib/api-helpers.ts').then((m) =>
-				m.executeSelectiveRewind(sessionId, Array.from(selectedMessages), rewindModeChoice)
-			);
-
-			if (result.success) {
-				const parts = [];
-				if (result.messagesDeleted) parts.push(`${result.messagesDeleted} messages removed`);
-				if (result.filesReverted?.length)
-					parts.push(`${result.filesReverted.length} files restored`);
-				toast.success(`Rewound successfully: ${parts.join(', ')}`);
-				// Refresh session state to ensure data consistency
-				await sessionStore.refresh();
-				handleExitRewindMode();
-			} else {
-				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
-			}
-		} catch (err) {
-			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-		} finally {
-			setIsRewinding(false);
-			selectiveRewindModal.close();
-		}
-	}, [selectedMessages, sessionId, rewindModeChoice, handleExitRewindMode, selectiveRewindModal]);
-
-	// ========================================
-	// Reactive State from sessionStore (via useSignalEffect for re-renders)
-	// ========================================
-	const [contextUsage, setContextUsage] = useState(sessionStore.contextInfo.value);
-	const [agentState, setAgentState] = useState(sessionStore.agentState.value);
-	const [storeError, setStoreError] = useState(sessionStore.error.value);
-
-	// Sync messages from sessionStore
-	useSignalEffect(() => {
-		const nextMessages = sessionStore.sdkMessages.value;
-		const pendingChecks = pendingMessageVisibilityChecksRef.current;
-		if (pendingChecks.size > 0) {
-			for (const [messageId, timer] of pendingChecks) {
-				const isVisible = nextMessages.some((msg) => msg.uuid === messageId);
-				if (isVisible) {
-					clearTimeout(timer);
-					pendingChecks.delete(messageId);
-				}
-			}
-		}
-		setMessages(nextMessages);
-	});
-
-	// Sync session info from sessionStore
-	useSignalEffect(() => {
-		const info = sessionStore.sessionInfo.value;
-		setSession(info);
-		if (info?.config.autoScroll !== undefined) {
-			setAutoScroll(info.config.autoScroll);
-		}
-		if (info?.config.coordinatorMode !== undefined) {
-			setCoordinatorMode(info.config.coordinatorMode);
-		}
-		if (info?.config.sandbox?.enabled !== undefined) {
-			setSandboxEnabled(info.config.sandbox.enabled);
-		}
-	});
-
-	// Get feature flags from session config (for unified session architecture)
-	// Falls back to appropriate defaults based on session type
-	const features: SessionFeatures = useMemo(() => {
-		if (session?.config?.features) {
-			return session.config.features;
-		}
-		// Determine default features based on session ID format
-		if (sessionId.startsWith('space:chat:')) {
-			// Space agent sessions — no archive/delete (managed by space lifecycle)
-			return { ...DEFAULT_WORKER_FEATURES, archive: false };
-		}
-		if (sessionId.startsWith('lobby:')) {
-			return DEFAULT_LOBBY_FEATURES;
-		}
-		return DEFAULT_WORKER_FEATURES;
-	}, [session?.config?.features, sessionId]);
-
-	// Sync context from sessionStore
-	useSignalEffect(() => {
-		setContextUsage(sessionStore.contextInfo.value);
-	});
-
-	// Sync agent state from sessionStore
-	useSignalEffect(() => {
-		setAgentState(sessionStore.agentState.value);
-	});
-
-	// Sync error from sessionStore
-	useSignalEffect(() => {
-		setStoreError(sessionStore.error.value);
-	});
-
-	// Sync hasMoreMessages from sessionStore (inferred from initial load count)
-	// This avoids an expensive COUNT query on every session load
-	useSignalEffect(() => {
-		setHasMoreMessages(sessionStore.hasMoreMessages.value);
-	});
-
-	// Track initial load state — we are done loading only when BOTH the session
-	// state RPC has returned AND the initial messages LiveQuery snapshot has
-	// arrived. The two responses are independent, and on slow networks the
-	// session RPC can land many seconds before the messages snapshot. Flipping
-	// `isInitialLoad` too early is what lets the empty-state placeholder flash
-	// for 20+ seconds while messages are still in flight.
-	useSignalEffect(() => {
-		const sessionStateLoaded = sessionStore.sessionState.value !== null;
-		const messagesLoaded = sessionStore.messagesLoaded.value;
-		if (sessionStateLoaded && messagesLoaded) {
-			setIsInitialLoad(false);
-			setLoadTimedOut(false);
-		}
-	});
-
-	// Timeout: if session state doesn't load within 30s, show error instead of infinite spinner
-	useEffect(() => {
-		if (!isInitialLoad) return;
-		const timer = setTimeout(() => {
-			setLoadTimedOut(true);
-		}, 30_000);
-		return () => clearTimeout(timer);
-	}, [isInitialLoad]);
-
-	// Sync resolved questions from session metadata when session loads/updates
-	// Also clears resolvingQuestionsRef for items now confirmed by server
-	useEffect(() => {
-		if (session?.metadata?.resolvedQuestions) {
-			const map = new Map<string, ResolvedQuestion>();
-			for (const [toolUseId, resolved] of Object.entries(session.metadata.resolvedQuestions)) {
-				map.set(toolUseId, resolved);
-			}
-			setResolvedQuestions(map);
-
-			// Clear resolvingQuestionsRef for items now confirmed by server
-			const refMap = resolvingQuestionsRef.current;
-			for (const toolUseId of map.keys()) {
-				refMap.delete(toolUseId);
-			}
-		}
-	}, [session?.metadata?.resolvedQuestions]);
-
-	// Show worktree choice modal if session is pending worktree choice
-	useEffect(() => {
-		if (
-			session?.status === 'pending_worktree_choice' &&
-			session?.metadata?.worktreeChoice?.status === 'pending'
-		) {
-			setShowWorktreeChoice(true);
-		} else {
-			setShowWorktreeChoice(false);
-		}
-	}, [session]);
-
-	// Show workspace selector for active worker sessions without a workspace —
-	// but only before the conversation starts, so it never covers live messages
-	// (e.g. sessions created via the empty-state "create & send" landing).
-	useEffect(() => {
-		if (
-			session?.type === 'worker' &&
-			session?.status === 'active' &&
-			session?.workspacePath === null &&
-			(session?.metadata.messageCount ?? 0) === 0 &&
-			!readonly
-		) {
-			setShowWorkspaceSelector(true);
-		} else {
-			setShowWorkspaceSelector(false);
-		}
-	}, [
-		session?.type,
-		session?.status,
-		session?.workspacePath,
-		session?.metadata.messageCount,
-		readonly,
-	]);
-
-	// Handler for worktree mode change
-	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
-		setPendingWorktreeMode(mode);
-	};
-
-	// Derived processing state
-	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
-	const isWaitingForInput = agentState.status === 'waiting_for_input';
-	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
-
-	const {
-		currentModel,
-		currentModelInfo,
-		availableModels,
-		modelSwitching,
-		modelLoading,
-		switchModel,
-		currentAction,
-		streamingPhase,
-		coordinatorSwitching,
-		sandboxSwitching,
-		handleModelSwitchWithConfirmation,
-		handleCoordinatorModeChange,
-		handleSandboxModeChange,
-	} = useChatComposerController({
-		sessionId,
-		agentState,
-		messages,
-		isProcessing,
-		coordinatorMode,
-		setCoordinatorMode,
-		sandboxEnabled,
-		setSandboxEnabled,
-	});
-
-	const selectSearchMessage = useCallback(
-		(messageId: string, loadTarget?: SearchMessageLoadTarget) => {
-			const nextLoadTarget = loadTarget ?? null;
-			searchLoadTargetRef.current = nextLoadTarget;
-			setSearchLoadTarget(nextLoadTarget);
-			setSearchTargetMessageId(messageId);
-		},
-		[]
-	);
-
-	useSignalEffect(() => {
-		const target = searchHighlightMessageIdSignal.value;
-		if (target?.sessionId === sessionId && sessionStore.activeSessionId.value === sessionId) {
-			selectSearchMessage(target.messageId, target.loadTarget);
-			searchHighlightMessageIdSignal.value = null;
-		}
-	});
-
-	// ========================================
-	// Session Actions
-	// ========================================
-	const sessionActions = useSessionActions({
-		sessionId,
-		session,
-		onDeleteModalClose: deleteModal.close,
-		onStateReset: useCallback(() => {
-			setLocalError(null);
-			sessionStore.clearError();
-		}, []),
-	});
-
-	// ========================================
-	// Pagination (load older messages via RPC - pure WebSocket)
-	// hasMoreMessages is inferred from initial load count in sessionStore
-	// This avoids an expensive COUNT query on every session load
-	// ========================================
-	const loadOlderMessages = useCallback(async () => {
-		if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
-
-		try {
-			setLoadingOlder(true);
-
-			const container = messagesContainerRef.current;
-			if (!container) return;
-
-			// Store current scroll position to restore after messages are prepended
-			const oldScrollHeight = container.scrollHeight;
-			const oldScrollTop = container.scrollTop;
-
-			const oldestMessage = messages[0] as ChatMessage & { timestamp?: number };
-			const beforeTimestamp = oldestMessage?.timestamp;
-			if (!beforeTimestamp) {
-				setHasMoreMessages(false);
-				return;
-			}
-
-			// Load older messages via sessionStore RPC (pure WebSocket)
-			const { messages: olderMessages, hasMore } =
-				await sessionStore.loadOlderMessages(beforeTimestamp);
-			if (olderMessages.length === 0) {
-				setHasMoreMessages(false);
-				return;
-			}
-
-			// Store scroll position info for restoration after DOM updates
-			scrollPositionRestoreRef.current = {
-				oldScrollHeight,
-				oldScrollTop,
-				shouldRestore: true,
-			};
-
-			// Prepend older messages to sessionStore (will trigger re-render)
-			sessionStore.prependMessages(olderMessages);
-			setHasMoreMessages(hasMore);
-		} catch {
-			toast.error('Failed to load older messages');
-		} finally {
-			setLoadingOlder(false);
-		}
-	}, [loadingOlder, hasMoreMessages, messages]);
-
-	// ========================================
-	// Send Message
-	// ========================================
-	const handleMessageAccepted = useCallback(
-		(messageId: string) => {
-			const pendingChecks = pendingMessageVisibilityChecksRef.current;
-			const existingTimer = pendingChecks.get(messageId);
-			if (existingTimer) {
-				clearTimeout(existingTimer);
-			}
-			const timer = setTimeout(() => {
-				pendingChecks.delete(messageId);
-				const isVisible = sessionStore.sdkMessages.value.some(
-					(message) => message.uuid === messageId
-				);
-				if (!isVisible && sessionStore.activeSessionId.value === sessionId) {
-					sessionStore.refresh().catch(() => {});
-				}
-			}, 1200);
-			pendingChecks.set(messageId, timer);
-		},
-		[sessionId]
-	);
-	const { sendMessage } = useSendMessage({
-		sessionId,
-		session,
-		isSending: isProcessing,
-		allowQueueWhileProcessing: true,
-		onSendStart: useCallback(() => {
-			setLocalError(null);
-			sessionStore.clearError();
-		}, []),
-		onSendComplete: useCallback(() => {
-			// Completion handled by sessionStore state updates
-		}, []),
-		onError: useCallback((error: string) => {
-			setLocalError(error);
-		}, []),
-		onMessageAccepted: handleMessageAccepted,
-	});
-
-	// ========================================
-	// Effects
-	// ========================================
-
-	// Select session on mount or when sessionId changes
-	// This is needed when ChatContainer is used outside the main navigation flow
-	// (e.g., space agent overlays).
-	// Skip when in pending-agent mode — no real session exists yet.
-	useEffect(() => {
-		if (pendingAgent) return;
-		// Only select if this sessionId is different from the current active session
-		if (sessionId && sessionId !== sessionStore.activeSessionId.value) {
-			sessionStore.select(sessionId);
-		}
-		// Cleanup: deselect session when component unmounts
-		return () => {
-			const pendingChecks = pendingMessageVisibilityChecksRef.current;
-			for (const timer of pendingChecks.values()) {
-				clearTimeout(timer);
-			}
-			pendingChecks.clear();
-			// Defer cleanup so a newly-mounted ChatContainer can claim selection first.
-			setTimeout(() => {
-				if (sessionStore.activeSessionId.value === sessionId) {
-					sessionStore.select(null);
-				}
-			}, 0);
-		};
-	}, [sessionId]);
-
-	// Restore scroll position after older messages are loaded and DOM has updated.
-	// Uses useLayoutEffect (synchronous, before paint) to restore scroll before any
-	// useEffect-based auto-scroll can race and override the position.
-	useLayoutEffect(() => {
-		if (!scrollPositionRestoreRef.current?.shouldRestore) return;
-
-		const { oldScrollHeight, oldScrollTop } = scrollPositionRestoreRef.current;
-		const container = messagesContainerRef.current;
-
-		if (!container) return;
-
-		// Calculate the new scroll position to maintain visual position.
-		// The scrollHeight has increased by the height of prepended messages.
-		const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
-		container.scrollTop = newScrollTop;
-
-		// Clear the restore flag
-		scrollPositionRestoreRef.current = null;
-	}, [messages.length, loadingOlder]);
-
-	// ========================================
-	// Auto-scroll
-	// ========================================
-	const { showScrollButton, scrollToBottom } = useAutoScroll({
-		containerRef: messagesContainerRef,
-		endRef: messagesEndRef,
-		// Disable tail-following auto-scroll while the caller is asking us to
-		// scroll a specific message into view. The highlight id is cleared once
-		// that anchor succeeds, so normal tail-following resumes for new rows.
-		enabled: autoScroll && !highlightMessageId && !searchTargetMessageId,
-		messageCount: messages.length,
-		isInitialLoad,
-		loadingOlder,
-	});
-
-	// ========================================
-	// Highlight a specific message (deep-link from minimal thread feed)
-	// ========================================
-	// `useScrollToMessage` scrolls the matching row to viewport center, applies
-	// a temporary amber ring, and re-anchors briefly to handle layout shifts.
-	// Note: `enabled: autoScroll && !highlightMessageId` is also passed to
-	// `useAutoScroll` above so the initial-load tail-follow can't race the
-	// deep-link scroll.
-	useEffect(() => {
-		if (!searchTargetMessageId || isInitialLoad) return;
-		const isLoaded = messages.some(
-			(message) =>
-				message.uuid === searchTargetMessageId ||
-				(message as ChatMessage & { id?: string }).id === searchTargetMessageId
-		);
-		if (isLoaded) return;
-
-		if (!searchLoadTarget?.before) {
-			const timeout = setTimeout(() => {
-				setSearchTargetMessageId(null);
-				searchLoadTargetRef.current = null;
-				setSearchLoadTarget(null);
-			}, 750);
-			return () => clearTimeout(timeout);
-		}
-
-		let cancelled = false;
-		const resetSearchTarget = () => {
-			setSearchTargetMessageId(null);
-			searchLoadTargetRef.current = null;
-			setSearchLoadTarget(null);
-		};
-		const hasTargetMessage = (messageList: ChatMessage[]) =>
-			messageList.some(
-				(message) =>
-					message.uuid === searchTargetMessageId ||
-					(message as ChatMessage & { id?: string }).id === searchTargetMessageId
-			);
-		const applyTargetWindow = async () => {
-			setLoadingOlder(true);
-			let before = searchLoadTarget.before;
-			if (!before) return;
-			while (!cancelled) {
-				const { messages: targetWindow, hasMore } = await sessionStore.loadOlderMessages(
-					before,
-					100,
-					searchLoadTarget.sessionId
-				);
-				if (cancelled) return;
-				if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) {
-					resetSearchTarget();
-					return;
-				}
-				if (targetWindow.length === 0) {
-					setHasMoreMessages(false);
-					resetSearchTarget();
-					return;
-				}
-				sessionStore.prependMessages(targetWindow);
-				setHasMoreMessages(hasMore);
-				if (hasTargetMessage(targetWindow)) {
-					searchLoadTargetRef.current = null;
-					setSearchLoadTarget(null);
-					return;
-				}
-				if (!hasMore) {
-					resetSearchTarget();
-					return;
-				}
-				const oldestMessage = targetWindow[0] as ChatMessage & { timestamp?: number };
-				if (!oldestMessage.timestamp || oldestMessage.timestamp >= before) {
-					resetSearchTarget();
-					return;
-				}
-				before = oldestMessage.timestamp;
-			}
-		};
-		applyTargetWindow()
-			.catch(() => {
-				if (cancelled) return;
-				if (sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
-					toast.error('Failed to load search result context');
-				}
-				resetSearchTarget();
-			})
-			.finally(() => {
-				if (!cancelled) setLoadingOlder(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [searchTargetMessageId, searchLoadTarget, isInitialLoad, sessionId]);
-
-	useScrollToMessage({
-		containerRef: messagesContainerRef,
-		messageId: searchTargetMessageId || highlightMessageId,
-		messageCount: messages.length,
-		isInitialLoad,
-		onAnchored: (messageId) => {
-			if (messageId === searchTargetMessageId) {
-				setSearchTargetMessageId(null);
-				searchLoadTargetRef.current = null;
-				setSearchLoadTarget(null);
-			}
-			if (messageId === highlightMessageId) clearOverlayHighlightMessageId();
-		},
-	});
-
-	// ========================================
-	// Message Maps (for tool results/inputs)
-	// ========================================
-	const removedOutputs = session?.metadata?.removedOutputs || [];
-	const maps = useMessageMaps(messages, sessionId, removedOutputs);
-
-	const handleQuestionResolved = useCallback(
-		(state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => {
-			// Move question to resolved state locally for immediate UI feedback
-			// (Server also persists this via question.respond/cancel RPC)
-			if (pendingQuestion) {
-				const resolved = {
-					question: pendingQuestion,
-					state,
-					responses,
-					resolvedAt: Date.now(),
-				};
-				// Update ref immediately (synchronous)
-				resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
-				// Also schedule update to resolvedQuestions (will be merged with server data)
-				setResolvedQuestions((prev) => {
-					const next = new Map(prev);
-					next.set(pendingQuestion.toolUseId, resolved);
-					return next;
-				});
-			}
-		},
-		[pendingQuestion]
-	);
-
-	// Combined resolved questions map (state + ref)
-	// Includes questions synced from server (state) and questions being resolved (ref)
-	const allResolvedQuestions = useMemo(() => {
-		const combined = new Map<string, ResolvedQuestion>(resolvedQuestions);
-		for (const [toolUseId, resolved] of resolvingQuestionsRef.current) {
-			combined.set(toolUseId, resolved);
-		}
-		return combined;
-	}, [resolvedQuestions]);
-
-	// ========================================
-	// Connection Check
-	// ========================================
-	const isConnected = connectionState.value === 'connected';
-
-	// ========================================
-	// Handlers
-	// ========================================
-	const handleSendMessage = useCallback(
-		async (
-			content: string,
-			images?: MessageImage[],
-			deliveryMode: MessageDeliveryMode = 'immediate'
-		) => {
-			// If session is pending worktree choice, set the mode first
-			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
-				try {
-					const hub = connectionManager.getHubIfConnected();
-					if (!hub) {
-						toast.error('Connection lost.');
-						return false;
-					}
-					await hub.request('session.setWorktreeMode', {
-						sessionId,
-						mode: pendingWorktreeMode,
-					});
-					// UI will auto-hide via session status update
-				} catch {
-					toast.error('Failed to set workspace mode');
-					return false; // Don't send message if worktree setup failed
-				}
-			}
-
-			return await sendChatContainerMessage({
-				content,
-				images,
-				deliveryMode,
-				onSendOverride,
-				sendMessage,
-				setLocalError,
-			});
-		},
-		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId, onSendOverride]
-	);
-
-	const handleAutoScrollChange = useCallback(
-		async (newAutoScroll: boolean) => {
-			setAutoScroll(newAutoScroll);
-			try {
-				await updateSession(sessionId, {
-					config: { autoScroll: newAutoScroll },
-				});
-			} catch {
-				setAutoScroll(!newAutoScroll);
-				toast.error('Failed to save auto-scroll setting');
-			}
-		},
-		[sessionId]
-	);
-
-	// Get retry attempts from session store
-	const retryAttempts = sessionStore.retryAttempts.value;
-
-	// Build retry status message if there are retry attempts
-	const retryStatusMessage = useMemo(() => {
-		if (retryAttempts.length === 0) return null;
-		const lastRetry = retryAttempts[retryAttempts.length - 1];
-		const progress = `${lastRetry.attempt}/${lastRetry.max_retries}`;
-		const errorInfo = lastRetry.error_status ? ` (${lastRetry.error_status})` : '';
-		return `API retry: attempt ${progress}${errorInfo} - ${lastRetry.error}`;
-	}, [retryAttempts]);
-
-	// Combined error (local + store + retry status)
-	const error = localError || retryStatusMessage || storeError?.message || null;
-
-	// Build provider-specific action buttons for structured errors
-	const errorDetails = storeError?.details as StructuredError | undefined;
-	const errorCategory = errorDetails?.category;
-	const errorProviderId = errorDetails?.metadata?.providerId as string | undefined;
-	const errorActions = useMemo((): ErrorBannerAction[] => {
-		if (!errorDetails || !errorCategory) return [];
-		const providerLabel = errorProviderId ? getProviderLabel(errorProviderId) : 'Provider';
-		if (errorCategory === ErrorCategory.PROVIDER_AUTH_ERROR) {
-			return [
-				{
-					label: `Re-authenticate ${providerLabel}`,
-					onClick: () => {
-						navigateToSettings('providers');
-					},
-				},
-			];
-		}
-		if (errorCategory === ErrorCategory.PROVIDER_UNAVAILABLE) {
-			const defaultAnthropicModel = availableModels.find((m) => m.provider === 'anthropic');
-			const actions: ErrorBannerAction[] = [];
-			if (defaultAnthropicModel) {
-				actions.push({
-					label: 'Switch to Anthropic',
-					onClick: () => switchModel(defaultAnthropicModel),
-				});
-			}
-			return actions;
-		}
-		return [];
-	}, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
-
-	// Derive loading state from sessionStore.
-	//
-	// We must wait for BOTH pieces of the session init to land before the chat
-	// area is allowed to render:
-	//   1. `sessionState` (metadata + agent state, via `state.session` RPC)
-	//   2. `messagesLoaded` (first LiveQuery snapshot for `messages.bySession`)
-	//
-	// These are independent responses. On slow networks / large conversations
-	// the LiveQuery snapshot can take 20+ seconds, long after the metadata RPC
-	// has resolved. If we only gated on `sessionState`, the empty-state
-	// placeholder ("No messages yet") would flash during that window for any
-	// session that actually has messages. Gating on `messagesLoaded` as well
-	// keeps the loading skeleton up until the server has confirmed whether the
-	// conversation is genuinely empty.
-	//
-	// Errors short-circuit the loading state so the error UI can render.
-	const sessionStateLoaded = sessionStore.sessionState.value !== null;
-	const messagesLoaded = sessionStore.messagesLoaded.value;
-	const loading = !error && (!sessionStateLoaded || !messagesLoaded);
-
-	// ========================================
-	// Pending Agent Render (before loading check)
-	// ========================================
-	// When pendingAgent is set, show a "not started yet" state with a minimal
-	// composer. This replaces the standalone PendingAgentOverlay component.
-	if (pendingAgent) {
-		return (
-			<div
-				class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
-				data-testid="pending-agent-overlay"
-				aria-label={`${pendingAgent.agentName} chat (starting)`}
-			>
-				{/* Header — mirrors ChatHeader height (h-[52px]) for visual consistency */}
-				<div class="px-4 min-h-[52px] flex-shrink-0 bg-app-content flex items-center gap-3">
-					{onBack && (
-						<button
-							type="button"
-							onClick={onBack}
-							class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors flex-shrink-0"
-							aria-label="Back"
-						>
-							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M15 19l-7-7 7-7"
-								/>
-							</svg>
-						</button>
-					)}
-					<div class="min-w-0 flex-1">
-						<div class="text-sm font-medium text-gray-100 truncate">{pendingAgent.agentName}</div>
-						<div class="text-xs text-gray-500 truncate">
-							{pendingWaitingForSession ? 'Starting session…' : 'Not started yet'}
-						</div>
-					</div>
-				</div>
-
-				{/* Body */}
-				<div class="flex-1 min-h-0 overflow-auto px-4 py-6">
-					<div
-						class={cn(
-							'mx-auto max-w-md text-center text-sm rounded-lg border bg-dark-850/60 px-4 py-6',
-							borderColors.ui.default
-						)}
-						data-testid="pending-agent-overlay-body"
-					>
-						{pendingWaitingForSession ? (
-							<>
-								<div class="mb-3 flex items-center justify-center">
-									<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-								</div>
-								<p class="text-gray-200 font-medium mb-1">Starting {pendingAgent.agentName}…</p>
-								<p class="text-gray-500">
-									Your message has been queued. The session will open here as soon as the agent is
-									ready.
-								</p>
-							</>
-						) : (
-							<>
-								<p class="text-gray-200 font-medium mb-1">
-									{pendingAgent.agentName} hasn't started yet
-								</p>
-								<p class="text-gray-500">
-									Send a message below to start this agent's session. Your first message will be
-									delivered when the session is ready.
-								</p>
-							</>
-						)}
-					</div>
-				</div>
-
-				{/* Minimal Composer */}
-				<div class={cn('flex-shrink-0 border-t bg-app-content px-3 py-3', borderColors.ui.default)}>
-					{pendingErrorMessage && (
-						<p class="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
-							{pendingErrorMessage}
-						</p>
-					)}
-					<div class="flex gap-2">
-						<textarea
-							ref={pendingTextareaRef}
-							class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-dark-850 border border-dark-700 text-sm text-gray-100 px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-blue-500"
-							placeholder={
-								pendingWaitingForSession
-									? `Send another message to ${pendingAgent.agentName}…`
-									: `Send first message to ${pendingAgent.agentName}…`
-							}
-							value={pendingContent}
-							onInput={(e) => setPendingContent((e.target as HTMLTextAreaElement).value)}
-							onKeyDown={handlePendingKeyDown}
-							disabled={pendingSubmitting || pendingWaitingForSession}
-							data-testid="pending-agent-overlay-textarea"
-							rows={2}
-						/>
-						<button
-							type="button"
-							onClick={() => void handlePendingSend()}
-							disabled={!pendingContent.trim() || pendingSubmitting}
-							class={cn(
-								'inline-flex items-center justify-center rounded-md px-3 text-sm font-medium transition-colors flex-shrink-0',
-								'bg-blue-600 text-white hover:bg-blue-500',
-								'disabled:bg-dark-700 disabled:text-gray-500 disabled:cursor-not-allowed'
-							)}
-							data-testid="pending-agent-overlay-send"
-						>
-							{pendingSubmitting ? 'Starting…' : 'Send'}
-						</button>
-					</div>
-				</div>
-			</div>
-		);
-	}
-
-	// Render loading state
-	if (loading) {
-		if (loadTimedOut) {
-			return (
-				<div class="flex-1 flex items-center justify-center bg-app-content">
-					<div class="text-center">
-						<div class="text-5xl mb-4">⚠️</div>
-						<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
-						<p class="text-sm text-gray-400 mb-4">
-							Session may not exist or the connection timed out.
-						</p>
-						<Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
-					</div>
-				</div>
-			);
-		}
-		return (
-			// `relative` is required so the absolutely-positioned footer skeleton is
-			// anchored to this container, matching the real ChatComposer positioning.
-			<div class="flex-1 flex flex-col bg-app-content overflow-hidden relative">
-				{/* Skeleton header — h-[52px] matches ChatHeader's fixed height exactly */}
-				<div class="flex items-center gap-3 px-4 h-[52px] flex-shrink-0">
-					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
-					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
-				</div>
-				{/* Skeleton messages area — flex-1 fills all remaining space, matching the
+  // ========================================
+  // Refs
+  // ========================================
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // Store scroll position info to restore after older messages are loaded
+  const scrollPositionRestoreRef = useRef<{
+    oldScrollHeight: number;
+    oldScrollTop: number;
+    shouldRestore: boolean;
+  } | null>(null);
+
+  // Ref for tracking resolving questions (sync updates, prevents form disappearance during transition)
+  const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
+  const pendingMessageVisibilityChecksRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
+
+  // ========================================
+  // Pending Agent State (workflow agent not yet spawned)
+  // ========================================
+  const [pendingContent, setPendingContent] = useState('');
+  const [pendingSubmitting, setPendingSubmitting] = useState(false);
+  const [pendingWaitingForSession, setPendingWaitingForSession] = useState(false);
+  const [pendingErrorMessage, setPendingErrorMessage] = useState<string | null>(null);
+  const pendingTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Watch taskActivity for the live session matching this pending agent.
+  const pendingLiveMember = useMemo(() => {
+    if (!pendingAgent) return undefined;
+    const members = spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? [];
+    return members.find(
+      (m) => m.kind === 'node_agent' && m.role === pendingAgent.agentName && m.sessionId
+    );
+  }, [pendingAgent, spaceStore.taskActivity.value]);
+
+  // When a live session appears, hand off to the standard session-mode overlay.
+  useEffect(() => {
+    if (pendingLiveMember?.sessionId && pendingAgent) {
+      replaceOverlayHistory(
+        pendingLiveMember.sessionId,
+        pendingLiveMember.label || pendingAgent.agentName,
+        undefined,
+        {
+          taskId: pendingAgent.taskId,
+          agentName: pendingAgent.agentName,
+          ...(pendingLiveMember.nodeExecution?.nodeExecutionId
+            ? { nodeExecutionId: pendingLiveMember.nodeExecution.nodeExecutionId }
+            : {}),
+        }
+      );
+    }
+  }, [pendingLiveMember, pendingAgent]);
+
+  // Autofocus the pending composer on mount
+  useEffect(() => {
+    if (pendingAgent) {
+      pendingTextareaRef.current?.focus();
+    }
+  }, [pendingAgent]);
+
+  const handlePendingSend = useCallback(async () => {
+    if (!pendingAgent) return;
+    const trimmed = pendingContent.trim();
+    if (!trimmed || pendingSubmitting) return;
+    setPendingSubmitting(true);
+    setPendingErrorMessage(null);
+    try {
+      const result = await spaceStore.activateTaskNodeAgent(
+        pendingAgent.taskId,
+        pendingAgent.agentName,
+        trimmed
+      );
+      setPendingContent('');
+      if (result.sessionId) {
+        const matchingLiveMember =
+          (spaceStore.taskActivity.value.get(pendingAgent.taskId) ?? []).find(
+            (m) =>
+              m.kind === 'node_agent' &&
+              m.role === pendingAgent.agentName &&
+              m.sessionId === result.sessionId
+          ) ?? null;
+        replaceOverlayHistory(result.sessionId, pendingAgent.agentName, undefined, {
+          taskId: pendingAgent.taskId,
+          agentName: pendingAgent.agentName,
+          ...(matchingLiveMember?.nodeExecution?.nodeExecutionId
+            ? { nodeExecutionId: matchingLiveMember.nodeExecution.nodeExecutionId }
+            : {}),
+        });
+      } else {
+        setPendingWaitingForSession(true);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPendingErrorMessage(`Failed to start ${pendingAgent.agentName}: ${msg}`);
+    } finally {
+      setPendingSubmitting(false);
+    }
+  }, [pendingAgent, pendingContent, pendingSubmitting]);
+
+  const handlePendingKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void handlePendingSend();
+      }
+    },
+    [handlePendingSend]
+  );
+
+  // ========================================
+  // Local State (pagination, autoScroll)
+  // ========================================
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  // Initialize hasMoreMessages from sessionStore (inferred from initial load count)
+  // This avoids an expensive COUNT query on every session load
+  const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [coordinatorMode, setCoordinatorMode] = useState(true);
+  const [sandboxEnabled, setSandboxEnabled] = useState(true);
+  const [searchTargetMessageId, setSearchTargetMessageId] = useState<string | null>(null);
+  const searchLoadTargetRef = useRef<SearchMessageLoadTarget | null>(null);
+  const [searchLoadTarget, setSearchLoadTarget] = useState<SearchMessageLoadTarget | null>(null);
+
+  // Track resolved questions to keep showing them in disabled state
+  // Map of toolUseId -> resolved question data
+  // Initialized from session metadata and synced when session updates
+  const [resolvedQuestions, setResolvedQuestions] = useState<Map<string, ResolvedQuestion>>(
+    new Map()
+  );
+
+  // Rewind mode state
+  const [rewindMode, setRewindMode] = useState(false);
+  const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+  const [rewindModeChoice, setRewindModeChoice] = useState<'files' | 'conversation' | 'both'>(
+    'both'
+  );
+
+  // Per-message rewind state
+  const [rewindTargetUuid, setRewindTargetUuid] = useState<string | null>(null);
+  const [isRewinding, setIsRewinding] = useState(false);
+
+  // Worktree choice modal state
+  const [showWorktreeChoice, setShowWorktreeChoice] = useState(false);
+  const [pendingWorktreeMode, setPendingWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
+
+  // Inline workspace selector state (for sessions created without a workspace)
+  const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false);
+
+  // Reactive State from sessionStore (via useSignalEffect for re-renders)
+  // Moved here before callbacks that depend on it
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [session, setSession] = useState(sessionStore.sessionInfo.value);
+
+  // ========================================
+  // Modals
+  // ========================================
+  const deleteModal = useModal();
+  const toolsModal = useModal();
+  const infoModal = useModal();
+  const errorDialog = useModal();
+  const rewindConfirmModal = useModal();
+  const selectiveRewindModal = useModal();
+
+  // ========================================
+  // Rewind handler
+  // ========================================
+  const handleRewindClick = useCallback(
+    (uuid: string) => {
+      setRewindTargetUuid(uuid);
+      setRewindModeChoice('both');
+      rewindConfirmModal.open();
+    },
+    [rewindConfirmModal]
+  );
+
+  const handleRewindConfirm = useCallback(async () => {
+    if (!rewindTargetUuid) return;
+
+    setIsRewinding(true);
+    try {
+      const { result } = await import('../lib/api-helpers.ts').then((m) =>
+        m.executeRewind(sessionId, rewindTargetUuid, rewindModeChoice)
+      );
+
+      if (result.success) {
+        toast.success(
+          `Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
+            result.filesChanged?.length || 0
+          } files restored`
+        );
+        // Refresh session state to ensure data consistency
+        await sessionStore.refresh();
+      } else {
+        toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsRewinding(false);
+      setRewindTargetUuid(null);
+      rewindConfirmModal.close();
+    }
+  }, [rewindTargetUuid, sessionId, rewindModeChoice, rewindConfirmModal]);
+
+  const handleRewindCancel = useCallback(() => {
+    setRewindTargetUuid(null);
+    rewindConfirmModal.close();
+  }, [rewindConfirmModal]);
+
+  // Rewind mode handlers
+  const handleEnterRewindMode = useCallback(() => {
+    setRewindMode(true);
+    setSelectedMessages(new Set());
+  }, []);
+
+  const handleExitRewindMode = useCallback(() => {
+    setRewindMode(false);
+    setSelectedMessages(new Set());
+  }, []);
+
+  const handleMessageCheckboxChange = useCallback(
+    (messageId: string, checked: boolean) => {
+      const newSelected = new Set(selectedMessages);
+
+      if (checked) {
+        // Find message index and select all messages from this point onward
+        const messageIndex = messages.findIndex((m) => m.uuid === messageId);
+        for (let i = messageIndex; i < messages.length; i++) {
+          if (messages[i].uuid) {
+            newSelected.add(messages[i].uuid!);
+          }
+        }
+      } else {
+        // Unselect this message and all after it
+        const messageIndex = messages.findIndex((m) => m.uuid === messageId);
+        for (let i = messageIndex; i < messages.length; i++) {
+          if (messages[i].uuid) {
+            newSelected.delete(messages[i].uuid!);
+          }
+        }
+      }
+
+      setSelectedMessages(newSelected);
+    },
+    [selectedMessages, messages]
+  );
+
+  const handleRewindSelection = useCallback(() => {
+    if (selectedMessages.size === 0) return;
+    setRewindModeChoice('both'); // reset to default
+    selectiveRewindModal.open();
+  }, [selectedMessages, selectiveRewindModal]);
+
+  const handleSelectiveRewindConfirm = useCallback(async () => {
+    if (selectedMessages.size === 0) return;
+
+    setIsRewinding(true);
+    try {
+      const { result } = await import('../lib/api-helpers.ts').then((m) =>
+        m.executeSelectiveRewind(sessionId, Array.from(selectedMessages), rewindModeChoice)
+      );
+
+      if (result.success) {
+        const parts = [];
+        if (result.messagesDeleted) parts.push(`${result.messagesDeleted} messages removed`);
+        if (result.filesReverted?.length)
+          parts.push(`${result.filesReverted.length} files restored`);
+        toast.success(`Rewound successfully: ${parts.join(', ')}`);
+        // Refresh session state to ensure data consistency
+        await sessionStore.refresh();
+        handleExitRewindMode();
+      } else {
+        toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsRewinding(false);
+      selectiveRewindModal.close();
+    }
+  }, [selectedMessages, sessionId, rewindModeChoice, handleExitRewindMode, selectiveRewindModal]);
+
+  // ========================================
+  // Reactive State from sessionStore (via useSignalEffect for re-renders)
+  // ========================================
+  const [contextUsage, setContextUsage] = useState(sessionStore.contextInfo.value);
+  const [agentState, setAgentState] = useState(sessionStore.agentState.value);
+  const [storeError, setStoreError] = useState(sessionStore.error.value);
+
+  // Sync messages from sessionStore
+  useSignalEffect(() => {
+    const nextMessages = sessionStore.sdkMessages.value;
+    const pendingChecks = pendingMessageVisibilityChecksRef.current;
+    if (pendingChecks.size > 0) {
+      for (const [messageId, timer] of pendingChecks) {
+        const isVisible = nextMessages.some((msg) => msg.uuid === messageId);
+        if (isVisible) {
+          clearTimeout(timer);
+          pendingChecks.delete(messageId);
+        }
+      }
+    }
+    setMessages(nextMessages);
+  });
+
+  // Sync session info from sessionStore
+  useSignalEffect(() => {
+    const info = sessionStore.sessionInfo.value;
+    setSession(info);
+    if (info?.config.autoScroll !== undefined) {
+      setAutoScroll(info.config.autoScroll);
+    }
+    if (info?.config.coordinatorMode !== undefined) {
+      setCoordinatorMode(info.config.coordinatorMode);
+    }
+    if (info?.config.sandbox?.enabled !== undefined) {
+      setSandboxEnabled(info.config.sandbox.enabled);
+    }
+  });
+
+  // Get feature flags from session config (for unified session architecture)
+  // Falls back to appropriate defaults based on session type
+  const features: SessionFeatures = useMemo(() => {
+    if (session?.config?.features) {
+      return session.config.features;
+    }
+    // Determine default features based on session ID format
+    if (sessionId.startsWith('space:chat:')) {
+      // Space agent sessions — no archive/delete (managed by space lifecycle)
+      return { ...DEFAULT_WORKER_FEATURES, archive: false };
+    }
+    if (sessionId.startsWith('lobby:')) {
+      return DEFAULT_LOBBY_FEATURES;
+    }
+    return DEFAULT_WORKER_FEATURES;
+  }, [session?.config?.features, sessionId]);
+
+  // Sync context from sessionStore
+  useSignalEffect(() => {
+    setContextUsage(sessionStore.contextInfo.value);
+  });
+
+  // Sync agent state from sessionStore
+  useSignalEffect(() => {
+    setAgentState(sessionStore.agentState.value);
+  });
+
+  // Sync error from sessionStore
+  useSignalEffect(() => {
+    setStoreError(sessionStore.error.value);
+  });
+
+  // Sync hasMoreMessages from sessionStore (inferred from initial load count)
+  // This avoids an expensive COUNT query on every session load
+  useSignalEffect(() => {
+    setHasMoreMessages(sessionStore.hasMoreMessages.value);
+  });
+
+  // Track initial load state — we are done loading only when BOTH the session
+  // state RPC has returned AND the initial messages LiveQuery snapshot has
+  // arrived. The two responses are independent, and on slow networks the
+  // session RPC can land many seconds before the messages snapshot. Flipping
+  // `isInitialLoad` too early is what lets the empty-state placeholder flash
+  // for 20+ seconds while messages are still in flight.
+  useSignalEffect(() => {
+    const sessionStateLoaded = sessionStore.sessionState.value !== null;
+    const messagesLoaded = sessionStore.messagesLoaded.value;
+    if (sessionStateLoaded && messagesLoaded) {
+      setIsInitialLoad(false);
+      setLoadTimedOut(false);
+    }
+  });
+
+  // Timeout: if session state doesn't load within 30s, show error instead of infinite spinner
+  useEffect(() => {
+    if (!isInitialLoad) return;
+    const timer = setTimeout(() => {
+      setLoadTimedOut(true);
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [isInitialLoad]);
+
+  // Sync resolved questions from session metadata when session loads/updates
+  // Also clears resolvingQuestionsRef for items now confirmed by server
+  useEffect(() => {
+    if (session?.metadata?.resolvedQuestions) {
+      const map = new Map<string, ResolvedQuestion>();
+      for (const [toolUseId, resolved] of Object.entries(session.metadata.resolvedQuestions)) {
+        map.set(toolUseId, resolved);
+      }
+      setResolvedQuestions(map);
+
+      // Clear resolvingQuestionsRef for items now confirmed by server
+      const refMap = resolvingQuestionsRef.current;
+      for (const toolUseId of map.keys()) {
+        refMap.delete(toolUseId);
+      }
+    }
+  }, [session?.metadata?.resolvedQuestions]);
+
+  // Show worktree choice modal if session is pending worktree choice
+  useEffect(() => {
+    if (
+      session?.status === 'pending_worktree_choice' &&
+      session?.metadata?.worktreeChoice?.status === 'pending'
+    ) {
+      setShowWorktreeChoice(true);
+    } else {
+      setShowWorktreeChoice(false);
+    }
+  }, [session]);
+
+  // Show workspace selector for active worker sessions without a workspace —
+  // but only before the conversation starts, so it never covers live messages
+  // (e.g. sessions created via the empty-state "create & send" landing).
+  useEffect(() => {
+    if (
+      session?.type === 'worker' &&
+      session?.status === 'active' &&
+      session?.workspacePath === null &&
+      (session?.metadata.messageCount ?? 0) === 0 &&
+      !readonly
+    ) {
+      setShowWorkspaceSelector(true);
+    } else {
+      setShowWorkspaceSelector(false);
+    }
+  }, [
+    session?.type,
+    session?.status,
+    session?.workspacePath,
+    session?.metadata.messageCount,
+    readonly,
+  ]);
+
+  // Handler for worktree mode change
+  const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
+    setPendingWorktreeMode(mode);
+  };
+
+  // Derived processing state
+  const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
+  const isWaitingForInput = agentState.status === 'waiting_for_input';
+  const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
+
+  const {
+    currentModel,
+    currentModelInfo,
+    availableModels,
+    modelSwitching,
+    modelLoading,
+    switchModel,
+    currentAction,
+    streamingPhase,
+    coordinatorSwitching,
+    sandboxSwitching,
+    handleModelSwitchWithConfirmation,
+    handleCoordinatorModeChange,
+    handleSandboxModeChange,
+  } = useChatComposerController({
+    sessionId,
+    agentState,
+    messages,
+    isProcessing,
+    coordinatorMode,
+    setCoordinatorMode,
+    sandboxEnabled,
+    setSandboxEnabled,
+  });
+
+  const selectSearchMessage = useCallback(
+    (messageId: string, loadTarget?: SearchMessageLoadTarget) => {
+      const nextLoadTarget = loadTarget ?? null;
+      searchLoadTargetRef.current = nextLoadTarget;
+      setSearchLoadTarget(nextLoadTarget);
+      setSearchTargetMessageId(messageId);
+    },
+    []
+  );
+
+  useSignalEffect(() => {
+    const target = searchHighlightMessageIdSignal.value;
+    if (target?.sessionId === sessionId && sessionStore.activeSessionId.value === sessionId) {
+      selectSearchMessage(target.messageId, target.loadTarget);
+      searchHighlightMessageIdSignal.value = null;
+    }
+  });
+
+  // ========================================
+  // Session Actions
+  // ========================================
+  const sessionActions = useSessionActions({
+    sessionId,
+    session,
+    onDeleteModalClose: deleteModal.close,
+    onStateReset: useCallback(() => {
+      setLocalError(null);
+      sessionStore.clearError();
+    }, []),
+  });
+
+  // ========================================
+  // Pagination (load older messages via RPC - pure WebSocket)
+  // hasMoreMessages is inferred from initial load count in sessionStore
+  // This avoids an expensive COUNT query on every session load
+  // ========================================
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlder || !hasMoreMessages || messages.length === 0) return;
+
+    try {
+      setLoadingOlder(true);
+
+      const container = messagesContainerRef.current;
+      if (!container) return;
+
+      // Store current scroll position to restore after messages are prepended
+      const oldScrollHeight = container.scrollHeight;
+      const oldScrollTop = container.scrollTop;
+
+      const oldestMessage = messages[0] as ChatMessage & { timestamp?: number };
+      const beforeTimestamp = oldestMessage?.timestamp;
+      if (!beforeTimestamp) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      // Load older messages via sessionStore RPC (pure WebSocket)
+      const { messages: olderMessages, hasMore } =
+        await sessionStore.loadOlderMessages(beforeTimestamp);
+      if (olderMessages.length === 0) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      // Store scroll position info for restoration after DOM updates
+      scrollPositionRestoreRef.current = {
+        oldScrollHeight,
+        oldScrollTop,
+        shouldRestore: true,
+      };
+
+      // Prepend older messages to sessionStore (will trigger re-render)
+      sessionStore.prependMessages(olderMessages);
+      setHasMoreMessages(hasMore);
+    } catch {
+      toast.error('Failed to load older messages');
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [loadingOlder, hasMoreMessages, messages]);
+
+  // ========================================
+  // Send Message
+  // ========================================
+  const handleMessageAccepted = useCallback(
+    (messageId: string) => {
+      const pendingChecks = pendingMessageVisibilityChecksRef.current;
+      const existingTimer = pendingChecks.get(messageId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+      const timer = setTimeout(() => {
+        pendingChecks.delete(messageId);
+        const isVisible = sessionStore.sdkMessages.value.some(
+          (message) => message.uuid === messageId
+        );
+        if (!isVisible && sessionStore.activeSessionId.value === sessionId) {
+          sessionStore.refresh().catch(() => {});
+        }
+      }, 1200);
+      pendingChecks.set(messageId, timer);
+    },
+    [sessionId]
+  );
+  const { sendMessage } = useSendMessage({
+    sessionId,
+    session,
+    isSending: isProcessing,
+    allowQueueWhileProcessing: true,
+    onSendStart: useCallback(() => {
+      setLocalError(null);
+      sessionStore.clearError();
+    }, []),
+    onSendComplete: useCallback(() => {
+      // Completion handled by sessionStore state updates
+    }, []),
+    onError: useCallback((error: string) => {
+      setLocalError(error);
+    }, []),
+    onMessageAccepted: handleMessageAccepted,
+  });
+
+  // ========================================
+  // Effects
+  // ========================================
+
+  // Select session on mount or when sessionId changes
+  // This is needed when ChatContainer is used outside the main navigation flow
+  // (e.g., space agent overlays).
+  // Skip when in pending-agent mode — no real session exists yet.
+  useEffect(() => {
+    if (pendingAgent) return;
+    // Only select if this sessionId is different from the current active session
+    if (sessionId && sessionId !== sessionStore.activeSessionId.value) {
+      sessionStore.select(sessionId);
+    }
+    // Cleanup: deselect session when component unmounts
+    return () => {
+      const pendingChecks = pendingMessageVisibilityChecksRef.current;
+      for (const timer of pendingChecks.values()) {
+        clearTimeout(timer);
+      }
+      pendingChecks.clear();
+      // Defer cleanup so a newly-mounted ChatContainer can claim selection first.
+      setTimeout(() => {
+        if (sessionStore.activeSessionId.value === sessionId) {
+          sessionStore.select(null);
+        }
+      }, 0);
+    };
+  }, [sessionId]);
+
+  // Restore scroll position after older messages are loaded and DOM has updated.
+  // Uses useLayoutEffect (synchronous, before paint) to restore scroll before any
+  // useEffect-based auto-scroll can race and override the position.
+  useLayoutEffect(() => {
+    if (!scrollPositionRestoreRef.current?.shouldRestore) return;
+
+    const { oldScrollHeight, oldScrollTop } = scrollPositionRestoreRef.current;
+    const container = messagesContainerRef.current;
+
+    if (!container) return;
+
+    // Calculate the new scroll position to maintain visual position.
+    // The scrollHeight has increased by the height of prepended messages.
+    const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
+    container.scrollTop = newScrollTop;
+
+    // Clear the restore flag
+    scrollPositionRestoreRef.current = null;
+  }, [messages.length, loadingOlder]);
+
+  // ========================================
+  // Auto-scroll
+  // ========================================
+  const { showScrollButton, scrollToBottom } = useAutoScroll({
+    containerRef: messagesContainerRef,
+    endRef: messagesEndRef,
+    // Disable tail-following auto-scroll while the caller is asking us to
+    // scroll a specific message into view. The highlight id is cleared once
+    // that anchor succeeds, so normal tail-following resumes for new rows.
+    enabled: autoScroll && !highlightMessageId && !searchTargetMessageId,
+    messageCount: messages.length,
+    isInitialLoad,
+    loadingOlder,
+  });
+
+  // ========================================
+  // Highlight a specific message (deep-link from minimal thread feed)
+  // ========================================
+  // `useScrollToMessage` scrolls the matching row to viewport center, applies
+  // a temporary amber ring, and re-anchors briefly to handle layout shifts.
+  // Note: `enabled: autoScroll && !highlightMessageId` is also passed to
+  // `useAutoScroll` above so the initial-load tail-follow can't race the
+  // deep-link scroll.
+  useEffect(() => {
+    if (!searchTargetMessageId || isInitialLoad) return;
+    const isLoaded = messages.some(
+      (message) =>
+        message.uuid === searchTargetMessageId ||
+        (message as ChatMessage & { id?: string }).id === searchTargetMessageId
+    );
+    if (isLoaded) return;
+
+    if (!searchLoadTarget?.before) {
+      const timeout = setTimeout(() => {
+        setSearchTargetMessageId(null);
+        searchLoadTargetRef.current = null;
+        setSearchLoadTarget(null);
+      }, 750);
+      return () => clearTimeout(timeout);
+    }
+
+    let cancelled = false;
+    const resetSearchTarget = () => {
+      setSearchTargetMessageId(null);
+      searchLoadTargetRef.current = null;
+      setSearchLoadTarget(null);
+    };
+    const hasTargetMessage = (messageList: ChatMessage[]) =>
+      messageList.some(
+        (message) =>
+          message.uuid === searchTargetMessageId ||
+          (message as ChatMessage & { id?: string }).id === searchTargetMessageId
+      );
+    const applyTargetWindow = async () => {
+      setLoadingOlder(true);
+      let before = searchLoadTarget.before;
+      if (!before) return;
+      while (!cancelled) {
+        const { messages: targetWindow, hasMore } = await sessionStore.loadOlderMessages(
+          before,
+          100,
+          searchLoadTarget.sessionId
+        );
+        if (cancelled) return;
+        if (sessionStore.activeSessionId.value !== searchLoadTarget.sessionId) {
+          resetSearchTarget();
+          return;
+        }
+        if (targetWindow.length === 0) {
+          setHasMoreMessages(false);
+          resetSearchTarget();
+          return;
+        }
+        sessionStore.prependMessages(targetWindow);
+        setHasMoreMessages(hasMore);
+        if (hasTargetMessage(targetWindow)) {
+          searchLoadTargetRef.current = null;
+          setSearchLoadTarget(null);
+          return;
+        }
+        if (!hasMore) {
+          resetSearchTarget();
+          return;
+        }
+        const oldestMessage = targetWindow[0] as ChatMessage & { timestamp?: number };
+        if (!oldestMessage.timestamp || oldestMessage.timestamp >= before) {
+          resetSearchTarget();
+          return;
+        }
+        before = oldestMessage.timestamp;
+      }
+    };
+    applyTargetWindow()
+      .catch(() => {
+        if (cancelled) return;
+        if (sessionStore.activeSessionId.value === searchLoadTarget.sessionId) {
+          toast.error('Failed to load search result context');
+        }
+        resetSearchTarget();
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOlder(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchTargetMessageId, searchLoadTarget, isInitialLoad, sessionId]);
+
+  useScrollToMessage({
+    containerRef: messagesContainerRef,
+    messageId: searchTargetMessageId || highlightMessageId,
+    messageCount: messages.length,
+    isInitialLoad,
+    onAnchored: (messageId) => {
+      if (messageId === searchTargetMessageId) {
+        setSearchTargetMessageId(null);
+        searchLoadTargetRef.current = null;
+        setSearchLoadTarget(null);
+      }
+      if (messageId === highlightMessageId) clearOverlayHighlightMessageId();
+    },
+  });
+
+  // ========================================
+  // Message Maps (for tool results/inputs)
+  // ========================================
+  const removedOutputs = session?.metadata?.removedOutputs || [];
+  const maps = useMessageMaps(messages, sessionId, removedOutputs);
+
+  const handleQuestionResolved = useCallback(
+    (state: 'submitted' | 'cancelled', responses: QuestionDraftResponse[]) => {
+      // Move question to resolved state locally for immediate UI feedback
+      // (Server also persists this via question.respond/cancel RPC)
+      if (pendingQuestion) {
+        const resolved = {
+          question: pendingQuestion,
+          state,
+          responses,
+          resolvedAt: Date.now(),
+        };
+        // Update ref immediately (synchronous)
+        resolvingQuestionsRef.current.set(pendingQuestion.toolUseId, resolved);
+        // Also schedule update to resolvedQuestions (will be merged with server data)
+        setResolvedQuestions((prev) => {
+          const next = new Map(prev);
+          next.set(pendingQuestion.toolUseId, resolved);
+          return next;
+        });
+      }
+    },
+    [pendingQuestion]
+  );
+
+  // Combined resolved questions map (state + ref)
+  // Includes questions synced from server (state) and questions being resolved (ref)
+  const allResolvedQuestions = useMemo(() => {
+    const combined = new Map<string, ResolvedQuestion>(resolvedQuestions);
+    for (const [toolUseId, resolved] of resolvingQuestionsRef.current) {
+      combined.set(toolUseId, resolved);
+    }
+    return combined;
+  }, [resolvedQuestions]);
+
+  // ========================================
+  // Connection Check
+  // ========================================
+  const isConnected = connectionState.value === 'connected';
+
+  // ========================================
+  // Handlers
+  // ========================================
+  const handleSendMessage = useCallback(
+    async (
+      content: string,
+      images?: MessageImage[],
+      deliveryMode: MessageDeliveryMode = 'immediate'
+    ) => {
+      // If session is pending worktree choice, set the mode first
+      if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
+        try {
+          const hub = connectionManager.getHubIfConnected();
+          if (!hub) {
+            toast.error('Connection lost.');
+            return false;
+          }
+          await hub.request('session.setWorktreeMode', {
+            sessionId,
+            mode: pendingWorktreeMode,
+          });
+          // UI will auto-hide via session status update
+        } catch {
+          toast.error('Failed to set workspace mode');
+          return false; // Don't send message if worktree setup failed
+        }
+      }
+
+      return await sendChatContainerMessage({
+        content,
+        images,
+        deliveryMode,
+        onSendOverride,
+        sendMessage,
+        setLocalError,
+      });
+    },
+    [sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId, onSendOverride]
+  );
+
+  const handleAutoScrollChange = useCallback(
+    async (newAutoScroll: boolean) => {
+      setAutoScroll(newAutoScroll);
+      try {
+        await updateSession(sessionId, {
+          config: { autoScroll: newAutoScroll },
+        });
+      } catch {
+        setAutoScroll(!newAutoScroll);
+        toast.error('Failed to save auto-scroll setting');
+      }
+    },
+    [sessionId]
+  );
+
+  // Get retry attempts from session store
+  const retryAttempts = sessionStore.retryAttempts.value;
+
+  // Build retry status message if there are retry attempts
+  const retryStatusMessage = useMemo(() => {
+    if (retryAttempts.length === 0) return null;
+    const lastRetry = retryAttempts[retryAttempts.length - 1];
+    const progress = `${lastRetry.attempt}/${lastRetry.max_retries}`;
+    const errorInfo = lastRetry.error_status ? ` (${lastRetry.error_status})` : '';
+    return `API retry: attempt ${progress}${errorInfo} - ${lastRetry.error}`;
+  }, [retryAttempts]);
+
+  // Combined error (local + store + retry status)
+  const error = localError || retryStatusMessage || storeError?.message || null;
+
+  // Build provider-specific action buttons for structured errors
+  const errorDetails = storeError?.details as StructuredError | undefined;
+  const errorCategory = errorDetails?.category;
+  const errorProviderId = errorDetails?.metadata?.providerId as string | undefined;
+  const errorActions = useMemo((): ErrorBannerAction[] => {
+    if (!errorDetails || !errorCategory) return [];
+    const providerLabel = errorProviderId ? getProviderLabel(errorProviderId) : 'Provider';
+    if (errorCategory === ErrorCategory.PROVIDER_AUTH_ERROR) {
+      return [
+        {
+          label: `Re-authenticate ${providerLabel}`,
+          onClick: () => {
+            navigateToSettings('providers');
+          },
+        },
+      ];
+    }
+    if (errorCategory === ErrorCategory.PROVIDER_UNAVAILABLE) {
+      const defaultAnthropicModel = availableModels.find((m) => m.provider === 'anthropic');
+      const actions: ErrorBannerAction[] = [];
+      if (defaultAnthropicModel) {
+        actions.push({
+          label: 'Switch to Anthropic',
+          onClick: () => switchModel(defaultAnthropicModel),
+        });
+      }
+      return actions;
+    }
+    return [];
+  }, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
+
+  // Derive loading state from sessionStore.
+  //
+  // We must wait for BOTH pieces of the session init to land before the chat
+  // area is allowed to render:
+  //   1. `sessionState` (metadata + agent state, via `state.session` RPC)
+  //   2. `messagesLoaded` (first LiveQuery snapshot for `messages.bySession`)
+  //
+  // These are independent responses. On slow networks / large conversations
+  // the LiveQuery snapshot can take 20+ seconds, long after the metadata RPC
+  // has resolved. If we only gated on `sessionState`, the empty-state
+  // placeholder ("No messages yet") would flash during that window for any
+  // session that actually has messages. Gating on `messagesLoaded` as well
+  // keeps the loading skeleton up until the server has confirmed whether the
+  // conversation is genuinely empty.
+  //
+  // Errors short-circuit the loading state so the error UI can render.
+  const sessionStateLoaded = sessionStore.sessionState.value !== null;
+  const messagesLoaded = sessionStore.messagesLoaded.value;
+  const loading = !error && (!sessionStateLoaded || !messagesLoaded);
+
+  // ========================================
+  // Pending Agent Render (before loading check)
+  // ========================================
+  // When pendingAgent is set, show a "not started yet" state with a minimal
+  // composer. This replaces the standalone PendingAgentOverlay component.
+  if (pendingAgent) {
+    return (
+      <div
+        class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
+        data-testid="pending-agent-overlay"
+        aria-label={`${pendingAgent.agentName} chat (starting)`}
+      >
+        {/* Header — mirrors ChatHeader height (h-[52px]) for visual consistency */}
+        <div class="px-4 min-h-[52px] flex-shrink-0 bg-app-content flex items-center gap-3">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors flex-shrink-0"
+              aria-label="Back"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </button>
+          )}
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-gray-100 truncate">{pendingAgent.agentName}</div>
+            <div class="text-xs text-gray-500 truncate">
+              {pendingWaitingForSession ? 'Starting session…' : 'Not started yet'}
+            </div>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div class="flex-1 min-h-0 overflow-auto px-4 py-6">
+          <div
+            class={cn(
+              'mx-auto max-w-md text-center text-sm rounded-lg border bg-dark-850/60 px-4 py-6',
+              borderColors.ui.default
+            )}
+            data-testid="pending-agent-overlay-body"
+          >
+            {pendingWaitingForSession ? (
+              <>
+                <div class="mb-3 flex items-center justify-center">
+                  <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+                <p class="text-gray-200 font-medium mb-1">Starting {pendingAgent.agentName}…</p>
+                <p class="text-gray-500">
+                  Your message has been queued. The session will open here as soon as the agent is
+                  ready.
+                </p>
+              </>
+            ) : (
+              <>
+                <p class="text-gray-200 font-medium mb-1">
+                  {pendingAgent.agentName} hasn't started yet
+                </p>
+                <p class="text-gray-500">
+                  Send a message below to start this agent's session. Your first message will be
+                  delivered when the session is ready.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Minimal Composer */}
+        <div class={cn('flex-shrink-0 border-t bg-app-content px-3 py-3', borderColors.ui.default)}>
+          {pendingErrorMessage && (
+            <p class="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+              {pendingErrorMessage}
+            </p>
+          )}
+          <div class="flex gap-2">
+            <textarea
+              ref={pendingTextareaRef}
+              class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-dark-850 border border-dark-700 text-sm text-gray-100 px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              placeholder={
+                pendingWaitingForSession
+                  ? `Send another message to ${pendingAgent.agentName}…`
+                  : `Send first message to ${pendingAgent.agentName}…`
+              }
+              value={pendingContent}
+              onInput={(e) => setPendingContent((e.target as HTMLTextAreaElement).value)}
+              onKeyDown={handlePendingKeyDown}
+              disabled={pendingSubmitting || pendingWaitingForSession}
+              data-testid="pending-agent-overlay-textarea"
+              rows={2}
+            />
+            <button
+              type="button"
+              onClick={() => void handlePendingSend()}
+              disabled={!pendingContent.trim() || pendingSubmitting}
+              class={cn(
+                'inline-flex items-center justify-center rounded-md px-3 text-sm font-medium transition-colors flex-shrink-0',
+                'bg-blue-600 text-white hover:bg-blue-500',
+                'disabled:bg-dark-700 disabled:text-gray-500 disabled:cursor-not-allowed'
+              )}
+              data-testid="pending-agent-overlay-send"
+            >
+              {pendingSubmitting ? 'Starting…' : 'Send'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render loading state
+  if (loading) {
+    if (loadTimedOut) {
+      return (
+        <div class="flex-1 flex items-center justify-center bg-app-content">
+          <div class="text-center">
+            <div class="text-5xl mb-4">⚠️</div>
+            <h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
+            <p class="text-sm text-gray-400 mb-4">
+              Session may not exist or the connection timed out.
+            </p>
+            <Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      // `relative` is required so the absolutely-positioned footer skeleton is
+      // anchored to this container, matching the real ChatComposer positioning.
+      <div class="flex-1 flex flex-col bg-app-content overflow-hidden relative">
+        {/* Skeleton header — h-[52px] matches ChatHeader's fixed height exactly */}
+        <div class="flex items-center gap-3 px-4 h-[52px] flex-shrink-0">
+          <div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
+          <div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
+        </div>
+        {/* Skeleton messages area — flex-1 fills all remaining space, matching the
 				    real layout where ChatComposer is absolutely positioned (not in flex flow) */}
-				<div class="flex-1 flex items-center justify-center">
-					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-				</div>
-				{/* Skeleton footer — absolute bottom-0 matches ChatComposer's
+        <div class="flex-1 flex items-center justify-center">
+          <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+        {/* Skeleton footer — absolute bottom-0 matches ChatComposer's
 				    `absolute bottom-0 left-0 right-0` so it doesn't participate in the
 				    flex layout (prevents the messages area from shifting on load) */}
-				<div class="absolute bottom-0 left-0 right-0 pt-4 pb-4 px-4">
-					<div class="h-10 rounded-2xl bg-dark-800 animate-pulse" />
-				</div>
-			</div>
-		);
-	}
+        <div class="absolute bottom-0 left-0 right-0 pt-4 pb-4 px-4">
+          <div class="h-10 rounded-2xl bg-dark-800 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
 
-	// Render error state (with retry via sessionStore re-selection).
-	// Also catches the case where session state was cleared (sessionInfo null in the store)
-	// but the local `session` copy is still stale from a previous successful load.
-	const storeHasNoSessionInfo =
-		sessionStore.sessionState.value !== null &&
-		sessionStore.sessionState.value?.sessionInfo === null;
-	if (error && (!session || storeHasNoSessionInfo)) {
-		return (
-			<div class="flex-1 flex items-center justify-center bg-app-content">
-				<div class="text-center">
-					<div class="text-5xl mb-4">⚠️</div>
-					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
-					<p class="text-sm text-gray-400 mb-4">{error}</p>
-					<Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
-				</div>
-			</div>
-		);
-	}
+  // Render error state (with retry via sessionStore re-selection).
+  // Also catches the case where session state was cleared (sessionInfo null in the store)
+  // but the local `session` copy is still stale from a previous successful load.
+  const storeHasNoSessionInfo =
+    sessionStore.sessionState.value !== null &&
+    sessionStore.sessionState.value?.sessionInfo === null;
+  if (error && (!session || storeHasNoSessionInfo)) {
+    return (
+      <div class="flex-1 flex items-center justify-center bg-app-content">
+        <div class="text-center">
+          <div class="text-5xl mb-4">⚠️</div>
+          <h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
+          <p class="text-sm text-gray-400 mb-4">{error}</p>
+          <Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
+        </div>
+      </div>
+    );
+  }
 
-	return (
-		<div
-			class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
-			data-testid="chat-container"
-		>
-			{/* Loading overlay for archive/delete operations */}
-			{(sessionActions.archiving || sessionActions.deleting) && (
-				<div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
-					<div class="text-center">
-						<Spinner size="lg" className="mx-auto mb-3" />
-						<p class="text-sm text-gray-400">
-							{sessionActions.deleting ? 'Deleting session...' : 'Archiving session...'}
-						</p>
-					</div>
-				</div>
-			)}
+  return (
+    <div
+      class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
+      data-testid="chat-container"
+    >
+      {/* Loading overlay for archive/delete operations */}
+      {(sessionActions.archiving || sessionActions.deleting) && (
+        <div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
+          <div class="text-center">
+            <Spinner size="lg" className="mx-auto mb-3" />
+            <p class="text-sm text-gray-400">
+              {sessionActions.deleting ? 'Deleting session...' : 'Archiving session...'}
+            </p>
+          </div>
+        </div>
+      )}
 
-			{/* Error Banner */}
-			{error && (
-				<ErrorBanner
-					error={error}
-					hasDetails={!!storeError?.details}
-					onViewDetails={errorDialog.open}
-					onDismiss={() => {
-						setLocalError(null);
-						sessionStore.clearError();
-					}}
-					actions={errorActions.length > 0 ? errorActions : undefined}
-				/>
-			)}
+      {/* Error Banner */}
+      {error && (
+        <ErrorBanner
+          error={error}
+          hasDetails={!!storeError?.details}
+          onViewDetails={errorDialog.open}
+          onDismiss={() => {
+            setLocalError(null);
+            sessionStore.clearError();
+          }}
+          actions={errorActions.length > 0 ? errorActions : undefined}
+        />
+      )}
 
-			{/* Rate Limit Cooldown Banner */}
-			{agentState.status === 'rate_limit_cooldown' && session && (
-				<RateLimitCooldownBanner
-					sessionId={session.id}
-					retryCount={agentState.retryCount}
-					maxRetries={agentState.maxRetries}
-					retryAt={agentState.retryAt}
-				/>
-			)}
+      {/* Rate Limit Cooldown Banner */}
+      {agentState.status === 'rate_limit_cooldown' && session && (
+        <RateLimitCooldownBanner
+          sessionId={session.id}
+          retryCount={agentState.retryCount}
+          maxRetries={agentState.maxRetries}
+          retryAt={agentState.retryAt}
+        />
+      )}
 
-			{/* Header */}
-			<ChatHeader
-				session={session}
-				features={features}
-				onToolsClick={toolsModal.open}
-				onInfoClick={infoModal.open}
-				onExportClick={sessionActions.handleExportChat}
-				onResetClick={sessionActions.handleResetAgent}
-				onArchiveClick={sessionActions.handleArchiveClick}
-				onDeleteClick={deleteModal.open}
-				archiving={sessionActions.archiving}
-				resettingAgent={sessionActions.resettingAgent}
-				readonly={readonly}
-				onBack={onBack}
-				titleOverride={titleOverride}
-				messages={messages}
-				toolInputsMap={maps.toolInputsMap}
-			/>
+      {/* Header */}
+      <ChatHeader
+        session={session}
+        features={features}
+        onToolsClick={toolsModal.open}
+        onInfoClick={infoModal.open}
+        onExportClick={sessionActions.handleExportChat}
+        onResetClick={sessionActions.handleResetAgent}
+        onArchiveClick={sessionActions.handleArchiveClick}
+        onDeleteClick={deleteModal.open}
+        archiving={sessionActions.archiving}
+        resettingAgent={sessionActions.resettingAgent}
+        readonly={readonly}
+        onBack={onBack}
+        titleOverride={titleOverride}
+        messages={messages}
+        toolInputsMap={maps.toolInputsMap}
+      />
 
-			{/* Messages */}
-			<div class="flex-1 relative min-h-0">
-				{/* Rewind Mode Banner - only show if feature is enabled */}
-				{features.rewind && rewindMode && (
-					<div class="absolute top-0 left-0 right-0 z-20 bg-amber-500/10 backdrop-blur-sm border-b border-amber-500/30 px-4 py-3">
-						<div class="max-w-4xl mx-auto flex items-center justify-between">
-							<div class="flex items-center gap-3">
-								<svg
-									class="w-5 h-5 text-amber-400"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-									/>
-								</svg>
-								<span class="text-sm text-amber-200">
-									{selectedMessages.size > 0
-										? `${selectedMessages.size} message${selectedMessages.size > 1 ? 's' : ''} selected`
-										: 'Select a message to rewind to'}
-								</span>
-							</div>
-							<div class="flex items-center gap-2">
-								{selectedMessages.size > 0 && (
-									<button
-										onClick={handleRewindSelection}
-										disabled={isRewinding}
-										class="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-									>
-										{isRewinding && <Spinner size="xs" color="border-white" />}
-										{isRewinding ? 'Rewinding...' : 'Rewind to Here'}
-									</button>
-								)}
-								<button
-									onClick={handleExitRewindMode}
-									class="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-gray-200 rounded-lg text-sm font-medium transition-colors"
-								>
-									Cancel
-								</button>
-							</div>
-						</div>
-					</div>
-				)}
+      {/* Messages */}
+      <div class="flex-1 relative min-h-0">
+        {/* Rewind Mode Banner - only show if feature is enabled */}
+        {features.rewind && rewindMode && (
+          <div class="absolute top-0 left-0 right-0 z-20 bg-amber-500/10 backdrop-blur-sm border-b border-amber-500/30 px-4 py-3">
+            <div class="max-w-4xl mx-auto flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <svg
+                  class="w-5 h-5 text-amber-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                  />
+                </svg>
+                <span class="text-sm text-amber-200">
+                  {selectedMessages.size > 0
+                    ? `${selectedMessages.size} message${selectedMessages.size > 1 ? 's' : ''} selected`
+                    : 'Select a message to rewind to'}
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                {selectedMessages.size > 0 && (
+                  <button
+                    onClick={handleRewindSelection}
+                    disabled={isRewinding}
+                    class="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                  >
+                    {isRewinding && <Spinner size="xs" color="border-white" />}
+                    {isRewinding ? 'Rewinding...' : 'Rewind to Here'}
+                  </button>
+                )}
+                <button
+                  onClick={handleExitRewindMode}
+                  class="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-gray-200 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
-				<div
-					ref={messagesContainerRef}
-					data-messages-container
-					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
-					style={{
-						WebkitOverflowScrolling: 'touch',
-						paddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
-						// Mirror paddingBottom so browser-driven scrolls (scrollIntoView,
-						// focus/anchor scroll) stop short of the floating composer instead
-						// of parking the last message behind it.
-						scrollPaddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
-					}}
-				>
-					{/* Worktree Choice Inline */}
-					{showWorktreeChoice && session?.workspacePath && (
-						<WorktreeChoiceInline
-							sessionId={sessionId}
-							workspacePath={session.workspacePath}
-							onModeChange={handleWorktreeModeChange}
-						/>
-					)}
+        <div
+          ref={messagesContainerRef}
+          data-messages-container
+          class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
+          style={{
+            WebkitOverflowScrolling: 'touch',
+            paddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
+            // Mirror paddingBottom so browser-driven scrolls (scrollIntoView,
+            // focus/anchor scroll) stop short of the floating composer instead
+            // of parking the last message behind it.
+            scrollPaddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
+          }}
+        >
+          {/* Worktree Choice Inline */}
+          {showWorktreeChoice && session?.workspacePath && (
+            <WorktreeChoiceInline
+              sessionId={sessionId}
+              workspacePath={session.workspacePath}
+              onModeChange={handleWorktreeModeChange}
+            />
+          )}
 
-					{/* Loading overlay for rewind operation */}
-					{isRewinding && (
-						<div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
-							<div class="bg-dark-800 border border-amber-500/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-2xl">
-								<Spinner size="lg" color="border-amber-500" />
-								<div class="text-amber-200 text-sm font-medium">Rewinding conversation...</div>
-								<div class="text-gray-400 text-xs">This may take a moment</div>
-							</div>
-						</div>
-					)}
-					{messages.length === 0 ? (
-						showWorkspaceSelector && session ? (
-							<WorkspaceSelector
-								sessionId={sessionId}
-								onConfirm={() => setShowWorkspaceSelector(false)}
-								onSkip={() => setShowWorkspaceSelector(false)}
-							/>
-						) : (
-							<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
-								<div class="text-center">
-									<div class="text-5xl mb-4">💬</div>
-									<p class="text-lg text-gray-300 mb-2">No messages yet</p>
-									<p class="text-sm text-gray-500">
-										Start a conversation with Claude to see the magic happen
-									</p>
-								</div>
-							</div>
-						)
-					) : (
-						<ContentContainer className="space-y-0 min-h-[calc(100%+1px)]">
-							{/* Load More Button */}
-							{hasMoreMessages && messages.length > 0 && (
-								<div class="flex items-center justify-center py-4">
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={loadOlderMessages}
-										disabled={loadingOlder}
-									>
-										{loadingOlder ? (
-											<>
-												<Spinner size="sm" className="mr-2" />
-												Loading...
-											</>
-										) : (
-											'Load More Messages'
-										)}
-									</Button>
-								</div>
-							)}
+          {/* Loading overlay for rewind operation */}
+          {isRewinding && (
+            <div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
+              <div class="bg-dark-800 border border-amber-500/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-2xl">
+                <Spinner size="lg" color="border-amber-500" />
+                <div class="text-amber-200 text-sm font-medium">Rewinding conversation...</div>
+                <div class="text-gray-400 text-xs">This may take a moment</div>
+              </div>
+            </div>
+          )}
+          {messages.length === 0 ? (
+            showWorkspaceSelector && session ? (
+              <WorkspaceSelector
+                sessionId={sessionId}
+                onConfirm={() => setShowWorkspaceSelector(false)}
+                onSkip={() => setShowWorkspaceSelector(false)}
+              />
+            ) : (
+              <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
+                <div class="text-center">
+                  <div class="text-5xl mb-4">💬</div>
+                  <p class="text-lg text-gray-300 mb-2">No messages yet</p>
+                  <p class="text-sm text-gray-500">
+                    Start a conversation with Claude to see the magic happen
+                  </p>
+                </div>
+              </div>
+            )
+          ) : (
+            <ContentContainer className="space-y-0 min-h-[calc(100%+1px)]">
+              {/* Load More Button */}
+              {hasMoreMessages && messages.length > 0 && (
+                <div class="flex items-center justify-center py-4">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={loadOlderMessages}
+                    disabled={loadingOlder}
+                  >
+                    {loadingOlder ? (
+                      <>
+                        <Spinner size="sm" className="mr-2" />
+                        Loading...
+                      </>
+                    ) : (
+                      'Load More Messages'
+                    )}
+                  </Button>
+                </div>
+              )}
 
-							{!hasMoreMessages && messages.length > 0 && (
-								<div class="flex items-center justify-center py-4">
-									<div class="text-xs text-gray-500">Beginning of conversation</div>
-								</div>
-							)}
+              {!hasMoreMessages && messages.length > 0 && (
+                <div class="flex items-center justify-center py-4">
+                  <div class="text-xs text-gray-500">Beginning of conversation</div>
+                </div>
+              )}
 
-							{/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
-							{messages.map((msg, idx) => (
-								<div
-									key={msg.uuid || `msg-${idx}`}
-									data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
-									class="scroll-mt-20"
-								>
-									<SDKMessageRenderer
-										message={msg}
-										toolResultsMap={maps.toolResultsMap}
-										toolInputsMap={maps.toolInputsMap}
-										subagentMessagesMap={maps.subagentMessagesMap}
-										sessionInfo={
-											msg.uuid
-												? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
-												: undefined
-										}
-										sessionId={sessionId}
-										resolvedQuestions={allResolvedQuestions}
-										pendingQuestion={pendingQuestion}
-										onRewind={handleRewindClick}
-										rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
-										rewindMode={rewindMode}
-										selectedMessages={selectedMessages}
-										onMessageCheckboxChange={handleMessageCheckboxChange}
-										onQuestionResolved={handleQuestionResolved}
-									/>
-								</div>
-							))}
-						</ContentContainer>
-					)}
+              {/* Messages - QuestionPrompt rendered inline with AskUserQuestion tool blocks */}
+              {messages.map((msg, idx) => (
+                <div
+                  key={msg.uuid || `msg-${idx}`}
+                  data-message-id={msg.uuid || (msg as ChatMessage & { id?: string }).id}
+                  class="scroll-mt-20"
+                >
+                  <SDKMessageRenderer
+                    message={msg}
+                    toolResultsMap={maps.toolResultsMap}
+                    toolInputsMap={maps.toolInputsMap}
+                    subagentMessagesMap={maps.subagentMessagesMap}
+                    sessionInfo={
+                      msg.uuid
+                        ? (maps.sessionInfoMap.get(msg.uuid) as SDKSystemMessage | undefined)
+                        : undefined
+                    }
+                    sessionId={sessionId}
+                    resolvedQuestions={allResolvedQuestions}
+                    pendingQuestion={pendingQuestion}
+                    onRewind={handleRewindClick}
+                    rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
+                    rewindMode={rewindMode}
+                    selectedMessages={selectedMessages}
+                    onMessageCheckboxChange={handleMessageCheckboxChange}
+                    onQuestionResolved={handleQuestionResolved}
+                  />
+                </div>
+              ))}
+            </ContentContainer>
+          )}
 
-					<div ref={messagesEndRef} />
-				</div>
+          <div ref={messagesEndRef} />
+        </div>
 
-				{/* Scroll Button - positioned relative to container, not scrollable content */}
-				{showScrollButton && (
-					<ScrollToBottomButton onClick={() => scrollToBottom(true)} autoScroll={autoScroll} />
-				)}
-			</div>
+        {/* Scroll Button - positioned relative to container, not scrollable content */}
+        {showScrollButton && (
+          <ScrollToBottomButton onClick={() => scrollToBottom(true)} autoScroll={autoScroll} />
+        )}
+      </div>
 
-			{/* Footer - Floating Status Bar */}
-			<ChatComposer
-				sessionId={sessionId}
-				readonly={readonly}
-				sessionStatus={session?.status}
-				sessionType={session?.type}
-				thinkingLevel={
-					session?.config?.thinkingLevel
-						? normalizeThinkingLevel(session.config.thinkingLevel)
-						: undefined
-				}
-				isProcessing={isProcessing}
-				currentAction={currentAction}
-				streamingPhase={streamingPhase}
-				contextUsage={contextUsage ?? undefined}
-				features={features}
-				currentModel={currentModel}
-				currentModelInfo={currentModelInfo}
-				availableModels={availableModels}
-				modelSwitching={modelSwitching}
-				modelLoading={modelLoading}
-				autoScroll={autoScroll}
-				coordinatorMode={coordinatorMode}
-				coordinatorSwitching={coordinatorSwitching}
-				sandboxEnabled={sandboxEnabled}
-				sandboxSwitching={sandboxSwitching}
-				isWaitingForInput={isWaitingForInput}
-				isConnected={isConnected}
-				rewindMode={rewindMode}
-				onModelSwitch={handleModelSwitchWithConfirmation}
-				onAutoScrollChange={handleAutoScrollChange}
-				onCoordinatorModeChange={handleCoordinatorModeChange}
-				onSandboxModeChange={handleSandboxModeChange}
-				onSend={handleSendMessage}
-				onOpenTools={toolsModal.open}
-				onEnterRewindMode={handleEnterRewindMode}
-				onExitRewindMode={handleExitRewindMode}
-			/>
+      {/* Footer - Floating Status Bar */}
+      <ChatComposer
+        sessionId={sessionId}
+        readonly={readonly}
+        sessionStatus={session?.status}
+        sessionType={session?.type}
+        thinkingLevel={
+          session?.config?.thinkingLevel
+            ? normalizeThinkingLevel(session.config.thinkingLevel)
+            : undefined
+        }
+        isProcessing={isProcessing}
+        currentAction={currentAction}
+        streamingPhase={streamingPhase}
+        contextUsage={contextUsage ?? undefined}
+        features={features}
+        currentModel={currentModel}
+        currentModelInfo={currentModelInfo}
+        availableModels={availableModels}
+        modelSwitching={modelSwitching}
+        modelLoading={modelLoading}
+        autoScroll={autoScroll}
+        coordinatorMode={coordinatorMode}
+        coordinatorSwitching={coordinatorSwitching}
+        sandboxEnabled={sandboxEnabled}
+        sandboxSwitching={sandboxSwitching}
+        isWaitingForInput={isWaitingForInput}
+        isConnected={isConnected}
+        rewindMode={rewindMode}
+        onModelSwitch={handleModelSwitchWithConfirmation}
+        onAutoScrollChange={handleAutoScrollChange}
+        onCoordinatorModeChange={handleCoordinatorModeChange}
+        onSandboxModeChange={handleSandboxModeChange}
+        onSend={handleSendMessage}
+        onOpenTools={toolsModal.open}
+        onEnterRewindMode={handleEnterRewindMode}
+        onExitRewindMode={handleExitRewindMode}
+      />
 
-			{/* Delete Modal */}
-			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">
-				<div class="space-y-4">
-					<p class="text-gray-300 text-sm">
-						Are you sure you want to delete this chat session? This action cannot be undone.
-					</p>
-					<div class="flex gap-3 justify-end">
-						<Button
-							variant="secondary"
-							onClick={deleteModal.close}
-							disabled={sessionActions.deleting}
-						>
-							Cancel
-						</Button>
-						<Button
-							variant="danger"
-							onClick={sessionActions.handleDeleteSession}
-							loading={sessionActions.deleting}
-							data-testid="confirm-delete-session"
-						>
-							Delete Chat
-						</Button>
-					</div>
-				</div>
-			</Modal>
+      {/* Delete Modal */}
+      <Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">
+        <div class="space-y-4">
+          <p class="text-gray-300 text-sm">
+            Are you sure you want to delete this chat session? This action cannot be undone.
+          </p>
+          <div class="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={deleteModal.close}
+              disabled={sessionActions.deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={sessionActions.handleDeleteSession}
+              loading={sessionActions.deleting}
+              data-testid="confirm-delete-session"
+            >
+              Delete Chat
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
-			{/* Archive Confirmation */}
-			{sessionActions.archiveConfirmDialog?.show &&
-				sessionActions.archiveConfirmDialog.commitStatus && (
-					<ArchiveConfirmDialog
-						commitStatus={sessionActions.archiveConfirmDialog.commitStatus}
-						archiving={sessionActions.archiving}
-						onConfirm={sessionActions.handleConfirmArchive}
-						onCancel={sessionActions.handleCancelArchive}
-					/>
-				)}
+      {/* Archive Confirmation */}
+      {sessionActions.archiveConfirmDialog?.show &&
+        sessionActions.archiveConfirmDialog.commitStatus && (
+          <ArchiveConfirmDialog
+            commitStatus={sessionActions.archiveConfirmDialog.commitStatus}
+            archiving={sessionActions.archiving}
+            onConfirm={sessionActions.handleConfirmArchive}
+            onCancel={sessionActions.handleCancelArchive}
+          />
+        )}
 
-			{/* Tools Modal */}
-			<ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
+      {/* Tools Modal */}
+      <ToolsModal isOpen={toolsModal.isOpen} onClose={toolsModal.close} session={session} />
 
-			{/* Session Info Modal */}
-			<SessionInfoModal isOpen={infoModal.isOpen} onClose={infoModal.close} session={session} />
+      {/* Session Info Modal */}
+      <SessionInfoModal isOpen={infoModal.isOpen} onClose={infoModal.close} session={session} />
 
-			{/* Error Dialog */}
-			<ErrorDialog
-				isOpen={errorDialog.isOpen}
-				onClose={errorDialog.close}
-				error={sessionStore.getErrorDetails()}
-				isDev={import.meta.env.DEV === 'true' || import.meta.env.MODE === 'development'}
-			/>
+      {/* Error Dialog */}
+      <ErrorDialog
+        isOpen={errorDialog.isOpen}
+        onClose={errorDialog.close}
+        error={sessionStore.getErrorDetails()}
+        isDev={import.meta.env.DEV === 'true' || import.meta.env.MODE === 'development'}
+      />
 
-			{/* Rewind Confirmation Modal */}
-			<Modal
-				isOpen={rewindConfirmModal.isOpen}
-				onClose={handleRewindCancel}
-				title="Rewind Conversation"
-				size="sm"
-			>
-				<div class="space-y-4">
-					<p class="text-gray-300 text-sm">
-						This will rewind the conversation to before this message. Choose what to restore:
-					</p>
-					<div class="space-y-2">
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="radio"
-								name="perMessageRewindMode"
-								value="both"
-								checked={rewindModeChoice === 'both'}
-								onChange={() => setRewindModeChoice('both')}
-								class="text-amber-500 focus:ring-amber-500"
-							/>
-							<span class="text-sm text-gray-200">Files & Conversation</span>
-						</label>
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="radio"
-								name="perMessageRewindMode"
-								value="files"
-								checked={rewindModeChoice === 'files'}
-								onChange={() => setRewindModeChoice('files')}
-								class="text-amber-500 focus:ring-amber-500"
-							/>
-							<span class="text-sm text-gray-200">Files only</span>
-						</label>
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="radio"
-								name="perMessageRewindMode"
-								value="conversation"
-								checked={rewindModeChoice === 'conversation'}
-								onChange={() => setRewindModeChoice('conversation')}
-								class="text-amber-500 focus:ring-amber-500"
-							/>
-							<span class="text-sm text-gray-200">Conversation only</span>
-						</label>
-					</div>
-					<p class="text-amber-400 text-xs">This action cannot be undone.</p>
-					<div class="flex gap-3 justify-end">
-						<Button variant="secondary" onClick={handleRewindCancel} disabled={isRewinding}>
-							Cancel
-						</Button>
-						<Button variant="danger" onClick={handleRewindConfirm} loading={isRewinding}>
-							{isRewinding ? 'Rewinding...' : 'Rewind'}
-						</Button>
-					</div>
-				</div>
-			</Modal>
+      {/* Rewind Confirmation Modal */}
+      <Modal
+        isOpen={rewindConfirmModal.isOpen}
+        onClose={handleRewindCancel}
+        title="Rewind Conversation"
+        size="sm"
+      >
+        <div class="space-y-4">
+          <p class="text-gray-300 text-sm">
+            This will rewind the conversation to before this message. Choose what to restore:
+          </p>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="perMessageRewindMode"
+                value="both"
+                checked={rewindModeChoice === 'both'}
+                onChange={() => setRewindModeChoice('both')}
+                class="text-amber-500 focus:ring-amber-500"
+              />
+              <span class="text-sm text-gray-200">Files & Conversation</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="perMessageRewindMode"
+                value="files"
+                checked={rewindModeChoice === 'files'}
+                onChange={() => setRewindModeChoice('files')}
+                class="text-amber-500 focus:ring-amber-500"
+              />
+              <span class="text-sm text-gray-200">Files only</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="perMessageRewindMode"
+                value="conversation"
+                checked={rewindModeChoice === 'conversation'}
+                onChange={() => setRewindModeChoice('conversation')}
+                class="text-amber-500 focus:ring-amber-500"
+              />
+              <span class="text-sm text-gray-200">Conversation only</span>
+            </label>
+          </div>
+          <p class="text-amber-400 text-xs">This action cannot be undone.</p>
+          <div class="flex gap-3 justify-end">
+            <Button variant="secondary" onClick={handleRewindCancel} disabled={isRewinding}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleRewindConfirm} loading={isRewinding}>
+              {isRewinding ? 'Rewinding...' : 'Rewind'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
-			{/* Selective Rewind Modal */}
-			<Modal
-				isOpen={selectiveRewindModal.isOpen}
-				onClose={() => {
-					if (!isRewinding) selectiveRewindModal.close();
-				}}
-				title="Rewind Conversation"
-				size="sm"
-			>
-				<div class="space-y-4">
-					<p class="text-gray-300 text-sm">
-						This will rewind the conversation to the selected point. Choose what to restore:
-					</p>
-					<div class="space-y-2">
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="radio"
-								name="rewindMode"
-								value="both"
-								checked={rewindModeChoice === 'both'}
-								onChange={() => setRewindModeChoice('both')}
-								class="text-amber-500 focus:ring-amber-500"
-							/>
-							<span class="text-sm text-gray-200">Files & Conversation</span>
-						</label>
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="radio"
-								name="rewindMode"
-								value="files"
-								checked={rewindModeChoice === 'files'}
-								onChange={() => setRewindModeChoice('files')}
-								class="text-amber-500 focus:ring-amber-500"
-							/>
-							<span class="text-sm text-gray-200">Files only</span>
-						</label>
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="radio"
-								name="rewindMode"
-								value="conversation"
-								checked={rewindModeChoice === 'conversation'}
-								onChange={() => setRewindModeChoice('conversation')}
-								class="text-amber-500 focus:ring-amber-500"
-							/>
-							<span class="text-sm text-gray-200">Conversation only</span>
-						</label>
-					</div>
-					<p class="text-amber-400 text-xs">This action cannot be undone.</p>
-					<div class="flex gap-3 justify-end">
-						<Button
-							variant="secondary"
-							onClick={() => selectiveRewindModal.close()}
-							disabled={isRewinding}
-						>
-							Cancel
-						</Button>
-						<Button variant="danger" onClick={handleSelectiveRewindConfirm} loading={isRewinding}>
-							{isRewinding ? 'Rewinding...' : 'Rewind'}
-						</Button>
-					</div>
-				</div>
-			</Modal>
-		</div>
-	);
+      {/* Selective Rewind Modal */}
+      <Modal
+        isOpen={selectiveRewindModal.isOpen}
+        onClose={() => {
+          if (!isRewinding) selectiveRewindModal.close();
+        }}
+        title="Rewind Conversation"
+        size="sm"
+      >
+        <div class="space-y-4">
+          <p class="text-gray-300 text-sm">
+            This will rewind the conversation to the selected point. Choose what to restore:
+          </p>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="rewindMode"
+                value="both"
+                checked={rewindModeChoice === 'both'}
+                onChange={() => setRewindModeChoice('both')}
+                class="text-amber-500 focus:ring-amber-500"
+              />
+              <span class="text-sm text-gray-200">Files & Conversation</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="rewindMode"
+                value="files"
+                checked={rewindModeChoice === 'files'}
+                onChange={() => setRewindModeChoice('files')}
+                class="text-amber-500 focus:ring-amber-500"
+              />
+              <span class="text-sm text-gray-200">Files only</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="rewindMode"
+                value="conversation"
+                checked={rewindModeChoice === 'conversation'}
+                onChange={() => setRewindModeChoice('conversation')}
+                class="text-amber-500 focus:ring-amber-500"
+              />
+              <span class="text-sm text-gray-200">Conversation only</span>
+            </label>
+          </div>
+          <p class="text-amber-400 text-xs">This action cannot be undone.</p>
+          <div class="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => selectiveRewindModal.close()}
+              disabled={isRewinding}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleSelectiveRewindConfirm} loading={isRewinding}>
+              {isRewinding ? 'Rewinding...' : 'Rewind'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
 }

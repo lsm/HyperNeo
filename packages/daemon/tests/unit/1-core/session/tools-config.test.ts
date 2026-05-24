@@ -17,44 +17,44 @@ import type { Database } from '../../../../src/storage/database';
 import type { GlobalToolsConfig } from '@neokai/shared';
 
 describe('ToolsConfigManager', () => {
-	let mockDb: Database;
-	let manager: ToolsConfigManager;
+  let mockDb: Database;
+  let manager: ToolsConfigManager;
 
-	const defaultGlobalToolsConfig: GlobalToolsConfig = {
-		systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
-		settingSources: { project: { allowed: true, defaultEnabled: true } },
-		mcp: { allowProjectMcp: true, defaultProjectMcp: true },
-	};
+  const defaultGlobalToolsConfig: GlobalToolsConfig = {
+    systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
+    settingSources: { project: { allowed: true, defaultEnabled: true } },
+    mcp: { allowProjectMcp: true, defaultProjectMcp: true },
+  };
 
-	beforeEach(() => {
-		// Mock Database
-		mockDb = {
-			getGlobalToolsConfig: mock(() => defaultGlobalToolsConfig),
-			saveGlobalToolsConfig: mock(() => {}),
-		} as unknown as Database;
+  beforeEach(() => {
+    // Mock Database
+    mockDb = {
+      getGlobalToolsConfig: mock(() => defaultGlobalToolsConfig),
+      saveGlobalToolsConfig: mock(() => {}),
+    } as unknown as Database;
 
-		manager = new ToolsConfigManager(mockDb);
-	});
+    manager = new ToolsConfigManager(mockDb);
+  });
 
-	describe('getGlobal', () => {
-		it('should return global tools configuration from database', () => {
-			const config = manager.getGlobal();
+  describe('getGlobal', () => {
+    it('should return global tools configuration from database', () => {
+      const config = manager.getGlobal();
 
-			expect(config).toEqual(defaultGlobalToolsConfig);
-			expect(mockDb.getGlobalToolsConfig).toHaveBeenCalled();
-		});
-	});
+      expect(config).toEqual(defaultGlobalToolsConfig);
+      expect(mockDb.getGlobalToolsConfig).toHaveBeenCalled();
+    });
+  });
 
-	describe('saveGlobal', () => {
-		it('should save global tools configuration to database', () => {
-			const newConfig: GlobalToolsConfig = {
-				...defaultGlobalToolsConfig,
-				mcp: { allowProjectMcp: false, defaultProjectMcp: false },
-			};
+  describe('saveGlobal', () => {
+    it('should save global tools configuration to database', () => {
+      const newConfig: GlobalToolsConfig = {
+        ...defaultGlobalToolsConfig,
+        mcp: { allowProjectMcp: false, defaultProjectMcp: false },
+      };
 
-			manager.saveGlobal(newConfig);
+      manager.saveGlobal(newConfig);
 
-			expect(mockDb.saveGlobalToolsConfig).toHaveBeenCalledWith(newConfig);
-		});
-	});
+      expect(mockDb.saveGlobalToolsConfig).toHaveBeenCalledWith(newConfig);
+    });
+  });
 });

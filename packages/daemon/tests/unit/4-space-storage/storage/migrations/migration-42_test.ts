@@ -19,118 +19,118 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations, createTables } from '../../../../../src/storage/schema/index.ts';
 
 function indexExists(db: BunDatabase, indexName: string): boolean {
-	const result = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
-		.get(indexName);
-	return !!result;
+  const result = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
+    .get(indexName);
+  return !!result;
 }
 
 describe('Migration 42: Zombie group cleanup + partial unique index', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-42', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
+  beforeEach(() => {
+    testDir = join(process.cwd(), 'tmp', 'test-migration-42', `test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
 
-		const dbPath = join(testDir, 'test.db');
-		db = new BunDatabase(dbPath);
-		db.exec('PRAGMA foreign_keys = ON');
-	});
+    const dbPath = join(testDir, 'test.db');
+    db = new BunDatabase(dbPath);
+    db.exec('PRAGMA foreign_keys = ON');
+  });
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	});
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
-	// -------------------------------------------------------------------------
-	// Fresh DB — full schema + migration chain
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Fresh DB — full schema + migration chain
+  // -------------------------------------------------------------------------
 
-	test('fresh DB: idx_session_groups_active_ref unique index exists', () => {
-		createTables(db);
-		runMigrations(db, () => {});
-		expect(indexExists(db, 'idx_session_groups_active_ref')).toBe(true);
-	});
+  test('fresh DB: idx_session_groups_active_ref unique index exists', () => {
+    createTables(db);
+    runMigrations(db, () => {});
+    expect(indexExists(db, 'idx_session_groups_active_ref')).toBe(true);
+  });
 
-	test('fresh DB: unique constraint prevents two active groups for same task', () => {
-		createTables(db);
-		runMigrations(db, () => {});
+  test('fresh DB: unique constraint prevents two active groups for same task', () => {
+    createTables(db);
+    runMigrations(db, () => {});
 
-		const now = Date.now();
-		// Insert first active group
-		db.prepare(
-			`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+    const now = Date.now();
+    // Insert first active group
+    db.prepare(
+      `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES ('group-a', 'task', 'task-x', 0, '{}', ?)`
-		).run(now);
+    ).run(now);
 
-		// Second insert for same ref_id with completed_at IS NULL should fail
-		expect(() => {
-			db.prepare(
-				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+    // Second insert for same ref_id with completed_at IS NULL should fail
+    expect(() => {
+      db.prepare(
+        `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 				 VALUES ('group-b', 'task', 'task-x', 0, '{}', ?)`
-			).run(now + 1);
-		}).toThrow();
-	});
+      ).run(now + 1);
+    }).toThrow();
+  });
 
-	test('fresh DB: completed groups do not violate the unique constraint', () => {
-		createTables(db);
-		runMigrations(db, () => {});
+  test('fresh DB: completed groups do not violate the unique constraint', () => {
+    createTables(db);
+    runMigrations(db, () => {});
 
-		const now = Date.now();
-		// Insert a completed group
-		db.prepare(
-			`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
+    const now = Date.now();
+    // Insert a completed group
+    db.prepare(
+      `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
 			 VALUES ('group-a', 'task', 'task-x', 0, '{}', ?, ?)`
-		).run(now - 1000, now - 500);
+    ).run(now - 1000, now - 500);
 
-		// A new active group for the same ref_id is allowed (completed_at IS NULL)
-		expect(() => {
-			db.prepare(
-				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+    // A new active group for the same ref_id is allowed (completed_at IS NULL)
+    expect(() => {
+      db.prepare(
+        `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 				 VALUES ('group-b', 'task', 'task-x', 0, '{}', ?)`
-			).run(now);
-		}).not.toThrow();
-	});
+      ).run(now);
+    }).not.toThrow();
+  });
 
-	test('fresh DB: non-task group types with same ref_id are not blocked by the constraint', () => {
-		createTables(db);
-		runMigrations(db, () => {});
+  test('fresh DB: non-task group types with same ref_id are not blocked by the constraint', () => {
+    createTables(db);
+    runMigrations(db, () => {});
 
-		const now = Date.now();
-		// Insert an active task group
-		db.prepare(
-			`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+    const now = Date.now();
+    // Insert an active task group
+    db.prepare(
+      `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES ('task-grp', 'task', 'shared-ref', 0, '{}', ?)`
-		).run(now);
+    ).run(now);
 
-		// A different group type with the same ref_id should NOT be blocked
-		expect(() => {
-			db.prepare(
-				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+    // A different group type with the same ref_id should NOT be blocked
+    expect(() => {
+      db.prepare(
+        `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 				 VALUES ('other-grp', 'planning', 'shared-ref', 0, '{}', ?)`
-			).run(now + 1);
-		}).not.toThrow();
-	});
+      ).run(now + 1);
+    }).not.toThrow();
+  });
 
-	// -------------------------------------------------------------------------
-	// Existing DB with zombie groups (active groups for terminal tasks)
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Existing DB with zombie groups (active groups for terminal tasks)
+  // -------------------------------------------------------------------------
 
-	test('existing DB: zombie groups for terminal tasks are completed by migration', () => {
-		// Build a pre-migration DB state with stale groups.
-		// The tasks status CHECK must include 'review' (and not 'escalated') to prevent
-		// migration 16 from attempting to recreate the table with missing columns.
-		db.exec('PRAGMA foreign_keys = ON');
-		db.exec(`
+  test('existing DB: zombie groups for terminal tasks are completed by migration', () => {
+    // Build a pre-migration DB state with stale groups.
+    // The tasks status CHECK must include 'review' (and not 'escalated') to prevent
+    // migration 16 from attempting to recreate the table with missing columns.
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
 				id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 			);
@@ -172,8 +172,8 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			);
 		`);
 
-		const now = Date.now();
-		db.exec(`
+    const now = Date.now();
+    db.exec(`
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${now}, ${now});
 			INSERT INTO tasks (id, room_id, title, description, status, created_at)
 			VALUES ('task-done', 'room-1', 'Done Task', 'desc', 'completed', ${now});
@@ -189,25 +189,25 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			VALUES ('legit-grp', 'task', 'task-active', 0, '{}', ${now});
 		`);
 
-		// Run migrations (which includes migration 42)
-		runMigrations(db, () => {});
+    // Run migrations (which includes migration 42)
+    runMigrations(db, () => {});
 
-		// Zombie should be completed
-		const zombie = db
-			.prepare(`SELECT completed_at FROM session_groups WHERE id = 'zombie-grp'`)
-			.get() as { completed_at: number | null };
-		expect(zombie.completed_at).not.toBeNull();
+    // Zombie should be completed
+    const zombie = db
+      .prepare(`SELECT completed_at FROM session_groups WHERE id = 'zombie-grp'`)
+      .get() as { completed_at: number | null };
+    expect(zombie.completed_at).not.toBeNull();
 
-		// Legitimate group should still be active
-		const legit = db
-			.prepare(`SELECT completed_at FROM session_groups WHERE id = 'legit-grp'`)
-			.get() as { completed_at: number | null };
-		expect(legit.completed_at).toBeNull();
-	});
+    // Legitimate group should still be active
+    const legit = db
+      .prepare(`SELECT completed_at FROM session_groups WHERE id = 'legit-grp'`)
+      .get() as { completed_at: number | null };
+    expect(legit.completed_at).toBeNull();
+  });
 
-	test('existing DB: zombie groups for needs_attention tasks are completed by migration', () => {
-		db.exec('PRAGMA foreign_keys = ON');
-		db.exec(`
+  test('existing DB: zombie groups for needs_attention tasks are completed by migration', () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
 				id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 			);
@@ -249,8 +249,8 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			);
 		`);
 
-		const now = Date.now();
-		db.exec(`
+    const now = Date.now();
+    db.exec(`
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${now}, ${now});
 			INSERT INTO tasks (id, room_id, title, description, status, created_at)
 			VALUES ('task-failed', 'room-1', 'Failed Task', 'desc', 'needs_attention', ${now});
@@ -260,21 +260,21 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			VALUES ('zombie-failed', 'task', 'task-failed', 0, '{}', ${now - 1000});
 		`);
 
-		runMigrations(db, () => {});
+    runMigrations(db, () => {});
 
-		const zombie = db
-			.prepare(`SELECT completed_at FROM session_groups WHERE id = 'zombie-failed'`)
-			.get() as { completed_at: number | null };
-		expect(zombie.completed_at).not.toBeNull();
-	});
+    const zombie = db
+      .prepare(`SELECT completed_at FROM session_groups WHERE id = 'zombie-failed'`)
+      .get() as { completed_at: number | null };
+    expect(zombie.completed_at).not.toBeNull();
+  });
 
-	// -------------------------------------------------------------------------
-	// Existing DB with duplicate active groups
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Existing DB with duplicate active groups
+  // -------------------------------------------------------------------------
 
-	test('existing DB: oldest duplicates are completed, newest kept active', () => {
-		db.exec('PRAGMA foreign_keys = ON');
-		db.exec(`
+  test('existing DB: oldest duplicates are completed, newest kept active', () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
 				id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 			);
@@ -316,8 +316,8 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			);
 		`);
 
-		const now = Date.now();
-		db.exec(`
+    const now = Date.now();
+    db.exec(`
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${now}, ${now});
 			INSERT INTO tasks (id, room_id, title, description, status, created_at)
 			VALUES ('task-1', 'room-1', 'Task 1', 'desc', 'in_progress', ${now});
@@ -331,29 +331,29 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			VALUES ('new-grp', 'task', 'task-1', 0, '{}', ${now});
 		`);
 
-		runMigrations(db, () => {});
+    runMigrations(db, () => {});
 
-		// Newest group should remain active
-		const newGrp = db
-			.prepare(`SELECT completed_at FROM session_groups WHERE id = 'new-grp'`)
-			.get() as { completed_at: number | null };
-		expect(newGrp.completed_at).toBeNull();
+    // Newest group should remain active
+    const newGrp = db
+      .prepare(`SELECT completed_at FROM session_groups WHERE id = 'new-grp'`)
+      .get() as { completed_at: number | null };
+    expect(newGrp.completed_at).toBeNull();
 
-		// Older groups should be completed
-		const oldGrp = db
-			.prepare(`SELECT completed_at FROM session_groups WHERE id = 'old-grp'`)
-			.get() as { completed_at: number | null };
-		expect(oldGrp.completed_at).not.toBeNull();
+    // Older groups should be completed
+    const oldGrp = db
+      .prepare(`SELECT completed_at FROM session_groups WHERE id = 'old-grp'`)
+      .get() as { completed_at: number | null };
+    expect(oldGrp.completed_at).not.toBeNull();
 
-		const midGrp = db
-			.prepare(`SELECT completed_at FROM session_groups WHERE id = 'mid-grp'`)
-			.get() as { completed_at: number | null };
-		expect(midGrp.completed_at).not.toBeNull();
-	});
+    const midGrp = db
+      .prepare(`SELECT completed_at FROM session_groups WHERE id = 'mid-grp'`)
+      .get() as { completed_at: number | null };
+    expect(midGrp.completed_at).not.toBeNull();
+  });
 
-	test('existing DB: duplicate groups with identical created_at are deduped via rowid', () => {
-		db.exec('PRAGMA foreign_keys = ON');
-		db.exec(`
+  test('existing DB: duplicate groups with identical created_at are deduped via rowid', () => {
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
 				id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 			);
@@ -395,8 +395,8 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			);
 		`);
 
-		const now = Date.now();
-		db.exec(`
+    const now = Date.now();
+    db.exec(`
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${now}, ${now});
 			INSERT INTO tasks (id, room_id, title, description, status, created_at)
 			VALUES ('task-1', 'room-1', 'Task 1', 'desc', 'in_progress', ${now});
@@ -408,29 +408,29 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			VALUES ('grp-b', 'task', 'task-1', 0, '{}', ${now});
 		`);
 
-		// Should not throw even with identical created_at (rowid tiebreaker handles it)
-		expect(() => runMigrations(db, () => {})).not.toThrow();
+    // Should not throw even with identical created_at (rowid tiebreaker handles it)
+    expect(() => runMigrations(db, () => {})).not.toThrow();
 
-		// One group should remain active, one should be completed
-		const grpA = db.prepare(`SELECT completed_at FROM session_groups WHERE id = 'grp-a'`).get() as {
-			completed_at: number | null;
-		};
-		const grpB = db.prepare(`SELECT completed_at FROM session_groups WHERE id = 'grp-b'`).get() as {
-			completed_at: number | null;
-		};
+    // One group should remain active, one should be completed
+    const grpA = db.prepare(`SELECT completed_at FROM session_groups WHERE id = 'grp-a'`).get() as {
+      completed_at: number | null;
+    };
+    const grpB = db.prepare(`SELECT completed_at FROM session_groups WHERE id = 'grp-b'`).get() as {
+      completed_at: number | null;
+    };
 
-		// Exactly one should be active (completed_at IS NULL), one should be completed
-		const activeCount = [grpA, grpB].filter((g) => g.completed_at === null).length;
-		expect(activeCount).toBe(1);
-	});
+    // Exactly one should be active (completed_at IS NULL), one should be completed
+    const activeCount = [grpA, grpB].filter((g) => g.completed_at === null).length;
+    expect(activeCount).toBe(1);
+  });
 
-	// -------------------------------------------------------------------------
-	// Idempotency
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Idempotency
+  // -------------------------------------------------------------------------
 
-	test('idempotency: running migrations twice does not error', () => {
-		createTables(db);
-		runMigrations(db, () => {});
-		expect(() => runMigrations(db, () => {})).not.toThrow();
-	});
+  test('idempotency: running migrations twice does not error', () => {
+    createTables(db);
+    runMigrations(db, () => {});
+    expect(() => runMigrations(db, () => {})).not.toThrow();
+  });
 });

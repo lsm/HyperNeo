@@ -1,16 +1,16 @@
 {
-	"compilerOptions": {
-		"lib": ["ESNext", "DOM"],
-		"module": "ESNext",
-		"target": "ESNext",
-		"moduleResolution": "bundler",
-		"strict": true,
-		"skipLibCheck": true,
-		"allowImportingTsExtensions": true,
-		"noEmit": true,
-		"composite": true,
-		"types": ["@playwright/test", "node"]
-	},
-	"include": ["global.d.ts", "tests/**/*", "playwright.config.ts"],
-	"exclude": ["node_modules"]
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "composite": true,
+    "types": ["@playwright/test", "node"]
+  },
+  "include": ["global.d.ts", "tests/**/*", "playwright.config.ts"],
+  "exclude": ["node_modules"]
 }

@@ -24,102 +24,102 @@ import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
 import {
-	createDevProxyController,
-	type DevProxyController,
-	type DevProxyOptions,
+  createDevProxyController,
+  type DevProxyController,
+  type DevProxyOptions,
 } from './dev-proxy';
 
 export interface DaemonServerOptions {
-	/**
-	 * Port for the daemon server.
-	 * Default: 0 (OS-assigned). The actual port is read back from the server
-	 * after startup (via server.port for in-process, stdout parsing for spawned).
-	 */
-	port?: number;
+  /**
+   * Port for the daemon server.
+   * Default: 0 (OS-assigned). The actual port is read back from the server
+   * after startup (via server.port for in-process, stdout parsing for spawned).
+   */
+  port?: number;
 
-	/**
-	 * Environment variables to pass to the daemon process
-	 */
-	env?: Record<string, string>;
+  /**
+   * Environment variables to pass to the daemon process
+   */
+  env?: Record<string, string>;
 
-	/**
-	 * Dev Proxy options for mocking HTTP requests
-	 * Only used when NEOKAI_USE_DEV_PROXY=1 is set
-	 */
-	devProxy?: DevProxyOptions;
+  /**
+   * Dev Proxy options for mocking HTTP requests
+   * Only used when NEOKAI_USE_DEV_PROXY=1 is set
+   */
+  devProxy?: DevProxyOptions;
 
-	/**
-	 * Force enable Dev Proxy even without NEOKAI_USE_DEV_PROXY=1
-	 * Default: false
-	 */
-	useDevProxy?: boolean;
+  /**
+   * Force enable Dev Proxy even without NEOKAI_USE_DEV_PROXY=1
+   * Default: false
+   */
+  useDevProxy?: boolean;
 
-	/**
-	 * Reuse an existing workspace directory instead of creating a new temp one.
-	 * Used for daemon restart scenarios: pass the workspace path from a previous
-	 * daemon instance to share the same SQLite database across restarts.
-	 * When provided, the workspace is NOT deleted in waitForExit.
-	 */
-	workspacePath?: string;
+  /**
+   * Reuse an existing workspace directory instead of creating a new temp one.
+   * Used for daemon restart scenarios: pass the workspace path from a previous
+   * daemon instance to share the same SQLite database across restarts.
+   * When provided, the workspace is NOT deleted in waitForExit.
+   */
+  workspacePath?: string;
 }
 
 export interface DaemonServerContext {
-	/**
-	 * Child process PID for sending signals
-	 */
-	pid: number;
+  /**
+   * Child process PID for sending signals
+   */
+  pid: number;
 
-	/**
-	 * MessageHub client for communicating with the daemon
-	 */
-	messageHub: MessageHub;
+  /**
+   * MessageHub client for communicating with the daemon
+   */
+  messageHub: MessageHub;
 
-	/**
-	 * Base URL for the daemon server
-	 */
-	baseUrl: string;
+  /**
+   * Base URL for the daemon server
+   */
+  baseUrl: string;
 
-	/**
-	 * Kill the daemon server
-	 */
-	kill: (signal?: NodeJS.Signals) => boolean;
+  /**
+   * Kill the daemon server
+   */
+  kill: (signal?: NodeJS.Signals) => boolean;
 
-	/**
-	 * Wait for the daemon to exit
-	 */
-	waitForExit: () => Promise<void>;
+  /**
+   * Wait for the daemon to exit
+   */
+  waitForExit: () => Promise<void>;
 
-	/**
-	 * Track a session for cleanup
-	 */
-	trackSession: (sessionId: string) => void;
+  /**
+   * Track a session for cleanup
+   */
+  trackSession: (sessionId: string) => void;
 
-	/**
-	 * Cleanup all tracked sessions using session.delete RPC
-	 */
-	cleanup: () => Promise<void>;
+  /**
+   * Cleanup all tracked sessions using session.delete RPC
+   */
+  cleanup: () => Promise<void>;
 
-	/**
-	 * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
-	 * Sets ANTHROPIC_BASE_URL to point to Dev Proxy for API mocking.
-	 */
-	devProxy: DevProxyController | null;
+  /**
+   * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
+   * Sets ANTHROPIC_BASE_URL to point to Dev Proxy for API mocking.
+   */
+  devProxy: DevProxyController | null;
 
-	/**
-	 * Workspace directory used by this daemon instance.
-	 * Set for in-process daemons; undefined for spawned-process daemons.
-	 * Exposed so restart helpers can spin up a new daemon on the same workspace/DB.
-	 */
-	workspacePath?: string;
+  /**
+   * Workspace directory used by this daemon instance.
+   * Set for in-process daemons; undefined for spawned-process daemons.
+   * Exposed so restart helpers can spin up a new daemon on the same workspace/DB.
+   */
+  workspacePath?: string;
 }
 
 function getDevProxyPort(options?: DevProxyOptions): number {
-	return options?.port ?? 8000;
+  return options?.port ?? 8000;
 }
 
 interface DevProxyLease {
-	controller: DevProxyController | null;
-	release: () => Promise<void>;
+  controller: DevProxyController | null;
+  release: () => Promise<void>;
 }
 
 let sharedDevProxyController: DevProxyController | null = null;
@@ -130,195 +130,195 @@ let sharedDevProxyStopTimer: ReturnType<typeof setTimeout> | null = null;
 let sharedDevProxyStopPromise: Promise<void> | null = null;
 
 function shouldReuseDevProxy(): boolean {
-	// Reuse one Dev Proxy instance across tests in the same process by default.
-	// Set NEOKAI_DEV_PROXY_REUSE=0 to force per-test start/stop behavior.
-	return process.env.NEOKAI_DEV_PROXY_REUSE !== '0';
+  // Reuse one Dev Proxy instance across tests in the same process by default.
+  // Set NEOKAI_DEV_PROXY_REUSE=0 to force per-test start/stop behavior.
+  return process.env.NEOKAI_DEV_PROXY_REUSE !== '0';
 }
 
 function getSharedDevProxyIdleTtlMs(): number {
-	// Keep proxy warm between test transitions, then auto-stop when idle.
-	const raw = process.env.NEOKAI_DEV_PROXY_IDLE_TTL_MS;
-	if (!raw) {
-		return 2000;
-	}
-	const parsed = Number.parseInt(raw, 10);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2000;
+  // Keep proxy warm between test transitions, then auto-stop when idle.
+  const raw = process.env.NEOKAI_DEV_PROXY_IDLE_TTL_MS;
+  if (!raw) {
+    return 2000;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2000;
 }
 
 function clearSharedDevProxyStopTimer(): void {
-	if (sharedDevProxyStopTimer) {
-		clearTimeout(sharedDevProxyStopTimer);
-		sharedDevProxyStopTimer = null;
-	}
+  if (sharedDevProxyStopTimer) {
+    clearTimeout(sharedDevProxyStopTimer);
+    sharedDevProxyStopTimer = null;
+  }
 }
 
 async function stopSharedDevProxyAsync(): Promise<void> {
-	if (!sharedDevProxyController) {
-		return;
-	}
-	if (sharedDevProxyStopPromise) {
-		await sharedDevProxyStopPromise;
-		return;
-	}
+  if (!sharedDevProxyController) {
+    return;
+  }
+  if (sharedDevProxyStopPromise) {
+    await sharedDevProxyStopPromise;
+    return;
+  }
 
-	const controller = sharedDevProxyController;
-	sharedDevProxyStopPromise = (async () => {
-		try {
-			await controller.stop();
-		} catch {
-			// Best-effort cleanup
-		}
-		try {
-			controller.restoreEnv();
-		} catch {
-			// Best-effort env restoration
-		}
-		if (sharedDevProxyController === controller) {
-			sharedDevProxyController = null;
-			sharedDevProxyPort = null;
-			sharedDevProxyRefCount = 0;
-		}
-	})();
+  const controller = sharedDevProxyController;
+  sharedDevProxyStopPromise = (async () => {
+    try {
+      await controller.stop();
+    } catch {
+      // Best-effort cleanup
+    }
+    try {
+      controller.restoreEnv();
+    } catch {
+      // Best-effort env restoration
+    }
+    if (sharedDevProxyController === controller) {
+      sharedDevProxyController = null;
+      sharedDevProxyPort = null;
+      sharedDevProxyRefCount = 0;
+    }
+  })();
 
-	try {
-		await sharedDevProxyStopPromise;
-	} finally {
-		sharedDevProxyStopPromise = null;
-	}
+  try {
+    await sharedDevProxyStopPromise;
+  } finally {
+    sharedDevProxyStopPromise = null;
+  }
 }
 
 function scheduleSharedDevProxyStopIfIdle(): void {
-	clearSharedDevProxyStopTimer();
-	sharedDevProxyStopTimer = setTimeout(() => {
-		sharedDevProxyStopTimer = null;
-		if (sharedDevProxyRefCount === 0) {
-			void stopSharedDevProxyAsync();
-		}
-	}, getSharedDevProxyIdleTtlMs());
-	// Don't keep test process alive solely for deferred proxy shutdown.
-	sharedDevProxyStopTimer.unref?.();
+  clearSharedDevProxyStopTimer();
+  sharedDevProxyStopTimer = setTimeout(() => {
+    sharedDevProxyStopTimer = null;
+    if (sharedDevProxyRefCount === 0) {
+      void stopSharedDevProxyAsync();
+    }
+  }, getSharedDevProxyIdleTtlMs());
+  // Don't keep test process alive solely for deferred proxy shutdown.
+  sharedDevProxyStopTimer.unref?.();
 }
 
 function installSharedDevProxyExitHook(): void {
-	if (sharedDevProxyExitHookInstalled) {
-		return;
-	}
-	sharedDevProxyExitHookInstalled = true;
+  if (sharedDevProxyExitHookInstalled) {
+    return;
+  }
+  sharedDevProxyExitHookInstalled = true;
 
-	process.once('exit', () => {
-		clearSharedDevProxyStopTimer();
-		if (!sharedDevProxyController) {
-			return;
-		}
-		try {
-			// Detached Dev Proxy should be stopped explicitly to avoid local process leaks.
-			spawnSync('devproxy', ['stop'], { stdio: 'ignore' });
-		} catch {
-			// Best-effort cleanup
-		}
-		try {
-			sharedDevProxyController.restoreEnv();
-		} catch {
-			// Best-effort env restoration
-		}
-		sharedDevProxyController = null;
-		sharedDevProxyPort = null;
-		sharedDevProxyRefCount = 0;
-		sharedDevProxyStopPromise = null;
-	});
+  process.once('exit', () => {
+    clearSharedDevProxyStopTimer();
+    if (!sharedDevProxyController) {
+      return;
+    }
+    try {
+      // Detached Dev Proxy should be stopped explicitly to avoid local process leaks.
+      spawnSync('devproxy', ['stop'], { stdio: 'ignore' });
+    } catch {
+      // Best-effort cleanup
+    }
+    try {
+      sharedDevProxyController.restoreEnv();
+    } catch {
+      // Best-effort env restoration
+    }
+    sharedDevProxyController = null;
+    sharedDevProxyPort = null;
+    sharedDevProxyRefCount = 0;
+    sharedDevProxyStopPromise = null;
+  });
 }
 
 async function acquireDevProxyLease(
-	shouldUseDevProxy: boolean,
-	devProxyOptions?: DevProxyOptions
+  shouldUseDevProxy: boolean,
+  devProxyOptions?: DevProxyOptions
 ): Promise<DevProxyLease> {
-	if (!shouldUseDevProxy) {
-		return {
-			controller: null,
-			release: async () => {},
-		};
-	}
+  if (!shouldUseDevProxy) {
+    return {
+      controller: null,
+      release: async () => {},
+    };
+  }
 
-	const devProxyPort = getDevProxyPort(devProxyOptions);
-	const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
-	const reuse = shouldReuseDevProxy();
+  const devProxyPort = getDevProxyPort(devProxyOptions);
+  const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
+  const reuse = shouldReuseDevProxy();
 
-	if (reuse && sharedDevProxyStopPromise) {
-		await sharedDevProxyStopPromise;
-	}
-	if (reuse) {
-		clearSharedDevProxyStopTimer();
-	}
+  if (reuse && sharedDevProxyStopPromise) {
+    await sharedDevProxyStopPromise;
+  }
+  if (reuse) {
+    clearSharedDevProxyStopTimer();
+  }
 
-	if (reuse && sharedDevProxyController) {
-		if (sharedDevProxyPort !== null && sharedDevProxyPort !== devProxyPort) {
-			throw new Error(
-				`Dev Proxy reuse conflict: existing shared port ${sharedDevProxyPort}, requested ${devProxyPort}`
-			);
-		}
-		sharedDevProxyRefCount++;
-		return {
-			controller: sharedDevProxyController,
-			release: async () => {
-				sharedDevProxyRefCount = Math.max(0, sharedDevProxyRefCount - 1);
-				if (sharedDevProxyRefCount === 0) {
-					scheduleSharedDevProxyStopIfIdle();
-				}
-			},
-		};
-	}
+  if (reuse && sharedDevProxyController) {
+    if (sharedDevProxyPort !== null && sharedDevProxyPort !== devProxyPort) {
+      throw new Error(
+        `Dev Proxy reuse conflict: existing shared port ${sharedDevProxyPort}, requested ${devProxyPort}`
+      );
+    }
+    sharedDevProxyRefCount++;
+    return {
+      controller: sharedDevProxyController,
+      release: async () => {
+        sharedDevProxyRefCount = Math.max(0, sharedDevProxyRefCount - 1);
+        if (sharedDevProxyRefCount === 0) {
+          scheduleSharedDevProxyStopIfIdle();
+        }
+      },
+    };
+  }
 
-	const devProxy: DevProxyController = createDevProxyController({
-		// Daemon helper explicitly sets env vars for both in-process and spawned modes.
-		// Keep proxy lifecycle independent from parent-process env mutation.
-		setEnvVars: false,
-		...devProxyOptions,
-	});
+  const devProxy: DevProxyController = createDevProxyController({
+    // Daemon helper explicitly sets env vars for both in-process and spawned modes.
+    // Keep proxy lifecycle independent from parent-process env mutation.
+    setEnvVars: false,
+    ...devProxyOptions,
+  });
 
-	try {
-		// start() will adopt an existing proxy (isExternal=true) rather than failing
-		// when a devproxy instance is already listening on the port.
-		await devProxy.start();
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error);
-		throw new Error(
-			`Dev Proxy is required for this test run but failed to start on ${devProxyBaseUrl}. ` +
-				`Error: ${errorMessage}`
-		);
-	}
+  try {
+    // start() will adopt an existing proxy (isExternal=true) rather than failing
+    // when a devproxy instance is already listening on the port.
+    await devProxy.start();
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Dev Proxy is required for this test run but failed to start on ${devProxyBaseUrl}. ` +
+        `Error: ${errorMessage}`
+    );
+  }
 
-	// For reuse mode, only register as shared controller when we own the proxy
-	// process.  External instances are intentionally not pooled in
-	// sharedDevProxyController: the exit hook (installSharedDevProxyExitHook)
-	// unconditionally runs `devproxy stop` on process exit, which would kill a
-	// proxy that belongs to another session.  With external instances each
-	// acquireDevProxyLease call creates a lightweight controller that performs a
-	// TCP probe on start and a no-op on stop — cheap enough that skipping the
-	// pool is acceptable.
-	if (reuse && !devProxy.isExternal) {
-		sharedDevProxyController = devProxy;
-		sharedDevProxyPort = devProxyPort;
-		sharedDevProxyRefCount = 1;
-		installSharedDevProxyExitHook();
-		return {
-			controller: devProxy,
-			release: async () => {
-				sharedDevProxyRefCount = Math.max(0, sharedDevProxyRefCount - 1);
-				if (sharedDevProxyRefCount === 0) {
-					scheduleSharedDevProxyStopIfIdle();
-				}
-			},
-		};
-	}
+  // For reuse mode, only register as shared controller when we own the proxy
+  // process.  External instances are intentionally not pooled in
+  // sharedDevProxyController: the exit hook (installSharedDevProxyExitHook)
+  // unconditionally runs `devproxy stop` on process exit, which would kill a
+  // proxy that belongs to another session.  With external instances each
+  // acquireDevProxyLease call creates a lightweight controller that performs a
+  // TCP probe on start and a no-op on stop — cheap enough that skipping the
+  // pool is acceptable.
+  if (reuse && !devProxy.isExternal) {
+    sharedDevProxyController = devProxy;
+    sharedDevProxyPort = devProxyPort;
+    sharedDevProxyRefCount = 1;
+    installSharedDevProxyExitHook();
+    return {
+      controller: devProxy,
+      release: async () => {
+        sharedDevProxyRefCount = Math.max(0, sharedDevProxyRefCount - 1);
+        if (sharedDevProxyRefCount === 0) {
+          scheduleSharedDevProxyStopIfIdle();
+        }
+      },
+    };
+  }
 
-	return {
-		controller: devProxy,
-		release: async () => {
-			// stop() is a no-op for external instances, so it's always safe to call.
-			await devProxy.stop();
-			devProxy.restoreEnv();
-		},
-	};
+  return {
+    controller: devProxy,
+    release: async () => {
+      // stop() is a no-op for external instances, so it's always safe to call.
+      await devProxy.stop();
+      devProxy.restoreEnv();
+    },
+  };
 }
 
 /**
@@ -328,145 +328,145 @@ async function acquireDevProxyLease(
  * allowing true process isolation and proper WebSocket testing.
  */
 async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<DaemonServerContext> {
-	const {
-		port: userPort = 0, // Use port 0 for OS-assigned port; actual port parsed from stdout
-		env: customEnv = {},
-		devProxy: devProxyOptions,
-		useDevProxy = false,
-	} = options;
+  const {
+    port: userPort = 0, // Use port 0 for OS-assigned port; actual port parsed from stdout
+    env: customEnv = {},
+    devProxy: devProxyOptions,
+    useDevProxy = false,
+  } = options;
 
-	// Start Dev Proxy if requested
-	// Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
-	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
-	const devProxyPort = getDevProxyPort(devProxyOptions);
-	const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
-	const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
-	const devProxy = devProxyLease.controller;
+  // Start Dev Proxy if requested
+  // Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
+  const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+  const devProxyPort = getDevProxyPort(devProxyOptions);
+  const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
+  const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
+  const devProxy = devProxyLease.controller;
 
-	// Create a standalone daemon server entry point
-	const serverPath = path.join(__dirname, 'standalone-server.ts');
+  // Create a standalone daemon server entry point
+  const serverPath = path.join(__dirname, 'standalone-server.ts');
 
-	// Build environment for daemon process
-	const daemonEnv: Record<string, string> = {
-		...process.env,
-		...customEnv,
-		NEOKAI_USE_DEV_PROXY: shouldUseDevProxy ? '1' : process.env.NEOKAI_USE_DEV_PROXY,
-		ANTHROPIC_BASE_URL: shouldUseDevProxy ? devProxyBaseUrl : process.env.ANTHROPIC_BASE_URL,
-		ANTHROPIC_API_KEY: shouldUseDevProxy ? 'sk-devproxy-test-key' : process.env.ANTHROPIC_API_KEY,
-		ANTHROPIC_AUTH_TOKEN: shouldUseDevProxy ? '' : process.env.ANTHROPIC_AUTH_TOKEN,
-		CLAUDE_CODE_OAUTH_TOKEN: shouldUseDevProxy ? '' : process.env.CLAUDE_CODE_OAUTH_TOKEN,
-		PORT: userPort.toString(),
-		NODE_ENV: 'test',
-		NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
-	};
+  // Build environment for daemon process
+  const daemonEnv: Record<string, string> = {
+    ...process.env,
+    ...customEnv,
+    NEOKAI_USE_DEV_PROXY: shouldUseDevProxy ? '1' : process.env.NEOKAI_USE_DEV_PROXY,
+    ANTHROPIC_BASE_URL: shouldUseDevProxy ? devProxyBaseUrl : process.env.ANTHROPIC_BASE_URL,
+    ANTHROPIC_API_KEY: shouldUseDevProxy ? 'sk-devproxy-test-key' : process.env.ANTHROPIC_API_KEY,
+    ANTHROPIC_AUTH_TOKEN: shouldUseDevProxy ? '' : process.env.ANTHROPIC_AUTH_TOKEN,
+    CLAUDE_CODE_OAUTH_TOKEN: shouldUseDevProxy ? '' : process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    PORT: userPort.toString(),
+    NODE_ENV: 'test',
+    NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
+  };
 
-	// Note: Proxy env vars are inherited from parent process via ...process.env
-	// Dev Proxy will intercept requests to api.anthropic.com
+  // Note: Proxy env vars are inherited from parent process via ...process.env
+  // Dev Proxy will intercept requests to api.anthropic.com
 
-	// Spawn the daemon server
-	const daemonProcess = spawn('bun', ['run', serverPath], {
-		env: daemonEnv,
-		stdio: 'pipe',
-		// Don't use detached: true - we want to be able to track and kill the process
-		detached: false,
-	});
+  // Spawn the daemon server
+  const daemonProcess = spawn('bun', ['run', serverPath], {
+    env: daemonEnv,
+    stdio: 'pipe',
+    // Don't use detached: true - we want to be able to track and kill the process
+    detached: false,
+  });
 
-	// Wait for the server to be ready and parse the actual port from stdout
-	let stderrOutput = '';
-	let stdoutOutput = '';
-	let actualPort = userPort;
-	await new Promise<void>((resolve, reject) => {
-		const timeout = setTimeout(() => reject(new Error('Daemon server startup timeout')), 20000);
+  // Wait for the server to be ready and parse the actual port from stdout
+  let stderrOutput = '';
+  let stdoutOutput = '';
+  let actualPort = userPort;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Daemon server startup timeout')), 20000);
 
-		const onData = (data: Buffer) => {
-			const output = data.toString();
-			stderrOutput += output;
-			stdoutOutput += output;
-			if (process.env.TEST_VERBOSE) {
-				console.error(`[DAEMON-PROCESS] ${output.trim()}`);
-			}
-			// Parse actual port from "Running on port XXXX" output
-			const portMatch = output.match(/Running on port (\d+)/);
-			if (portMatch) {
-				actualPort = Number.parseInt(portMatch[1], 10);
-				clearTimeout(timeout);
-				daemonProcess.stdout!.off('data', onData);
-				daemonProcess.stderr!.off('data', onData);
-				resolve();
-			}
-		};
+    const onData = (data: Buffer) => {
+      const output = data.toString();
+      stderrOutput += output;
+      stdoutOutput += output;
+      if (process.env.TEST_VERBOSE) {
+        console.error(`[DAEMON-PROCESS] ${output.trim()}`);
+      }
+      // Parse actual port from "Running on port XXXX" output
+      const portMatch = output.match(/Running on port (\d+)/);
+      if (portMatch) {
+        actualPort = Number.parseInt(portMatch[1], 10);
+        clearTimeout(timeout);
+        daemonProcess.stdout!.off('data', onData);
+        daemonProcess.stderr!.off('data', onData);
+        resolve();
+      }
+    };
 
-		daemonProcess.stdout!.on('data', onData);
-		daemonProcess.stderr!.on('data', onData);
+    daemonProcess.stdout!.on('data', onData);
+    daemonProcess.stderr!.on('data', onData);
 
-		daemonProcess.on('error', (error) => {
-			clearTimeout(timeout);
-			reject(error);
-		});
+    daemonProcess.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
 
-		daemonProcess.on('exit', (code) => {
-			clearTimeout(timeout);
-			reject(
-				new Error(
-					`Daemon server exited with code ${code}\nStderr: ${stderrOutput}\nStdout: ${stdoutOutput}`
-				)
-			);
-		});
-	});
+    daemonProcess.on('exit', (code) => {
+      clearTimeout(timeout);
+      reject(
+        new Error(
+          `Daemon server exited with code ${code}\nStderr: ${stderrOutput}\nStdout: ${stdoutOutput}`
+        )
+      );
+    });
+  });
 
-	// Create WebSocket client to communicate with the daemon
-	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
-	const transport = new WebSocketClientTransport({
-		url: wsUrl,
-		autoReconnect: false, // Don't auto-reconnect in tests
-	});
+  // Create WebSocket client to communicate with the daemon
+  const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
+  const transport = new WebSocketClientTransport({
+    url: wsUrl,
+    autoReconnect: false, // Don't auto-reconnect in tests
+  });
 
-	const messageHub = new MessageHub({
-		defaultSessionId: 'global',
-	});
+  const messageHub = new MessageHub({
+    defaultSessionId: 'global',
+  });
 
-	messageHub.registerTransport(transport);
-	await transport.initialize();
+  messageHub.registerTransport(transport);
+  await transport.initialize();
 
-	// Track sessions for cleanup
-	const trackedSessions: string[] = [];
+  // Track sessions for cleanup
+  const trackedSessions: string[] = [];
 
-	const cleanup = async () => {
-		// Delete all tracked sessions via RPC
-		for (const sessionId of trackedSessions) {
-			try {
-				await messageHub.request('session.delete', { sessionId });
-			} catch {
-				// Session may already be deleted, ignore errors
-			}
-		}
-		trackedSessions.length = 0;
-	};
+  const cleanup = async () => {
+    // Delete all tracked sessions via RPC
+    for (const sessionId of trackedSessions) {
+      try {
+        await messageHub.request('session.delete', { sessionId });
+      } catch {
+        // Session may already be deleted, ignore errors
+      }
+    }
+    trackedSessions.length = 0;
+  };
 
-	return {
-		pid: daemonProcess.pid!,
-		messageHub,
-		baseUrl: `http://127.0.0.1:${actualPort}`,
-		devProxy,
-		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
-		waitForExit: async () => {
-			// Cleanup tracked sessions before exiting
-			await cleanup();
-			await new Promise<void>((resolve) => {
-				if (daemonProcess.killed) {
-					resolve();
-					return;
-				}
-				daemonProcess.once('exit', () => resolve());
-			});
-			// Stop Dev Proxy (no need to restore env in spawned mode)
-			await devProxyLease.release();
-		},
-		trackSession: (sessionId: string) => {
-			trackedSessions.push(sessionId);
-		},
-		cleanup,
-	};
+  return {
+    pid: daemonProcess.pid!,
+    messageHub,
+    baseUrl: `http://127.0.0.1:${actualPort}`,
+    devProxy,
+    kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
+    waitForExit: async () => {
+      // Cleanup tracked sessions before exiting
+      await cleanup();
+      await new Promise<void>((resolve) => {
+        if (daemonProcess.killed) {
+          resolve();
+          return;
+        }
+        daemonProcess.once('exit', () => resolve());
+      });
+      // Stop Dev Proxy (no need to restore env in spawned mode)
+      await devProxyLease.release();
+    },
+    trackSession: (sessionId: string) => {
+      trackedSessions.push(sessionId);
+    },
+    cleanup,
+  };
 }
 
 /**
@@ -481,213 +481,213 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
  * using WebSocketClientTransport, just like a real client.
  */
 async function createInProcessDaemonServer(
-	options: DaemonServerOptions = {}
+  options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext & { daemonContext: DaemonAppContext }> {
-	const {
-		port: userPort = 0, // Use port 0 for OS-assigned port to avoid collisions in CI
-		env: customEnv = {},
-		devProxy: devProxyOptions,
-		useDevProxy = false,
-		workspacePath: externalWorkspacePath,
-	} = options;
+  const {
+    port: userPort = 0, // Use port 0 for OS-assigned port to avoid collisions in CI
+    env: customEnv = {},
+    devProxy: devProxyOptions,
+    useDevProxy = false,
+    workspacePath: externalWorkspacePath,
+  } = options;
 
-	// Start Dev Proxy if requested
-	// Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
-	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
-	const devProxyPort = getDevProxyPort(devProxyOptions);
-	const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
-	const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
-	const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
-	const originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-	const originalClaudeCodeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-	const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
-	const devProxy = devProxyLease.controller;
+  // Start Dev Proxy if requested
+  // Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
+  const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+  const devProxyPort = getDevProxyPort(devProxyOptions);
+  const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
+  const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
+  const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  const originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+  const originalClaudeCodeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
+  const devProxy = devProxyLease.controller;
 
-	// Save originals for all custom env keys so they can be restored on teardown
-	const originalCustomEnv: Record<string, string | undefined> = {};
-	for (const key of Object.keys(customEnv)) {
-		originalCustomEnv[key] = process.env[key];
-	}
+  // Save originals for all custom env keys so they can be restored on teardown
+  const originalCustomEnv: Record<string, string | undefined> = {};
+  for (const key of Object.keys(customEnv)) {
+    originalCustomEnv[key] = process.env[key];
+  }
 
-	// Apply custom env vars
-	for (const [key, value] of Object.entries(customEnv)) {
-		process.env[key] = value;
-	}
-	if (shouldUseDevProxy) {
-		process.env.ANTHROPIC_BASE_URL = devProxyBaseUrl;
-		process.env.ANTHROPIC_API_KEY = 'sk-devproxy-test-key';
-		process.env.ANTHROPIC_AUTH_TOKEN = '';
-		process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
-	}
+  // Apply custom env vars
+  for (const [key, value] of Object.entries(customEnv)) {
+    process.env[key] = value;
+  }
+  if (shouldUseDevProxy) {
+    process.env.ANTHROPIC_BASE_URL = devProxyBaseUrl;
+    process.env.ANTHROPIC_API_KEY = 'sk-devproxy-test-key';
+    process.env.ANTHROPIC_AUTH_TOKEN = '';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
+  }
 
-	// Online tests do real provider calls and often need longer startup windows in CI.
-	// Keep production default unchanged; override only in test daemon helper.
-	process.env.NODE_ENV = 'test';
-	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
-		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
-	}
+  // Online tests do real provider calls and often need longer startup windows in CI.
+  // Keep production default unchanged; override only in test daemon helper.
+  process.env.NODE_ENV = 'test';
+  if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
+    process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
+  }
 
-	// Create temp workspace for this test (or reuse an existing one for restart scenarios)
-	const workspace =
-		externalWorkspacePath ??
-		`/tmp/daemon-online-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-	const isExternalWorkspace = !!externalWorkspacePath;
-	if (!isExternalWorkspace) {
-		await Bun.$`mkdir -p ${workspace}`;
-	}
+  // Create temp workspace for this test (or reuse an existing one for restart scenarios)
+  const workspace =
+    externalWorkspacePath ??
+    `/tmp/daemon-online-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const isExternalWorkspace = !!externalWorkspacePath;
+  if (!isExternalWorkspace) {
+    await Bun.$`mkdir -p ${workspace}`;
+  }
 
-	// Set worktree base dir to keep worktrees under /tmp (avoids ~/.neokai path issues in CI)
-	if (!process.env.TEST_WORKTREE_BASE_DIR) {
-		process.env.TEST_WORKTREE_BASE_DIR = `/tmp/daemon-worktrees-${Date.now()}`;
-	}
+  // Set worktree base dir to keep worktrees under /tmp (avoids ~/.neokai path issues in CI)
+  if (!process.env.TEST_WORKTREE_BASE_DIR) {
+    process.env.TEST_WORKTREE_BASE_DIR = `/tmp/daemon-worktrees-${Date.now()}`;
+  }
 
-	// Configure daemon
-	process.env.NEOKAI_WORKSPACE_PATH = workspace;
-	const config = getConfig();
-	config.port = userPort;
-	config.dbPath = `${workspace}/daemon.db`;
+  // Configure daemon
+  process.env.NEOKAI_WORKSPACE_PATH = workspace;
+  const config = getConfig();
+  config.port = userPort;
+  config.dbPath = `${workspace}/daemon.db`;
 
-	// Create daemon app in-process (starts its own server)
-	const daemonContext = await createDaemonApp({
-		config,
-		verbose: false,
-		standalone: false,
-	});
+  // Create daemon app in-process (starts its own server)
+  const daemonContext = await createDaemonApp({
+    config,
+    verbose: false,
+    standalone: false,
+  });
 
-	// Optional CI/test optimization: disable sandbox by default for sessions created
-	// in online tests. This avoids requiring bubblewrap/socat on Linux runners for
-	// test shards that only exercise message/query flows, not sandbox enforcement.
-	if (process.env.NEOKAI_TEST_DISABLE_SANDBOX === '1') {
-		const current = daemonContext.settingsManager.getGlobalSettings();
-		daemonContext.settingsManager.updateGlobalSettings({
-			sandbox: {
-				...(current.sandbox ?? {}),
-				enabled: false,
-			},
-		});
-	}
+  // Optional CI/test optimization: disable sandbox by default for sessions created
+  // in online tests. This avoids requiring bubblewrap/socat on Linux runners for
+  // test shards that only exercise message/query flows, not sandbox enforcement.
+  if (process.env.NEOKAI_TEST_DISABLE_SANDBOX === '1') {
+    const current = daemonContext.settingsManager.getGlobalSettings();
+    daemonContext.settingsManager.updateGlobalSettings({
+      sandbox: {
+        ...(current.sandbox ?? {}),
+        enabled: false,
+      },
+    });
+  }
 
-	// Read back the actual port from the server (handles port 0 / OS-assigned ports)
-	const actualPort = daemonContext.server.port;
+  // Read back the actual port from the server (handles port 0 / OS-assigned ports)
+  const actualPort = daemonContext.server.port;
 
-	// Connect to the daemon's WebSocket server (just like a real client)
-	const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
-	const transport = new WebSocketClientTransport({
-		url: wsUrl,
-		autoReconnect: false, // Don't auto-reconnect in tests
-	});
+  // Connect to the daemon's WebSocket server (just like a real client)
+  const wsUrl = `ws://127.0.0.1:${actualPort}/ws`;
+  const transport = new WebSocketClientTransport({
+    url: wsUrl,
+    autoReconnect: false, // Don't auto-reconnect in tests
+  });
 
-	const messageHub = new MessageHub({
-		defaultSessionId: 'global',
-	});
+  const messageHub = new MessageHub({
+    defaultSessionId: 'global',
+  });
 
-	messageHub.registerTransport(transport);
-	await transport.initialize();
+  messageHub.registerTransport(transport);
+  await transport.initialize();
 
-	// Track sessions for cleanup
-	const trackedSessions: string[] = [];
+  // Track sessions for cleanup
+  const trackedSessions: string[] = [];
 
-	const cleanup = async () => {
-		// Delete all tracked sessions via RPC with timeout
-		for (const sessionId of trackedSessions) {
-			try {
-				// Use Promise.race to add timeout - session.delete may hang if SDK is busy
-				await Promise.race([
-					messageHub.request('session.delete', { sessionId }),
-					new Promise((_, reject) =>
-						setTimeout(() => reject(new Error('session.delete timeout')), 5000)
-					),
-				]);
-			} catch {
-				// Session may already be deleted or timeout, ignore errors
-			}
-		}
-		trackedSessions.length = 0;
-	};
+  const cleanup = async () => {
+    // Delete all tracked sessions via RPC with timeout
+    for (const sessionId of trackedSessions) {
+      try {
+        // Use Promise.race to add timeout - session.delete may hang if SDK is busy
+        await Promise.race([
+          messageHub.request('session.delete', { sessionId }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('session.delete timeout')), 5000)
+          ),
+        ]);
+      } catch {
+        // Session may already be deleted or timeout, ignore errors
+      }
+    }
+    trackedSessions.length = 0;
+  };
 
-	return {
-		pid: process.pid, // Same process
-		messageHub,
-		baseUrl: `http://127.0.0.1:${actualPort}`,
-		daemonContext, // Expose for advanced usage
-		devProxy,
-		workspacePath: workspace,
-		kill: () => {
-			// For in-process, cleanup happens in waitForExit - just return true
-			return true;
-		},
-		waitForExit: async () => {
-			// Wrap entire cleanup in timeout to prevent test hangs
-			const cleanupWithTimeout = async () => {
-				// Cleanup tracked sessions before exiting (with timeout protection)
-				await cleanup();
-				// Close client transport
-				try {
-					await transport.close();
-				} catch {
-					// Transport may already be closed
-				}
-				// Then cleanup daemon (stops server, closes DB, etc.)
-				await daemonContext.cleanup();
-				// Cleanup temp workspace (skip if workspace was provided externally)
-				if (!isExternalWorkspace) {
-					await Bun.$`rm -rf ${workspace}`.quiet();
-				}
-			};
+  return {
+    pid: process.pid, // Same process
+    messageHub,
+    baseUrl: `http://127.0.0.1:${actualPort}`,
+    daemonContext, // Expose for advanced usage
+    devProxy,
+    workspacePath: workspace,
+    kill: () => {
+      // For in-process, cleanup happens in waitForExit - just return true
+      return true;
+    },
+    waitForExit: async () => {
+      // Wrap entire cleanup in timeout to prevent test hangs
+      const cleanupWithTimeout = async () => {
+        // Cleanup tracked sessions before exiting (with timeout protection)
+        await cleanup();
+        // Close client transport
+        try {
+          await transport.close();
+        } catch {
+          // Transport may already be closed
+        }
+        // Then cleanup daemon (stops server, closes DB, etc.)
+        await daemonContext.cleanup();
+        // Cleanup temp workspace (skip if workspace was provided externally)
+        if (!isExternalWorkspace) {
+          await Bun.$`rm -rf ${workspace}`.quiet();
+        }
+      };
 
-			try {
-				await Promise.race([
-					cleanupWithTimeout(),
-					new Promise<void>((_, reject) =>
-						setTimeout(() => reject(new Error('waitForExit timeout')), 10000)
-					),
-				]);
-			} catch {
-				// Timeout or error - force cleanup workspace anyway (skip if external)
-				if (!isExternalWorkspace) {
-					await Bun.$`rm -rf ${workspace}`.quiet();
-				}
-			}
+      try {
+        await Promise.race([
+          cleanupWithTimeout(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error('waitForExit timeout')), 10000)
+          ),
+        ]);
+      } catch {
+        // Timeout or error - force cleanup workspace anyway (skip if external)
+        if (!isExternalWorkspace) {
+          await Bun.$`rm -rf ${workspace}`.quiet();
+        }
+      }
 
-			// Stop Dev Proxy and restore environment variables if Dev Proxy was started
-			await devProxyLease.release();
-			if (shouldUseDevProxy) {
-				if (originalAnthropicBaseUrl === undefined) {
-					delete process.env.ANTHROPIC_BASE_URL;
-				} else {
-					process.env.ANTHROPIC_BASE_URL = originalAnthropicBaseUrl;
-				}
-				if (originalAnthropicApiKey === undefined) {
-					delete process.env.ANTHROPIC_API_KEY;
-				} else {
-					process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
-				}
-				if (originalAnthropicAuthToken === undefined) {
-					delete process.env.ANTHROPIC_AUTH_TOKEN;
-				} else {
-					process.env.ANTHROPIC_AUTH_TOKEN = originalAnthropicAuthToken;
-				}
-				if (originalClaudeCodeOauthToken === undefined) {
-					delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-				} else {
-					process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOauthToken;
-				}
-			}
+      // Stop Dev Proxy and restore environment variables if Dev Proxy was started
+      await devProxyLease.release();
+      if (shouldUseDevProxy) {
+        if (originalAnthropicBaseUrl === undefined) {
+          delete process.env.ANTHROPIC_BASE_URL;
+        } else {
+          process.env.ANTHROPIC_BASE_URL = originalAnthropicBaseUrl;
+        }
+        if (originalAnthropicApiKey === undefined) {
+          delete process.env.ANTHROPIC_API_KEY;
+        } else {
+          process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+        }
+        if (originalAnthropicAuthToken === undefined) {
+          delete process.env.ANTHROPIC_AUTH_TOKEN;
+        } else {
+          process.env.ANTHROPIC_AUTH_TOKEN = originalAnthropicAuthToken;
+        }
+        if (originalClaudeCodeOauthToken === undefined) {
+          delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        } else {
+          process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOauthToken;
+        }
+      }
 
-			// Restore custom env vars (always, not just in dev proxy mode)
-			for (const [key, original] of Object.entries(originalCustomEnv)) {
-				if (original === undefined) {
-					delete process.env[key];
-				} else {
-					process.env[key] = original;
-				}
-			}
-		},
-		trackSession: (sessionId: string) => {
-			trackedSessions.push(sessionId);
-		},
-		cleanup,
-	};
+      // Restore custom env vars (always, not just in dev proxy mode)
+      for (const [key, original] of Object.entries(originalCustomEnv)) {
+        if (original === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = original;
+        }
+      }
+    },
+    trackSession: (sessionId: string) => {
+      trackedSessions.push(sessionId);
+    },
+    cleanup,
+  };
 }
 
 /**
@@ -697,10 +697,10 @@ async function createInProcessDaemonServer(
  * Set DAEMON_TEST_SPAWN=true to use spawned process mode for true isolation.
  */
 export async function createDaemonServer(
-	options: DaemonServerOptions = {}
+  options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext> {
-	if (process.env.DAEMON_TEST_SPAWN === 'true') {
-		return spawnDaemonServer(options);
-	}
-	return createInProcessDaemonServer(options);
+  if (process.env.DAEMON_TEST_SPAWN === 'true') {
+    return spawnDaemonServer(options);
+  }
+  return createInProcessDaemonServer(options);
 }

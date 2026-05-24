@@ -6,8 +6,8 @@ import { JOB_QUEUE_CLEANUP } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 
 function createTestDb(): Database {
-	const db = new Database(':memory:');
-	db.exec(`
+  const db = new Database(':memory:');
+  db.exec(`
 		CREATE TABLE job_queue (
 			id TEXT PRIMARY KEY,
 			queue TEXT NOT NULL,
@@ -28,141 +28,141 @@ function createTestDb(): Database {
 		CREATE INDEX idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
 		CREATE INDEX idx_job_queue_status ON job_queue(status);
 	`);
-	return db;
+  return db;
 }
 
 /** Fake job fixture used as the argument to the handler */
 const fakeJob: Job = {
-	id: 'fake-job-id',
-	queue: JOB_QUEUE_CLEANUP,
-	status: 'processing',
-	payload: {},
-	result: null,
-	error: null,
-	priority: 0,
-	maxRetries: 3,
-	retryCount: 0,
-	runAt: Date.now(),
-	createdAt: Date.now(),
-	startedAt: Date.now(),
-	completedAt: null,
+  id: 'fake-job-id',
+  queue: JOB_QUEUE_CLEANUP,
+  status: 'processing',
+  payload: {},
+  result: null,
+  error: null,
+  priority: 0,
+  maxRetries: 3,
+  retryCount: 0,
+  runAt: Date.now(),
+  createdAt: Date.now(),
+  startedAt: Date.now(),
+  completedAt: null,
 };
 
 describe('createCleanupHandler', () => {
-	let db: Database;
-	let jobQueue: JobQueueRepository;
+  let db: Database;
+  let jobQueue: JobQueueRepository;
 
-	beforeEach(() => {
-		db = createTestDb();
-		jobQueue = new JobQueueRepository(db as any);
-	});
+  beforeEach(() => {
+    db = createTestDb();
+    jobQueue = new JobQueueRepository(db as any);
+  });
 
-	afterEach(() => {
-		db.close();
-	});
+  afterEach(() => {
+    db.close();
+  });
 
-	it('deletes completed jobs older than 7 days and returns count', async () => {
-		const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  it('deletes completed jobs older than 7 days and returns count', async () => {
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
 
-		// Insert an old completed job directly via SQL
-		db.exec(`
+    // Insert an old completed job directly via SQL
+    db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('old-completed', 'some.queue', 'completed', '{}', 0, 3, 0, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
 		`);
 
-		// Insert a recent completed job (should NOT be deleted)
-		const recentTime = Date.now() - 60_000; // 1 minute ago
-		db.exec(`
+    // Insert a recent completed job (should NOT be deleted)
+    const recentTime = Date.now() - 60_000; // 1 minute ago
+    db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('recent-completed', 'some.queue', 'completed', '{}', 0, 3, 0, ${recentTime}, ${recentTime}, ${recentTime})
 		`);
 
-		const handler = createCleanupHandler(jobQueue);
-		const result = await handler(fakeJob);
+    const handler = createCleanupHandler(jobQueue);
+    const result = await handler(fakeJob);
 
-		expect(result.deletedJobs).toBe(1);
+    expect(result.deletedJobs).toBe(1);
 
-		// Verify only the old job is gone
-		const remaining = jobQueue.listJobs({ limit: 100 });
-		expect(remaining.some((j) => j.id === 'old-completed')).toBe(false);
-		expect(remaining.some((j) => j.id === 'recent-completed')).toBe(true);
-	});
+    // Verify only the old job is gone
+    const remaining = jobQueue.listJobs({ limit: 100 });
+    expect(remaining.some((j) => j.id === 'old-completed')).toBe(false);
+    expect(remaining.some((j) => j.id === 'recent-completed')).toBe(true);
+  });
 
-	it('deletes dead jobs older than 7 days', async () => {
-		const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  it('deletes dead jobs older than 7 days', async () => {
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
 
-		db.exec(`
+    db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('old-dead', 'some.queue', 'dead', '{}', 0, 3, 3, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
 		`);
 
-		const handler = createCleanupHandler(jobQueue);
-		const result = await handler(fakeJob);
+    const handler = createCleanupHandler(jobQueue);
+    const result = await handler(fakeJob);
 
-		expect(result.deletedJobs).toBe(1);
-		// Only the next-scheduled pending cleanup job should remain
-		const remaining = jobQueue.listJobs({ limit: 100 });
-		expect(remaining.every((j) => j.status === 'pending' && j.queue === JOB_QUEUE_CLEANUP)).toBe(
-			true
-		);
-	});
+    expect(result.deletedJobs).toBe(1);
+    // Only the next-scheduled pending cleanup job should remain
+    const remaining = jobQueue.listJobs({ limit: 100 });
+    expect(remaining.every((j) => j.status === 'pending' && j.queue === JOB_QUEUE_CLEANUP)).toBe(
+      true
+    );
+  });
 
-	it('self-schedules the next cleanup job ~24 hours from now', async () => {
-		const handler = createCleanupHandler(jobQueue);
-		const before = Date.now();
-		const result = await handler(fakeJob);
-		const after = Date.now();
+  it('self-schedules the next cleanup job ~24 hours from now', async () => {
+    const handler = createCleanupHandler(jobQueue);
+    const before = Date.now();
+    const result = await handler(fakeJob);
+    const after = Date.now();
 
-		const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
-		expect(pending.length).toBe(1);
+    const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
+    expect(pending.length).toBe(1);
 
-		const expectedMin = before + 24 * 60 * 60 * 1000;
-		const expectedMax = after + 24 * 60 * 60 * 1000;
-		expect(pending[0].runAt).toBeGreaterThanOrEqual(expectedMin);
-		expect(pending[0].runAt).toBeLessThanOrEqual(expectedMax);
-		expect(result.nextRunAt).toBeGreaterThanOrEqual(expectedMin);
-		expect(result.nextRunAt).toBeLessThanOrEqual(expectedMax);
-	});
+    const expectedMin = before + 24 * 60 * 60 * 1000;
+    const expectedMax = after + 24 * 60 * 60 * 1000;
+    expect(pending[0].runAt).toBeGreaterThanOrEqual(expectedMin);
+    expect(pending[0].runAt).toBeLessThanOrEqual(expectedMax);
+    expect(result.nextRunAt).toBeGreaterThanOrEqual(expectedMin);
+    expect(result.nextRunAt).toBeLessThanOrEqual(expectedMax);
+  });
 
-	it('does not create duplicate pending cleanup jobs (dedup)', async () => {
-		// Pre-enqueue a pending cleanup job
-		jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() + 1000 });
+  it('does not create duplicate pending cleanup jobs (dedup)', async () => {
+    // Pre-enqueue a pending cleanup job
+    jobQueue.enqueue({ queue: JOB_QUEUE_CLEANUP, payload: {}, runAt: Date.now() + 1000 });
 
-		const handler = createCleanupHandler(jobQueue);
-		await handler(fakeJob);
+    const handler = createCleanupHandler(jobQueue);
+    await handler(fakeJob);
 
-		const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
-		expect(pending.length).toBe(1); // Still only one — dedup worked
-	});
+    const pending = jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 });
+    expect(pending.length).toBe(1); // Still only one — dedup worked
+  });
 
-	it('deletes failed jobs older than 7 days', async () => {
-		const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  it('deletes failed jobs older than 7 days', async () => {
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
 
-		// 'failed' is a legal status in the type contract; cleanup must prune it
-		// to prevent indefinite accumulation if any code path ever writes it.
-		db.exec(`
+    // 'failed' is a legal status in the type contract; cleanup must prune it
+    // to prevent indefinite accumulation if any code path ever writes it.
+    db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('old-failed', 'some.queue', 'failed', '{}', 0, 3, 1, ${eightDaysAgo}, ${eightDaysAgo}, ${eightDaysAgo})
 		`);
 
-		const handler = createCleanupHandler(jobQueue);
-		const result = await handler(fakeJob);
+    const handler = createCleanupHandler(jobQueue);
+    const result = await handler(fakeJob);
 
-		expect(result.deletedJobs).toBe(1);
-		expect(jobQueue.getJob('old-failed')).toBeNull();
-	});
+    expect(result.deletedJobs).toBe(1);
+    expect(jobQueue.getJob('old-failed')).toBeNull();
+  });
 
-	it('returns 0 deletedJobs when nothing is old enough', async () => {
-		// Only a recent completed job
-		const recentTime = Date.now() - 60_000;
-		db.exec(`
+  it('returns 0 deletedJobs when nothing is old enough', async () => {
+    // Only a recent completed job
+    const recentTime = Date.now() - 60_000;
+    db.exec(`
 			INSERT INTO job_queue (id, queue, status, payload, priority, max_retries, retry_count, run_at, created_at, completed_at)
 			VALUES ('recent', 'some.queue', 'completed', '{}', 0, 3, 0, ${recentTime}, ${recentTime}, ${recentTime})
 		`);
 
-		const handler = createCleanupHandler(jobQueue);
-		const result = await handler(fakeJob);
+    const handler = createCleanupHandler(jobQueue);
+    const result = await handler(fakeJob);
 
-		expect(result.deletedJobs).toBe(0);
-	});
+    expect(result.deletedJobs).toBe(0);
+  });
 });

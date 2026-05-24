@@ -49,10 +49,10 @@ import { existsSync, rmSync } from 'node:fs';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
 import {
-	createSpaceViaRpc,
-	createSpaceTaskViaRpc,
-	createUniqueSpaceDir,
-	deleteSpaceViaRpc,
+  createSpaceViaRpc,
+  createSpaceTaskViaRpc,
+  createUniqueSpaceDir,
+  deleteSpaceViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
@@ -60,10 +60,10 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 // ─── Infrastructure helpers (RPC — beforeEach / afterEach only) ────────────────
 
 interface OverlayTestContext {
-	spaceId: string;
-	taskId: string;
-	sessionId: string;
-	wsPath: string;
+  spaceId: string;
+  taskId: string;
+  sessionId: string;
+  wsPath: string;
 }
 
 /**
@@ -77,56 +77,56 @@ interface OverlayTestContext {
  * race against test assertions.
  */
 async function createSpaceWithTaskAndSession(
-	page: Parameters<typeof waitForWebSocketConnected>[0]
+  page: Parameters<typeof waitForWebSocketConnected>[0]
 ): Promise<OverlayTestContext> {
-	await waitForWebSocketConnected(page);
-	const workspaceRoot = await getWorkspaceRoot(page);
-	const wsPath = createUniqueSpaceDir(workspaceRoot, 'overlay');
+  await waitForWebSocketConnected(page);
+  const workspaceRoot = await getWorkspaceRoot(page);
+  const wsPath = createUniqueSpaceDir(workspaceRoot, 'overlay');
 
-	const spaceName = `E2E Overlay ${Date.now()}`;
-	const spaceId = await createSpaceViaRpc(page, wsPath, spaceName);
-	const taskId = await createSpaceTaskViaRpc(page, spaceId, 'Overlay test task');
+  const spaceName = `E2E Overlay ${Date.now()}`;
+  const spaceId = await createSpaceViaRpc(page, wsPath, spaceName);
+  const taskId = await createSpaceTaskViaRpc(page, spaceId, 'Overlay test task');
 
-	const sessionId = await page.evaluate(
-		async ({ wsPath: wp, spaceId: sid, taskId: tid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
+  const sessionId = await page.evaluate(
+    async ({ wsPath: wp, spaceId: sid, taskId: tid }) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Mark task done first — prevents the space runtime from processing it.
-			await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
+      // Mark task done first — prevents the space runtime from processing it.
+      await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
 
-			// Create a lightweight human session (no AI). ChatContainer can load any
-			// valid session — it doesn't have to be a space_task_agent type session.
-			const { sessionId: newSessionId } = (await hub.request('session.create', {
-				workspacePath: wp,
-				createdBy: 'human',
-			})) as { sessionId: string };
+      // Create a lightweight human session (no AI). ChatContainer can load any
+      // valid session — it doesn't have to be a space_task_agent type session.
+      const { sessionId: newSessionId } = (await hub.request('session.create', {
+        workspacePath: wp,
+        createdBy: 'human',
+      })) as { sessionId: string };
 
-			return newSessionId;
-		},
-		{ wsPath, spaceId, taskId }
-	);
+      return newSessionId;
+    },
+    { wsPath, spaceId, taskId }
+  );
 
-	return { spaceId, taskId, sessionId, wsPath };
+  return { spaceId, taskId, sessionId, wsPath };
 }
 
 /**
  * Delete a session via RPC. Best-effort for afterEach cleanup.
  */
 async function deleteSessionViaRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	sessionId: string
+  page: Parameters<typeof waitForWebSocketConnected>[0],
+  sessionId: string
 ): Promise<void> {
-	if (!sessionId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('session.delete', { sessionId: id });
-		}, sessionId);
-	} catch {
-		// Best-effort cleanup
-	}
+  if (!sessionId) return;
+  try {
+    await page.evaluate(async (id) => {
+      const hub = window.__messageHub || window.appState?.messageHub;
+      if (!hub?.request) return;
+      await hub.request('session.delete', { sessionId: id });
+    }, sessionId);
+  } catch {
+    // Best-effort cleanup
+  }
 }
 
 /**
@@ -138,177 +138,177 @@ async function deleteSessionViaRpc(
  * mount useEffect, so we wait for it to be available before calling.
  */
 async function openOverlay(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	sessionId: string,
-	agentName = 'Task Agent'
+  page: Parameters<typeof waitForWebSocketConnected>[0],
+  sessionId: string,
+  agentName = 'Task Agent'
 ): Promise<void> {
-	// Wait for SpaceIsland to mount and register the hook.
-	await page.waitForFunction(() => !!(window as Record<string, unknown>).__neokai_space_overlay, {
-		timeout: 10000,
-	});
-	await page.evaluate(
-		({ sid, name }) => {
-			type Api = { open: (s: string, n: string) => void };
-			const api = (window as Record<string, unknown>).__neokai_space_overlay as Api;
-			api.open(sid, name);
-		},
-		{ sid: sessionId, name: agentName }
-	);
+  // Wait for SpaceIsland to mount and register the hook.
+  await page.waitForFunction(() => !!(window as Record<string, unknown>).__neokai_space_overlay, {
+    timeout: 10000,
+  });
+  await page.evaluate(
+    ({ sid, name }) => {
+      type Api = { open: (s: string, n: string) => void };
+      const api = (window as Record<string, unknown>).__neokai_space_overlay as Api;
+      api.open(sid, name);
+    },
+    { sid: sessionId, name: agentName }
+  );
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Agent Overlay Chat', () => {
-	// Serial mode: tests share describe-scoped let variables and each beforeEach
-	// creates fresh state. Serial execution ensures those variables aren't
-	// overwritten mid-test by another test's beforeEach on the same worker.
-	test.describe.configure({ mode: 'serial' });
-	test.use({ viewport: DESKTOP_VIEWPORT });
+  // Serial mode: tests share describe-scoped let variables and each beforeEach
+  // creates fresh state. Serial execution ensures those variables aren't
+  // overwritten mid-test by another test's beforeEach on the same worker.
+  test.describe.configure({ mode: 'serial' });
+  test.use({ viewport: DESKTOP_VIEWPORT });
 
-	let spaceId = '';
-	let taskId = '';
-	let sessionId = '';
-	let wsPath = '';
+  let spaceId = '';
+  let taskId = '';
+  let sessionId = '';
+  let wsPath = '';
 
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		const ctx = await createSpaceWithTaskAndSession(page);
-		spaceId = ctx.spaceId;
-		taskId = ctx.taskId;
-		sessionId = ctx.sessionId;
-		wsPath = ctx.wsPath;
-	});
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    const ctx = await createSpaceWithTaskAndSession(page);
+    spaceId = ctx.spaceId;
+    taskId = ctx.taskId;
+    sessionId = ctx.sessionId;
+    wsPath = ctx.wsPath;
+  });
 
-	test.afterEach(async ({ page }) => {
-		if (sessionId) {
-			await deleteSessionViaRpc(page, sessionId);
-			sessionId = '';
-		}
-		if (spaceId) {
-			await deleteSpaceViaRpc(page, spaceId);
-			spaceId = '';
-		}
-		taskId = '';
-		if (wsPath && existsSync(wsPath)) {
-			try {
-				rmSync(wsPath, { recursive: true, force: true });
-			} catch {
-				// Best-effort cleanup
-			}
-			wsPath = '';
-		}
-	});
+  test.afterEach(async ({ page }) => {
+    if (sessionId) {
+      await deleteSessionViaRpc(page, sessionId);
+      sessionId = '';
+    }
+    if (spaceId) {
+      await deleteSpaceViaRpc(page, spaceId);
+      spaceId = '';
+    }
+    taskId = '';
+    if (wsPath && existsSync(wsPath)) {
+      try {
+        rmSync(wsPath, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup
+      }
+      wsPath = '';
+    }
+  });
 
-	// ─── Test 1: Opening the overlay via test hook ────────────────────────────
+  // ─── Test 1: Opening the overlay via test hook ────────────────────────────
 
-	test('opening the overlay shows the agent overlay panel', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+  test('opening the overlay shows the agent overlay panel', async ({ page }) => {
+    await page.goto(`/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		// Open overlay via the test hook (header button was removed in a019567d0).
-		await openOverlay(page, sessionId, 'Task Agent');
+    // Open overlay via the test hook (header button was removed in a019567d0).
+    await openOverlay(page, sessionId, 'Task Agent');
 
-		// The overlay panel must appear.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
-	});
+    // The overlay panel must appear.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+  });
 
-	// ─── Test 2: Task view remains accessible while overlay is open ─────────
+  // ─── Test 2: Task view remains accessible while overlay is open ─────────
 
-	test('task view is still visible underneath while overlay is open', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+  test('task view is still visible underneath while overlay is open', async ({ page }) => {
+    await page.goto(`/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await openOverlay(page, sessionId, 'Task Agent');
+    await openOverlay(page, sessionId, 'Task Agent');
 
-		// Overlay is open.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+    // Overlay is open.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
 
-		// URL must NOT have changed — the task view is still the active route.
-		expect(page.url()).toContain(`/space/${spaceId}/task/${taskId}`);
+    // URL must NOT have changed — the task view is still the active route.
+    expect(page.url()).toContain(`/space/${spaceId}/task/${taskId}`);
 
-		// The task-thread-panel remains in the DOM (rendered underneath the overlay).
-		await expect(page.getByTestId('task-thread-panel')).toBeAttached({ timeout: 5000 });
-	});
+    // The task-thread-panel remains in the DOM (rendered underneath the overlay).
+    await expect(page.getByTestId('task-thread-panel')).toBeAttached({ timeout: 5000 });
+  });
 
-	// ─── Test 3: Agent identity surfaced via dialog aria-label ──────────────
+  // ─── Test 3: Agent identity surfaced via dialog aria-label ──────────────
 
-	test('overlay surfaces the agent name via the dialog aria-label', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+  test('overlay surfaces the agent name via the dialog aria-label', async ({ page }) => {
+    await page.goto(`/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await openOverlay(page, sessionId, 'Task Agent');
+    await openOverlay(page, sessionId, 'Task Agent');
 
-		const overlay = page.getByTestId('agent-overlay-chat');
-		await expect(overlay).toBeVisible({ timeout: 5000 });
+    const overlay = page.getByTestId('agent-overlay-chat');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
 
-		// The dialog wrapper's aria-label must be non-empty so screen readers
-		// identify which agent is open. It's either `${agentName} chat` when we
-		// have a name, or the fallback `Agent chat` — both are non-empty.
-		const ariaLabel = await overlay.getAttribute('aria-label');
-		expect(ariaLabel?.trim().length).toBeGreaterThan(0);
-		expect(ariaLabel).toMatch(/chat$/);
-	});
+    // The dialog wrapper's aria-label must be non-empty so screen readers
+    // identify which agent is open. It's either `${agentName} chat` when we
+    // have a name, or the fallback `Agent chat` — both are non-empty.
+    const ariaLabel = await overlay.getAttribute('aria-label');
+    expect(ariaLabel?.trim().length).toBeGreaterThan(0);
+    expect(ariaLabel).toMatch(/chat$/);
+  });
 
-	// ─── Test 4: Back button dismisses the overlay ──────────────────────────
+  // ─── Test 4: Back button dismisses the overlay ──────────────────────────
 
-	test('back button in the chat header dismisses the overlay', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+  test('back button in the chat header dismisses the overlay', async ({ page }) => {
+    await page.goto(`/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await openOverlay(page, sessionId, 'Task Agent');
+    await openOverlay(page, sessionId, 'Task Agent');
 
-		// Overlay is open.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+    // Overlay is open.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
 
-		// The embedded ChatContainer owns the only header; its left-slot back
-		// button (which replaces the mobile-menu button when `onBack` is set)
-		// is the dismiss control.
-		await page.getByTestId('chat-header-back').click();
+    // The embedded ChatContainer owns the only header; its left-slot back
+    // button (which replaces the mobile-menu button when `onBack` is set)
+    // is the dismiss control.
+    await page.getByTestId('chat-header-back').click();
 
-		// Overlay must be gone.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
+    // Overlay must be gone.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
 
-		// Task thread panel must still be visible.
-		await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
-	});
+    // Task thread panel must still be visible.
+    await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
+  });
 
-	// ─── Test 5: Escape key dismisses the overlay ───────────────────────────
+  // ─── Test 5: Escape key dismisses the overlay ───────────────────────────
 
-	test('pressing Escape dismisses the overlay', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+  test('pressing Escape dismisses the overlay', async ({ page }) => {
+    await page.goto(`/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await openOverlay(page, sessionId, 'Task Agent');
+    await openOverlay(page, sessionId, 'Task Agent');
 
-		// Overlay is open.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+    // Overlay is open.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
 
-		// Press Escape.
-		await page.keyboard.press('Escape');
+    // Press Escape.
+    await page.keyboard.press('Escape');
 
-		// Overlay must be gone.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
-	});
+    // Overlay must be gone.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
+  });
 
-	// ─── Test 6: Backdrop click dismisses the overlay ───────────────────────
+  // ─── Test 6: Backdrop click dismisses the overlay ───────────────────────
 
-	test('clicking the backdrop dismisses the overlay', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+  test('clicking the backdrop dismisses the overlay', async ({ page }) => {
+    await page.goto(`/space/${spaceId}/task/${taskId}`);
+    await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await openOverlay(page, sessionId, 'Task Agent');
+    await openOverlay(page, sessionId, 'Task Agent');
 
-		// Overlay is open.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+    // Overlay is open.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
 
-		// Click the translucent backdrop (the aria-hidden div that fills the left
-		// side of the screen). The slide-over panel is right-aligned (max-w-2xl),
-		// so clicking at {x:100, y:100} relative to the full-screen backdrop lands
-		// safely in the left area, away from the panel.
-		const backdrop = page.getByTestId('agent-overlay-chat').locator('[aria-hidden="true"]').first();
-		await backdrop.click({ position: { x: 100, y: 100 } });
+    // Click the translucent backdrop (the aria-hidden div that fills the left
+    // side of the screen). The slide-over panel is right-aligned (max-w-2xl),
+    // so clicking at {x:100, y:100} relative to the full-screen backdrop lands
+    // safely in the left area, away from the panel.
+    const backdrop = page.getByTestId('agent-overlay-chat').locator('[aria-hidden="true"]').first();
+    await backdrop.click({ position: { x: 100, y: 100 } });
 
-		// Overlay must be gone.
-		await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
-	});
+    // Overlay must be gone.
+    await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
+  });
 });

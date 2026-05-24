@@ -17,17 +17,17 @@
 
 import type { Database } from '../../storage/database';
 import type {
-	AppMcpServer,
-	McpServerConfig,
-	McpStdioServerConfig,
-	McpSSEServerConfig,
-	McpHttpServerConfig,
-	ValidationResult,
+  AppMcpServer,
+  McpServerConfig,
+  McpStdioServerConfig,
+  McpSSEServerConfig,
+  McpHttpServerConfig,
+  ValidationResult,
 } from '@neokai/shared';
 import {
-	resolveMcpServers,
-	scopeChainForSession,
-	type ResolveMcpServersSession,
+  resolveMcpServers,
+  scopeChainForSession,
+  type ResolveMcpServersSession,
 } from './resolve-mcp-servers';
 
 // Re-export so callers can import from this module without reaching into shared.
@@ -38,9 +38,9 @@ export type { ValidationResult } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 
 export interface McpStartupError {
-	serverId: string;
-	name: string;
-	error: string;
+  serverId: string;
+  name: string;
+  error: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -48,165 +48,165 @@ export interface McpStartupError {
 // ---------------------------------------------------------------------------
 
 export class AppMcpLifecycleManager {
-	constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database) {}
 
-	/**
-	 * Returns SDK MCP configs for all globally-enabled registry entries.
-	 * Invalid entries (e.g. missing required fields) are silently skipped —
-	 * call `getStartupErrors()` to surface them to the UI.
-	 */
-	getEnabledMcpConfigs(): Record<string, McpServerConfig> {
-		const entries = this.db.appMcpServers.listEnabled();
-		const result: Record<string, McpServerConfig> = {};
+  /**
+   * Returns SDK MCP configs for all globally-enabled registry entries.
+   * Invalid entries (e.g. missing required fields) are silently skipped —
+   * call `getStartupErrors()` to surface them to the UI.
+   */
+  getEnabledMcpConfigs(): Record<string, McpServerConfig> {
+    const entries = this.db.appMcpServers.listEnabled();
+    const result: Record<string, McpServerConfig> = {};
 
-		for (const entry of entries) {
-			const validation = this.validateEntry(entry);
-			if (!validation.valid) {
-				continue;
-			}
+    for (const entry of entries) {
+      const validation = this.validateEntry(entry);
+      if (!validation.valid) {
+        continue;
+      }
 
-			result[entry.name] = this.convertEntry(entry);
-		}
+      result[entry.name] = this.convertEntry(entry);
+    }
 
-		return result;
-	}
+    return result;
+  }
 
-	/**
-	 * Returns SDK MCP configs effective for a given session, resolving the
-	 * session's space / session scope chain against the registry via the
-	 * pure {@link resolveMcpServers} function.
-	 *
-	 * This is the canonical entry point for all session-spawn paths (space ad-hoc,
-	 * node-agent). Legacy variant
-	 * ({@link getEnabledMcpConfigs}) remains for backward compatibility with
-	 * callers that don't yet have a Session object.
-	 */
-	getEnabledMcpConfigsForSession(
-		session: ResolveMcpServersSession
-	): Record<string, McpServerConfig> {
-		const registry = this.db.appMcpServers.list();
-		const chain = scopeChainForSession(session);
-		const overrides = this.db.mcpEnablement.listForScopes(chain);
-		const effective = resolveMcpServers(session, registry, overrides);
+  /**
+   * Returns SDK MCP configs effective for a given session, resolving the
+   * session's space / session scope chain against the registry via the
+   * pure {@link resolveMcpServers} function.
+   *
+   * This is the canonical entry point for all session-spawn paths (space ad-hoc,
+   * node-agent). Legacy variant
+   * ({@link getEnabledMcpConfigs}) remains for backward compatibility with
+   * callers that don't yet have a Session object.
+   */
+  getEnabledMcpConfigsForSession(
+    session: ResolveMcpServersSession
+  ): Record<string, McpServerConfig> {
+    const registry = this.db.appMcpServers.list();
+    const chain = scopeChainForSession(session);
+    const overrides = this.db.mcpEnablement.listForScopes(chain);
+    const effective = resolveMcpServers(session, registry, overrides);
 
-		const result: Record<string, McpServerConfig> = {};
-		for (const entry of effective) {
-			const validation = this.validateEntry(entry);
-			if (!validation.valid) continue;
-			result[entry.name] = this.convertEntry(entry);
-		}
-		return result;
-	}
+    const result: Record<string, McpServerConfig> = {};
+    for (const entry of effective) {
+      const validation = this.validateEntry(entry);
+      if (!validation.valid) continue;
+      result[entry.name] = this.convertEntry(entry);
+    }
+    return result;
+  }
 
-	/**
-	 * Validates a single registry entry, checking that required fields are
-	 * present for its source type.
-	 */
-	validateEntry(entry: AppMcpServer): ValidationResult {
-		switch (entry.sourceType) {
-			case 'stdio':
-				if (!entry.command || entry.command.trim() === '') {
-					return {
-						valid: false,
-						error: `stdio server "${entry.name}" is missing required field: command`,
-					};
-				}
-				return { valid: true };
+  /**
+   * Validates a single registry entry, checking that required fields are
+   * present for its source type.
+   */
+  validateEntry(entry: AppMcpServer): ValidationResult {
+    switch (entry.sourceType) {
+      case 'stdio':
+        if (!entry.command || entry.command.trim() === '') {
+          return {
+            valid: false,
+            error: `stdio server "${entry.name}" is missing required field: command`,
+          };
+        }
+        return { valid: true };
 
-			case 'sse':
-				if (!entry.url || entry.url.trim() === '') {
-					return {
-						valid: false,
-						error: `sse server "${entry.name}" is missing required field: url`,
-					};
-				}
-				return { valid: true };
+      case 'sse':
+        if (!entry.url || entry.url.trim() === '') {
+          return {
+            valid: false,
+            error: `sse server "${entry.name}" is missing required field: url`,
+          };
+        }
+        return { valid: true };
 
-			case 'http':
-				if (!entry.url || entry.url.trim() === '') {
-					return {
-						valid: false,
-						error: `http server "${entry.name}" is missing required field: url`,
-					};
-				}
-				return { valid: true };
+      case 'http':
+        if (!entry.url || entry.url.trim() === '') {
+          return {
+            valid: false,
+            error: `http server "${entry.name}" is missing required field: url`,
+          };
+        }
+        return { valid: true };
 
-			default: {
-				const exhaustive: never = entry.sourceType;
-				return {
-					valid: false,
-					error: `server "${entry.name}" has unknown sourceType: ${exhaustive}`,
-				};
-			}
-		}
-	}
+      default: {
+        const exhaustive: never = entry.sourceType;
+        return {
+          valid: false,
+          error: `server "${entry.name}" has unknown sourceType: ${exhaustive}`,
+        };
+      }
+    }
+  }
 
-	/**
-	 * Returns all registry entries (enabled or disabled) that fail validation.
-	 * Exposed via the `mcp.registry.listErrors` RPC so the UI can render a
-	 * warning badge next to misconfigured entries.
-	 */
-	getStartupErrors(): McpStartupError[] {
-		// Check all entries (not just enabled) so users can see invalid drafts too.
-		const allEntries = this.db.appMcpServers.list();
-		const errors: McpStartupError[] = [];
+  /**
+   * Returns all registry entries (enabled or disabled) that fail validation.
+   * Exposed via the `mcp.registry.listErrors` RPC so the UI can render a
+   * warning badge next to misconfigured entries.
+   */
+  getStartupErrors(): McpStartupError[] {
+    // Check all entries (not just enabled) so users can see invalid drafts too.
+    const allEntries = this.db.appMcpServers.list();
+    const errors: McpStartupError[] = [];
 
-		for (const entry of allEntries) {
-			const validation = this.validateEntry(entry);
-			if (!validation.valid) {
-				errors.push({
-					serverId: entry.id,
-					name: entry.name,
-					error: validation.error ?? 'Unknown validation error',
-				});
-			}
-		}
+    for (const entry of allEntries) {
+      const validation = this.validateEntry(entry);
+      if (!validation.valid) {
+        errors.push({
+          serverId: entry.id,
+          name: entry.name,
+          error: validation.error ?? 'Unknown validation error',
+        });
+      }
+    }
 
-		return errors;
-	}
+    return errors;
+  }
 
-	// ---------------------------------------------------------------------------
-	// Private helpers
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
 
-	private convertEntry(entry: AppMcpServer): McpServerConfig {
-		switch (entry.sourceType) {
-			case 'stdio': {
-				const config: McpStdioServerConfig = {
-					type: 'stdio',
-					command: entry.command!,
-					...(entry.args && entry.args.length > 0 ? { args: entry.args } : {}),
-					...(entry.env && Object.keys(entry.env).length > 0 ? { env: entry.env } : {}),
-				};
-				return config;
-			}
+  private convertEntry(entry: AppMcpServer): McpServerConfig {
+    switch (entry.sourceType) {
+      case 'stdio': {
+        const config: McpStdioServerConfig = {
+          type: 'stdio',
+          command: entry.command!,
+          ...(entry.args && entry.args.length > 0 ? { args: entry.args } : {}),
+          ...(entry.env && Object.keys(entry.env).length > 0 ? { env: entry.env } : {}),
+        };
+        return config;
+      }
 
-			case 'sse': {
-				const config: McpSSEServerConfig = {
-					type: 'sse',
-					url: entry.url!,
-					...(entry.headers && Object.keys(entry.headers).length > 0
-						? { headers: entry.headers }
-						: {}),
-				};
-				return config;
-			}
+      case 'sse': {
+        const config: McpSSEServerConfig = {
+          type: 'sse',
+          url: entry.url!,
+          ...(entry.headers && Object.keys(entry.headers).length > 0
+            ? { headers: entry.headers }
+            : {}),
+        };
+        return config;
+      }
 
-			case 'http': {
-				const config: McpHttpServerConfig = {
-					type: 'http',
-					url: entry.url!,
-					...(entry.headers && Object.keys(entry.headers).length > 0
-						? { headers: entry.headers }
-						: {}),
-				};
-				return config;
-			}
+      case 'http': {
+        const config: McpHttpServerConfig = {
+          type: 'http',
+          url: entry.url!,
+          ...(entry.headers && Object.keys(entry.headers).length > 0
+            ? { headers: entry.headers }
+            : {}),
+        };
+        return config;
+      }
 
-			default: {
-				const exhaustive: never = entry.sourceType;
-				throw new Error(`convertEntry: unhandled sourceType "${exhaustive}"`);
-			}
-		}
-	}
+      default: {
+        const exhaustive: never = entry.sourceType;
+        throw new Error(`convertEntry: unhandled sourceType "${exhaustive}"`);
+      }
+    }
+  }
 }
