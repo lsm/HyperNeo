@@ -205,7 +205,11 @@ describe('SpaceGoals', () => {
 	});
 
 	it('writes the current goal selection for the right-panel toggle', async () => {
-		mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
+		const now = Date.now();
+		mockGoals.value = [
+			makeGoal({ updatedAt: now }),
+			makeGoal({ id: 'goal-2', title: 'Second goal', updatedAt: now - 1 }),
+		];
 
 		const { unmount } = render(<SpaceGoals spaceId="space-1" />);
 
