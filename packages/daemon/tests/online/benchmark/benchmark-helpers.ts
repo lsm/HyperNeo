@@ -299,14 +299,25 @@ export function writeBenchmarkResults(
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a minimal stdio MCP server script that wraps `ast-grep run`.
- * Follows the pattern from anthropic-to-copilot-bridge-provider.test.ts.
+ * Generate a stdio MCP server script wrapping ast-grep CLI.
+ *
+ * @param workspacePath   Repo root to search
+ * @param astGrepBin      Absolute path to pre-resolved ast-grep binary,
+ *                        or 'npx' to fall back to per-call npx invocation
  */
-export function makeAstGrepMcpServerScript(workspacePath: string): string {
+export function makeAstGrepMcpServerScript(workspacePath: string, astGrepBin: string): string {
+	// When astGrepBin is 'npx', use npx-based invocation with the full package prefix
+	const useNpx = astGrepBin === 'npx';
+	const binExpr = JSON.stringify(astGrepBin);
+	const npxRunPrefix = useNpx ? `['npx', '-y', '-p', '@ast-grep/cli', 'ast-grep']` : `[${binExpr}]`;
+	const npxScanPrefix = npxRunPrefix;
 	return `
 const { spawnSync } = require('child_process');
 const rl = require('readline').createInterface({ input: process.stdin, terminal: false });
 const WORKSPACE = ${JSON.stringify(workspacePath)};
+const USE_NPX = ${useNpx};
+const BIN = ${binExpr};
+const SPAWN_OPTS = { timeout: 60000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf-8' };
 rl.on('line', (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
@@ -315,27 +326,39 @@ rl.on('line', (line) => {
     write({ jsonrpc: '2.0', id, result: {
       protocolVersion: params.protocolVersion || '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'ast-grep-wrapper', version: '1.0.0' }
+      serverInfo: { name: 'ast-grep-wrapper', version: '1.1.0' }
     }});
   } else if (method === 'notifications/initialized') {
-    // fire-and-forget, no response
+    // fire-and-forget
   } else if (method === 'tools/list') {
     write({ jsonrpc: '2.0', id, result: { tools: [
       {
         name: 'ast_grep_search',
-        description: 'Run ast-grep structural search over the workspace. Returns JSON matches. Use --pattern for AST patterns or literal string search.',
+        description: 'Run ast-grep structural pattern search. Uses AST-aware matching — $VAR matches any expression, $$$ARGS matches multiple. Returns JSON matches.',
         inputSchema: {
           type: 'object',
           properties: {
-            pattern: { type: 'string', description: 'Search pattern (AST pattern or string literal)' },
+            pattern: { type: 'string', description: 'AST pattern (e.g. "console.log($ARG)", "async function $NAME() { $$$BODY }")' },
             lang: { type: 'string', description: 'Language (ts, tsx, js, py, etc.). Default: ts' },
           },
           required: ['pattern'],
         },
       },
       {
+        name: 'ast_grep_scan',
+        description: 'Run ast-grep structural scan with a YAML rule. Supports relational queries (inside, has, precedes, follows) and composite logic (all, any, not). More powerful than ast_grep_search for complex structural queries.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            rule: { type: 'string', description: 'YAML rule string. Required fields: id, language, rule. Example: "id: async-await\\nlanguage: javascript\\nrule:\\n  kind: function_declaration\\n  has:\\n    pattern: await $EXPR\\n    stopBy: end"' },
+            lang: { type: 'string', description: 'Language override (optional — rule usually specifies it). Default: ts' },
+          },
+          required: ['rule'],
+        },
+      },
+      {
         name: 'ast_grep_search_multiple',
-        description: 'Run multiple ast-grep searches and combine results. Pass comma-separated patterns.',
+        description: 'Run multiple ast-grep pattern searches and combine results. Pass comma-separated patterns.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -353,6 +376,8 @@ rl.on('line', (line) => {
       let result;
       if (toolName === 'ast_grep_search') {
         result = runAstGrep(args.pattern, args.lang || 'ts');
+      } else if (toolName === 'ast_grep_scan') {
+        result = runAstGrepScan(args.rule, args.lang || 'ts');
       } else if (toolName === 'ast_grep_search_multiple') {
         const patterns = (args.patterns || '').split(',').map(s => s.trim()).filter(Boolean);
         const parts = patterns.map(p => ({ pattern: p, output: runAstGrep(p, args.lang || 'ts') }));
@@ -375,13 +400,22 @@ rl.on('line', (line) => {
     write({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' }});
   }
 });
+function astGrepCmd(subArgs) {
+  if (USE_NPX) return ['npx', '-y', '-p', '@ast-grep/cli', 'ast-grep', ...subArgs];
+  return [BIN, ...subArgs];
+}
 function runAstGrep(pattern, lang) {
-  const r = spawnSync('npx', ['-y', '-p', '@ast-grep/cli', 'ast-grep', 'run',
-    '--pattern', pattern, '--lang', lang, '--json', WORKSPACE],
-    { timeout: 60000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf-8' });
-  // ast-grep uses exit code 1 for "no matches found" — treat as empty result, not error
+  const cmd = astGrepCmd(['run', '--pattern', pattern, '--lang', lang, '--json', WORKSPACE]);
+  const r = spawnSync(cmd[0], cmd.slice(1), SPAWN_OPTS);
   if (r.status === 1) return '(no matches)';
   if (r.status !== 0) throw new Error(r.stderr || 'ast-grep exited with code ' + r.status);
+  return r.stdout || '(no output)';
+}
+function runAstGrepScan(rule, lang) {
+  const cmd = astGrepCmd(['scan', '--inline-rules', rule, '--lang', lang, '--json', WORKSPACE]);
+  const r = spawnSync(cmd[0], cmd.slice(1), SPAWN_OPTS);
+  if (r.status === 1) return '(no matches)';
+  if (r.status !== 0) throw new Error(r.stderr || 'ast-grep scan exited with code ' + r.status);
   return r.stdout || '(no output)';
 }
 function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }

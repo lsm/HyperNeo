@@ -27,7 +27,7 @@ import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 import {
 	BENCHMARK_PROMPT_UNSEDED,
@@ -113,6 +113,7 @@ const results: BenchmarkResult[] = [];
 let codegraphReady = false;
 let crgReady = false;
 let graphifyReady = false;
+let astGrepBin: string | null = null;
 let astGrepServerPath: string | null = null;
 
 // ---------------------------------------------------------------------------
@@ -221,8 +222,56 @@ function setupGraphify() {
 }
 
 function setupAstGrep() {
-	const script = makeAstGrepMcpServerScript(WORKTREE);
-	const tmpPath = join(tmpdir(), 'ast-grep-mcp-server.js');
+	// Resolve ast-grep binary once — avoids per-call npx overhead
+	console.log('Resolving ast-grep CLI...');
+	const resolveStart = Date.now();
+	try {
+		// Prefer pre-installed binary on PATH
+		astGrepBin = execFileSync('which', ['ast-grep'], { encoding: 'utf-8' }).trim();
+	} catch {
+		// Fall back to npx install
+		try {
+			const p = Bun.spawnSync(['npx', '-y', '-p', '@ast-grep/cli', 'ast-grep', '--version'], {
+				timeout: 120_000,
+				stdout: 'pipe',
+				stderr: 'pipe',
+				encoding: 'utf-8',
+			});
+			if (p.exitCode === 0) {
+				// npx caches the package; find the resolved binary
+				astGrepBin = execFileSync(
+					'node',
+					[
+						'-e',
+						`const p=require('child_process').spawnSync('npx',['-y','-p','@ast-grep/cli','which','ast-grep'],{encoding:'utf-8'});process.stdout.write(p.stdout.trim())`,
+					],
+					{ encoding: 'utf-8' }
+				).trim();
+				// If that didn't work, fall back to npx-based invocation
+				if (!astGrepBin || !existsSync(astGrepBin)) {
+					astGrepBin = null;
+				}
+			}
+		} catch {
+			// Will fall through to npx fallback below
+		}
+	}
+	const resolveMs = Date.now() - resolveStart;
+	if (astGrepBin) {
+		console.log(`  ast-grep resolved to ${astGrepBin} (${(resolveMs / 1000).toFixed(1)}s)`);
+	} else {
+		// Last resort: use npx as the binary — still cached but has bootstrap cost
+		astGrepBin = null;
+		console.log(
+			`  ast-grep binary not found, will use npx fallback (${(resolveMs / 1000).toFixed(1)}s)`
+		);
+	}
+
+	// Generate MCP server script with unique temp path per run
+	const effectiveBin = astGrepBin ?? 'npx';
+	const script = makeAstGrepMcpServerScript(WORKTREE, effectiveBin);
+	const uniqueId = randomUUID().slice(0, 8);
+	const tmpPath = join(tmpdir(), `ast-grep-mcp-${uniqueId}.js`);
 	writeFileSync(tmpPath, script);
 	astGrepServerPath = tmpPath;
 	console.log(`  ast-grep MCP server wrapper written to ${tmpPath}`);
@@ -379,7 +428,9 @@ describeSkip('Graph Tool Benchmark', () => {
 	}, 420_000);
 
 	test('ast-grep', async () => {
-		if (!astGrepServerPath) return expect.unreachable('ast-grep wrapper not created');
+		if (!astGrepServerPath) return expect.unreachable('ast-grep setup failed (binary or wrapper)');
+		if (!astGrepBin)
+			console.log('  Warning: ast-grep using npx fallback, wall time may be inflated');
 		const result = await runWithGlm({
 			name: 'ast-grep',
 			prompt: BENCHMARK_PROMPT_UNSEDED,
