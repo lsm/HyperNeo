@@ -616,6 +616,7 @@ export class TaskAgentManager {
 			}
 
 			const slotOverrides = this.buildSlotOverrides(slot, {
+				task,
 				node,
 				workflow,
 				workflowRun,
@@ -2766,6 +2767,7 @@ export class TaskAgentManager {
 	private buildSlotOverrides(
 		slot: WorkflowNodeAgent,
 		context?: {
+			task?: Pick<SpaceTask, 'workflowModelOverrides'>;
 			node?: { id: string; name: string };
 			workflow?: { id: string };
 			workflowRun?: { id: string };
@@ -2788,8 +2790,12 @@ export class TaskAgentManager {
 				slotCustomPrompt = legacySp || legacyInstr || undefined;
 			}
 		}
+		const modelOverrideKey = context?.node ? `${context.node.id}:${slot.name}` : null;
+		const taskModelOverride = modelOverrideKey
+			? context?.task?.workflowModelOverrides?.[modelOverrideKey]
+			: undefined;
 		return {
-			model: slot.model,
+			model: taskModelOverride ?? slot.model,
 			thinkingLevel: slot.thinkingLevel,
 			customPrompt: slotCustomPrompt,
 			disabledSkillIds: slot.disabledSkillIds,
@@ -2847,6 +2853,7 @@ export class TaskAgentManager {
 			workflowRun,
 			workflow,
 			slotOverrides: this.buildSlotOverrides(slot, {
+				task,
 				node,
 				workflow: workflow ?? undefined,
 				workflowRun: workflowRun ?? undefined,
@@ -3841,6 +3848,7 @@ export class TaskAgentManager {
 
 		const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
 		const slotOverrides = this.buildSlotOverrides(matchedSlot, {
+			task,
 			node: matchedNode,
 			workflow,
 			workflowRun: workflowRun ?? undefined,

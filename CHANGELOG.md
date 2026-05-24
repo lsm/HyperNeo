@@ -2,6 +2,30 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.31.0] - 2026-05-23
+
+Long-horizon Space agents, Forge task dependencies, workflow gate validation, and Forge evidence fixes. 15 commits since v0.30.0.
+
+### Added
+
+- **Long-horizon Space agents**: Persistent agent instances with templates, lifecycle management, and MCP server attachment
+- **Agent management tools**: MCP tools for creating, listing, and managing Space agent instances
+- **Long-horizon agent templates**: Pre-built templates for common agent patterns (coder, reviewer, QA, etc.)
+- **Forge task dependencies**: Support creating Forge tasks with dependency relationships, blocking execution until deps resolve
+- **Workflow gate writer validation**: Validate that only authorized node agents can write to workflow gates
+
+### Changed
+
+- Space Agent UI renamed to Agents for clarity
+- Space agent idle status messages suppressed to reduce noise
+- QA workflow now discovers and injects QA.md context into node prompts
+- Agents automatically stop when a new dependency blocks their current task
+
+### Fixed
+
+- Forge trace evidence capture on task completion now persists correctly
+- Guard Forge task result artifact capture against missing or malformed data
+
 ## [0.30.0] - 2026-05-22
 
 Forge evidence reliability, mobile Goal/Forge navigation, and workflow result propagation. 4 commits since v0.29.0.

@@ -1771,6 +1771,18 @@ class SpaceStore {
 		return task;
 	}
 
+	async fetchEvolutionScope(
+		scopeId: string
+	): Promise<import('@neokai/shared').EvolutionScope | null> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		const result = await hub.request<{ scope: import('@neokai/shared').EvolutionScope | null }>(
+			'evolution.scope.get',
+			{ id: scopeId }
+		);
+		return result.scope ?? null;
+	}
+
 	async recoverWorkflowTask(taskId: string, status: 'open' | 'in_progress'): Promise<SpaceTask> {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) throw new Error('No space selected');
