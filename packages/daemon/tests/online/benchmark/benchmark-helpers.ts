@@ -210,10 +210,21 @@ export async function runBenchmarkCase(
 	const wallTimeMs = Date.now() - startMs;
 
 	// 3. Collect SDK messages
+	// Wait for at least 2 messages (user prompt + assistant response).
+	// minCount:1 can snapshot before the assistant has responded.
 	const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-		minCount: 1,
+		minCount: 2,
 		timeout: 30_000,
 	});
+
+	// Fetch full transcript (default pagination is 100, which may truncate
+	// long sessions with many tool round-trips)
+	const fullResult = (await daemon.messageHub.request('message.sdkMessages', {
+		sessionId,
+		limit: 10_000,
+	})) as { sdkMessages: Array<Record<string, unknown>> };
+	const allSdkMessages =
+		fullResult.sdkMessages.length > sdkMessages.length ? fullResult.sdkMessages : sdkMessages;
 
 	// 4. Get session metadata for token counts
 	const sessionResult = (await daemon.messageHub.request('session.get', {
@@ -231,8 +242,8 @@ export async function runBenchmarkCase(
 	const meta = sessionResult.session?.metadata ?? {};
 
 	// 5. Parse tool calls and response text
-	const toolCallMap = extractToolCalls(sdkMessages ?? []);
-	const responseText = extractResponseText(sdkMessages ?? []);
+	const toolCallMap = extractToolCalls(allSdkMessages ?? []);
+	const responseText = extractResponseText(allSdkMessages ?? []);
 
 	const toolCalls = Array.from(toolCallMap.entries()).map(([name, count]) => ({
 		name,
@@ -357,7 +368,8 @@ function runAstGrep(pattern, lang) {
   const r = spawnSync('npx', ['-y', '-p', '@ast-grep/cli', 'ast-grep', 'run',
     '--pattern', pattern, '--lang', lang, '--json', WORKSPACE],
     { timeout: 60000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf-8' });
-  return r.stdout || r.stderr || '(no output)';
+  if (r.status !== 0) throw new Error(r.stderr || 'ast-grep exited with code ' + r.status);
+  return r.stdout || '(no output)';
 }
 function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
 `.trim();

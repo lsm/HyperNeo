@@ -58,14 +58,19 @@ const CRG_TOOLS =
 
 const RESULTS_PATH = '/tmp/graph-tool-benchmark-results.json';
 
-// Resolve the actual commit SHA for reproducible results
-const COMMIT_SHA = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+// Resolve the actual commit SHA from the worktree for reproducible results
+const COMMIT_SHA = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
 
 // Resolve Graphify python env (same executable used for extraction and MCP serve)
+// First resolve the binary path via PATH lookup, then read its shebang for the Python interpreter
 const GRAPHIFY_BIN = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BIN || 'graphify';
 let graphifyPython = 'python3';
 try {
-	const shebang = readFileSync(GRAPHIFY_BIN, 'utf-8')
+	const resolvedBin =
+		GRAPHIFY_BIN === 'graphify'
+			? execSync('which graphify', { encoding: 'utf-8' }).trim()
+			: GRAPHIFY_BIN;
+	const shebang = readFileSync(resolvedBin, 'utf-8')
 		.split('\n')[0]
 		.replace(/^#!\s*/, '')
 		.trim();
@@ -137,17 +142,21 @@ async function buildCRG() {
 async function setupGraphify() {
 	const graphJson = join(GRAPHIFY_OUT, 'graph.json');
 
-	// Verify cache belongs to current worktree — delete stale graphs from other repos
+	// Verify cache belongs to current worktree AND commit - rebuild if stale
 	if (existsSync(graphJson) && existsSync(join(GRAPHIFY_OUT, '.benchmark_worktree'))) {
 		const cachedWorktree = readFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), 'utf-8').trim();
+		const cachedCommit = existsSync(join(GRAPHIFY_OUT, '.benchmark_commit'))
+			? readFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), 'utf-8').trim()
+			: '';
 		if (cachedWorktree !== WORKTREE) {
 			console.log('  Graphify graph is from a different worktree, forcing rebuild...');
-			mkdirSync(GRAPHIFY_OUT, { recursive: true });
-		} else if (existsSync(join(GRAPHIFY_OUT, '.benchmark_commit'))) {
-			// Same worktree — keep cached graph
+		} else if (cachedCommit && cachedCommit === COMMIT_SHA) {
+			// Same worktree and commit - keep cached graph
 			graphifyReady = true;
-			console.log('  Graphify graph already exists for this worktree, skipping extraction');
+			console.log('  Graphify graph already exists for this worktree@commit, skipping extraction');
 			return;
+		} else {
+			console.log('  Graphify graph commit mismatch, forcing rebuild...');
 		}
 	}
 
@@ -168,14 +177,17 @@ async function setupGraphify() {
 		{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
 	);
 	const elapsed = Date.now() - start;
-	if (existsSync(graphJson)) {
+	if (p.exitCode === 0 && existsSync(graphJson)) {
 		// Tag the cache with worktree + commit for staleness detection
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), WORKTREE);
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), COMMIT_SHA);
 		graphifyReady = true;
 		console.log(`  Graphify graph extracted in ${(elapsed / 1000).toFixed(1)}s`);
 	} else {
-		console.error('  Graphify extraction failed:', p.stderr?.toString()?.slice(0, 500));
+		console.error(
+			'  Graphify extraction failed (exit=' + p.exitCode + '):',
+			p.stderr?.toString()?.slice(0, 500)
+		);
 	}
 }
 
