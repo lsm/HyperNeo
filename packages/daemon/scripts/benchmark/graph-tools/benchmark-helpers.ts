@@ -18,7 +18,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 // Shared config
 // ---------------------------------------------------------------------------
 
-/** Resolve the repo root (3 levels up from this file). */
+/** Resolve the repo root (5 levels up from this file). */
 export const WORKTREE =
   process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
 
