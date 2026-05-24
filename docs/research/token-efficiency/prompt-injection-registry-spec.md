@@ -144,14 +144,14 @@ CREATE TABLE prompt_injections (
 		'system.prepend', 'system.append', 'agent.prompt.append', 'user.prepend'
 	)),
 	-- MVP repository validation rejects stored user.prepend records until message-level rendering exists.
-	priority INTEGER NOT NULL,
+	priority INTEGER NOT NULL CHECK(priority BETWEEN 500 AND 799),
 	enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
 	content TEXT NOT NULL CHECK(length(content) > 0),
 	source_kind TEXT NOT NULL CHECK(source_kind IN (
 		'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
 	)),
 	source_ref TEXT,
-	constraints TEXT,
+	constraints TEXT CHECK(constraints IS NULL OR json_valid(constraints)),
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -271,6 +271,8 @@ Documented bands keep ordering stable:
 
 Use one direction consistently. Recommended composer sorts by ascending `priority`, then `id`, so lower bands appear earlier and output style appears late enough to shape wording without preceding safety policy.
 
+Persisted user/config/workflow records are schema-limited to non-protected bands `500–799`. Built-in providers may emit protected lower-band records from code, but the user/config table must not persist them.
+
 ### Conflict handling
 
 - If any active injection has `requiresNormalProse`, output-mode compressed injection is suppressed for that render.
@@ -323,9 +325,9 @@ Support existing NeoKai shapes:
 
 - `undefined` → create append string when needed.
 - `string` → prepend/append joined with double newline.
-- `{ type: 'preset', preset: 'claude_code', append }` → merge `system.append` into `append`. `system.prepend` is not representable with this SDK shape because preset objects cannot be mixed into `string[]`; do not append prepend text after the preset. MVP behavior: suppress `system.prepend` entries for preset prompts with provenance reason `unsupported-with-preset-system-prompt`.
+- `{ type: 'preset', preset: 'claude_code', append }` → keep the preset object and merge both `system.prepend` and `system.append` into `append`, with prepend text placed before append text inside the appended block. This is the only representable MVP shape that preserves Claude Code preset semantics and still applies prepend content in default sessions. Record provenance note `system.prepend.rendered-inside-preset-append` because the content is after the SDK preset, not before it.
 
-Do not expand preset prompts to SDK `string[]` in MVP because doing so would drop Claude Code preset semantics and dynamic sections. If true preset prepend becomes required later, add SDK support or materialize the full preset prompt explicitly before enabling that channel for preset sessions.
+Do not expand preset prompts to SDK `string[]` in MVP because doing so would drop Claude Code preset semantics and dynamic sections. If true before-preset prepend becomes required later, add SDK support or materialize the full preset prompt explicitly.
 
 ### Subagent rendering
 
