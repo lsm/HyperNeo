@@ -35,13 +35,13 @@ import type { AppMcpServer, McpEnablementOverride, Session } from '@neokai/share
  * doesn't yet have a full Session row persisted).
  */
 export interface ResolveMcpServersSession {
-	/** The session's unique id. */
-	id: string;
-	/** Optional scoping context; missing values skip that scope level. */
-	context?: {
-		spaceId?: string;
-		roomId?: string;
-	};
+  /** The session's unique id. */
+  id: string;
+  /** Optional scoping context; missing values skip that scope level. */
+  context?: {
+    spaceId?: string;
+    roomId?: string;
+  };
 }
 
 /**
@@ -64,39 +64,39 @@ export interface ResolveMcpServersSession {
  *          supplied; the resolver never mutates or clones them.
  */
 export function resolveMcpServers(
-	session: ResolveMcpServersSession | Session,
-	registry: readonly AppMcpServer[],
-	overrides: readonly McpEnablementOverride[]
+  session: ResolveMcpServersSession | Session,
+  registry: readonly AppMcpServer[],
+  overrides: readonly McpEnablementOverride[]
 ): AppMcpServer[] {
-	const ctx = (session as ResolveMcpServersSession).context ?? {};
-	const sessionId = session.id;
-	const { spaceId, roomId } = ctx;
+  const ctx = (session as ResolveMcpServersSession).context ?? {};
+  const sessionId = session.id;
+  const { spaceId, roomId } = ctx;
 
-	// Group overrides by (scopeType, scopeId, serverId) for O(1) lookup. The
-	// input may contain overrides for scopes the session doesn't care about
-	// (e.g. another room); those are ignored silently.
-	const sessionOverrides = new Map<string, McpEnablementOverride>(); // serverId → override
-	const roomOverrides = new Map<string, McpEnablementOverride>();
-	const spaceOverrides = new Map<string, McpEnablementOverride>();
+  // Group overrides by (scopeType, scopeId, serverId) for O(1) lookup. The
+  // input may contain overrides for scopes the session doesn't care about
+  // (e.g. another room); those are ignored silently.
+  const sessionOverrides = new Map<string, McpEnablementOverride>(); // serverId → override
+  const roomOverrides = new Map<string, McpEnablementOverride>();
+  const spaceOverrides = new Map<string, McpEnablementOverride>();
 
-	for (const ov of overrides) {
-		if (ov.scopeType === 'session' && ov.scopeId === sessionId) {
-			sessionOverrides.set(ov.serverId, ov);
-		} else if (ov.scopeType === 'room' && roomId && ov.scopeId === roomId) {
-			roomOverrides.set(ov.serverId, ov);
-		} else if (ov.scopeType === 'space' && spaceId && ov.scopeId === spaceId) {
-			spaceOverrides.set(ov.serverId, ov);
-		}
-		// Overrides for other sessions/rooms/spaces: ignored.
-	}
+  for (const ov of overrides) {
+    if (ov.scopeType === 'session' && ov.scopeId === sessionId) {
+      sessionOverrides.set(ov.serverId, ov);
+    } else if (ov.scopeType === 'room' && roomId && ov.scopeId === roomId) {
+      roomOverrides.set(ov.serverId, ov);
+    } else if (ov.scopeType === 'space' && spaceId && ov.scopeId === spaceId) {
+      spaceOverrides.set(ov.serverId, ov);
+    }
+    // Overrides for other sessions/rooms/spaces: ignored.
+  }
 
-	const result: AppMcpServer[] = [];
-	for (const entry of registry) {
-		if (isEffectivelyEnabled(entry, sessionOverrides, roomOverrides, spaceOverrides)) {
-			result.push(entry);
-		}
-	}
-	return result;
+  const result: AppMcpServer[] = [];
+  for (const entry of registry) {
+    if (isEffectivelyEnabled(entry, sessionOverrides, roomOverrides, spaceOverrides)) {
+      result.push(entry);
+    }
+  }
+  return result;
 }
 
 /**
@@ -109,14 +109,14 @@ export function resolveMcpServers(
  * eyeballing the query.
  */
 export function scopeChainForSession(
-	session: ResolveMcpServersSession | Session
+  session: ResolveMcpServersSession | Session
 ): Array<{ scopeType: 'session' | 'room' | 'space'; scopeId: string }> {
-	const ctx = (session as ResolveMcpServersSession).context ?? {};
-	const chain: Array<{ scopeType: 'session' | 'room' | 'space'; scopeId: string }> = [];
-	chain.push({ scopeType: 'session', scopeId: session.id });
-	if (ctx.roomId) chain.push({ scopeType: 'room', scopeId: ctx.roomId });
-	if (ctx.spaceId) chain.push({ scopeType: 'space', scopeId: ctx.spaceId });
-	return chain;
+  const ctx = (session as ResolveMcpServersSession).context ?? {};
+  const chain: Array<{ scopeType: 'session' | 'room' | 'space'; scopeId: string }> = [];
+  chain.push({ scopeType: 'session', scopeId: session.id });
+  if (ctx.roomId) chain.push({ scopeType: 'room', scopeId: ctx.roomId });
+  if (ctx.spaceId) chain.push({ scopeType: 'space', scopeId: ctx.spaceId });
+  return chain;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,19 +131,19 @@ export function scopeChainForSession(
  *   4. Otherwise fall back to the registry row's own `enabled` flag.
  */
 function isEffectivelyEnabled(
-	entry: AppMcpServer,
-	sessionOverrides: Map<string, McpEnablementOverride>,
-	roomOverrides: Map<string, McpEnablementOverride>,
-	spaceOverrides: Map<string, McpEnablementOverride>
+  entry: AppMcpServer,
+  sessionOverrides: Map<string, McpEnablementOverride>,
+  roomOverrides: Map<string, McpEnablementOverride>,
+  spaceOverrides: Map<string, McpEnablementOverride>
 ): boolean {
-	const sessionOv = sessionOverrides.get(entry.id);
-	if (sessionOv) return sessionOv.enabled;
+  const sessionOv = sessionOverrides.get(entry.id);
+  if (sessionOv) return sessionOv.enabled;
 
-	const roomOv = roomOverrides.get(entry.id);
-	if (roomOv) return roomOv.enabled;
+  const roomOv = roomOverrides.get(entry.id);
+  if (roomOv) return roomOv.enabled;
 
-	const spaceOv = spaceOverrides.get(entry.id);
-	if (spaceOv) return spaceOv.enabled;
+  const spaceOv = spaceOverrides.get(entry.id);
+  if (spaceOv) return spaceOv.enabled;
 
-	return entry.enabled;
+  return entry.enabled;
 }

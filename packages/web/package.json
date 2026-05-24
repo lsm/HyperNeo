@@ -1,41 +1,41 @@
 {
-	"name": "@neokai/web",
-	"version": "0.31.0",
-	"type": "module",
-	"license": "Apache-2.0",
-	"scripts": {
-		"dev": "vite",
-		"build": "vite build",
-		"preview": "vite preview",
-		"dev:old": "bun run css:build && bun run --bun css:watch & bun run server:dev",
-		"css:build": "tailwindcss --input src/styles.css --output src/styles.out.css",
-		"css:watch": "tailwindcss --input src/styles.css --output src/styles.out.css --watch",
-		"server:dev": "bun --watch src/index.ts",
-		"build:old": "bun run build.ts",
-		"start": "NODE_ENV=production bun src/server-prod.ts",
-		"typecheck": "tsc --build",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"coverage": "vitest run --reporter dot --coverage"
-	},
-	"dependencies": {
-		"@preact/signals": "2.9.0",
-		"clsx": "2.1.1",
-		"highlight.js": "11.11.1",
-		"marked": "18.0.2",
-		"preact": "10.29.1"
-	},
-	"devDependencies": {
-		"@preact/preset-vite": "2.10.5",
-		"@tailwindcss/vite": "4.2.4",
-		"@testing-library/preact": "3.2.4",
-		"@types/bun": "1.3.13",
-		"@vitest/coverage-v8": "4.1.5",
-		"@vitest/ui": "4.1.5",
-		"happy-dom": "20.9.0",
-		"tailwindcss": "4.2.4",
-		"typescript": "6.0.3",
-		"vite": "8.0.10",
-		"vitest": "4.1.5"
-	}
+  "name": "@neokai/web",
+  "version": "0.31.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "dev:old": "bun run css:build && bun run --bun css:watch & bun run server:dev",
+    "css:build": "tailwindcss --input src/styles.css --output src/styles.out.css",
+    "css:watch": "tailwindcss --input src/styles.css --output src/styles.out.css --watch",
+    "server:dev": "bun --watch src/index.ts",
+    "build:old": "bun run build.ts",
+    "start": "NODE_ENV=production bun src/server-prod.ts",
+    "typecheck": "tsc --build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --reporter dot --coverage"
+  },
+  "dependencies": {
+    "@preact/signals": "2.9.0",
+    "clsx": "2.1.1",
+    "highlight.js": "11.11.1",
+    "marked": "18.0.2",
+    "preact": "10.29.1"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "2.10.5",
+    "@tailwindcss/vite": "4.2.4",
+    "@testing-library/preact": "3.2.4",
+    "@types/bun": "1.3.13",
+    "@vitest/coverage-v8": "4.1.5",
+    "@vitest/ui": "4.1.5",
+    "happy-dom": "20.9.0",
+    "tailwindcss": "4.2.4",
+    "typescript": "6.0.3",
+    "vite": "8.0.10",
+    "vitest": "4.1.5"
+  }
 }

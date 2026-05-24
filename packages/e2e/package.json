@@ -1,22 +1,22 @@
 {
-	"name": "@neokai/e2e",
-	"version": "0.31.0",
-	"private": true,
-	"license": "Apache-2.0",
-	"type": "module",
-	"scripts": {
-		"test": "playwright test",
-		"test:ui": "playwright test --ui",
-		"test:headed": "playwright test --headed",
-		"test:debug": "playwright test --debug",
-		"test:coverage": "COVERAGE=true playwright test",
-		"test:coverage:headed": "COVERAGE=true playwright test --headed",
-		"report": "playwright show-report",
-		"report:coverage": "open coverage/html/index.html"
-	},
-	"devDependencies": {
-		"@playwright/test": "1.59.1",
-		"@types/node": "25.8.0",
-		"monocart-reporter": "2.11.2"
-	}
+  "name": "@neokai/e2e",
+  "version": "0.31.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:coverage": "COVERAGE=true playwright test",
+    "test:coverage:headed": "COVERAGE=true playwright test --headed",
+    "report": "playwright show-report",
+    "report:coverage": "open coverage/html/index.html"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.59.1",
+    "@types/node": "25.8.0",
+    "monocart-reporter": "2.11.2"
+  }
 }

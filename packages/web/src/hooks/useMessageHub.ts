@@ -36,7 +36,7 @@ import type { MessageHub, ChannelEventHandler } from '@neokai/shared';
 
 // Define SubscribeOptions locally (removed from shared types)
 interface SubscribeOptions {
-	once?: boolean;
+  once?: boolean;
 }
 
 // EventHandler is now ChannelEventHandler in the new API
@@ -46,114 +46,114 @@ type EventHandler<TData = unknown> = ChannelEventHandler<TData>;
  * Options for the useMessageHub hook
  */
 export interface UseMessageHubOptions {
-	/**
-	 * Default timeout for RPC calls in milliseconds
-	 * @default 10000
-	 */
-	defaultTimeout?: number;
+  /**
+   * Default timeout for RPC calls in milliseconds
+   * @default 10000
+   */
+  defaultTimeout?: number;
 
-	/**
-	 * Whether to log connection state changes
-	 * @default false
-	 */
-	debug?: boolean;
+  /**
+   * Whether to log connection state changes
+   * @default false
+   */
+  debug?: boolean;
 }
 
 /**
  * Result of the useMessageHub hook
  */
 export interface UseMessageHubResult {
-	/**
-	 * Whether the WebSocket is currently connected
-	 * This is a reactive value - components will re-render when it changes
-	 */
-	isConnected: boolean;
+  /**
+   * Whether the WebSocket is currently connected
+   * This is a reactive value - components will re-render when it changes
+   */
+  isConnected: boolean;
 
-	/**
-	 * Current connection state ('connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting')
-	 * This is a reactive value
-	 */
-	state: typeof connectionState.value;
+  /**
+   * Current connection state ('connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting')
+   * This is a reactive value
+   */
+  state: typeof connectionState.value;
 
-	/**
-	 * Get the MessageHub if connected, null otherwise (NON-BLOCKING)
-	 */
-	getHub: () => MessageHub | null;
+  /**
+   * Get the MessageHub if connected, null otherwise (NON-BLOCKING)
+   */
+  getHub: () => MessageHub | null;
 
-	/**
-	 * Make a request call (request-response) (NON-BLOCKING - throws if not connected)
-	 * @throws {ConnectionNotReadyError} If not connected
-	 */
-	request: <TResult = unknown, TData = unknown>(
-		method: string,
-		data?: TData,
-		options?: { timeout?: number }
-	) => Promise<TResult>;
+  /**
+   * Make a request call (request-response) (NON-BLOCKING - throws if not connected)
+   * @throws {ConnectionNotReadyError} If not connected
+   */
+  request: <TResult = unknown, TData = unknown>(
+    method: string,
+    data?: TData,
+    options?: { timeout?: number }
+  ) => Promise<TResult>;
 
-	/**
-	 * Listen for events (replaces subscribe for new API)
-	 * Returns unsubscribe function
-	 */
-	onEvent: <TData = unknown>(
-		method: string,
-		handler: EventHandler<TData>,
-		options?: SubscribeOptions
-	) => () => void;
+  /**
+   * Listen for events (replaces subscribe for new API)
+   * Returns unsubscribe function
+   */
+  onEvent: <TData = unknown>(
+    method: string,
+    handler: EventHandler<TData>,
+    options?: SubscribeOptions
+  ) => () => void;
 
-	/**
-	 * Join a room for receiving room-specific events
-	 */
-	joinRoom: (room: string) => void;
+  /**
+   * Join a room for receiving room-specific events
+   */
+  joinRoom: (room: string) => void;
 
-	/**
-	 * Leave a room
-	 */
-	leaveRoom: (room: string) => void;
+  /**
+   * Leave a room
+   */
+  leaveRoom: (room: string) => void;
 
-	/**
-	 * Make an RPC call (NON-BLOCKING - throws if not connected)
-	 * @deprecated Use query() instead
-	 * @throws {ConnectionNotReadyError} If not connected
-	 */
-	call: <TResult = unknown, TData = unknown>(
-		method: string,
-		data?: TData,
-		options?: { timeout?: number }
-	) => Promise<TResult>;
+  /**
+   * Make an RPC call (NON-BLOCKING - throws if not connected)
+   * @deprecated Use query() instead
+   * @throws {ConnectionNotReadyError} If not connected
+   */
+  call: <TResult = unknown, TData = unknown>(
+    method: string,
+    data?: TData,
+    options?: { timeout?: number }
+  ) => Promise<TResult>;
 
-	/**
-	 * Make an RPC call if connected, returns null if not (NON-BLOCKING)
-	 * Use this when you want to silently skip operations when disconnected
-	 */
-	callIfConnected: <TResult = unknown, TData = unknown>(
-		method: string,
-		data?: TData,
-		options?: { timeout?: number }
-	) => Promise<TResult | null>;
+  /**
+   * Make an RPC call if connected, returns null if not (NON-BLOCKING)
+   * Use this when you want to silently skip operations when disconnected
+   */
+  callIfConnected: <TResult = unknown, TData = unknown>(
+    method: string,
+    data?: TData,
+    options?: { timeout?: number }
+  ) => Promise<TResult | null>;
 
-	/**
-	 * Subscribe to events with optimistic registration (NON-BLOCKING)
-	 * Returns unsubscribe function immediately
-	 */
-	subscribe: <TData = unknown>(
-		method: string,
-		handler: EventHandler<TData>,
-		options?: SubscribeOptions
-	) => () => void;
+  /**
+   * Subscribe to events with optimistic registration (NON-BLOCKING)
+   * Returns unsubscribe function immediately
+   */
+  subscribe: <TData = unknown>(
+    method: string,
+    handler: EventHandler<TData>,
+    options?: SubscribeOptions
+  ) => () => void;
 
-	/**
-	 * Wait for connection to be established
-	 * @param timeout - Timeout in milliseconds (default: 10000)
-	 * @throws {ConnectionTimeoutError} If timeout exceeded
-	 */
-	waitForConnection: (timeout?: number) => Promise<void>;
+  /**
+   * Wait for connection to be established
+   * @param timeout - Timeout in milliseconds (default: 10000)
+   * @throws {ConnectionTimeoutError} If timeout exceeded
+   */
+  waitForConnection: (timeout?: number) => Promise<void>;
 
-	/**
-	 * Register a callback for when connection is established
-	 * If already connected, callback is called immediately
-	 * @returns Unsubscribe function
-	 */
-	onConnected: (callback: () => void) => () => void;
+  /**
+   * Register a callback for when connection is established
+   * If already connected, callback is called immediately
+   * @returns Unsubscribe function
+   */
+  onConnected: (callback: () => void) => () => void;
 }
 
 /**
@@ -198,264 +198,264 @@ export interface UseMessageHubResult {
  * ```
  */
 export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHubResult {
-	const { defaultTimeout = 10000, debug = false } = options;
+  const { defaultTimeout = 10000, debug = false } = options;
 
-	// Track active subscriptions for cleanup
-	const subscriptionsRef = useRef<Array<() => void>>([]);
+  // Track active subscriptions for cleanup
+  const subscriptionsRef = useRef<Array<() => void>>([]);
 
-	// Computed reactive connection state
-	const isConnected = useComputed(() => connectionState.value === 'connected');
-	const state = useComputed(() => connectionState.value);
+  // Computed reactive connection state
+  const isConnected = useComputed(() => connectionState.value === 'connected');
+  const state = useComputed(() => connectionState.value);
 
-	// Connection state tracking (for debug mode)
-	useEffect(() => {
-		if (debug) {
-			return connectionState.subscribe(() => {});
-		}
-	}, [debug]);
+  // Connection state tracking (for debug mode)
+  useEffect(() => {
+    if (debug) {
+      return connectionState.subscribe(() => {});
+    }
+  }, [debug]);
 
-	// Cleanup subscriptions on unmount
-	useEffect(() => {
-		return () => {
-			subscriptionsRef.current.forEach((unsub) => {
-				try {
-					unsub();
-				} catch {
-					// Ignore cleanup errors
-				}
-			});
-			subscriptionsRef.current = [];
-		};
-	}, []);
+  // Cleanup subscriptions on unmount
+  useEffect(() => {
+    return () => {
+      subscriptionsRef.current.forEach((unsub) => {
+        try {
+          unsub();
+        } catch {
+          // Ignore cleanup errors
+        }
+      });
+      subscriptionsRef.current = [];
+    };
+  }, []);
 
-	/**
-	 * Get the MessageHub if connected (NON-BLOCKING)
-	 */
-	const getHub = useCallback((): MessageHub | null => {
-		return connectionManager.getHubIfConnected();
-	}, []);
+  /**
+   * Get the MessageHub if connected (NON-BLOCKING)
+   */
+  const getHub = useCallback((): MessageHub | null => {
+    return connectionManager.getHubIfConnected();
+  }, []);
 
-	/**
-	 * Make a request call (request-response) (NON-BLOCKING - throws if not connected)
-	 */
-	const request = useCallback(
-		async <TResult = unknown, TData = unknown>(
-			method: string,
-			data?: TData,
-			callOptions?: { timeout?: number }
-		): Promise<TResult> => {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) {
-				throw new ConnectionNotReadyError(`Cannot call '${method}': not connected to server`);
-			}
-			return hub.request<TResult>(method, data, {
-				timeout: callOptions?.timeout ?? defaultTimeout,
-			});
-		},
-		[defaultTimeout]
-	);
+  /**
+   * Make a request call (request-response) (NON-BLOCKING - throws if not connected)
+   */
+  const request = useCallback(
+    async <TResult = unknown, TData = unknown>(
+      method: string,
+      data?: TData,
+      callOptions?: { timeout?: number }
+    ): Promise<TResult> => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) {
+        throw new ConnectionNotReadyError(`Cannot call '${method}': not connected to server`);
+      }
+      return hub.request<TResult>(method, data, {
+        timeout: callOptions?.timeout ?? defaultTimeout,
+      });
+    },
+    [defaultTimeout]
+  );
 
-	/**
-	 * Listen for events (replaces subscribe for new API)
-	 */
-	const onEvent = useCallback(
-		<TData = unknown>(
-			method: string,
-			handler: EventHandler<TData>,
-			_subOptions?: SubscribeOptions
-		): (() => void) => {
-			const hub = connectionManager.getHubIfConnected();
+  /**
+   * Listen for events (replaces subscribe for new API)
+   */
+  const onEvent = useCallback(
+    <TData = unknown>(
+      method: string,
+      handler: EventHandler<TData>,
+      _subOptions?: SubscribeOptions
+    ): (() => void) => {
+      const hub = connectionManager.getHubIfConnected();
 
-			if (!hub) {
-				// Queue subscription for when connected
-				let actualUnsub: (() => void) | null = null;
-				let cancelled = false;
+      if (!hub) {
+        // Queue subscription for when connected
+        let actualUnsub: (() => void) | null = null;
+        let cancelled = false;
 
-				const connectionUnsub = connectionManager.onceConnected(() => {
-					if (cancelled) return;
+        const connectionUnsub = connectionManager.onceConnected(() => {
+          if (cancelled) return;
 
-					const connectedHub = connectionManager.getHubIfConnected();
-					if (connectedHub) {
-						actualUnsub = connectedHub.onEvent(method, handler);
-					}
-				});
+          const connectedHub = connectionManager.getHubIfConnected();
+          if (connectedHub) {
+            actualUnsub = connectedHub.onEvent(method, handler);
+          }
+        });
 
-				// Return unsubscribe function
-				const unsub = () => {
-					cancelled = true;
-					connectionUnsub();
-					if (actualUnsub) {
-						actualUnsub();
-					}
-				};
+        // Return unsubscribe function
+        const unsub = () => {
+          cancelled = true;
+          connectionUnsub();
+          if (actualUnsub) {
+            actualUnsub();
+          }
+        };
 
-				// Track for cleanup
-				subscriptionsRef.current.push(unsub);
+        // Track for cleanup
+        subscriptionsRef.current.push(unsub);
 
-				return unsub;
-			}
+        return unsub;
+      }
 
-			// Already connected - subscribe immediately
-			const unsub = hub.onEvent(method, handler);
+      // Already connected - subscribe immediately
+      const unsub = hub.onEvent(method, handler);
 
-			// Track for cleanup
-			subscriptionsRef.current.push(unsub);
+      // Track for cleanup
+      subscriptionsRef.current.push(unsub);
 
-			return () => {
-				unsub();
-				// Remove from tracked subscriptions
-				const index = subscriptionsRef.current.indexOf(unsub);
-				if (index !== -1) {
-					subscriptionsRef.current.splice(index, 1);
-				}
-			};
-		},
-		[]
-	);
+      return () => {
+        unsub();
+        // Remove from tracked subscriptions
+        const index = subscriptionsRef.current.indexOf(unsub);
+        if (index !== -1) {
+          subscriptionsRef.current.splice(index, 1);
+        }
+      };
+    },
+    []
+  );
 
-	/**
-	 * Join a room
-	 */
-	const joinRoom = useCallback((room: string): void => {
-		const hub = connectionManager.getHubIfConnected();
-		if (hub) {
-			hub.joinChannel(room);
-		}
-	}, []);
+  /**
+   * Join a room
+   */
+  const joinRoom = useCallback((room: string): void => {
+    const hub = connectionManager.getHubIfConnected();
+    if (hub) {
+      hub.joinChannel(room);
+    }
+  }, []);
 
-	/**
-	 * Leave a room
-	 */
-	const leaveRoom = useCallback((room: string): void => {
-		const hub = connectionManager.getHubIfConnected();
-		if (hub) {
-			hub.leaveChannel(room);
-		}
-	}, []);
+  /**
+   * Leave a room
+   */
+  const leaveRoom = useCallback((room: string): void => {
+    const hub = connectionManager.getHubIfConnected();
+    if (hub) {
+      hub.leaveChannel(room);
+    }
+  }, []);
 
-	/**
-	 * Make an RPC call (NON-BLOCKING - throws if not connected)
-	 * @deprecated Use request() instead
-	 */
-	const call = useCallback(
-		async <TResult = unknown, TData = unknown>(
-			method: string,
-			data?: TData,
-			callOptions?: { timeout?: number }
-		): Promise<TResult> => {
-			return request<TResult, TData>(method, data, callOptions);
-		},
-		[request]
-	);
+  /**
+   * Make an RPC call (NON-BLOCKING - throws if not connected)
+   * @deprecated Use request() instead
+   */
+  const call = useCallback(
+    async <TResult = unknown, TData = unknown>(
+      method: string,
+      data?: TData,
+      callOptions?: { timeout?: number }
+    ): Promise<TResult> => {
+      return request<TResult, TData>(method, data, callOptions);
+    },
+    [request]
+  );
 
-	/**
-	 * Make an RPC call if connected, returns null otherwise (NON-BLOCKING)
-	 */
-	const callIfConnected = useCallback(
-		async <TResult = unknown, TData = unknown>(
-			method: string,
-			data?: TData,
-			callOptions?: { timeout?: number }
-		): Promise<TResult | null> => {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) {
-				return null;
-			}
-			return hub.request<TResult>(method, data, {
-				timeout: callOptions?.timeout ?? defaultTimeout,
-			});
-		},
-		[defaultTimeout]
-	);
+  /**
+   * Make an RPC call if connected, returns null otherwise (NON-BLOCKING)
+   */
+  const callIfConnected = useCallback(
+    async <TResult = unknown, TData = unknown>(
+      method: string,
+      data?: TData,
+      callOptions?: { timeout?: number }
+    ): Promise<TResult | null> => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) {
+        return null;
+      }
+      return hub.request<TResult>(method, data, {
+        timeout: callOptions?.timeout ?? defaultTimeout,
+      });
+    },
+    [defaultTimeout]
+  );
 
-	/**
-	 * Subscribe to events with optimistic registration (NON-BLOCKING)
-	 * @deprecated Use onEvent() instead
-	 */
-	const subscribe = useCallback(
-		<TData = unknown>(
-			method: string,
-			handler: EventHandler<TData>,
-			_subOptions?: SubscribeOptions
-		): (() => void) => {
-			const hub = connectionManager.getHubIfConnected();
+  /**
+   * Subscribe to events with optimistic registration (NON-BLOCKING)
+   * @deprecated Use onEvent() instead
+   */
+  const subscribe = useCallback(
+    <TData = unknown>(
+      method: string,
+      handler: EventHandler<TData>,
+      _subOptions?: SubscribeOptions
+    ): (() => void) => {
+      const hub = connectionManager.getHubIfConnected();
 
-			if (!hub) {
-				// Queue subscription for when connected
-				let actualUnsub: (() => void) | null = null;
-				let cancelled = false;
+      if (!hub) {
+        // Queue subscription for when connected
+        let actualUnsub: (() => void) | null = null;
+        let cancelled = false;
 
-				const connectionUnsub = connectionManager.onceConnected(() => {
-					if (cancelled) return;
+        const connectionUnsub = connectionManager.onceConnected(() => {
+          if (cancelled) return;
 
-					const connectedHub = connectionManager.getHubIfConnected();
-					if (connectedHub) {
-						actualUnsub = connectedHub.onEvent(method, handler);
-					}
-				});
+          const connectedHub = connectionManager.getHubIfConnected();
+          if (connectedHub) {
+            actualUnsub = connectedHub.onEvent(method, handler);
+          }
+        });
 
-				// Return unsubscribe function
-				const unsub = () => {
-					cancelled = true;
-					connectionUnsub();
-					if (actualUnsub) {
-						actualUnsub();
-					}
-				};
+        // Return unsubscribe function
+        const unsub = () => {
+          cancelled = true;
+          connectionUnsub();
+          if (actualUnsub) {
+            actualUnsub();
+          }
+        };
 
-				// Track for cleanup
-				subscriptionsRef.current.push(unsub);
+        // Track for cleanup
+        subscriptionsRef.current.push(unsub);
 
-				return unsub;
-			}
+        return unsub;
+      }
 
-			// Already connected - subscribe immediately
-			const unsub = hub.onEvent(method, handler);
+      // Already connected - subscribe immediately
+      const unsub = hub.onEvent(method, handler);
 
-			// Track for cleanup
-			subscriptionsRef.current.push(unsub);
+      // Track for cleanup
+      subscriptionsRef.current.push(unsub);
 
-			return () => {
-				unsub();
-				// Remove from tracked subscriptions
-				const index = subscriptionsRef.current.indexOf(unsub);
-				if (index !== -1) {
-					subscriptionsRef.current.splice(index, 1);
-				}
-			};
-		},
-		[]
-	);
+      return () => {
+        unsub();
+        // Remove from tracked subscriptions
+        const index = subscriptionsRef.current.indexOf(unsub);
+        if (index !== -1) {
+          subscriptionsRef.current.splice(index, 1);
+        }
+      };
+    },
+    []
+  );
 
-	/**
-	 * Wait for connection to be established
-	 */
-	const waitForConnection = useCallback(
-		(timeout?: number): Promise<void> => {
-			return connectionManager.onConnected(timeout ?? defaultTimeout);
-		},
-		[defaultTimeout]
-	);
+  /**
+   * Wait for connection to be established
+   */
+  const waitForConnection = useCallback(
+    (timeout?: number): Promise<void> => {
+      return connectionManager.onConnected(timeout ?? defaultTimeout);
+    },
+    [defaultTimeout]
+  );
 
-	/**
-	 * Register a callback for when connection is established
-	 */
-	const onConnected = useCallback((callback: () => void): (() => void) => {
-		return connectionManager.onceConnected(callback);
-	}, []);
+  /**
+   * Register a callback for when connection is established
+   */
+  const onConnected = useCallback((callback: () => void): (() => void) => {
+    return connectionManager.onceConnected(callback);
+  }, []);
 
-	return {
-		isConnected: isConnected.value,
-		state: state.value,
-		getHub,
-		request,
-		onEvent,
-		joinRoom,
-		leaveRoom,
-		call,
-		callIfConnected,
-		subscribe,
-		waitForConnection,
-		onConnected,
-	};
+  return {
+    isConnected: isConnected.value,
+    state: state.value,
+    getHub,
+    request,
+    onEvent,
+    joinRoom,
+    leaveRoom,
+    call,
+    callIfConnected,
+    subscribe,
+    waitForConnection,
+    onConnected,
+  };
 }

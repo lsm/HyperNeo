@@ -25,10 +25,10 @@
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@neokai/shared';
 import {
-	isSDKAssistantMessage,
-	isSDKResultMessage,
-	isSDKSystemInit,
-	isToolUseBlock,
+  isSDKAssistantMessage,
+  isSDKResultMessage,
+  isSDKSystemInit,
+  isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -36,10 +36,10 @@ type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 import { useEffect, useState } from 'preact/hooks';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import {
-	type AgentTurnBlock,
-	buildAgentTurns,
-	isUserRow,
-	normalizeAgentKey,
+  type AgentTurnBlock,
+  buildAgentTurns,
+  isUserRow,
+  normalizeAgentKey,
 } from '../space-task-thread-turns';
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
 import { DeliveryStateBadge } from '../../../ui/DeliveryStateBadge';
@@ -52,41 +52,41 @@ import { ToolIcon } from '../../../sdk/tools/ToolIcon';
 import { getToolColors, getToolDisplayName } from '../../../sdk/tools/tool-utils';
 
 interface MinimalThreadFeedProps {
-	parsedRows: ParsedThreadRow[];
-	/**
-	 * Labels of agents whose underlying sessions are currently executing.
-	 * The trailing non-terminal block **for each label in this set** renders as
-	 * the active turn (coloured rail, live tool roster, ticking elapsed clock).
-	 *
-	 * Per-agent rather than a single boolean: in multi-session workflows
-	 * (e.g. Coder + Reviewer interleaved), the Reviewer's terminal `result`
-	 * row can land *after* the Coder's last visible row. With a single
-	 * boolean + globally-trailing block check, that suppresses the Coder's
-	 * still-running rail because the global tail is now terminal. Keying
-	 * activity by agent label lets each agent's trailing block be upgraded
-	 * independently of what other agents emitted afterwards.
-	 *
-	 * Labels are matched case-insensitively / whitespace-insensitively against
-	 * each block's `agentLabel` so activity-member labels (which are run
-	 * through a title-casing helper on the daemon) collide with raw row
-	 * labels (e.g. "coder agent" → "Coder Agent").
-	 */
-	activeAgentLabels?: ReadonlySet<string>;
-	/**
-	 * Server-derived activity summaries — one per session with an active
-	 * (non-terminal) turn. The roster on each active feed turn is built from
-	 * the matching summary's full entry list, so the rail stays accurate even
-	 * when the compact feed has dropped older non-terminal rows from the
-	 * trailing turn. Empty array when no session is mid-turn.
-	 *
-	 * Optional for backwards-compatibility with tests / call sites that
-	 * haven't been updated; an absent payload silently falls back to no
-	 * roster (rather than the previous client-side derivation, which is now
-	 * gone).
-	 */
-	activeTurnSummaries?: ActiveTurnSummary[];
-	/** Task id used to preserve node-agent task messaging when opening overlays. */
-	overlayTaskId?: string;
+  parsedRows: ParsedThreadRow[];
+  /**
+   * Labels of agents whose underlying sessions are currently executing.
+   * The trailing non-terminal block **for each label in this set** renders as
+   * the active turn (coloured rail, live tool roster, ticking elapsed clock).
+   *
+   * Per-agent rather than a single boolean: in multi-session workflows
+   * (e.g. Coder + Reviewer interleaved), the Reviewer's terminal `result`
+   * row can land *after* the Coder's last visible row. With a single
+   * boolean + globally-trailing block check, that suppresses the Coder's
+   * still-running rail because the global tail is now terminal. Keying
+   * activity by agent label lets each agent's trailing block be upgraded
+   * independently of what other agents emitted afterwards.
+   *
+   * Labels are matched case-insensitively / whitespace-insensitively against
+   * each block's `agentLabel` so activity-member labels (which are run
+   * through a title-casing helper on the daemon) collide with raw row
+   * labels (e.g. "coder agent" → "Coder Agent").
+   */
+  activeAgentLabels?: ReadonlySet<string>;
+  /**
+   * Server-derived activity summaries — one per session with an active
+   * (non-terminal) turn. The roster on each active feed turn is built from
+   * the matching summary's full entry list, so the rail stays accurate even
+   * when the compact feed has dropped older non-terminal rows from the
+   * trailing turn. Empty array when no session is mid-turn.
+   *
+   * Optional for backwards-compatibility with tests / call sites that
+   * haven't been updated; an absent payload silently falls back to no
+   * roster (rather than the previous client-side derivation, which is now
+   * gone).
+   */
+  activeTurnSummaries?: ActiveTurnSummary[];
+  /** Task id used to preserve node-agent task messaging when opening overlays. */
+  overlayTaskId?: string;
 }
 
 /**
@@ -107,131 +107,131 @@ interface MinimalThreadFeedProps {
  * from the wire format.
  */
 interface RosterToolEntry {
-	kind: 'tool';
-	tool: string;
-	preview: string;
-	ts: number;
+  kind: 'tool';
+  tool: string;
+  preview: string;
+  ts: number;
 }
 interface RosterMessageEntry {
-	kind: 'message';
-	text: string;
-	ts: number;
+  kind: 'message';
+  text: string;
+  ts: number;
 }
 interface RosterThinkingEntry {
-	kind: 'thinking';
-	preview: string;
-	ts: number;
+  kind: 'thinking';
+  preview: string;
+  ts: number;
 }
 interface RosterUserEntry {
-	kind: 'user';
-	text: string;
-	ts: number;
+  kind: 'user';
+  text: string;
+  ts: number;
 }
 interface RosterHandoffEntry {
-	kind: 'handoff';
-	text: string;
-	ts: number;
+  kind: 'handoff';
+  text: string;
+  ts: number;
 }
 type ActiveRosterEntry =
-	| RosterToolEntry
-	| RosterMessageEntry
-	| RosterThinkingEntry
-	| RosterUserEntry
-	| RosterHandoffEntry;
+  | RosterToolEntry
+  | RosterMessageEntry
+  | RosterThinkingEntry
+  | RosterUserEntry
+  | RosterHandoffEntry;
 
 const TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS = 'max-w-[85%] md:max-w-[86%]';
 const TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS = 'max-w-full md:max-w-[86%]';
 
 interface CompletedFeedTurn {
-	state: 'completed';
-	id: string;
-	agent: string;
-	agentKind: 'task_agent' | 'node_agent';
-	agentRole: string;
-	agentNodeExecutionId?: string | null;
-	startedAt: number;
-	durationSec: number;
-	toolCalls: number;
-	messages: number;
-	lastMessage: string;
-	fallback: boolean;
-	/**
-	 * Session id that produced this turn's reply text. Used by the
-	 * "open in session" affordance so clicking the button lands the user
-	 * on the right session even when multiple sessions are interleaved
-	 * in the feed. Null when the underlying row had no resolvable session.
-	 */
-	sessionId: string | null;
-	/**
-	 * SDK message UUID of the row whose text was surfaced as `lastMessage`.
-	 * Forwarded as `highlightMessageId` to the slide-over so that message
-	 * is scrolled to + briefly highlighted on open. May be undefined when
-	 * we fell back to `fallbackText` and no SDK message was available.
-	 */
-	highlightMessageUuid?: string;
-	/**
-	 * SDK `result` envelope for the exec that produced this turn. When
-	 * present, the actions row renders a result-info dropdown surfacing
-	 * usage tokens / cost / duration / errors. Undefined when the block
-	 * is non-terminal (e.g. the trailing fragment of a still-running
-	 * exec) — the result message hasn't arrived yet.
-	 */
-	resultInfo?: ResultMessage;
+  state: 'completed';
+  id: string;
+  agent: string;
+  agentKind: 'task_agent' | 'node_agent';
+  agentRole: string;
+  agentNodeExecutionId?: string | null;
+  startedAt: number;
+  durationSec: number;
+  toolCalls: number;
+  messages: number;
+  lastMessage: string;
+  fallback: boolean;
+  /**
+   * Session id that produced this turn's reply text. Used by the
+   * "open in session" affordance so clicking the button lands the user
+   * on the right session even when multiple sessions are interleaved
+   * in the feed. Null when the underlying row had no resolvable session.
+   */
+  sessionId: string | null;
+  /**
+   * SDK message UUID of the row whose text was surfaced as `lastMessage`.
+   * Forwarded as `highlightMessageId` to the slide-over so that message
+   * is scrolled to + briefly highlighted on open. May be undefined when
+   * we fell back to `fallbackText` and no SDK message was available.
+   */
+  highlightMessageUuid?: string;
+  /**
+   * SDK `result` envelope for the exec that produced this turn. When
+   * present, the actions row renders a result-info dropdown surfacing
+   * usage tokens / cost / duration / errors. Undefined when the block
+   * is non-terminal (e.g. the trailing fragment of a still-running
+   * exec) — the result message hasn't arrived yet.
+   */
+  resultInfo?: ResultMessage;
 }
 
 interface ActiveFeedTurn {
-	state: 'active';
-	id: string;
-	agent: string;
-	agentKind: 'task_agent' | 'node_agent';
-	agentRole: string;
-	agentNodeExecutionId?: string | null;
-	startedAt: number;
-	status: string;
-	toolCalls: number;
-	messages: number;
-	thinkingEntries: number | null;
-	messageEntries: number | null;
-	toolEntries: number | null;
-	lastEventAt: number;
-	roster: ActiveRosterEntry[];
-	/** Session id for the still-running turn; used by the agent header open affordance. */
-	sessionId: string | null;
+  state: 'active';
+  id: string;
+  agent: string;
+  agentKind: 'task_agent' | 'node_agent';
+  agentRole: string;
+  agentNodeExecutionId?: string | null;
+  startedAt: number;
+  status: string;
+  toolCalls: number;
+  messages: number;
+  thinkingEntries: number | null;
+  messageEntries: number | null;
+  toolEntries: number | null;
+  lastEventAt: number;
+  roster: ActiveRosterEntry[];
+  /** Session id for the still-running turn; used by the agent header open affordance. */
+  sessionId: string | null;
 }
 
 interface MessageFeedTurn {
-	state: 'message';
-	id: string;
-	/** Human-readable sender label (e.g. "User", "Reviewer Agent"). */
-	fromLabel: string;
-	/** Recipient agent label — the session this row belongs to. */
-	toLabel: string;
-	/** Recipient agent kind, used to avoid node-agent routing for Task Agent sessions. */
-	toKind: 'task_agent' | 'node_agent';
-	/** Raw workflow slot/role name for routing task messages. */
-	toRole: string;
-	/** Node execution id for exact routing to duplicate-named node agents. */
-	toNodeExecutionId?: string | null;
-	/** Rendered message text (markdown when not fallback). */
-	body: string;
-	bodyIsFallback: boolean;
-	createdAt: number;
-	/** True for synthetic agent→agent / system handoffs; false for human input. */
-	isSynthetic: boolean;
-	/** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
-	sessionId: string | null;
-	/** User-message delivery state, shown as a small send-state badge. */
-	deliveryState?: ActorMessageDeliveryState | null;
-	/** SDK message UUID, used to deep-link the slide-over. */
-	highlightMessageUuid?: string;
-	/**
-	 * SDK `system:init` envelope for the recipient agent's exec — the agent
-	 * state this user message landed in. When present, the actions row
-	 * renders an info-circle dropdown surfacing model / cwd / tools / mcp
-	 * servers. Undefined when no init message exists in the same logical
-	 * block (e.g. for replays, or messages that didn't trigger a new exec).
-	 */
-	sessionInit?: SystemInitMessage;
+  state: 'message';
+  id: string;
+  /** Human-readable sender label (e.g. "User", "Reviewer Agent"). */
+  fromLabel: string;
+  /** Recipient agent label — the session this row belongs to. */
+  toLabel: string;
+  /** Recipient agent kind, used to avoid node-agent routing for Task Agent sessions. */
+  toKind: 'task_agent' | 'node_agent';
+  /** Raw workflow slot/role name for routing task messages. */
+  toRole: string;
+  /** Node execution id for exact routing to duplicate-named node agents. */
+  toNodeExecutionId?: string | null;
+  /** Rendered message text (markdown when not fallback). */
+  body: string;
+  bodyIsFallback: boolean;
+  createdAt: number;
+  /** True for synthetic agent→agent / system handoffs; false for human input. */
+  isSynthetic: boolean;
+  /** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
+  sessionId: string | null;
+  /** User-message delivery state, shown as a small send-state badge. */
+  deliveryState?: ActorMessageDeliveryState | null;
+  /** SDK message UUID, used to deep-link the slide-over. */
+  highlightMessageUuid?: string;
+  /**
+   * SDK `system:init` envelope for the recipient agent's exec — the agent
+   * state this user message landed in. When present, the actions row
+   * renders an info-circle dropdown surfacing model / cwd / tools / mcp
+   * servers. Undefined when no init message exists in the same logical
+   * block (e.g. for replays, or messages that didn't trigger a new exec).
+   */
+  sessionInit?: SystemInitMessage;
 }
 
 type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
@@ -239,12 +239,12 @@ type FeedTurn = CompletedFeedTurn | ActiveFeedTurn | MessageFeedTurn;
 const ROSTER_MAX_ENTRIES = 8;
 
 function getToolUseContentBlocks(row: ParsedThreadRow) {
-	if (!row.message || !isSDKAssistantMessage(row.message)) return [];
-	const content = (row.message as { message?: { content?: unknown } }).message?.content;
-	if (!Array.isArray(content)) return [];
-	return content.filter((block): block is { type: 'tool_use'; name: string; input?: unknown } =>
-		isToolUseBlock(block as never)
-	);
+  if (!row.message || !isSDKAssistantMessage(row.message)) return [];
+  const content = (row.message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return [];
+  return content.filter((block): block is { type: 'tool_use'; name: string; input?: unknown } =>
+    isToolUseBlock(block as never)
+  );
 }
 
 /**
@@ -260,16 +260,16 @@ function getToolUseContentBlocks(row: ParsedThreadRow) {
  * future server change relaxes the filter.
  */
 function rosterEntriesFromSummary(
-	summary: ActiveTurnSummary | undefined,
-	maxEntries: number
+  summary: ActiveTurnSummary | undefined,
+  maxEntries: number
 ): ActiveRosterEntry[] {
-	if (!summary) return [];
-	const out: ActiveRosterEntry[] = [];
-	for (const entry of summary.entries) {
-		const mapped = mapActivityEntry(entry);
-		if (mapped) out.push(mapped);
-	}
-	return out.slice(-maxEntries);
+  if (!summary) return [];
+  const out: ActiveRosterEntry[] = [];
+  for (const entry of summary.entries) {
+    const mapped = mapActivityEntry(entry);
+    if (mapped) out.push(mapped);
+  }
+  return out.slice(-maxEntries);
 }
 
 /**
@@ -280,41 +280,41 @@ function rosterEntriesFromSummary(
  * `.trim()`.
  */
 function asTrimmedString(value: unknown): string {
-	return typeof value === 'string' ? value.trim() : '';
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
-	switch (entry.kind) {
-		case 'tool_use':
-			return {
-				kind: 'tool',
-				tool: typeof entry.toolName === 'string' ? entry.toolName : '',
-				preview: typeof entry.preview === 'string' ? entry.preview : '',
-				ts: entry.ts,
-			};
-		case 'text': {
-			const text = asTrimmedString(entry.text);
-			if (!text) return null;
-			return { kind: 'message', text, ts: entry.ts };
-		}
-		case 'thinking': {
-			const preview = asTrimmedString(entry.preview);
-			if (!preview) return null;
-			return { kind: 'thinking', preview, ts: entry.ts };
-		}
-		case 'user_message': {
-			const text = asTrimmedString(entry.text);
-			if (!text) return null;
-			return { kind: 'user', text, ts: entry.ts };
-		}
-		case 'agent_handoff': {
-			const text = asTrimmedString(entry.text);
-			if (!text) return null;
-			return { kind: 'handoff', text, ts: entry.ts };
-		}
-		default:
-			return null;
-	}
+  switch (entry.kind) {
+    case 'tool_use':
+      return {
+        kind: 'tool',
+        tool: typeof entry.toolName === 'string' ? entry.toolName : '',
+        preview: typeof entry.preview === 'string' ? entry.preview : '',
+        ts: entry.ts,
+      };
+    case 'text': {
+      const text = asTrimmedString(entry.text);
+      if (!text) return null;
+      return { kind: 'message', text, ts: entry.ts };
+    }
+    case 'thinking': {
+      const preview = asTrimmedString(entry.preview);
+      if (!preview) return null;
+      return { kind: 'thinking', preview, ts: entry.ts };
+    }
+    case 'user_message': {
+      const text = asTrimmedString(entry.text);
+      if (!text) return null;
+      return { kind: 'user', text, ts: entry.ts };
+    }
+    case 'agent_handoff': {
+      const text = asTrimmedString(entry.text);
+      if (!text) return null;
+      return { kind: 'handoff', text, ts: entry.ts };
+    }
+    default:
+      return null;
+  }
 }
 
 /**
@@ -323,83 +323,83 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
  * fall back to the parsed rows when no summary is available.
  */
 function countToolCallsForActive(
-	rows: ParsedThreadRow[],
-	summary: ActiveTurnSummary | undefined
+  rows: ParsedThreadRow[],
+  summary: ActiveTurnSummary | undefined
 ): number {
-	if (summary) {
-		let n = 0;
-		for (const e of summary.entries) {
-			if (e.kind === 'tool_use') n += 1;
-		}
-		return n;
-	}
-	let n = 0;
-	for (const row of rows) {
-		n += getToolUseContentBlocks(row).length;
-	}
-	return n;
+  if (summary) {
+    let n = 0;
+    for (const e of summary.entries) {
+      if (e.kind === 'tool_use') n += 1;
+    }
+    return n;
+  }
+  let n = 0;
+  for (const row of rows) {
+    n += getToolUseContentBlocks(row).length;
+  }
+  return n;
 }
 
 function countToolCalls(rows: ParsedThreadRow[]): number {
-	let n = 0;
-	for (const row of rows) {
-		n += getToolUseContentBlocks(row).length;
-	}
-	return n;
+  let n = 0;
+  for (const row of rows) {
+    n += getToolUseContentBlocks(row).length;
+  }
+  return n;
 }
 
 function countSummaryEntries(
-	summary: ActiveTurnSummary | undefined,
-	kind: ActivityEntry['kind']
+  summary: ActiveTurnSummary | undefined,
+  kind: ActivityEntry['kind']
 ): number | null {
-	if (!summary) return null;
-	let n = 0;
-	for (const entry of summary.entries) {
-		if (entry.kind === kind) n += 1;
-	}
-	return n;
+  if (!summary) return null;
+  let n = 0;
+  for (const entry of summary.entries) {
+    if (entry.kind === kind) n += 1;
+  }
+  return n;
 }
 
 function countMessagesForActive(rows: ParsedThreadRow[]): number {
-	return rows.length;
+  return rows.length;
 }
 
 function latestActivityTimestamp(
-	summary: ActiveTurnSummary | undefined,
-	rows: ParsedThreadRow[]
+  summary: ActiveTurnSummary | undefined,
+  rows: ParsedThreadRow[]
 ): number {
-	const lastEntry = summary?.entries[summary.entries.length - 1];
-	return lastEntry?.ts ?? rows[rows.length - 1]?.createdAt ?? Date.now();
+  const lastEntry = summary?.entries[summary.entries.length - 1];
+  return lastEntry?.ts ?? rows[rows.length - 1]?.createdAt ?? Date.now();
 }
 
 function latestTurnIndex(rows: ParsedThreadRow[]): number | undefined {
-	for (let i = rows.length - 1; i >= 0; i--) {
-		if (typeof rows[i].turnIndex === 'number') return rows[i].turnIndex;
-	}
-	return undefined;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (typeof rows[i].turnIndex === 'number') return rows[i].turnIndex;
+  }
+  return undefined;
 }
 
 function summaryMatchesTurn(
-	summary: ActiveTurnSummary | undefined,
-	rows: ParsedThreadRow[]
+  summary: ActiveTurnSummary | undefined,
+  rows: ParsedThreadRow[]
 ): ActiveTurnSummary | undefined {
-	if (!summary) return undefined;
-	const turnIndex = latestTurnIndex(rows);
-	return turnIndex !== undefined && summary.turnIndex === turnIndex ? summary : undefined;
+  if (!summary) return undefined;
+  const turnIndex = latestTurnIndex(rows);
+  return turnIndex !== undefined && summary.turnIndex === turnIndex ? summary : undefined;
 }
 
 function rowsContainResult(
-	rows: ParsedThreadRow[],
-	resultInfo: ResultMessage | undefined
+  rows: ParsedThreadRow[],
+  resultInfo: ResultMessage | undefined
 ): boolean {
-	return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
+  return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
 }
 
 function latestSessionId(rows: ParsedThreadRow[]): string | null {
-	for (let i = rows.length - 1; i >= 0; i--) {
-		if (rows[i].sessionId) return rows[i].sessionId;
-	}
-	return null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].sessionId) return rows[i].sessionId;
+  }
+  return null;
 }
 
 /**
@@ -424,118 +424,118 @@ function latestSessionId(rows: ParsedThreadRow[]): string | null {
  * back to the original SDK message (sessionId + uuid) for the slide-over.
  */
 function extractLastAssistantText(rows: ParsedThreadRow[]): {
-	text: string;
-	fallback: boolean;
-	sourceRow: ParsedThreadRow | null;
+  text: string;
+  fallback: boolean;
+  sourceRow: ParsedThreadRow | null;
 } {
-	let resultFallback: { text: string; sourceRow: ParsedThreadRow } | null = null;
+  let resultFallback: { text: string; sourceRow: ParsedThreadRow } | null = null;
 
-	for (let i = rows.length - 1; i >= 0; i--) {
-		const row = rows[i];
-		if (!row.message) continue;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (!row.message) continue;
 
-		// Result-success rows carry the agent's final reply on `.result`.
-		// Capture the most recent one as a fallback — but keep walking in case
-		// there is an assistant message above it we'd rather highlight.
-		if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
-			if (!resultFallback) {
-				const result = (row.message as { result?: unknown }).result;
-				if (typeof result === 'string' && result.trim().length > 0) {
-					resultFallback = { text: result.trim(), sourceRow: row };
-				}
-			}
-			continue;
-		}
+    // Result-success rows carry the agent's final reply on `.result`.
+    // Capture the most recent one as a fallback — but keep walking in case
+    // there is an assistant message above it we'd rather highlight.
+    if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
+      if (!resultFallback) {
+        const result = (row.message as { result?: unknown }).result;
+        if (typeof result === 'string' && result.trim().length > 0) {
+          resultFallback = { text: result.trim(), sourceRow: row };
+        }
+      }
+      continue;
+    }
 
-		if (!isSDKAssistantMessage(row.message)) continue;
-		const content = (row.message as { message?: { content?: unknown } }).message?.content;
-		if (!Array.isArray(content)) continue;
-		const texts = content
-			.filter(
-				(block): block is { type: 'text'; text: string } =>
-					typeof (block as { type?: unknown }).type === 'string' &&
-					(block as { type?: unknown }).type === 'text' &&
-					typeof (block as { text?: unknown }).text === 'string'
-			)
-			.map((block) => block.text.trim())
-			.filter((s) => s.length > 0);
-		if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false, sourceRow: row };
-	}
+    if (!isSDKAssistantMessage(row.message)) continue;
+    const content = (row.message as { message?: { content?: unknown } }).message?.content;
+    if (!Array.isArray(content)) continue;
+    const texts = content
+      .filter(
+        (block): block is { type: 'text'; text: string } =>
+          typeof (block as { type?: unknown }).type === 'string' &&
+          (block as { type?: unknown }).type === 'text' &&
+          typeof (block as { text?: unknown }).text === 'string'
+      )
+      .map((block) => block.text.trim())
+      .filter((s) => s.length > 0);
+    if (texts.length > 0) return { text: texts.join('\n\n'), fallback: false, sourceRow: row };
+  }
 
-	// No assistant text anywhere in the turn — fall back to the result envelope.
-	if (resultFallback) {
-		return { text: resultFallback.text, fallback: false, sourceRow: resultFallback.sourceRow };
-	}
+  // No assistant text anywhere in the turn — fall back to the result envelope.
+  if (resultFallback) {
+    return { text: resultFallback.text, fallback: false, sourceRow: resultFallback.sourceRow };
+  }
 
-	const tail = rows[rows.length - 1] ?? null;
-	const tailFallback = tail?.fallbackText ?? '';
-	return { text: tailFallback, fallback: true, sourceRow: tail };
+  const tail = rows[rows.length - 1] ?? null;
+  const tailFallback = tail?.fallbackText ?? '';
+  return { text: tailFallback, fallback: true, sourceRow: tail };
 }
 
 function buildCompletedTurn(
-	block: AgentTurnBlock,
-	rows: ParsedThreadRow[],
-	turnId: string,
-	resultInfo: ResultMessage | undefined,
-	transitionSummary: ActiveTurnSummary | undefined = undefined
+  block: AgentTurnBlock,
+  rows: ParsedThreadRow[],
+  turnId: string,
+  resultInfo: ResultMessage | undefined,
+  transitionSummary: ActiveTurnSummary | undefined = undefined
 ): CompletedFeedTurn {
-	const startedAt = rows[0].createdAt;
-	const lastRow = rows[rows.length - 1];
-	const resultRow = resultInfo ? rows.find((row) => row.message === resultInfo) : undefined;
-	const endedAt = resultRow?.createdAt ?? lastRow.createdAt;
-	const durationMs = Math.max(0, endedAt - startedAt);
-	const durationSec = Math.max(1, Math.round(durationMs / 1000));
-	const { text, fallback, sourceRow } = extractLastAssistantText(rows);
-	const highlightSource = sourceRow ?? lastRow;
-	const highlightUuid =
-		highlightSource?.message &&
-		typeof (highlightSource.message as { uuid?: unknown }).uuid === 'string'
-			? ((highlightSource.message as { uuid: string }).uuid as string)
-			: undefined;
-	return {
-		state: 'completed',
-		id: turnId,
-		agent: block.agentLabel,
-		agentKind: rows[0]?.kind ?? 'task_agent',
-		agentRole: rows[0]?.role ?? block.agentLabel,
-		agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
-		startedAt,
-		durationSec,
-		toolCalls: countSummaryEntries(transitionSummary, 'tool_use') ?? countToolCalls(rows),
-		messages: rows.length,
-		lastMessage: text,
-		fallback,
-		sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
-		highlightMessageUuid: highlightUuid,
-		resultInfo,
-	};
+  const startedAt = rows[0].createdAt;
+  const lastRow = rows[rows.length - 1];
+  const resultRow = resultInfo ? rows.find((row) => row.message === resultInfo) : undefined;
+  const endedAt = resultRow?.createdAt ?? lastRow.createdAt;
+  const durationMs = Math.max(0, endedAt - startedAt);
+  const durationSec = Math.max(1, Math.round(durationMs / 1000));
+  const { text, fallback, sourceRow } = extractLastAssistantText(rows);
+  const highlightSource = sourceRow ?? lastRow;
+  const highlightUuid =
+    highlightSource?.message &&
+    typeof (highlightSource.message as { uuid?: unknown }).uuid === 'string'
+      ? ((highlightSource.message as { uuid: string }).uuid as string)
+      : undefined;
+  return {
+    state: 'completed',
+    id: turnId,
+    agent: block.agentLabel,
+    agentKind: rows[0]?.kind ?? 'task_agent',
+    agentRole: rows[0]?.role ?? block.agentLabel,
+    agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
+    startedAt,
+    durationSec,
+    toolCalls: countSummaryEntries(transitionSummary, 'tool_use') ?? countToolCalls(rows),
+    messages: rows.length,
+    lastMessage: text,
+    fallback,
+    sessionId: highlightSource?.sessionId ?? lastRow.sessionId,
+    highlightMessageUuid: highlightUuid,
+    resultInfo,
+  };
 }
 
 function buildActiveTurn(
-	block: AgentTurnBlock,
-	rows: ParsedThreadRow[],
-	turnId: string,
-	summary: ActiveTurnSummary | undefined,
-	sessionId: string | null
+  block: AgentTurnBlock,
+  rows: ParsedThreadRow[],
+  turnId: string,
+  summary: ActiveTurnSummary | undefined,
+  sessionId: string | null
 ): ActiveFeedTurn {
-	return {
-		state: 'active',
-		id: turnId,
-		agent: block.agentLabel,
-		agentKind: rows[0]?.kind ?? 'task_agent',
-		agentRole: rows[0]?.role ?? block.agentLabel,
-		agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
-		startedAt: rows[0].createdAt,
-		status: 'Running…',
-		toolCalls: countToolCallsForActive(rows, summary),
-		messages: countMessagesForActive(rows),
-		thinkingEntries: countSummaryEntries(summary, 'thinking'),
-		messageEntries: countSummaryEntries(summary, 'text'),
-		toolEntries: countSummaryEntries(summary, 'tool_use'),
-		lastEventAt: latestActivityTimestamp(summary, rows),
-		roster: rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES),
-		sessionId,
-	};
+  return {
+    state: 'active',
+    id: turnId,
+    agent: block.agentLabel,
+    agentKind: rows[0]?.kind ?? 'task_agent',
+    agentRole: rows[0]?.role ?? block.agentLabel,
+    agentNodeExecutionId: rows[0]?.nodeExecutionId ?? null,
+    startedAt: rows[0].createdAt,
+    status: 'Running…',
+    toolCalls: countToolCallsForActive(rows, summary),
+    messages: countMessagesForActive(rows),
+    thinkingEntries: countSummaryEntries(summary, 'thinking'),
+    messageEntries: countSummaryEntries(summary, 'text'),
+    toolEntries: countSummaryEntries(summary, 'tool_use'),
+    lastEventAt: latestActivityTimestamp(summary, rows),
+    roster: rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES),
+    sessionId,
+  };
 }
 
 /**
@@ -554,38 +554,38 @@ function buildActiveTurn(
  * missing.
  */
 function extractSenderLabel(
-	message: SDKMessage,
-	previousAgentLabel: string | null
+  message: SDKMessage,
+  previousAgentLabel: string | null
 ): { label: string; isSynthetic: boolean } {
-	const m = message as SDKMessage & {
-		origin?: unknown;
-		isSynthetic?: boolean;
-		isReplay?: boolean;
-	};
-	const isSynthetic = !!m.isSynthetic || !!m.isReplay;
-	const origin = m.origin;
+  const m = message as SDKMessage & {
+    origin?: unknown;
+    isSynthetic?: boolean;
+    isReplay?: boolean;
+  };
+  const isSynthetic = !!m.isSynthetic || !!m.isReplay;
+  const origin = m.origin;
 
-	if (typeof origin === 'string') {
-		if (origin === 'system') return { label: 'System', isSynthetic: true };
-		if (origin === 'human') return { label: 'User', isSynthetic: false };
-	}
+  if (typeof origin === 'string') {
+    if (origin === 'system') return { label: 'System', isSynthetic: true };
+    if (origin === 'human') return { label: 'User', isSynthetic: false };
+  }
 
-	if (typeof origin === 'object' && origin !== null) {
-		const o = origin as { kind?: string; from?: string; name?: string; server?: string };
-		if (o.kind === 'human') return { label: 'User', isSynthetic: false };
-		if (o.kind === 'peer') {
-			return { label: o.name ?? o.from ?? previousAgentLabel ?? 'Peer Agent', isSynthetic: true };
-		}
-		if (o.kind === 'channel') return { label: o.server ?? 'Channel', isSynthetic: true };
-		if (o.kind === 'task-notification') return { label: 'Task', isSynthetic: true };
-		if (o.kind === 'coordinator') return { label: 'Coordinator', isSynthetic: true };
-	}
+  if (typeof origin === 'object' && origin !== null) {
+    const o = origin as { kind?: string; from?: string; name?: string; server?: string };
+    if (o.kind === 'human') return { label: 'User', isSynthetic: false };
+    if (o.kind === 'peer') {
+      return { label: o.name ?? o.from ?? previousAgentLabel ?? 'Peer Agent', isSynthetic: true };
+    }
+    if (o.kind === 'channel') return { label: o.server ?? 'Channel', isSynthetic: true };
+    if (o.kind === 'task-notification') return { label: 'Task', isSynthetic: true };
+    if (o.kind === 'coordinator') return { label: 'Coordinator', isSynthetic: true };
+  }
 
-	if (isSynthetic && previousAgentLabel) {
-		return { label: previousAgentLabel, isSynthetic: true };
-	}
-	if (isSynthetic) return { label: 'Agent', isSynthetic: true };
-	return { label: 'User', isSynthetic: false };
+  if (isSynthetic && previousAgentLabel) {
+    return { label: previousAgentLabel, isSynthetic: true };
+  }
+  if (isSynthetic) return { label: 'Agent', isSynthetic: true };
+  return { label: 'User', isSynthetic: false };
 }
 
 /**
@@ -593,57 +593,57 @@ function extractSenderLabel(
  * back to the row's fallbackText when the message can't be parsed.
  */
 function extractUserMessageText(row: ParsedThreadRow): { body: string; fallback: boolean } {
-	if (!row.message) {
-		return { body: row.fallbackText ?? '', fallback: true };
-	}
-	const apiMessage = (row.message as { message?: { content?: unknown } }).message;
-	const content = apiMessage?.content;
-	if (typeof content === 'string') return { body: content.trim(), fallback: false };
-	if (Array.isArray(content)) {
-		const parts: string[] = [];
-		for (const block of content) {
-			const b = block as { type?: unknown; text?: unknown };
-			if (b.type === 'text' && typeof b.text === 'string') {
-				parts.push(b.text);
-			}
-		}
-		const joined = parts.join('\n\n').trim();
-		return { body: joined, fallback: false };
-	}
-	return { body: '', fallback: false };
+  if (!row.message) {
+    return { body: row.fallbackText ?? '', fallback: true };
+  }
+  const apiMessage = (row.message as { message?: { content?: unknown } }).message;
+  const content = apiMessage?.content;
+  if (typeof content === 'string') return { body: content.trim(), fallback: false };
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      const b = block as { type?: unknown; text?: unknown };
+      if (b.type === 'text' && typeof b.text === 'string') {
+        parts.push(b.text);
+      }
+    }
+    const joined = parts.join('\n\n').trim();
+    return { body: joined, fallback: false };
+  }
+  return { body: '', fallback: false };
 }
 
 function buildMessageTurn(
-	row: ParsedThreadRow,
-	previousAgentLabel: string | null,
-	sessionInit: SystemInitMessage | undefined
+  row: ParsedThreadRow,
+  previousAgentLabel: string | null,
+  sessionInit: SystemInitMessage | undefined
 ): MessageFeedTurn {
-	const { label: fromLabel, isSynthetic } = extractSenderLabel(
-		row.message ?? ({} as SDKMessage),
-		previousAgentLabel
-	);
-	const { body, fallback } = extractUserMessageText(row);
-	const highlightUuid =
-		row.message && typeof (row.message as { uuid?: unknown }).uuid === 'string'
-			? ((row.message as { uuid: string }).uuid as string)
-			: undefined;
-	return {
-		state: 'message',
-		id: `msg-${String(row.id)}`,
-		fromLabel,
-		toLabel: row.label,
-		toKind: row.kind,
-		toRole: row.role,
-		toNodeExecutionId: row.nodeExecutionId ?? null,
-		body,
-		bodyIsFallback: fallback,
-		createdAt: row.createdAt,
-		isSynthetic,
-		deliveryState: row.deliveryState ?? null,
-		sessionId: row.sessionId,
-		highlightMessageUuid: highlightUuid,
-		sessionInit,
-	};
+  const { label: fromLabel, isSynthetic } = extractSenderLabel(
+    row.message ?? ({} as SDKMessage),
+    previousAgentLabel
+  );
+  const { body, fallback } = extractUserMessageText(row);
+  const highlightUuid =
+    row.message && typeof (row.message as { uuid?: unknown }).uuid === 'string'
+      ? ((row.message as { uuid: string }).uuid as string)
+      : undefined;
+  return {
+    state: 'message',
+    id: `msg-${String(row.id)}`,
+    fromLabel,
+    toLabel: row.label,
+    toKind: row.kind,
+    toRole: row.role,
+    toNodeExecutionId: row.nodeExecutionId ?? null,
+    body,
+    bodyIsFallback: fallback,
+    createdAt: row.createdAt,
+    isSynthetic,
+    deliveryState: row.deliveryState ?? null,
+    sessionId: row.sessionId,
+    highlightMessageUuid: highlightUuid,
+    sessionInit,
+  };
 }
 
 /**
@@ -657,21 +657,21 @@ function buildMessageTurn(
  *     happens to contain multiple (rare; mostly defensive).
  */
 function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
-	init: SystemInitMessage | undefined;
-	result: ResultMessage | undefined;
+  init: SystemInitMessage | undefined;
+  result: ResultMessage | undefined;
 } {
-	let init: SystemInitMessage | undefined;
-	let result: ResultMessage | undefined;
-	for (const row of rows) {
-		if (!row.message) continue;
-		if (!init && isSDKSystemInit(row.message)) {
-			init = row.message as SystemInitMessage;
-		}
-		if (isSDKResultMessage(row.message)) {
-			result = row.message as ResultMessage;
-		}
-	}
-	return { init, result };
+  let init: SystemInitMessage | undefined;
+  let result: ResultMessage | undefined;
+  for (const row of rows) {
+    if (!row.message) continue;
+    if (!init && isSDKSystemInit(row.message)) {
+      init = row.message as SystemInitMessage;
+    }
+    if (isSDKResultMessage(row.message)) {
+      result = row.message as ResultMessage;
+    }
+  }
+  return { init, result };
 }
 
 /**
@@ -688,119 +688,119 @@ function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
  *   lands after Coder's last row in a multi-session workflow.
  */
 function buildFeedTurns(
-	parsedRows: ParsedThreadRow[],
-	activeAgentLabels: ReadonlySet<string>,
-	activeTurnSummaries: ActiveTurnSummary[]
+  parsedRows: ParsedThreadRow[],
+  activeAgentLabels: ReadonlySet<string>,
+  activeTurnSummaries: ActiveTurnSummary[]
 ): FeedTurn[] {
-	const blocks = buildAgentTurns(parsedRows);
-	if (blocks.length === 0) return [];
+  const blocks = buildAgentTurns(parsedRows);
+  if (blocks.length === 0) return [];
 
-	// Index summaries by sessionId so the trailing-block upgrade can pick the
-	// right summary in O(1) rather than scanning the (small but not bounded)
-	// list once per render. The server emits at most one summary per session.
-	const summariesBySession = new Map<string, ActiveTurnSummary>();
-	for (const summary of activeTurnSummaries) {
-		summariesBySession.set(summary.sessionId, summary);
-	}
+  // Index summaries by sessionId so the trailing-block upgrade can pick the
+  // right summary in O(1) rather than scanning the (small but not bounded)
+  // list once per render. The server emits at most one summary per session.
+  const summariesBySession = new Map<string, ActiveTurnSummary>();
+  for (const summary of activeTurnSummaries) {
+    summariesBySession.set(summary.sessionId, summary);
+  }
 
-	const turns: FeedTurn[] = [];
-	// Per-agent trailing completed-turn pointer. Keyed by the normalised agent
-	// label so case/whitespace variants between activity-member labels (run
-	// through a title-casing helper on the daemon) and raw row labels collide
-	// on the same entry. Each `flushAgent` call overwrites the entry for
-	// `block.agentLabel`, so after the loop the map points at the *last*
-	// completed turn each agent produced — exactly what we want to upgrade.
-	type AgentTrailing = {
-		turnIdx: number;
-		rows: ParsedThreadRow[];
-		block: AgentTurnBlock;
-	};
-	const perAgentTrailing = new Map<string, AgentTrailing>();
-	let previousAgentLabel: string | null = null;
+  const turns: FeedTurn[] = [];
+  // Per-agent trailing completed-turn pointer. Keyed by the normalised agent
+  // label so case/whitespace variants between activity-member labels (run
+  // through a title-casing helper on the daemon) and raw row labels collide
+  // on the same entry. Each `flushAgent` call overwrites the entry for
+  // `block.agentLabel`, so after the loop the map points at the *last*
+  // completed turn each agent produced — exactly what we want to upgrade.
+  type AgentTrailing = {
+    turnIdx: number;
+    rows: ParsedThreadRow[];
+    block: AgentTurnBlock;
+  };
+  const perAgentTrailing = new Map<string, AgentTrailing>();
+  let previousAgentLabel: string | null = null;
 
-	for (const block of blocks) {
-		// Pre-extract once per block so every turn we emit (user msg AND
-		// completed turn) shares the same view of the block's init/result
-		// envelopes. Cheap — single linear scan over rows we'd already be
-		// walking anyway.
-		const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
-		const blockKey = normalizeAgentKey(block.agentLabel);
+  for (const block of blocks) {
+    // Pre-extract once per block so every turn we emit (user msg AND
+    // completed turn) shares the same view of the block's init/result
+    // envelopes. Cheap — single linear scan over rows we'd already be
+    // walking anyway.
+    const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
+    const blockKey = normalizeAgentKey(block.agentLabel);
 
-		let pendingAgentRows: ParsedThreadRow[] = [];
-		const flushAgent = () => {
-			if (pendingAgentRows.length === 0) return;
-			const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
-			const sessionId = latestSessionId(pendingAgentRows);
-			const transitionSummary = rowsContainResult(pendingAgentRows, blockResult)
-				? summaryMatchesTurn(
-						sessionId ? summariesBySession.get(sessionId) : undefined,
-						pendingAgentRows
-					)
-				: undefined;
-			turns.push(
-				buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
-			);
-			perAgentTrailing.set(blockKey, {
-				turnIdx: turns.length - 1,
-				rows: pendingAgentRows,
-				block,
-			});
-			pendingAgentRows = [];
-		};
+    let pendingAgentRows: ParsedThreadRow[] = [];
+    const flushAgent = () => {
+      if (pendingAgentRows.length === 0) return;
+      const turnId = `${block.id}:${String(pendingAgentRows[0].id)}`;
+      const sessionId = latestSessionId(pendingAgentRows);
+      const transitionSummary = rowsContainResult(pendingAgentRows, blockResult)
+        ? summaryMatchesTurn(
+            sessionId ? summariesBySession.get(sessionId) : undefined,
+            pendingAgentRows
+          )
+        : undefined;
+      turns.push(
+        buildCompletedTurn(block, pendingAgentRows, turnId, blockResult, transitionSummary)
+      );
+      perAgentTrailing.set(blockKey, {
+        turnIdx: turns.length - 1,
+        rows: pendingAgentRows,
+        block,
+      });
+      pendingAgentRows = [];
+    };
 
-		for (const row of block.rows) {
-			if (isUserRow(row)) {
-				flushAgent();
-				turns.push(buildMessageTurn(row, previousAgentLabel, blockInit));
-				continue;
-			}
-			pendingAgentRows.push(row);
-		}
-		flushAgent();
-		previousAgentLabel = block.agentLabel;
-	}
+    for (const row of block.rows) {
+      if (isUserRow(row)) {
+        flushAgent();
+        turns.push(buildMessageTurn(row, previousAgentLabel, blockInit));
+        continue;
+      }
+      pendingAgentRows.push(row);
+    }
+    flushAgent();
+    previousAgentLabel = block.agentLabel;
+  }
 
-	// Per-agent active-rail upgrade. For every label in `activeAgentLabels`
-	// whose trailing block is non-terminal, swap that agent's last completed
-	// turn for an active turn. Independent across agents — a Reviewer terminal
-	// block landing after Coder's last row can no longer suppress the Coder
-	// rail because Coder has its own entry in `perAgentTrailing`. The roster
-	// is built from the server-derived summary keyed on the trailing rows'
-	// session id; missing summary → empty roster (e.g. server hasn't shipped
-	// metadata yet, or the active turn lives on a different session than the
-	// trailing fragment).
-	if (activeAgentLabels.size > 0) {
-		const normalisedActive = new Set<string>();
-		for (const label of activeAgentLabels) {
-			normalisedActive.add(normalizeAgentKey(label));
-		}
-		for (const [key, trailing] of perAgentTrailing) {
-			if (!normalisedActive.has(key)) continue;
-			if (trailing.block.isTerminal) continue;
-			const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
-			const sessionId = latestSessionId(trailing.rows);
-			const summary = sessionId ? summariesBySession.get(sessionId) : undefined;
-			turns[trailing.turnIdx] = buildActiveTurn(
-				trailing.block,
-				trailing.rows,
-				completed.id,
-				summary,
-				sessionId
-			);
-		}
-	}
+  // Per-agent active-rail upgrade. For every label in `activeAgentLabels`
+  // whose trailing block is non-terminal, swap that agent's last completed
+  // turn for an active turn. Independent across agents — a Reviewer terminal
+  // block landing after Coder's last row can no longer suppress the Coder
+  // rail because Coder has its own entry in `perAgentTrailing`. The roster
+  // is built from the server-derived summary keyed on the trailing rows'
+  // session id; missing summary → empty roster (e.g. server hasn't shipped
+  // metadata yet, or the active turn lives on a different session than the
+  // trailing fragment).
+  if (activeAgentLabels.size > 0) {
+    const normalisedActive = new Set<string>();
+    for (const label of activeAgentLabels) {
+      normalisedActive.add(normalizeAgentKey(label));
+    }
+    for (const [key, trailing] of perAgentTrailing) {
+      if (!normalisedActive.has(key)) continue;
+      if (trailing.block.isTerminal) continue;
+      const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
+      const sessionId = latestSessionId(trailing.rows);
+      const summary = sessionId ? summariesBySession.get(sessionId) : undefined;
+      turns[trailing.turnIdx] = buildActiveTurn(
+        trailing.block,
+        trailing.rows,
+        completed.id,
+        summary,
+        sessionId
+      );
+    }
+  }
 
-	// Drop empty completed turns. With result-message-aware text extraction in
-	// place, the only way a completed turn ends up with no body is if it's an
-	// agent-phase fragment that got cut off by another agent's rows before its
-	// own exec's result message arrived — its actual reply lives in a sibling
-	// turn from the same agent. Showing the fragment as its own header-only row
-	// (e.g. "REVIEWER 12:29 PM · 3 messages · 9s" with nothing under it) is
-	// noise; the reply is rendered in the sibling that holds the result text.
-	return turns.filter((t) => {
-		if (t.state !== 'completed') return true;
-		return t.lastMessage.length > 0;
-	});
+  // Drop empty completed turns. With result-message-aware text extraction in
+  // place, the only way a completed turn ends up with no body is if it's an
+  // agent-phase fragment that got cut off by another agent's rows before its
+  // own exec's result message arrived — its actual reply lives in a sibling
+  // turn from the same agent. Showing the fragment as its own header-only row
+  // (e.g. "REVIEWER 12:29 PM · 3 messages · 9s" with nothing under it) is
+  // noise; the reply is rendered in the sibling that holds the result text.
+  return turns.filter((t) => {
+    if (t.state !== 'completed') return true;
+    return t.lastMessage.length > 0;
+  });
 }
 
 /**
@@ -809,150 +809,150 @@ function buildFeedTurns(
  * instance — cheap, and only mounted while there is an active turn.
  */
 function useSecondsTick(): void {
-	const [, setTick] = useState(0);
-	useEffect(() => {
-		const id = setInterval(() => setTick((n) => (n + 1) | 0), 1000);
-		return () => clearInterval(id);
-	}, []);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => (n + 1) | 0), 1000);
+    return () => clearInterval(id);
+  }, []);
 }
 
 /* ── visual building blocks ──────────────────────────────────────────────── */
 
 function PulseDot({ color }: { color: string }) {
-	return (
-		<span
-			class="inline-block h-2 w-2 rounded-full minimal-thread-live-dot shrink-0"
-			style={{ backgroundColor: color }}
-		/>
-	);
+  return (
+    <span
+      class="inline-block h-2 w-2 rounded-full minimal-thread-live-dot shrink-0"
+      style={{ backgroundColor: color }}
+    />
+  );
 }
 
 function StatusPill({ color, status }: { color: string; status: string }) {
-	return (
-		<span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
-			<PulseDot color={color} />
-			<span style={{ color }}>{status}</span>
-		</span>
-	);
+  return (
+    <span class="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-medium">
+      <PulseDot color={color} />
+      <span style={{ color }}>{status}</span>
+    </span>
+  );
 }
 
 function rosterToolLabel(toolName: string): string {
-	if (toolName.startsWith('mcp__')) {
-		const parts = toolName.split('__');
-		const serverName = parts[1] || 'unknown';
-		const toolShortName = parts.slice(2).join('__') || toolName;
-		return `${serverName} ${toolShortName}`;
-	}
-	return getToolDisplayName(toolName);
+  if (toolName.startsWith('mcp__')) {
+    const parts = toolName.split('__');
+    const serverName = parts[1] || 'unknown';
+    const toolShortName = parts.slice(2).join('__') || toolName;
+    return `${serverName} ${toolShortName}`;
+  }
+  return getToolDisplayName(toolName);
 }
 
 function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: boolean }) {
-	const fadeClass = isLatest ? 'minimal-thread-roster-fade-in' : '';
-	const bodyClass = `truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`;
+  const fadeClass = isLatest ? 'minimal-thread-roster-fade-in' : '';
+  const bodyClass = `truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`;
 
-	if (entry.kind === 'tool') {
-		const toolColor = getToolColors(entry.tool).iconColor;
-		const toolLabel = rosterToolLabel(entry.tool);
-		const preview = entry.preview.trim();
-		return (
-			<div
-				class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
-				data-testid="minimal-thread-roster-entry"
-				data-roster-kind="tool"
-			>
-				<span class="mt-1 shrink-0" aria-hidden="true">
-					<ToolIcon toolName={entry.tool} size="xs" />
-				</span>
-				<span class="min-w-0 truncate">
-					<span class={`${toolColor} font-semibold`}>{toolLabel}</span>
-					{preview ? (
-						<>
-							<span class="text-gray-600">: </span>
-							<span class={bodyClass}>{preview}</span>
-						</>
-					) : null}
-				</span>
-			</div>
-		);
-	}
+  if (entry.kind === 'tool') {
+    const toolColor = getToolColors(entry.tool).iconColor;
+    const toolLabel = rosterToolLabel(entry.tool);
+    const preview = entry.preview.trim();
+    return (
+      <div
+        class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="tool"
+      >
+        <span class="mt-1 shrink-0" aria-hidden="true">
+          <ToolIcon toolName={entry.tool} size="xs" />
+        </span>
+        <span class="min-w-0 truncate">
+          <span class={`${toolColor} font-semibold`}>{toolLabel}</span>
+          {preview ? (
+            <>
+              <span class="text-gray-600">: </span>
+              <span class={bodyClass}>{preview}</span>
+            </>
+          ) : null}
+        </span>
+      </div>
+    );
+  }
 
-	if (entry.kind === 'thinking') {
-		const thinkBody = `line-clamp-3 whitespace-pre-wrap italic ${isLatest ? 'text-amber-100' : 'text-amber-300/70'}`;
-		return (
-			<div
-				class={`flex items-start gap-2 text-xs leading-5 ${fadeClass}`}
-				data-testid="minimal-thread-roster-entry"
-				data-roster-kind="thinking"
-			>
-				<span class="mt-1 shrink-0" aria-hidden="true">
-					<ToolIcon toolName="Thinking" size="xs" />
-				</span>
-				<span class={thinkBody}>{entry.preview}</span>
-			</div>
-		);
-	}
+  if (entry.kind === 'thinking') {
+    const thinkBody = `line-clamp-3 whitespace-pre-wrap italic ${isLatest ? 'text-amber-100' : 'text-amber-300/70'}`;
+    return (
+      <div
+        class={`flex items-start gap-2 text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="thinking"
+      >
+        <span class="mt-1 shrink-0" aria-hidden="true">
+          <ToolIcon toolName="Thinking" size="xs" />
+        </span>
+        <span class={thinkBody}>{entry.preview}</span>
+      </div>
+    );
+  }
 
-	if (entry.kind === 'user') {
-		// Real human input that landed inside the active turn — surface it
-		// distinctly from agent text so a user reading the rail can tell at
-		// a glance which line is theirs.
-		return (
-			<div
-				class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
-				data-testid="minimal-thread-roster-entry"
-				data-roster-kind="user"
-			>
-				<span class="shrink-0 text-blue-400" aria-hidden="true">
-					👤
-				</span>
-				<span class={bodyClass}>{entry.text}</span>
-			</div>
-		);
-	}
+  if (entry.kind === 'user') {
+    // Real human input that landed inside the active turn — surface it
+    // distinctly from agent text so a user reading the rail can tell at
+    // a glance which line is theirs.
+    return (
+      <div
+        class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="user"
+      >
+        <span class="shrink-0 text-blue-400" aria-hidden="true">
+          👤
+        </span>
+        <span class={bodyClass}>{entry.text}</span>
+      </div>
+    );
+  }
 
-	if (entry.kind === 'handoff') {
-		// Synthetic agent→agent / system handoff — arrow glyph + body.
-		return (
-			<div
-				class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
-				data-testid="minimal-thread-roster-entry"
-				data-roster-kind="handoff"
-			>
-				<span class="shrink-0 text-gray-500" aria-hidden="true">
-					↪
-				</span>
-				<span class={bodyClass}>{entry.text}</span>
-			</div>
-		);
-	}
+  if (entry.kind === 'handoff') {
+    // Synthetic agent→agent / system handoff — arrow glyph + body.
+    return (
+      <div
+        class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+        data-testid="minimal-thread-roster-entry"
+        data-roster-kind="handoff"
+      >
+        <span class="shrink-0 text-gray-500" aria-hidden="true">
+          ↪
+        </span>
+        <span class={bodyClass}>{entry.text}</span>
+      </div>
+    );
+  }
 
-	// Assistant message — small chat-bubble glyph (mirrors the open-session
-	// affordance) plus an italic preview of the text. No mono-font / TOOL:
-	// prefix so it visually reads as "the agent said this" rather than
-	// "another command ran".
-	return (
-		<div
-			class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
-			data-testid="minimal-thread-roster-entry"
-			data-roster-kind="message"
-		>
-			<svg
-				class="w-3 h-3 shrink-0 text-gray-500 self-center"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				aria-hidden="true"
-			>
-				<path
-					strokeLinecap="round"
-					strokeLinejoin="round"
-					strokeWidth={2}
-					d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-				/>
-			</svg>
-			<span class={`${bodyClass} italic`}>{entry.text}</span>
-		</div>
-	);
+  // Assistant message — small chat-bubble glyph (mirrors the open-session
+  // affordance) plus an italic preview of the text. No mono-font / TOOL:
+  // prefix so it visually reads as "the agent said this" rather than
+  // "another command ran".
+  return (
+    <div
+      class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
+      data-testid="minimal-thread-roster-entry"
+      data-roster-kind="message"
+    >
+      <svg
+        class="w-3 h-3 shrink-0 text-gray-500 self-center"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+        />
+      </svg>
+      <span class={`${bodyClass} italic`}>{entry.text}</span>
+    </div>
+  );
 }
 
 /**
@@ -972,96 +972,96 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
  * to keep long markdown readable instead of stretching edge-to-edge.
  */
 function CompletedBody({
-	turn,
-	overlayTaskId,
+  turn,
+  overlayTaskId,
 }: {
-	turn: CompletedFeedTurn;
-	overlayTaskId?: string;
+  turn: CompletedFeedTurn;
+  overlayTaskId?: string;
 }) {
-	const openSession = turn.sessionId
-		? () => {
-				// `pushOverlayHistory` reads the highlight signal; passing the message
-				// uuid scrolls the slide-over straight to this turn's surfaced reply.
-				if (overlayTaskId && turn.agentKind === 'node_agent') {
-					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
-						taskId: overlayTaskId,
-						agentName: turn.agentRole,
-						...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
-					});
-				} else {
-					pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
-				}
-			}
-		: undefined;
-	return (
-		<div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
-			<div
-				class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
-				data-testid="minimal-thread-agent-bubble"
-			>
-				{turn.lastMessage ? (
-					<div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
-						{turn.fallback ? (
-							<p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
-						) : (
-							<MarkdownRenderer content={turn.lastMessage} />
-						)}
-					</div>
-				) : null}
-			</div>
-			<SpaceTaskThreadMessageActions
-				timestamp={turn.startedAt}
-				copyText={turn.lastMessage}
-				align="left"
-				onOpenSession={openSession}
-				resultInfo={turn.resultInfo}
-			/>
-		</div>
-	);
+  const openSession = turn.sessionId
+    ? () => {
+        // `pushOverlayHistory` reads the highlight signal; passing the message
+        // uuid scrolls the slide-over straight to this turn's surfaced reply.
+        if (overlayTaskId && turn.agentKind === 'node_agent') {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
+            taskId: overlayTaskId,
+            agentName: turn.agentRole,
+            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+          });
+        } else {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
+        }
+      }
+    : undefined;
+  return (
+    <div class={`mt-1.5 w-fit ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS}`}>
+      <div
+        class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
+        data-testid="minimal-thread-agent-bubble"
+      >
+        {turn.lastMessage ? (
+          <div class="text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400">
+            {turn.fallback ? (
+              <p class="whitespace-pre-wrap break-words">{turn.lastMessage}</p>
+            ) : (
+              <MarkdownRenderer content={turn.lastMessage} />
+            )}
+          </div>
+        ) : null}
+      </div>
+      <SpaceTaskThreadMessageActions
+        timestamp={turn.startedAt}
+        copyText={turn.lastMessage}
+        align="left"
+        onOpenSession={openSession}
+        resultInfo={turn.resultInfo}
+      />
+    </div>
+  );
 }
 
 function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
-	useSecondsTick();
-	const elapsedSec = Math.max(0, Math.round((Date.now() - turn.startedAt) / 1000));
-	const lastEventSec = Math.max(0, Math.round((Date.now() - turn.lastEventAt) / 1000));
-	const hasSummaryCounts =
-		turn.thinkingEntries !== null && turn.messageEntries !== null && turn.toolEntries !== null;
-	return (
-		<div
-			class="mt-1.5 pl-3 border-l-2"
-			style={{ borderColor: color }}
-			data-testid="minimal-thread-active-rail"
-		>
-			<div class="text-[11px] text-gray-500 mt-0.5" data-testid="minimal-thread-active-meta">
-				{hasSummaryCounts ? (
-					<>
-						✦ {turn.thinkingEntries} · 💬 {turn.messageEntries} · ⚙ {turn.toolEntries} ·{' '}
-						{formatDuration(elapsedSec)}
-					</>
-				) : (
-					<>
-						{turn.toolCalls} {turn.toolCalls === 1 ? 'tool' : 'tools'} ·{' '}
-						{formatDuration(elapsedSec)}
-					</>
-				)}
-			</div>
-			{turn.roster.length > 0 ? (
-				<div class="mt-2 space-y-0.5">
-					{turn.roster.map((entry, i) => (
-						<RosterEntry
-							key={`${entry.kind}-${i}`}
-							entry={entry}
-							isLatest={i === turn.roster.length - 1}
-						/>
-					))}
-				</div>
-			) : null}
-			<div class="mt-1.5 text-[11px] text-gray-600" data-testid="minimal-thread-last-event">
-				last event {lastEventSec < 1 ? 'now' : `${formatDuration(lastEventSec)} ago`} ·{' '}
-				{formatClock(turn.lastEventAt)}
-			</div>
-		</div>
-	);
+  useSecondsTick();
+  const elapsedSec = Math.max(0, Math.round((Date.now() - turn.startedAt) / 1000));
+  const lastEventSec = Math.max(0, Math.round((Date.now() - turn.lastEventAt) / 1000));
+  const hasSummaryCounts =
+    turn.thinkingEntries !== null && turn.messageEntries !== null && turn.toolEntries !== null;
+  return (
+    <div
+      class="mt-1.5 pl-3 border-l-2"
+      style={{ borderColor: color }}
+      data-testid="minimal-thread-active-rail"
+    >
+      <div class="text-[11px] text-gray-500 mt-0.5" data-testid="minimal-thread-active-meta">
+        {hasSummaryCounts ? (
+          <>
+            ✦ {turn.thinkingEntries} · 💬 {turn.messageEntries} · ⚙ {turn.toolEntries} ·{' '}
+            {formatDuration(elapsedSec)}
+          </>
+        ) : (
+          <>
+            {turn.toolCalls} {turn.toolCalls === 1 ? 'tool' : 'tools'} ·{' '}
+            {formatDuration(elapsedSec)}
+          </>
+        )}
+      </div>
+      {turn.roster.length > 0 ? (
+        <div class="mt-2 space-y-0.5">
+          {turn.roster.map((entry, i) => (
+            <RosterEntry
+              key={`${entry.kind}-${i}`}
+              entry={entry}
+              isLatest={i === turn.roster.length - 1}
+            />
+          ))}
+        </div>
+      ) : null}
+      <div class="mt-1.5 text-[11px] text-gray-600" data-testid="minimal-thread-last-event">
+        last event {lastEventSec < 1 ? 'now' : `${formatDuration(lastEventSec)} ago`} ·{' '}
+        {formatClock(turn.lastEventAt)}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -1079,74 +1079,74 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
  * iMessage chat bubbles — a better fit for "agent post with long output".
  */
 function AgentTurnRow({
-	turn,
-	overlayTaskId,
+  turn,
+  overlayTaskId,
 }: {
-	turn: CompletedFeedTurn | ActiveFeedTurn;
-	overlayTaskId?: string;
+  turn: CompletedFeedTurn | ActiveFeedTurn;
+  overlayTaskId?: string;
 }) {
-	const color = getAgentColor(turn.agent);
-	const initial = agentInitial(turn.agent);
-	const openSession = turn.sessionId
-		? () => {
-				const highlightMessageUuid =
-					turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
-				if (overlayTaskId && turn.agentKind === 'node_agent') {
-					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
-						taskId: overlayTaskId,
-						agentName: turn.agentRole,
-						...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
-					});
-				} else {
-					pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
-				}
-			}
-		: undefined;
-	const headerContent = (
-		<>
-			<div
-				class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
-				style={{ backgroundColor: color }}
-				aria-hidden="true"
-			>
-				{initial}
-			</div>
-			<div class="flex flex-col gap-0.5 min-w-0">
-				<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-					<span class="font-semibold leading-tight" style={{ color }}>
-						{shortAgentName(turn.agent)}
-					</span>
-					{turn.state === 'active' ? (
-						<span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
-					) : null}
-				</div>
-				{turn.state === 'completed' ? (
-					<div
-						class="text-[11px] text-gray-500 leading-tight"
-						data-testid="minimal-thread-agent-meta"
-					>
-						{turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
-						{turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
-					</div>
-				) : (
-					<div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-						<StatusPill color={color} status={turn.status} />
-						<span class="text-[11px] text-gray-500 leading-tight">
-							{turn.messages} {turn.messages === 1 ? 'message' : 'messages'}
-						</span>
-					</div>
-				)}
-			</div>
-		</>
-	);
-	return (
-		<div
-			data-testid="minimal-thread-turn"
-			data-agent-label={turn.agent}
-			data-agent-color={color}
-			data-turn-state={turn.state}
-		>
-			{/* Header — avatar + stacked (name / meta-or-clock) column. The meta
+  const color = getAgentColor(turn.agent);
+  const initial = agentInitial(turn.agent);
+  const openSession = turn.sessionId
+    ? () => {
+        const highlightMessageUuid =
+          turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
+        if (overlayTaskId && turn.agentKind === 'node_agent') {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
+            taskId: overlayTaskId,
+            agentName: turn.agentRole,
+            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
+          });
+        } else {
+          pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
+        }
+      }
+    : undefined;
+  const headerContent = (
+    <>
+      <div
+        class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      >
+        {initial}
+      </div>
+      <div class="flex flex-col gap-0.5 min-w-0">
+        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+          <span class="font-semibold leading-tight" style={{ color }}>
+            {shortAgentName(turn.agent)}
+          </span>
+          {turn.state === 'active' ? (
+            <span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+          ) : null}
+        </div>
+        {turn.state === 'completed' ? (
+          <div
+            class="text-[11px] text-gray-500 leading-tight"
+            data-testid="minimal-thread-agent-meta"
+          >
+            {turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
+            {turn.messages === 1 ? 'message' : 'messages'} · {formatDuration(turn.durationSec)}
+          </div>
+        ) : (
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <StatusPill color={color} status={turn.status} />
+            <span class="text-[11px] text-gray-500 leading-tight">
+              {turn.messages} {turn.messages === 1 ? 'message' : 'messages'}
+            </span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+  return (
+    <div
+      data-testid="minimal-thread-turn"
+      data-agent-label={turn.agent}
+      data-agent-color={color}
+      data-turn-state={turn.state}
+    >
+      {/* Header — avatar + stacked (name / meta-or-clock) column. The meta
 			    line ("3 tool calls · 4 messages · 22s") lives here under the
 			    agent name on completed turns instead of inside the reply
 			    bubble — it's metadata about the turn, not part of the agent's
@@ -1159,28 +1159,28 @@ function AgentTurnRow({
 			    running), so completed turns surface time + copy under the
 			    bubble via SpaceTaskThreadMessageActions to avoid duplicating
 			    the header clock. */}
-			{openSession ? (
-				<button
-					type="button"
-					class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
-					onClick={openSession}
-					title="Open session"
-					aria-label={`Open ${turn.agent} session`}
-					data-testid="minimal-thread-agent-open"
-				>
-					{headerContent}
-				</button>
-			) : (
-				<div class="flex min-h-11 items-center gap-3">{headerContent}</div>
-			)}
-			{/* Body — full-width on mobile, capped on desktop for readability. */}
-			{turn.state === 'active' ? (
-				<ActiveBody turn={turn} color={color} />
-			) : (
-				<CompletedBody turn={turn} overlayTaskId={overlayTaskId} />
-			)}
-		</div>
-	);
+      {openSession ? (
+        <button
+          type="button"
+          class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+          onClick={openSession}
+          title="Open session"
+          aria-label={`Open ${turn.agent} session`}
+          data-testid="minimal-thread-agent-open"
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div class="flex min-h-11 items-center gap-3">{headerContent}</div>
+      )}
+      {/* Body — full-width on mobile, capped on desktop for readability. */}
+      {turn.state === 'active' ? (
+        <ActiveBody turn={turn} color={color} />
+      ) : (
+        <CompletedBody turn={turn} overlayTaskId={overlayTaskId} />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -1189,50 +1189,50 @@ function AgentTurnRow({
  * recipient agent's session view).
  */
 function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
-	const recipientColor = getAgentColor(turn.toLabel);
-	return (
-		<div
-			class="flex justify-end"
-			data-testid="minimal-thread-turn"
-			data-turn-state="message"
-			data-message-kind="human"
-			data-agent-label={turn.toLabel}
-			data-agent-color={recipientColor}
-			data-from-label={turn.fromLabel}
-			data-to-label={turn.toLabel}
-		>
-			<div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS} w-auto`}>
-				<div
-					class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
-					data-testid="minimal-thread-human-bubble"
-				>
-					{turn.body ? (
-						<p class="whitespace-pre-wrap break-words">{turn.body}</p>
-					) : (
-						<p class="opacity-70 italic">(empty message)</p>
-					)}
-				</div>
-				{/* Right-aligned actions row — timestamp + (optional)
+  const recipientColor = getAgentColor(turn.toLabel);
+  return (
+    <div
+      class="flex justify-end"
+      data-testid="minimal-thread-turn"
+      data-turn-state="message"
+      data-message-kind="human"
+      data-agent-label={turn.toLabel}
+      data-agent-color={recipientColor}
+      data-from-label={turn.fromLabel}
+      data-to-label={turn.toLabel}
+    >
+      <div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS} w-auto`}>
+        <div
+          class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
+          data-testid="minimal-thread-human-bubble"
+        >
+          {turn.body ? (
+            <p class="whitespace-pre-wrap break-words">{turn.body}</p>
+          ) : (
+            <p class="opacity-70 italic">(empty message)</p>
+          )}
+        </div>
+        {/* Right-aligned actions row — timestamp + (optional)
 				    session-init dropdown + copy. Replaces the bare
 				    timestamp so the human bubble has parity with synthetic
 				    messages and agent reply bubbles. */}
-				{turn.deliveryState && turn.deliveryState !== 'delivered' ? (
-					<div class="mt-1 flex justify-end">
-						<DeliveryStateBadge
-							state={turn.deliveryState}
-							test-id="minimal-thread-delivery-state"
-						/>
-					</div>
-				) : null}
-				<SpaceTaskThreadMessageActions
-					timestamp={turn.createdAt}
-					copyText={turn.body}
-					align="right"
-					sessionInit={turn.sessionInit}
-				/>
-			</div>
-		</div>
-	);
+        {turn.deliveryState && turn.deliveryState !== 'delivered' ? (
+          <div class="mt-1 flex justify-end">
+            <DeliveryStateBadge
+              state={turn.deliveryState}
+              test-id="minimal-thread-delivery-state"
+            />
+          </div>
+        ) : null}
+        <SpaceTaskThreadMessageActions
+          timestamp={turn.createdAt}
+          copyText={turn.body}
+          align="right"
+          sessionInit={turn.sessionInit}
+        />
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -1246,81 +1246,81 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
  *     to this synthetic message.
  */
 function SyntheticMessageTurn({
-	turn,
-	overlayTaskId,
+  turn,
+  overlayTaskId,
 }: {
-	turn: MessageFeedTurn;
-	overlayTaskId?: string;
+  turn: MessageFeedTurn;
+  overlayTaskId?: string;
 }) {
-	const fromColor = getAgentColor(turn.fromLabel);
-	const toColor = getAgentColor(turn.toLabel);
-	const fromShort = shortAgentName(turn.fromLabel);
-	const toShort = shortAgentName(turn.toLabel);
+  const fromColor = getAgentColor(turn.fromLabel);
+  const toColor = getAgentColor(turn.toLabel);
+  const fromShort = shortAgentName(turn.fromLabel);
+  const toShort = shortAgentName(turn.toLabel);
 
-	return (
-		<div
-			data-testid="minimal-thread-turn"
-			data-turn-state="message"
-			data-message-kind="synthetic"
-			data-agent-label={turn.toLabel}
-			data-agent-color={toColor}
-			data-from-label={turn.fromLabel}
-			data-to-label={turn.toLabel}
-		>
-			<SyntheticMessageBlock
-				deliveryState={turn.deliveryState}
-				content={turn.body ?? ''}
-				timestamp={turn.createdAt}
-				uuid={turn.highlightMessageUuid}
-				fromAgent={turn.fromLabel}
-				toAgent={turn.toLabel}
-				fromColor={fromColor}
-				toColor={toColor}
-				fromShort={fromShort}
-				toShort={toShort}
-				renderAsPlainText={turn.bodyIsFallback}
-				sessionInit={turn.sessionInit}
-				widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
-				onOpenSession={
-					turn.sessionId
-						? () => {
-								if (overlayTaskId && turn.toKind === 'node_agent') {
-									pushOverlayHistory(
-										turn.sessionId as string,
-										turn.toLabel,
-										turn.highlightMessageUuid,
-										{
-											taskId: overlayTaskId,
-											agentName: turn.toRole,
-											...(turn.toNodeExecutionId
-												? { nodeExecutionId: turn.toNodeExecutionId }
-												: {}),
-										}
-									);
-								} else {
-									pushOverlayHistory(
-										turn.sessionId as string,
-										turn.toLabel,
-										turn.highlightMessageUuid
-									);
-								}
-							}
-						: undefined
-				}
-			/>
-		</div>
-	);
+  return (
+    <div
+      data-testid="minimal-thread-turn"
+      data-turn-state="message"
+      data-message-kind="synthetic"
+      data-agent-label={turn.toLabel}
+      data-agent-color={toColor}
+      data-from-label={turn.fromLabel}
+      data-to-label={turn.toLabel}
+    >
+      <SyntheticMessageBlock
+        deliveryState={turn.deliveryState}
+        content={turn.body ?? ''}
+        timestamp={turn.createdAt}
+        uuid={turn.highlightMessageUuid}
+        fromAgent={turn.fromLabel}
+        toAgent={turn.toLabel}
+        fromColor={fromColor}
+        toColor={toColor}
+        fromShort={fromShort}
+        toShort={toShort}
+        renderAsPlainText={turn.bodyIsFallback}
+        sessionInit={turn.sessionInit}
+        widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
+        onOpenSession={
+          turn.sessionId
+            ? () => {
+                if (overlayTaskId && turn.toKind === 'node_agent') {
+                  pushOverlayHistory(
+                    turn.sessionId as string,
+                    turn.toLabel,
+                    turn.highlightMessageUuid,
+                    {
+                      taskId: overlayTaskId,
+                      agentName: turn.toRole,
+                      ...(turn.toNodeExecutionId
+                        ? { nodeExecutionId: turn.toNodeExecutionId }
+                        : {}),
+                    }
+                  );
+                } else {
+                  pushOverlayHistory(
+                    turn.sessionId as string,
+                    turn.toLabel,
+                    turn.highlightMessageUuid
+                  );
+                }
+              }
+            : undefined
+        }
+      />
+    </div>
+  );
 }
 
 function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId?: string }) {
-	if (turn.state === 'message') {
-		return turn.isSynthetic ? (
-			<SyntheticMessageTurn turn={turn} overlayTaskId={overlayTaskId} />
-		) : (
-			<HumanMessageTurn turn={turn} />
-		);
-	}
-	return <AgentTurnRow turn={turn} overlayTaskId={overlayTaskId} />;
+  if (turn.state === 'message') {
+    return turn.isSynthetic ? (
+      <SyntheticMessageTurn turn={turn} overlayTaskId={overlayTaskId} />
+    ) : (
+      <HumanMessageTurn turn={turn} />
+    );
+  }
+  return <AgentTurnRow turn={turn} overlayTaskId={overlayTaskId} />;
 }
 
 /* ── public component ────────────────────────────────────────────────────── */
@@ -1328,24 +1328,24 @@ function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId
 const EMPTY_ACTIVE_AGENT_LABELS: ReadonlySet<string> = new Set();
 
 export function MinimalThreadFeed({
-	parsedRows,
-	activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
-	activeTurnSummaries = [],
-	overlayTaskId,
+  parsedRows,
+  activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
+  activeTurnSummaries = [],
+  overlayTaskId,
 }: MinimalThreadFeedProps) {
-	const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
-	if (turns.length === 0) return null;
+  const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
+  if (turns.length === 0) return null;
 
-	return (
-		<>
-			<style>{ANIMATIONS_CSS}</style>
-			<div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
-				{turns.map((turn) => (
-					<MinimalTurnRow key={turn.id} turn={turn} overlayTaskId={overlayTaskId} />
-				))}
-			</div>
-		</>
-	);
+  return (
+    <>
+      <style>{ANIMATIONS_CSS}</style>
+      <div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
+        {turns.map((turn) => (
+          <MinimalTurnRow key={turn.id} turn={turn} overlayTaskId={overlayTaskId} />
+        ))}
+      </div>
+    </>
+  );
 }
 
 /* ── animations (scoped via local <style> tag) ───────────────────────────── */

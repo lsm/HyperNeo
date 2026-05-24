@@ -9,12 +9,12 @@
  */
 
 import type {
-	NodeExecutionStatus,
-	SpaceAgent,
-	ThinkingLevel,
-	WorkflowChannel,
-	WorkflowNodeAgent,
-	WorkflowNodeAgentOverride,
+  NodeExecutionStatus,
+  SpaceAgent,
+  ThinkingLevel,
+  WorkflowChannel,
+  WorkflowNodeAgent,
+  WorkflowNodeAgentOverride,
 } from '@neokai/shared';
 import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
@@ -24,27 +24,27 @@ import { cn } from '../../lib/utils';
 // ============================================================================
 
 export interface NodeDraft {
-	/** Stable local key for React rendering — not sent to the server */
-	localId: string;
-	/** Existing step ID when editing an existing workflow */
-	id?: string;
-	name: string;
-	/** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
-	agentId: string;
-	/** Single-agent model override. Ignored when agents[] is present. */
-	model?: string;
-	/** Single-agent thinking-level override. Ignored when agents[] is present. */
-	thinkingLevel?: ThinkingLevel;
-	/** Single-agent custom prompt override. Ignored when agents[] is present. */
-	customPrompt?: WorkflowNodeAgentOverride;
-	/** Single-agent disabled skills. Ignored when agents[] is present. */
-	disabledSkillIds?: string[];
-	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
-	agents?: WorkflowNodeAgent[];
-	/** Directed messaging topology between agents. */
-	channels?: WorkflowChannel[];
-	/** Optional post-approval route scoped to this node. */
-	postApproval?: import('@neokai/shared').PostApprovalRoute;
+  /** Stable local key for React rendering — not sent to the server */
+  localId: string;
+  /** Existing step ID when editing an existing workflow */
+  id?: string;
+  name: string;
+  /** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
+  agentId: string;
+  /** Single-agent model override. Ignored when agents[] is present. */
+  model?: string;
+  /** Single-agent thinking-level override. Ignored when agents[] is present. */
+  thinkingLevel?: ThinkingLevel;
+  /** Single-agent custom prompt override. Ignored when agents[] is present. */
+  customPrompt?: WorkflowNodeAgentOverride;
+  /** Single-agent disabled skills. Ignored when agents[] is present. */
+  disabledSkillIds?: string[];
+  /** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
+  agents?: WorkflowNodeAgent[];
+  /** Directed messaging topology between agents. */
+  channels?: WorkflowChannel[];
+  /** Optional post-approval route scoped to this node. */
+  postApproval?: import('@neokai/shared').PostApprovalRoute;
 }
 
 // ============================================================================
@@ -53,7 +53,7 @@ export interface NodeDraft {
 
 /** Returns true when this node has multiple agents configured. */
 export function isMultiAgentNode(node: NodeDraft): boolean {
-	return Array.isArray(node.agents) && node.agents.length > 1;
+  return Array.isArray(node.agents) && node.agents.length > 1;
 }
 
 /**
@@ -61,9 +61,9 @@ export function isMultiAgentNode(node: NodeDraft): boolean {
  * Kept here for backward compatibility with WorkflowEditor imports.
  */
 export interface ConditionDraft {
-	type: 'always' | 'human' | 'condition' | 'task_result';
-	/** Expression: shell command for 'condition' type, match value for 'task_result' type */
-	expression?: string;
+  type: 'always' | 'human' | 'condition' | 'task_result';
+  /** Expression: shell command for 'condition' type, match value for 'task_result' type */
+  expression?: string;
 }
 
 // ============================================================================
@@ -75,15 +75,15 @@ export interface ConditionDraft {
  * Derived from NodeExecution records grouped by workflowNodeId.
  */
 export interface AgentTaskState {
-	/** Matches WorkflowNodeAgent.name; null means single-agent node */
-	agentName: string | null;
-	status: NodeExecutionStatus;
-	completionSummary?: string | null;
+  /** Matches WorkflowNodeAgent.name; null means single-agent node */
+  agentName: string | null;
+  status: NodeExecutionStatus;
+  completionSummary?: string | null;
 }
 
 /** Returns true when all provided agent states have status === 'idle'. */
 export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
-	return states.length > 0 && states.every((s) => s.status === 'idle');
+  return states.length > 0 && states.every((s) => s.status === 'idle');
 }
 
 // ============================================================================
@@ -92,109 +92,109 @@ export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
 
 /** Animated spinner for in-progress agents */
 function SpinnerIcon({ title }: { title?: string }) {
-	return (
-		<svg
-			class="w-3 h-3 animate-spin"
-			fill="none"
-			viewBox="0 0 24 24"
-			aria-label={title}
-			data-testid="agent-status-spinner"
-		>
-			<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-			<path
-				class="opacity-75"
-				fill="currentColor"
-				d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-			/>
-		</svg>
-	);
+  return (
+    <svg
+      class="w-3 h-3 animate-spin"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-label={title}
+      data-testid="agent-status-spinner"
+    >
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+      <path
+        class="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
+  );
 }
 
 /** Green checkmark for completed agents */
 function CheckIcon({ title }: { title?: string }) {
-	return (
-		<svg
-			class="w-3 h-3"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke="currentColor"
-			aria-label={title}
-			data-testid="agent-status-check"
-		>
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M5 13l4 4L19 7" />
-		</svg>
-	);
+  return (
+    <svg
+      class="w-3 h-3"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      aria-label={title}
+      data-testid="agent-status-check"
+    >
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M5 13l4 4L19 7" />
+    </svg>
+  );
 }
 
 /** Red/gray X for failed/cancelled agents */
 function FailIcon({ title }: { title?: string }) {
-	return (
-		<svg
-			class="w-3 h-3"
-			fill="none"
-			viewBox="0 0 24 24"
-			stroke="currentColor"
-			aria-label={title}
-			data-testid="agent-status-fail"
-		>
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width={2.5}
-				d="M6 18L18 6M6 6l12 12"
-			/>
-		</svg>
-	);
+  return (
+    <svg
+      class="w-3 h-3"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      aria-label={title}
+      data-testid="agent-status-fail"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width={2.5}
+        d="M6 18L18 6M6 6l12 12"
+      />
+    </svg>
+  );
 }
 
 /** Renders the appropriate icon for an agent's task status. */
 export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
-	const summary = state.completionSummary ?? undefined;
-	if (state.status === 'idle') {
-		return (
-			<span class="text-green-400 flex-shrink-0" title={summary ?? 'Done'}>
-				<CheckIcon title={summary ?? 'Done'} />
-			</span>
-		);
-	}
-	if (state.status === 'in_progress') {
-		return (
-			<span class="text-blue-400 flex-shrink-0" title="In progress">
-				<SpinnerIcon title="In progress" />
-			</span>
-		);
-	}
-	if (state.status === 'blocked' || state.status === 'cancelled') {
-		return (
-			<span class="text-red-400 flex-shrink-0" title={summary ?? state.status}>
-				<FailIcon title={summary ?? state.status} />
-			</span>
-		);
-	}
-	// pending/draft/review/rate_limited/usage_limited — faint dot
-	return (
-		<span
-			class="w-1.5 h-1.5 rounded-full bg-gray-500 flex-shrink-0"
-			title={state.status}
-			data-testid="agent-status-pending"
-		/>
-	);
+  const summary = state.completionSummary ?? undefined;
+  if (state.status === 'idle') {
+    return (
+      <span class="text-green-400 flex-shrink-0" title={summary ?? 'Done'}>
+        <CheckIcon title={summary ?? 'Done'} />
+      </span>
+    );
+  }
+  if (state.status === 'in_progress') {
+    return (
+      <span class="text-blue-400 flex-shrink-0" title="In progress">
+        <SpinnerIcon title="In progress" />
+      </span>
+    );
+  }
+  if (state.status === 'blocked' || state.status === 'cancelled') {
+    return (
+      <span class="text-red-400 flex-shrink-0" title={summary ?? state.status}>
+        <FailIcon title={summary ?? state.status} />
+      </span>
+    );
+  }
+  // pending/draft/review/rate_limited/usage_limited — faint dot
+  return (
+    <span
+      class="w-1.5 h-1.5 rounded-full bg-gray-500 flex-shrink-0"
+      title={state.status}
+      data-testid="agent-status-pending"
+    />
+  );
 }
 
 function ChevronDown() {
-	return (
-		<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
-		</svg>
-	);
+  return (
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
 }
 
 function ChevronUp() {
-	return (
-		<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M5 15l7-7 7 7" />
-		</svg>
-	);
+  return (
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M5 15l7-7 7 7" />
+    </svg>
+  );
 }
 
 // ============================================================================
@@ -203,16 +203,16 @@ function ChevronUp() {
 
 /** Extract the text value from an override (backward compat for legacy string shape). */
 export function extractOverrideValue(
-	override: WorkflowNodeAgentOverride | string | undefined
+  override: WorkflowNodeAgentOverride | string | undefined
 ): string {
-	if (!override) return '';
-	if (typeof override === 'string') return override;
-	return override.value ?? '';
+  if (!override) return '';
+  if (typeof override === 'string') return override;
+  return override.value ?? '';
 }
 
 /** Build an override object, clearing to undefined when value is empty. */
 export function buildOverride(value: string): WorkflowNodeAgentOverride | undefined {
-	return value.trim() ? { value: value.trim() } : undefined;
+  return value.trim() ? { value: value.trim() } : undefined;
 }
 
 // ============================================================================
@@ -220,244 +220,244 @@ export function buildOverride(value: string): WorkflowNodeAgentOverride | undefi
 // ============================================================================
 
 interface MultiAgentSectionProps {
-	node: NodeDraft;
-	agents: SpaceAgent[];
-	onUpdate: (node: NodeDraft) => void;
+  node: NodeDraft;
+  agents: SpaceAgent[];
+  onUpdate: (node: NodeDraft) => void;
 }
 
 function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
-	const nodeAgents = node.agents ?? [];
+  const nodeAgents = node.agents ?? [];
 
-	// Track which slots have their override fields expanded (keyed by name)
-	const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
+  // Track which slots have their override fields expanded (keyed by name)
+  const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
 
-	const toggleSlotExpanded = useCallback((role: string) => {
-		setExpandedSlots((prev) => {
-			const next = new Set(prev);
-			if (next.has(role)) next.delete(role);
-			else next.add(role);
-			return next;
-		});
-	}, []);
+  const toggleSlotExpanded = useCallback((role: string) => {
+    setExpandedSlots((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  }, []);
 
-	function updateAgents(next: WorkflowNodeAgent[]) {
-		onUpdate({ ...node, agents: next });
-	}
+  function updateAgents(next: WorkflowNodeAgent[]) {
+    onUpdate({ ...node, agents: next });
+  }
 
-	function addAgent(agentId: string) {
-		if (!agentId) return;
-		const agentInfo = agents.find((a) => a.id === agentId);
-		// Guard against agents with empty role strings to avoid indistinguishable slot names
-		const baseRole = agentInfo?.name?.trim() || agentId;
-		// Ensure the slot name is unique within this node. When the same agent is added
-		// multiple times, append a numeric suffix to distinguish the slots.
-		const usedRoles = new Set(nodeAgents.map((a) => a.name));
-		let role = baseRole;
-		for (let i = 2; usedRoles.has(role); i++) {
-			role = `${baseRole}-${i}`;
-		}
-		updateAgents([...nodeAgents, { agentId, name: role }]);
-	}
+  function addAgent(agentId: string) {
+    if (!agentId) return;
+    const agentInfo = agents.find((a) => a.id === agentId);
+    // Guard against agents with empty role strings to avoid indistinguishable slot names
+    const baseRole = agentInfo?.name?.trim() || agentId;
+    // Ensure the slot name is unique within this node. When the same agent is added
+    // multiple times, append a numeric suffix to distinguish the slots.
+    const usedRoles = new Set(nodeAgents.map((a) => a.name));
+    let role = baseRole;
+    for (let i = 2; usedRoles.has(role); i++) {
+      role = `${baseRole}-${i}`;
+    }
+    updateAgents([...nodeAgents, { agentId, name: role }]);
+  }
 
-	function removeAgent(role: string) {
-		const removed = nodeAgents.find((a) => a.name === role);
-		const next = nodeAgents.filter((a) => a.name !== role);
-		if (next.length === 0) {
-			// Switch back to single-agent mode: restore agentId from the removed agent and
-			// clear channels (orphaned channels on a single-agent node are semantically invalid)
-			onUpdate({
-				...node,
-				agents: undefined,
-				agentId: removed?.agentId ?? '',
-				channels: undefined,
-			});
-		} else {
-			updateAgents(next);
-		}
-	}
+  function removeAgent(role: string) {
+    const removed = nodeAgents.find((a) => a.name === role);
+    const next = nodeAgents.filter((a) => a.name !== role);
+    if (next.length === 0) {
+      // Switch back to single-agent mode: restore agentId from the removed agent and
+      // clear channels (orphaned channels on a single-agent node are semantically invalid)
+      onUpdate({
+        ...node,
+        agents: undefined,
+        agentId: removed?.agentId ?? '',
+        channels: undefined,
+      });
+    } else {
+      updateAgents(next);
+    }
+  }
 
-	function updateAgentCustomPrompt(role: string, value: string) {
-		updateAgents(
-			nodeAgents.map((a) => (a.name === role ? { ...a, customPrompt: buildOverride(value) } : a))
-		);
-	}
+  function updateAgentCustomPrompt(role: string, value: string) {
+    updateAgents(
+      nodeAgents.map((a) => (a.name === role ? { ...a, customPrompt: buildOverride(value) } : a))
+    );
+  }
 
-	function updateAgentModel(_role: string, _model: string) {
-		// model is no longer a property of WorkflowNodeAgent; this function is a no-op
-	}
+  function updateAgentModel(_role: string, _model: string) {
+    // model is no longer a property of WorkflowNodeAgent; this function is a no-op
+  }
 
-	// All agents are available; same agent may be added multiple times with different roles.
-	const availableAgents = agents;
+  // All agents are available; same agent may be added multiple times with different roles.
+  const availableAgents = agents;
 
-	return (
-		<div class="space-y-2">
-			<div class="flex items-center justify-between">
-				<label class="text-xs font-medium text-gray-400">
-					Agents <span class="text-gray-600">({nodeAgents.length})</span>
-				</label>
-				{nodeAgents.length === 1 && (
-					<button
-						type="button"
-						onClick={() =>
-							onUpdate({
-								...node,
-								agents: undefined,
-								agentId: nodeAgents[0]?.agentId ?? '',
-								channels: undefined,
-							})
-						}
-						class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-					>
-						Switch to single
-					</button>
-				)}
-			</div>
+  return (
+    <div class="space-y-2">
+      <div class="flex items-center justify-between">
+        <label class="text-xs font-medium text-gray-400">
+          Agents <span class="text-gray-600">({nodeAgents.length})</span>
+        </label>
+        {nodeAgents.length === 1 && (
+          <button
+            type="button"
+            onClick={() =>
+              onUpdate({
+                ...node,
+                agents: undefined,
+                agentId: nodeAgents[0]?.agentId ?? '',
+                channels: undefined,
+              })
+            }
+            class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            Switch to single
+          </button>
+        )}
+      </div>
 
-			{/* Agent list */}
-			<div class="space-y-1.5">
-				{nodeAgents.map((sa) => {
-					const agentInfo = agents.find((a) => a.id === sa.agentId);
-					const hasOverrides = !!sa.customPrompt;
-					const isExpanded = expandedSlots.has(sa.name);
-					return (
-						<div
-							key={sa.name}
-							class={`rounded p-2 space-y-1 border ${hasOverrides ? 'bg-amber-950/20 border-amber-700/40' : 'bg-dark-800 border-dark-600'}`}
-						>
-							{/* Header: role input + override badge + remove */}
-							<div class="flex items-center gap-1">
-								<input
-									type="text"
-									value={sa.name}
-									onInput={(e) => {
-										const oldRole = sa.name;
-										const newRole = (e.currentTarget as HTMLInputElement).value;
-										// Keep the override section expanded after a rename by migrating the key
-										setExpandedSlots((prev) => {
-											if (!prev.has(oldRole)) return prev;
-											const next = new Set(prev);
-											next.delete(oldRole);
-											next.add(newRole);
-											return next;
-										});
-										updateAgents(
-											nodeAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
-										);
-									}}
-									placeholder="slot role"
-									data-testid="agent-role-input"
-									class="flex-1 text-xs font-mono bg-dark-900 border border-dark-700 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600 min-w-0"
-								/>
-								{hasOverrides && (
-									<span class="text-xs text-amber-400 bg-amber-900/40 border border-amber-700/50 rounded px-1 py-0.5 flex-shrink-0">
-										overrides
-									</span>
-								)}
-								<button
-									type="button"
-									onClick={() => toggleSlotExpanded(sa.name)}
-									class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
-									title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
-									aria-expanded={isExpanded}
-									data-testid="toggle-overrides-button"
-								>
-									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										{isExpanded ? (
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M5 15l7-7 7 7"
-											/>
-										) : (
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M19 9l-7 7-7-7"
-											/>
-										)}
-									</svg>
-								</button>
-								<button
-									type="button"
-									onClick={() => removeAgent(sa.name)}
-									class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
-									title="Remove agent"
-								>
-									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M6 18L18 6M6 6l12 12"
-										/>
-									</svg>
-								</button>
-							</div>
-							{/* Agent name (readonly) */}
-							<p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId ?? ''}</p>
-							{/* Per-agent custom prompt */}
-							<div class="space-y-0.5">
-								<label class="text-xs text-gray-600">Custom Prompt</label>
-								<input
-									type="text"
-									value={extractOverrideValue(sa.customPrompt)}
-									onInput={(e) =>
-										updateAgentCustomPrompt(sa.name, (e.currentTarget as HTMLInputElement).value)
-									}
-									placeholder="Per-agent custom prompt (optional)…"
-									data-testid="agent-instructions-input"
-									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
-								/>
-							</div>
-							{/* Expandable overrides section */}
-							{isExpanded && (
-								<div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
-									<p class="text-xs text-gray-500 font-medium">Slot overrides</p>
-									<div class="space-y-0.5">
-										<label class="text-xs text-gray-600">Model</label>
-										<input
-											type="text"
-											value={''}
-											onInput={(e) =>
-												updateAgentModel(sa.name, (e.currentTarget as HTMLInputElement).value)
-											}
-											placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
-											data-testid="agent-model-input"
-											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
-										/>
-									</div>
-								</div>
-							)}
-						</div>
-					);
-				})}
-			</div>
+      {/* Agent list */}
+      <div class="space-y-1.5">
+        {nodeAgents.map((sa) => {
+          const agentInfo = agents.find((a) => a.id === sa.agentId);
+          const hasOverrides = !!sa.customPrompt;
+          const isExpanded = expandedSlots.has(sa.name);
+          return (
+            <div
+              key={sa.name}
+              class={`rounded p-2 space-y-1 border ${hasOverrides ? 'bg-amber-950/20 border-amber-700/40' : 'bg-dark-800 border-dark-600'}`}
+            >
+              {/* Header: role input + override badge + remove */}
+              <div class="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={sa.name}
+                  onInput={(e) => {
+                    const oldRole = sa.name;
+                    const newRole = (e.currentTarget as HTMLInputElement).value;
+                    // Keep the override section expanded after a rename by migrating the key
+                    setExpandedSlots((prev) => {
+                      if (!prev.has(oldRole)) return prev;
+                      const next = new Set(prev);
+                      next.delete(oldRole);
+                      next.add(newRole);
+                      return next;
+                    });
+                    updateAgents(
+                      nodeAgents.map((a) => (a.name === oldRole ? { ...a, name: newRole } : a))
+                    );
+                  }}
+                  placeholder="slot role"
+                  data-testid="agent-role-input"
+                  class="flex-1 text-xs font-mono bg-dark-900 border border-dark-700 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600 min-w-0"
+                />
+                {hasOverrides && (
+                  <span class="text-xs text-amber-400 bg-amber-900/40 border border-amber-700/50 rounded px-1 py-0.5 flex-shrink-0">
+                    overrides
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => toggleSlotExpanded(sa.name)}
+                  class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
+                  title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
+                  aria-expanded={isExpanded}
+                  data-testid="toggle-overrides-button"
+                >
+                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    {isExpanded ? (
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width={2}
+                        d="M5 15l7-7 7 7"
+                      />
+                    ) : (
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width={2}
+                        d="M19 9l-7 7-7-7"
+                      />
+                    )}
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeAgent(sa.name)}
+                  class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+                  title="Remove agent"
+                >
+                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+              {/* Agent name (readonly) */}
+              <p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId ?? ''}</p>
+              {/* Per-agent custom prompt */}
+              <div class="space-y-0.5">
+                <label class="text-xs text-gray-600">Custom Prompt</label>
+                <input
+                  type="text"
+                  value={extractOverrideValue(sa.customPrompt)}
+                  onInput={(e) =>
+                    updateAgentCustomPrompt(sa.name, (e.currentTarget as HTMLInputElement).value)
+                  }
+                  placeholder="Per-agent custom prompt (optional)…"
+                  data-testid="agent-instructions-input"
+                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+                />
+              </div>
+              {/* Expandable overrides section */}
+              {isExpanded && (
+                <div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
+                  <p class="text-xs text-gray-500 font-medium">Slot overrides</p>
+                  <div class="space-y-0.5">
+                    <label class="text-xs text-gray-600">Model</label>
+                    <input
+                      type="text"
+                      value={''}
+                      onInput={(e) =>
+                        updateAgentModel(sa.name, (e.currentTarget as HTMLInputElement).value)
+                      }
+                      placeholder="e.g. claude-opus-4-6 (leave blank to use default)"
+                      data-testid="agent-model-input"
+                      class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
-			{/* Add agent dropdown */}
-			{availableAgents.length > 0 && (
-				<select
-					value=""
-					onChange={(e) => {
-						addAgent((e.currentTarget as HTMLSelectElement).value);
-						(e.currentTarget as HTMLSelectElement).value = '';
-					}}
-					class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-500 focus:outline-none focus:border-blue-500"
-				>
-					<option value="">+ Add agent…</option>
-					{availableAgents.map((a) => (
-						<option key={a.id} value={a.id}>
-							{a.name}
-						</option>
-					))}
-				</select>
-			)}
+      {/* Add agent dropdown */}
+      {availableAgents.length > 0 && (
+        <select
+          value=""
+          onChange={(e) => {
+            addAgent((e.currentTarget as HTMLSelectElement).value);
+            (e.currentTarget as HTMLSelectElement).value = '';
+          }}
+          class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-500 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">+ Add agent…</option>
+          {availableAgents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      )}
 
-			{/* Channels section */}
-			<ChannelsSection node={node} agents={agents} onUpdate={onUpdate} />
-		</div>
-	);
+      {/* Channels section */}
+      <ChannelsSection node={node} agents={agents} onUpdate={onUpdate} />
+    </div>
+  );
 }
 
 // ============================================================================
@@ -465,163 +465,163 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 // ============================================================================
 
 interface ChannelsSectionProps {
-	node: NodeDraft;
-	agents: SpaceAgent[];
-	onUpdate: (node: NodeDraft) => void;
+  node: NodeDraft;
+  agents: SpaceAgent[];
+  onUpdate: (node: NodeDraft) => void;
 }
 
 /** Format a to value for display. */
 function formatTo(to: string | string[]): string {
-	return Array.isArray(to) ? `[${to.join(', ')}]` : to;
+  return Array.isArray(to) ? `[${to.join(', ')}]` : to;
 }
 
 function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
-	const channels = node.channels ?? [];
-	const nodeAgents = node.agents ?? [];
+  const channels = node.channels ?? [];
+  const nodeAgents = node.agents ?? [];
 
-	// Collect known roles from node agents (+ wildcard)
-	const knownRoles = ['*', ...nodeAgents.map((sa) => sa.name)];
+  // Collect known roles from node agents (+ wildcard)
+  const knownRoles = ['*', ...nodeAgents.map((sa) => sa.name)];
 
-	function updateChannels(next: WorkflowChannel[]) {
-		onUpdate({ ...node, channels: next.length > 0 ? next : undefined });
-	}
+  function updateChannels(next: WorkflowChannel[]) {
+    onUpdate({ ...node, channels: next.length > 0 ? next : undefined });
+  }
 
-	function removeChannel(index: number) {
-		updateChannels(channels.filter((_, i) => i !== index));
-	}
+  function removeChannel(index: number) {
+    updateChannels(channels.filter((_, i) => i !== index));
+  }
 
-	function addChannel(from: string, to: string, label?: string) {
-		if (!from || !to) return;
-		// Support comma-separated multi-select for fan-out
-		const toValue: string | string[] = to.includes(',')
-			? to
-					.split(',')
-					.map((s) => s.trim())
-					.filter(Boolean)
-			: to;
-		updateChannels([
-			...channels,
-			{ id: crypto.randomUUID(), from, to: toValue, label: label || undefined },
-		]);
-	}
+  function addChannel(from: string, to: string, label?: string) {
+    if (!from || !to) return;
+    // Support comma-separated multi-select for fan-out
+    const toValue: string | string[] = to.includes(',')
+      ? to
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : to;
+    updateChannels([
+      ...channels,
+      { id: crypto.randomUUID(), from, to: toValue, label: label || undefined },
+    ]);
+  }
 
-	return (
-		<div class="space-y-2 pt-2 border-t border-dark-700">
-			<label class="text-xs font-medium text-gray-400">
-				Channels <span class="text-gray-600 font-normal">(messaging topology)</span>
-			</label>
+  return (
+    <div class="space-y-2 pt-2 border-t border-dark-700">
+      <label class="text-xs font-medium text-gray-400">
+        Channels <span class="text-gray-600 font-normal">(messaging topology)</span>
+      </label>
 
-			{channels.length === 0 && (
-				<p class="text-xs text-gray-600">No channels — agents are isolated.</p>
-			)}
+      {channels.length === 0 && (
+        <p class="text-xs text-gray-600">No channels — agents are isolated.</p>
+      )}
 
-			{/* Channel list */}
-			<div class="space-y-1">
-				{channels.map((ch, i) => (
-					<div
-						key={i}
-						class="flex items-center gap-2 bg-dark-800 border border-dark-600 rounded px-2 py-1.5"
-					>
-						<span class="text-xs text-gray-300 font-mono flex-1">
-							{ch.from} → {formatTo(ch.to)}
-							{ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
-						</span>
-						<button
-							type="button"
-							onClick={() => removeChannel(i)}
-							class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
-							title="Remove channel"
-						>
-							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M6 18L18 6M6 6l12 12"
-								/>
-							</svg>
-						</button>
-					</div>
-				))}
-			</div>
+      {/* Channel list */}
+      <div class="space-y-1">
+        {channels.map((ch, i) => (
+          <div
+            key={i}
+            class="flex items-center gap-2 bg-dark-800 border border-dark-600 rounded px-2 py-1.5"
+          >
+            <span class="text-xs text-gray-300 font-mono flex-1">
+              {ch.from} → {formatTo(ch.to)}
+              {ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
+            </span>
+            <button
+              type="button"
+              onClick={() => removeChannel(i)}
+              class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+              title="Remove channel"
+            >
+              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
 
-			{/* Add channel form */}
-			<AddChannelForm knownRoles={knownRoles} onAdd={addChannel} />
-		</div>
-	);
+      {/* Add channel form */}
+      <AddChannelForm knownRoles={knownRoles} onAdd={addChannel} />
+    </div>
+  );
 }
 
 interface AddChannelFormProps {
-	knownRoles: string[];
-	onAdd: (from: string, to: string, label?: string) => void;
+  knownRoles: string[];
+  onAdd: (from: string, to: string, label?: string) => void;
 }
 
 function AddChannelForm({ knownRoles, onAdd }: AddChannelFormProps) {
-	return (
-		<details class="group">
-			<summary class="text-xs text-blue-400 hover:text-blue-300 cursor-pointer list-none">
-				+ Add channel
-			</summary>
-			<ChannelFormBody knownRoles={knownRoles} onAdd={onAdd} />
-		</details>
-	);
+  return (
+    <details class="group">
+      <summary class="text-xs text-blue-400 hover:text-blue-300 cursor-pointer list-none">
+        + Add channel
+      </summary>
+      <ChannelFormBody knownRoles={knownRoles} onAdd={onAdd} />
+    </details>
+  );
 }
 
 interface ChannelFormBodyProps {
-	knownRoles: string[];
-	onAdd: (from: string, to: string, label?: string) => void;
+  knownRoles: string[];
+  onAdd: (from: string, to: string, label?: string) => void;
 }
 
 function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
-	// We use a form inside details to avoid useState — just read values on submit
-	function handleSubmit(e: Event) {
-		e.preventDefault();
-		const form = e.currentTarget as HTMLFormElement;
-		const from = (form.elements.namedItem('from') as HTMLSelectElement).value;
-		const to = (form.elements.namedItem('to') as HTMLInputElement).value.trim();
-		const label = (form.elements.namedItem('label') as HTMLInputElement).value.trim();
-		onAdd(from, to, label || undefined);
-		form.reset();
-	}
+  // We use a form inside details to avoid useState — just read values on submit
+  function handleSubmit(e: Event) {
+    e.preventDefault();
+    const form = e.currentTarget as HTMLFormElement;
+    const from = (form.elements.namedItem('from') as HTMLSelectElement).value;
+    const to = (form.elements.namedItem('to') as HTMLInputElement).value.trim();
+    const label = (form.elements.namedItem('label') as HTMLInputElement).value.trim();
+    onAdd(from, to, label || undefined);
+    form.reset();
+  }
 
-	return (
-		<form
-			onSubmit={handleSubmit}
-			class="mt-2 space-y-2 bg-dark-800 border border-dark-600 rounded p-2"
-		>
-			<div class="flex gap-2">
-				<select
-					name="from"
-					class="flex-1 text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
-				>
-					<option value="">From…</option>
-					{knownRoles.map((r) => (
-						<option key={r} value={r}>
-							{r}
-						</option>
-					))}
-				</select>
-			</div>
-			<input
-				name="to"
-				type="text"
-				placeholder="To role(s) — comma-separated for fan-out, * for all"
-				class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-			/>
-			<input
-				name="label"
-				type="text"
-				placeholder="Label (optional)"
-				class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-			/>
-			<button
-				type="submit"
-				class="w-full text-xs py-1 rounded bg-dark-700 hover:bg-dark-600 text-gray-300 transition-colors"
-			>
-				Add
-			</button>
-		</form>
-	);
+  return (
+    <form
+      onSubmit={handleSubmit}
+      class="mt-2 space-y-2 bg-dark-800 border border-dark-600 rounded p-2"
+    >
+      <div class="flex gap-2">
+        <select
+          name="from"
+          class="flex-1 text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">From…</option>
+          {knownRoles.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </div>
+      <input
+        name="to"
+        type="text"
+        placeholder="To role(s) — comma-separated for fan-out, * for all"
+        class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+      />
+      <input
+        name="label"
+        type="text"
+        placeholder="Label (optional)"
+        class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+      />
+      <button
+        type="submit"
+        class="w-full text-xs py-1 rounded bg-dark-700 hover:bg-dark-600 text-gray-300 transition-colors"
+      >
+        Add
+      </button>
+    </form>
+  );
 }
 
 // ============================================================================
@@ -629,252 +629,252 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 // ============================================================================
 
 interface WorkflowNodeCardProps {
-	node: NodeDraft;
-	nodeIndex: number;
-	isFirst: boolean;
-	isLast: boolean;
-	expanded: boolean;
-	/** All space agents, excluding 'leader' */
-	agents: SpaceAgent[];
-	onToggleExpand: () => void;
-	onUpdate: (node: NodeDraft) => void;
-	onMoveUp: () => void;
-	onMoveDown: () => void;
-	onRemove: () => void;
-	/** When true, the Remove button is disabled (e.g. only one node remains) */
-	disableRemove?: boolean;
-	/**
-	 * Runtime agent completion states for this node.
-	 * Derived from NodeExecution records filtered by the node's ID.
-	 * When provided, per-agent status indicators are shown in the collapsed header.
-	 */
-	nodeTaskStates?: AgentTaskState[];
+  node: NodeDraft;
+  nodeIndex: number;
+  isFirst: boolean;
+  isLast: boolean;
+  expanded: boolean;
+  /** All space agents, excluding 'leader' */
+  agents: SpaceAgent[];
+  onToggleExpand: () => void;
+  onUpdate: (node: NodeDraft) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onRemove: () => void;
+  /** When true, the Remove button is disabled (e.g. only one node remains) */
+  disableRemove?: boolean;
+  /**
+   * Runtime agent completion states for this node.
+   * Derived from NodeExecution records filtered by the node's ID.
+   * When provided, per-agent status indicators are shown in the collapsed header.
+   */
+  nodeTaskStates?: AgentTaskState[];
 }
 
 export function WorkflowNodeCard({
-	node,
-	nodeIndex,
-	isFirst,
-	isLast,
-	expanded,
-	agents,
-	onToggleExpand,
-	onUpdate,
-	onMoveUp,
-	onMoveDown,
-	onRemove,
-	disableRemove = false,
-	nodeTaskStates,
+  node,
+  nodeIndex,
+  isFirst,
+  isLast,
+  expanded,
+  agents,
+  onToggleExpand,
+  onUpdate,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+  disableRemove = false,
+  nodeTaskStates,
 }: WorkflowNodeCardProps) {
-	const multi = isMultiAgentNode(node);
-	const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
+  const multi = isMultiAgentNode(node);
+  const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
 
-	// Build a lookup: agentName → AgentTaskState (for multi-agent) or the first entry (for single-agent)
-	const taskStateByAgent = new Map<string | null, AgentTaskState>(
-		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
-	);
-	const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
+  // Build a lookup: agentName → AgentTaskState (for multi-agent) or the first entry (for single-agent)
+  const taskStateByAgent = new Map<string | null, AgentTaskState>(
+    (nodeTaskStates ?? []).map((s) => [s.agentName, s])
+  );
+  const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
 
-	return (
-		<div
-			class={cn(
-				'border rounded-lg overflow-hidden',
-				allDone ? 'border-green-700/60' : 'border-dark-700'
-			)}
-		>
-			{/* Collapsed header — always visible */}
-			<div
-				class={cn(
-					'flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none',
-					expanded ? 'bg-dark-800 border-b border-dark-700' : 'bg-dark-850 hover:bg-dark-800'
-				)}
-				onClick={onToggleExpand}
-			>
-				{/* Step number — turns green when all agents done */}
-				<span
-					class={cn(
-						'w-5 h-5 flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0',
-						allDone ? 'bg-green-800 text-green-300' : 'bg-dark-700 text-gray-400'
-					)}
-					data-testid="node-step-badge"
-				>
-					{nodeIndex + 1}
-				</span>
+  return (
+    <div
+      class={cn(
+        'border rounded-lg overflow-hidden',
+        allDone ? 'border-green-700/60' : 'border-dark-700'
+      )}
+    >
+      {/* Collapsed header — always visible */}
+      <div
+        class={cn(
+          'flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none',
+          expanded ? 'bg-dark-800 border-b border-dark-700' : 'bg-dark-850 hover:bg-dark-800'
+        )}
+        onClick={onToggleExpand}
+      >
+        {/* Step number — turns green when all agents done */}
+        <span
+          class={cn(
+            'w-5 h-5 flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0',
+            allDone ? 'bg-green-800 text-green-300' : 'bg-dark-700 text-gray-400'
+          )}
+          data-testid="node-step-badge"
+        >
+          {nodeIndex + 1}
+        </span>
 
-				{/* Step info */}
-				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-1.5 min-w-0 flex-wrap">
-						<span class="text-xs font-medium text-gray-200 truncate">
-							{node.name || 'Unnamed Node'}
-						</span>
-						<span class="text-xs text-gray-600 flex-shrink-0">·</span>
-						{multi ? (
-							<span class="flex items-center gap-1 flex-wrap">
-								{node.agents!.map((a) => {
-									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId ?? '';
-									const hasOverrides = !!a.customPrompt;
-									const taskState = taskStateByAgent.get(a.name);
-									return (
-										<span
-											key={a.name}
-											class={cn(
-												'text-xs border rounded px-1 py-0.5 flex items-center gap-0.5',
-												hasOverrides
-													? 'bg-amber-950/30 border-amber-700/50 text-amber-300'
-													: 'bg-dark-700 border-dark-600 text-gray-300'
-											)}
-											title={`${name} — slot: ${a.name}${hasOverrides ? ' (has overrides)' : ''}`}
-										>
-											<span>{a.name}</span>
-											{hasOverrides && !taskState && (
-												<span
-													data-testid="override-dot"
-													class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
-												/>
-											)}
-											{taskState && <AgentStatusIcon state={taskState} />}
-										</span>
-									);
-								})}
-							</span>
-						) : (
-							<span class="flex items-center gap-1 text-xs text-gray-500 truncate flex-shrink-0">
-								<span>{agentName || '—'}</span>
-								{taskStateByAgent.get(null) && (
-									<AgentStatusIcon state={taskStateByAgent.get(null)!} />
-								)}
-							</span>
-						)}
-					</div>
-					{/* Completion summary — shown when the single-agent or any agent has a summary */}
-					{nodeTaskStates && nodeTaskStates.some((s) => s.completionSummary) && (
-						<p class="text-xs text-gray-500 truncate mt-0.5" data-testid="node-completion-summary">
-							{nodeTaskStates.find((s) => s.completionSummary)?.completionSummary}
-						</p>
-					)}
-				</div>
+        {/* Step info */}
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
+            <span class="text-xs font-medium text-gray-200 truncate">
+              {node.name || 'Unnamed Node'}
+            </span>
+            <span class="text-xs text-gray-600 flex-shrink-0">·</span>
+            {multi ? (
+              <span class="flex items-center gap-1 flex-wrap">
+                {node.agents!.map((a) => {
+                  const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId ?? '';
+                  const hasOverrides = !!a.customPrompt;
+                  const taskState = taskStateByAgent.get(a.name);
+                  return (
+                    <span
+                      key={a.name}
+                      class={cn(
+                        'text-xs border rounded px-1 py-0.5 flex items-center gap-0.5',
+                        hasOverrides
+                          ? 'bg-amber-950/30 border-amber-700/50 text-amber-300'
+                          : 'bg-dark-700 border-dark-600 text-gray-300'
+                      )}
+                      title={`${name} — slot: ${a.name}${hasOverrides ? ' (has overrides)' : ''}`}
+                    >
+                      <span>{a.name}</span>
+                      {hasOverrides && !taskState && (
+                        <span
+                          data-testid="override-dot"
+                          class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+                        />
+                      )}
+                      {taskState && <AgentStatusIcon state={taskState} />}
+                    </span>
+                  );
+                })}
+              </span>
+            ) : (
+              <span class="flex items-center gap-1 text-xs text-gray-500 truncate flex-shrink-0">
+                <span>{agentName || '—'}</span>
+                {taskStateByAgent.get(null) && (
+                  <AgentStatusIcon state={taskStateByAgent.get(null)!} />
+                )}
+              </span>
+            )}
+          </div>
+          {/* Completion summary — shown when the single-agent or any agent has a summary */}
+          {nodeTaskStates && nodeTaskStates.some((s) => s.completionSummary) && (
+            <p class="text-xs text-gray-500 truncate mt-0.5" data-testid="node-completion-summary">
+              {nodeTaskStates.find((s) => s.completionSummary)?.completionSummary}
+            </p>
+          )}
+        </div>
 
-				{/* Controls */}
-				<div class="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-					<button
-						onClick={onMoveUp}
-						disabled={isFirst}
-						class="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-						title="Move up"
-					>
-						<ChevronUp />
-					</button>
-					<button
-						onClick={onMoveDown}
-						disabled={isLast}
-						class="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-						title="Move down"
-					>
-						<ChevronDown />
-					</button>
-					<button
-						onClick={onRemove}
-						disabled={disableRemove}
-						class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-						title="Remove node"
-					>
-						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M6 18L18 6M6 6l12 12"
-							/>
-						</svg>
-					</button>
-				</div>
+        {/* Controls */}
+        <div class="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={onMoveUp}
+            disabled={isFirst}
+            class="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Move up"
+          >
+            <ChevronUp />
+          </button>
+          <button
+            onClick={onMoveDown}
+            disabled={isLast}
+            class="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Move down"
+          >
+            <ChevronDown />
+          </button>
+          <button
+            onClick={onRemove}
+            disabled={disableRemove}
+            class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Remove node"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
 
-				{/* Expand chevron */}
-				<span class="text-gray-600 flex-shrink-0">
-					{expanded ? <ChevronUp /> : <ChevronDown />}
-				</span>
-			</div>
+        {/* Expand chevron */}
+        <span class="text-gray-600 flex-shrink-0">
+          {expanded ? <ChevronUp /> : <ChevronDown />}
+        </span>
+      </div>
 
-			{/* Expanded body */}
-			{expanded && (
-				<div class="px-4 py-4 bg-dark-900 space-y-4">
-					{/* Name */}
-					<div class="space-y-1">
-						<label class="text-xs font-medium text-gray-400">Node Name</label>
-						<input
-							type="text"
-							value={node.name}
-							onInput={(e) =>
-								onUpdate({ ...node, name: (e.currentTarget as HTMLInputElement).value })
-							}
-							placeholder="e.g. Plan the approach"
-							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
-						/>
-					</div>
+      {/* Expanded body */}
+      {expanded && (
+        <div class="px-4 py-4 bg-dark-900 space-y-4">
+          {/* Name */}
+          <div class="space-y-1">
+            <label class="text-xs font-medium text-gray-400">Node Name</label>
+            <input
+              type="text"
+              value={node.name}
+              onInput={(e) =>
+                onUpdate({ ...node, name: (e.currentTarget as HTMLInputElement).value })
+              }
+              placeholder="e.g. Plan the approach"
+              class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+            />
+          </div>
 
-					{/* Agent(s) */}
-					{multi ? (
-						<MultiAgentSection node={node} agents={agents} onUpdate={onUpdate} />
-					) : (
-						<div class="space-y-1">
-							<div class="flex items-center justify-between">
-								<label class="text-xs font-medium text-gray-400">Agent</label>
-								<button
-									type="button"
-									onClick={() => {
-										const firstId = node.agentId;
-										const firstAgentRole = firstId
-											? (agents.find((a) => a.id === firstId)?.name ?? firstId)
-											: '';
-										const existing: WorkflowNodeAgent[] = firstId
-											? [{ agentId: firstId, name: firstAgentRole }]
-											: [];
-										onUpdate({ ...node, agents: existing, agentId: '' });
-									}}
-									class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-								>
-									+ Add agent
-								</button>
-							</div>
-							<select
-								value={node.agentId}
-								onChange={(e) =>
-									onUpdate({ ...node, agentId: (e.currentTarget as HTMLSelectElement).value })
-								}
-								class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
-							>
-								<option value="">— Select agent —</option>
-								{agents.map((a) => (
-									<option key={a.id} value={a.id}>
-										{a.name}
-									</option>
-								))}
-							</select>
-						</div>
-					)}
+          {/* Agent(s) */}
+          {multi ? (
+            <MultiAgentSection node={node} agents={agents} onUpdate={onUpdate} />
+          ) : (
+            <div class="space-y-1">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-medium text-gray-400">Agent</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstId = node.agentId;
+                    const firstAgentRole = firstId
+                      ? (agents.find((a) => a.id === firstId)?.name ?? firstId)
+                      : '';
+                    const existing: WorkflowNodeAgent[] = firstId
+                      ? [{ agentId: firstId, name: firstAgentRole }]
+                      : [];
+                    onUpdate({ ...node, agents: existing, agentId: '' });
+                  }}
+                  class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  + Add agent
+                </button>
+              </div>
+              <select
+                value={node.agentId}
+                onChange={(e) =>
+                  onUpdate({ ...node, agentId: (e.currentTarget as HTMLSelectElement).value })
+                }
+                class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+              >
+                <option value="">— Select agent —</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-					{/* Custom Prompt (single-agent) */}
-					<div class="space-y-1">
-						<label class="text-xs font-medium text-gray-400">
-							Custom Prompt <span class="font-normal text-gray-600">(optional)</span>
-						</label>
-						<textarea
-							value={extractOverrideValue(node.customPrompt)}
-							onInput={(e) => {
-								const value = (e.currentTarget as HTMLTextAreaElement).value;
-								onUpdate({
-									...node,
-									customPrompt: buildOverride(value),
-								});
-							}}
-							placeholder="Node-specific prompt appended to the agent's custom prompt…"
-							data-testid="single-agent-system-prompt"
-							rows={4}
-							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-						/>
-					</div>
-				</div>
-			)}
-		</div>
-	);
+          {/* Custom Prompt (single-agent) */}
+          <div class="space-y-1">
+            <label class="text-xs font-medium text-gray-400">
+              Custom Prompt <span class="font-normal text-gray-600">(optional)</span>
+            </label>
+            <textarea
+              value={extractOverrideValue(node.customPrompt)}
+              onInput={(e) => {
+                const value = (e.currentTarget as HTMLTextAreaElement).value;
+                onUpdate({
+                  ...node,
+                  customPrompt: buildOverride(value),
+                });
+              }}
+              placeholder="Node-specific prompt appended to the agent's custom prompt…"
+              data-testid="single-agent-system-prompt"
+              rows={4}
+              class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

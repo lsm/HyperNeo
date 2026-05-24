@@ -32,57 +32,57 @@ const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 45000 : 90000;
 
 describe('Session Resume', () => {
-	let daemon: DaemonServerContext;
+  let daemon: DaemonServerContext;
 
-	beforeEach(async () => {
-		daemon = await createDaemonServer();
-	}, SETUP_TIMEOUT);
+  beforeEach(async () => {
+    daemon = await createDaemonServer();
+  }, SETUP_TIMEOUT);
 
-	afterEach(async () => {
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
-	}, SETUP_TIMEOUT);
+  afterEach(async () => {
+    if (daemon) {
+      daemon.kill('SIGTERM');
+      await daemon.waitForExit();
+    }
+  }, SETUP_TIMEOUT);
 
-	test(
-		'should maintain session consistency across multiple operations',
-		async () => {
-			const workspacePath = `${TMP_DIR}/session-resume-test-${Date.now()}`;
+  test(
+    'should maintain session consistency across multiple operations',
+    async () => {
+      const workspacePath = `${TMP_DIR}/session-resume-test-${Date.now()}`;
 
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath,
-				title: 'Session Resume Test',
-				config: {
-					model: MODEL,
-					permissionMode: 'acceptEdits',
-				},
-			})) as { sessionId: string };
+      const createResult = (await daemon.messageHub.request('session.create', {
+        workspacePath,
+        title: 'Session Resume Test',
+        config: {
+          model: MODEL,
+          permissionMode: 'acceptEdits',
+        },
+      })) as { sessionId: string };
 
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
+      const { sessionId } = createResult;
+      daemon.trackSession(sessionId);
 
-			// Initial session state
-			let session = await getSession(daemon, sessionId);
-			expect(session.id).toBe(sessionId);
+      // Initial session state
+      let session = await getSession(daemon, sessionId);
+      expect(session.id).toBe(sessionId);
 
-			// Send first message
-			await sendMessage(daemon, sessionId, 'First message');
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+      // Send first message
+      await sendMessage(daemon, sessionId, 'First message');
+      await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			// Verify session is still consistent
-			session = await getSession(daemon, sessionId);
-			expect(session.id).toBe(sessionId);
+      // Verify session is still consistent
+      session = await getSession(daemon, sessionId);
+      expect(session.id).toBe(sessionId);
 
-			// Send second message
-			await sendMessage(daemon, sessionId, 'Second message');
-			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+      // Send second message
+      await sendMessage(daemon, sessionId, 'Second message');
+      await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			// Session should still be consistent and functional
-			session = await getSession(daemon, sessionId);
-			expect(session.id).toBe(sessionId);
-			expect(session.workspacePath).toBe(workspacePath);
-		},
-		TEST_TIMEOUT
-	);
+      // Session should still be consistent and functional
+      session = await getSession(daemon, sessionId);
+      expect(session.id).toBe(sessionId);
+      expect(session.workspacePath).toBe(workspacePath);
+    },
+    TEST_TIMEOUT
+  );
 });

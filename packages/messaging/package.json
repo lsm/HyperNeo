@@ -1,19 +1,19 @@
 {
-	"name": "@neokai/messaging",
-	"version": "0.25.0",
-	"type": "module",
-	"license": "Apache-2.0",
-	"main": "src/mod.ts",
-	"exports": {
-		".": "./src/mod.ts",
-		"./types": "./src/types.ts",
-		"./address": "./src/address.ts",
-		"./contracts": "./src/contracts.ts"
-	},
-	"scripts": {
-		"test": "bun test ./tests"
-	},
-	"devDependencies": {
-		"@types/bun": "1.3.13"
-	}
+  "name": "@neokai/messaging",
+  "version": "0.25.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "src/mod.ts",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./types": "./src/types.ts",
+    "./address": "./src/address.ts",
+    "./contracts": "./src/contracts.ts"
+  },
+  "scripts": {
+    "test": "bun test ./tests"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13"
+  }
 }

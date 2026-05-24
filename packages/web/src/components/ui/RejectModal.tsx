@@ -9,79 +9,79 @@ import { useState } from 'preact/hooks';
 import { Modal } from './Modal.tsx';
 
 export interface RejectModalProps {
-	isOpen: boolean;
-	onClose: () => void;
-	onConfirm: (feedback: string) => void;
-	title: string;
-	message: string;
-	placeholder?: string;
-	confirmText?: string;
-	cancelText?: string;
-	isLoading?: boolean;
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (feedback: string) => void;
+  title: string;
+  message: string;
+  placeholder?: string;
+  confirmText?: string;
+  cancelText?: string;
+  isLoading?: boolean;
 }
 
 export function RejectModal({
-	isOpen,
-	onClose,
-	onConfirm,
-	title,
-	message,
-	placeholder = 'Please provide feedback explaining why this work was rejected...',
-	confirmText = 'Reject',
-	cancelText = 'Cancel',
-	isLoading = false,
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  placeholder = 'Please provide feedback explaining why this work was rejected...',
+  confirmText = 'Reject',
+  cancelText = 'Cancel',
+  isLoading = false,
 }: RejectModalProps) {
-	const [feedback, setFeedback] = useState('');
+  const [feedback, setFeedback] = useState('');
 
-	const handleConfirm = () => {
-		if (feedback.trim()) {
-			onConfirm(feedback.trim());
-		}
-	};
+  const handleConfirm = () => {
+    if (feedback.trim()) {
+      onConfirm(feedback.trim());
+    }
+  };
 
-	const handleClose = () => {
-		setFeedback('');
-		onClose();
-	};
+  const handleClose = () => {
+    setFeedback('');
+    onClose();
+  };
 
-	const isValid = feedback.trim().length > 0;
+  const isValid = feedback.trim().length > 0;
 
-	return (
-		<Modal isOpen={isOpen} onClose={handleClose} title={title} size="md" showCloseButton={true}>
-			<div class="space-y-4">
-				{/* Message */}
-				<p class="text-gray-300 text-sm leading-relaxed">{message}</p>
+  return (
+    <Modal isOpen={isOpen} onClose={handleClose} title={title} size="md" showCloseButton={true}>
+      <div class="space-y-4">
+        {/* Message */}
+        <p class="text-gray-300 text-sm leading-relaxed">{message}</p>
 
-				{/* Feedback input */}
-				<textarea
-					class="w-full h-32 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
-					placeholder={placeholder}
-					value={feedback}
-					onInput={(e) => setFeedback((e.target as HTMLTextAreaElement).value)}
-					disabled={isLoading}
-					autoFocus
-				/>
+        {/* Feedback input */}
+        <textarea
+          class="w-full h-32 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+          placeholder={placeholder}
+          value={feedback}
+          onInput={(e) => setFeedback((e.target as HTMLTextAreaElement).value)}
+          disabled={isLoading}
+          autoFocus
+        />
 
-				{/* Actions */}
-				<div class="flex items-center justify-end gap-3 pt-2">
-					<button
-						type="button"
-						onClick={handleClose}
-						disabled={isLoading}
-						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						{cancelText}
-					</button>
-					<button
-						type="button"
-						onClick={handleConfirm}
-						disabled={isLoading || !isValid}
-						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50"
-					>
-						{isLoading ? 'Rejecting...' : confirmText}
-					</button>
-				</div>
-			</div>
-		</Modal>
-	);
+        {/* Actions */}
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={isLoading}
+            class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {cancelText}
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={isLoading || !isValid}
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50"
+          >
+            {isLoading ? 'Rejecting...' : confirmText}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
 }

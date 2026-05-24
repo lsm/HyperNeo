@@ -1,21 +1,21 @@
 {
-	"plugins": [
-		{
-			"name": "MockResponsePlugin",
-			"enabled": true,
-			"pluginPath": "~appFolder/plugins/DevProxy.Plugins.dll",
-			"configSection": "mockResponsePlugin"
-		}
-	],
-	"urlsToWatch": [
-		"http://127.0.0.1:8000/*",
-		"http://localhost:8000/*",
-		"https://api.anthropic.com/*"
-	],
-	"mockResponsePlugin": {
-		"mocksFile": "mocks.json"
-	},
-	"logLevel": "information",
-	"port": 8000,
-	"labelMode": "text"
+  "plugins": [
+    {
+      "name": "MockResponsePlugin",
+      "enabled": true,
+      "pluginPath": "~appFolder/plugins/DevProxy.Plugins.dll",
+      "configSection": "mockResponsePlugin"
+    }
+  ],
+  "urlsToWatch": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "https://api.anthropic.com/*"
+  ],
+  "mockResponsePlugin": {
+    "mocksFile": "mocks.json"
+  },
+  "logLevel": "information",
+  "port": 8000,
+  "labelMode": "text"
 }

@@ -21,567 +21,567 @@ import { SpaceExternalEventsSettings } from './SpaceExternalEventsSettings.tsx';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect.tsx';
 
 interface SpaceSettingsProps {
-	space: Space;
+  space: Space;
 }
 
 interface SettingsBlockProps {
-	title: string;
-	description: string;
-	children: ComponentChildren;
-	tone?: 'default' | 'danger';
+  title: string;
+  description: string;
+  children: ComponentChildren;
+  tone?: 'default' | 'danger';
 }
 
 function SettingsBlock({ title, description, children, tone = 'default' }: SettingsBlockProps) {
-	return (
-		<section
-			class={cn(
-				'grid gap-4 rounded-lg border p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6',
-				tone === 'danger' ? 'border-red-900/40 bg-red-950/10' : 'border-white/10 bg-white/[0.025]'
-			)}
-		>
-			<div>
-				<h3
-					class={cn(
-						'text-xs font-semibold uppercase tracking-wider',
-						tone === 'danger' ? 'text-red-400' : 'text-gray-400'
-					)}
-				>
-					{title}
-				</h3>
-				<p class="mt-1 text-xs leading-5 text-gray-600">{description}</p>
-			</div>
-			<div class="min-w-0">{children}</div>
-		</section>
-	);
+  return (
+    <section
+      class={cn(
+        'grid gap-4 rounded-lg border p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6',
+        tone === 'danger' ? 'border-red-900/40 bg-red-950/10' : 'border-white/10 bg-white/[0.025]'
+      )}
+    >
+      <div>
+        <h3
+          class={cn(
+            'text-xs font-semibold uppercase tracking-wider',
+            tone === 'danger' ? 'text-red-400' : 'text-gray-400'
+          )}
+        >
+          {title}
+        </h3>
+        <p class="mt-1 text-xs leading-5 text-gray-600">{description}</p>
+      </div>
+      <div class="min-w-0">{children}</div>
+    </section>
+  );
 }
 
 const SETTING_SOURCE_OPTIONS: Array<[SettingSource, string, string]> = [
-	['user', 'User settings', '~/.claude/settings.json'],
-	['project', 'Project settings + CLAUDE.md', '.claude/settings.json'],
-	['local', 'Local settings', '.claude/settings.local.json'],
+  ['user', 'User settings', '~/.claude/settings.json'],
+  ['project', 'Project settings + CLAUDE.md', '.claude/settings.json'],
+  ['local', 'Local settings', '.claude/settings.local.json'],
 ];
 
 function getInheritedSettingSources(): SettingSource[] {
-	return globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
+  return globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
 }
 
 export function SpaceSettings({ space }: SpaceSettingsProps) {
-	const [name, setName] = useState(space.name);
-	const [description, setDescription] = useState(space.description ?? '');
-	const [instructions, setInstructions] = useState(space.instructions ?? '');
-	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
-	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
-	const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(
-		space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS
-	);
-	const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
-	const [settingSources, setSettingSources] = useState<SettingSource[]>(
-		space.settingSources ?? getInheritedSettingSources()
-	);
-	const hadExplicitSettingSources = space.settingSources !== undefined;
-	const [clearSettingSources, setClearSettingSources] = useState(false);
-	const [saving, setSaving] = useState(false);
-	const [saveError, setSaveError] = useState<string | null>(null);
-	const [isArchiving, setIsArchiving] = useState(false);
-	const [isDeleting, setIsDeleting] = useState(false);
+  const [name, setName] = useState(space.name);
+  const [description, setDescription] = useState(space.description ?? '');
+  const [instructions, setInstructions] = useState(space.instructions ?? '');
+  const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
+  const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(
+    space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS
+  );
+  const [defaultModel, setDefaultModel] = useState<string | undefined>(space.defaultModel);
+  const [settingSources, setSettingSources] = useState<SettingSource[]>(
+    space.settingSources ?? getInheritedSettingSources()
+  );
+  const hadExplicitSettingSources = space.settingSources !== undefined;
+  const [clearSettingSources, setClearSettingSources] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-	useEffect(() => {
-		setName(space.name);
-		setDescription(space.description ?? '');
-		setInstructions(space.instructions ?? '');
-		setBackgroundContext(space.backgroundContext ?? '');
-		setAutonomyLevel(space.autonomyLevel ?? 1);
-		setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
-		setDefaultModel(space.defaultModel);
-		setSettingSources(space.settingSources ?? getInheritedSettingSources());
-		setClearSettingSources(false);
-		setSaveError(null);
-	}, [
-		space.id,
-		space.name,
-		space.description,
-		space.instructions,
-		space.backgroundContext,
-		space.autonomyLevel,
-		space.maxConcurrentTasks,
-		space.defaultModel,
-		space.settingSources,
-	]);
+  useEffect(() => {
+    setName(space.name);
+    setDescription(space.description ?? '');
+    setInstructions(space.instructions ?? '');
+    setBackgroundContext(space.backgroundContext ?? '');
+    setAutonomyLevel(space.autonomyLevel ?? 1);
+    setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
+    setDefaultModel(space.defaultModel);
+    setSettingSources(space.settingSources ?? getInheritedSettingSources());
+    setClearSettingSources(false);
+    setSaveError(null);
+  }, [
+    space.id,
+    space.name,
+    space.description,
+    space.instructions,
+    space.backgroundContext,
+    space.autonomyLevel,
+    space.maxConcurrentTasks,
+    space.defaultModel,
+    space.settingSources,
+  ]);
 
-	const isDirty =
-		name !== space.name ||
-		description !== (space.description ?? '') ||
-		instructions !== (space.instructions ?? '') ||
-		backgroundContext !== (space.backgroundContext ?? '') ||
-		autonomyLevel !== (space.autonomyLevel ?? 1) ||
-		maxConcurrentTasks !== (space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS) ||
-		defaultModel !== space.defaultModel ||
-		JSON.stringify(settingSources) !==
-			JSON.stringify(space.settingSources ?? getInheritedSettingSources()) ||
-		clearSettingSources;
+  const isDirty =
+    name !== space.name ||
+    description !== (space.description ?? '') ||
+    instructions !== (space.instructions ?? '') ||
+    backgroundContext !== (space.backgroundContext ?? '') ||
+    autonomyLevel !== (space.autonomyLevel ?? 1) ||
+    maxConcurrentTasks !== (space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS) ||
+    defaultModel !== space.defaultModel ||
+    JSON.stringify(settingSources) !==
+      JSON.stringify(space.settingSources ?? getInheritedSettingSources()) ||
+    clearSettingSources;
 
-	function resetChanges() {
-		setName(space.name);
-		setDescription(space.description ?? '');
-		setInstructions(space.instructions ?? '');
-		setBackgroundContext(space.backgroundContext ?? '');
-		setAutonomyLevel(space.autonomyLevel ?? 1);
-		setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
-		setDefaultModel(space.defaultModel);
-		setSettingSources(space.settingSources ?? getInheritedSettingSources());
-		setClearSettingSources(false);
-		setSaveError(null);
-	}
+  function resetChanges() {
+    setName(space.name);
+    setDescription(space.description ?? '');
+    setInstructions(space.instructions ?? '');
+    setBackgroundContext(space.backgroundContext ?? '');
+    setAutonomyLevel(space.autonomyLevel ?? 1);
+    setMaxConcurrentTasks(space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS);
+    setDefaultModel(space.defaultModel);
+    setSettingSources(space.settingSources ?? getInheritedSettingSources());
+    setClearSettingSources(false);
+    setSaveError(null);
+  }
 
-	async function handleSave(e: Event) {
-		e.preventDefault();
-		if (!name.trim()) {
-			setSaveError('Space name is required');
-			return;
-		}
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			setSaveError('Not connected to server');
-			return;
-		}
-		try {
-			setSaving(true);
-			setSaveError(null);
-			const updated = await hub.request<Space>('space.update', {
-				id: space.id,
-				name: name.trim(),
-				description: description.trim() || undefined,
-				instructions: instructions.trim() || undefined,
-				backgroundContext: backgroundContext.trim() || undefined,
-				autonomyLevel,
-				maxConcurrentTasks,
-				defaultModel: defaultModel || null,
-				...(clearSettingSources ||
-				JSON.stringify(settingSources) !==
-					JSON.stringify(space.settingSources ?? getInheritedSettingSources())
-					? { settingSources: clearSettingSources ? null : settingSources }
-					: {}),
-			});
-			// Apply response directly because undefined fields can be dropped during JSON serialization.
-			spaceStore.space.value = updated;
-			toast.success('Space updated');
-		} catch (err) {
-			setSaveError(err instanceof Error ? err.message : 'Failed to save changes');
-		} finally {
-			setSaving(false);
-		}
-	}
+  async function handleSave(e: Event) {
+    e.preventDefault();
+    if (!name.trim()) {
+      setSaveError('Space name is required');
+      return;
+    }
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      setSaveError('Not connected to server');
+      return;
+    }
+    try {
+      setSaving(true);
+      setSaveError(null);
+      const updated = await hub.request<Space>('space.update', {
+        id: space.id,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        instructions: instructions.trim() || undefined,
+        backgroundContext: backgroundContext.trim() || undefined,
+        autonomyLevel,
+        maxConcurrentTasks,
+        defaultModel: defaultModel || null,
+        ...(clearSettingSources ||
+        JSON.stringify(settingSources) !==
+          JSON.stringify(space.settingSources ?? getInheritedSettingSources())
+          ? { settingSources: clearSettingSources ? null : settingSources }
+          : {}),
+      });
+      // Apply response directly because undefined fields can be dropped during JSON serialization.
+      spaceStore.space.value = updated;
+      toast.success('Space updated');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save changes');
+    } finally {
+      setSaving(false);
+    }
+  }
 
-	async function exportBundle() {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Connection lost.');
-			return;
-		}
-		try {
-			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.bundle', {
-				spaceId: space.id,
-			});
-			downloadBundle(bundle, space.name, 'bundle');
-			toast.success(`Bundle exported for "${space.name}"`);
-		} catch (err) {
-			toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
+  async function exportBundle() {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Connection lost.');
+      return;
+    }
+    try {
+      const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.bundle', {
+        spaceId: space.id,
+      });
+      downloadBundle(bundle, space.name, 'bundle');
+      toast.success(`Bundle exported for "${space.name}"`);
+    } catch (err) {
+      toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-	async function handleArchive() {
-		if (
-			!confirm(
-				`Archive "${space.name}"? The space will be hidden from the main list but can be restored later.`
-			)
-		) {
-			return;
-		}
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Not connected to server');
-			return;
-		}
-		try {
-			setIsArchiving(true);
-			await hub.request('space.archive', { id: space.id });
-			toast.success(`Space "${space.name}" archived`);
-			navigateToSpaces();
-		} catch (err) {
-			toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`);
-		} finally {
-			setIsArchiving(false);
-		}
-	}
+  async function handleArchive() {
+    if (
+      !confirm(
+        `Archive "${space.name}"? The space will be hidden from the main list but can be restored later.`
+      )
+    ) {
+      return;
+    }
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setIsArchiving(true);
+      await hub.request('space.archive', { id: space.id });
+      toast.success(`Space "${space.name}" archived`);
+      navigateToSpaces();
+    } catch (err) {
+      toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsArchiving(false);
+    }
+  }
 
-	async function handleDelete() {
-		if (
-			!confirm(
-				`Permanently delete "${space.name}"? This will remove all agents, workflows, tasks, and runs. This cannot be undone.`
-			)
-		) {
-			return;
-		}
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Not connected to server');
-			return;
-		}
-		try {
-			setIsDeleting(true);
-			await hub.request('space.delete', { id: space.id });
-			toast.success(`Space "${space.name}" deleted`);
-			navigateToSpaces();
-		} catch (err) {
-			toast.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
-		} finally {
-			setIsDeleting(false);
-		}
-	}
+  async function handleDelete() {
+    if (
+      !confirm(
+        `Permanently delete "${space.name}"? This will remove all agents, workflows, tasks, and runs. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setIsDeleting(true);
+      await hub.request('space.delete', { id: space.id });
+      toast.success(`Space "${space.name}" deleted`);
+      navigateToSpaces();
+    } catch (err) {
+      toast.error(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
-	return (
-		<div class="scrollbar-dark flex h-full min-h-0 flex-col overflow-y-auto py-4 pr-3">
-			<div class="min-h-[calc(100%+1px)] space-y-4">
-				<form onSubmit={handleSave} class="space-y-4">
-					{saveError && (
-						<div class="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2 text-sm text-red-300">
-							{saveError}
-						</div>
-					)}
+  return (
+    <div class="scrollbar-dark flex h-full min-h-0 flex-col overflow-y-auto py-4 pr-3">
+      <div class="min-h-[calc(100%+1px)] space-y-4">
+        <form onSubmit={handleSave} class="space-y-4">
+          {saveError && (
+            <div class="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-2 text-sm text-red-300">
+              {saveError}
+            </div>
+          )}
 
-					<SettingsBlock
-						title="Basics"
-						description="Name the space, show where it runs, and choose the default model for new work."
-					>
-						<div class="grid gap-4 lg:grid-cols-2">
-							<div>
-								<label class="mb-1 block text-xs font-medium text-gray-400">Name</label>
-								<input
-									type="text"
-									value={name}
-									onInput={(e) => setName((e.target as HTMLInputElement).value)}
-									class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-								/>
-							</div>
-							<div>
-								<label class="mb-1 block text-xs font-medium text-gray-400">Default model</label>
-								<WorkflowModelSelect
-									value={defaultModel}
-									onChange={(val) => setDefaultModel(val)}
-									testId="default-model-select"
-									className="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-								/>
-							</div>
-							<div class="lg:col-span-2">
-								<label class="mb-1 block text-xs font-medium text-gray-400">Workspace path</label>
-								<p class="truncate rounded-lg border border-white/10 bg-dark-850 px-3 py-2 font-mono text-sm text-gray-500">
-									{space.workspacePath}
-								</p>
-							</div>
-							<div class="lg:col-span-2">
-								<label class="mb-1 block text-xs font-medium text-gray-400">
-									Description <span class="text-gray-600">(optional)</span>
-								</label>
-								<textarea
-									value={description}
-									onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-									placeholder="Brief description of this space..."
-									rows={2}
-									class="w-full resize-none rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-								/>
-							</div>
-						</div>
-					</SettingsBlock>
+          <SettingsBlock
+            title="Basics"
+            description="Name the space, show where it runs, and choose the default model for new work."
+          >
+            <div class="grid gap-4 lg:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-400">Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onInput={(e) => setName((e.target as HTMLInputElement).value)}
+                  class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-400">Default model</label>
+                <WorkflowModelSelect
+                  value={defaultModel}
+                  onChange={(val) => setDefaultModel(val)}
+                  testId="default-model-select"
+                  className="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div class="lg:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-400">Workspace path</label>
+                <p class="truncate rounded-lg border border-white/10 bg-dark-850 px-3 py-2 font-mono text-sm text-gray-500">
+                  {space.workspacePath}
+                </p>
+              </div>
+              <div class="lg:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-400">
+                  Description <span class="text-gray-600">(optional)</span>
+                </label>
+                <textarea
+                  value={description}
+                  onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+                  placeholder="Brief description of this space..."
+                  rows={2}
+                  class="w-full resize-none rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          </SettingsBlock>
 
-					<SettingsBlock
-						title="Instructions"
-						description="Persistent guidance that shapes every agent and task spawned from this space."
-					>
-						<div class="grid gap-4 xl:grid-cols-2">
-							<div>
-								<label class="mb-1 block text-xs font-medium text-gray-400">
-									Space instructions <span class="text-gray-600">(optional)</span>
-								</label>
-								<textarea
-									value={instructions}
-									onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
-									placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
-									rows={7}
-									class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-								/>
-								<div class="mt-0.5 text-right text-xs text-gray-600">
-									{instructions.length} characters
-								</div>
-							</div>
-							<div>
-								<label class="mb-1 block text-xs font-medium text-gray-400">
-									Background context <span class="text-gray-600">(optional)</span>
-								</label>
-								<textarea
-									value={backgroundContext}
-									onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
-									placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
-									rows={7}
-									class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-								/>
-								<div class="mt-0.5 text-right text-xs text-gray-600">
-									{backgroundContext.length} characters
-								</div>
-							</div>
-						</div>
-					</SettingsBlock>
+          <SettingsBlock
+            title="Instructions"
+            description="Persistent guidance that shapes every agent and task spawned from this space."
+          >
+            <div class="grid gap-4 xl:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-400">
+                  Space instructions <span class="text-gray-600">(optional)</span>
+                </label>
+                <textarea
+                  value={instructions}
+                  onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+                  placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
+                  rows={7}
+                  class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+                <div class="mt-0.5 text-right text-xs text-gray-600">
+                  {instructions.length} characters
+                </div>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-400">
+                  Background context <span class="text-gray-600">(optional)</span>
+                </label>
+                <textarea
+                  value={backgroundContext}
+                  onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
+                  placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
+                  rows={7}
+                  class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+                <div class="mt-0.5 text-right text-xs text-gray-600">
+                  {backgroundContext.length} characters
+                </div>
+              </div>
+            </div>
+          </SettingsBlock>
 
-					<SettingsBlock
-						title="Runtime"
-						description="Control how independent the space is and which local settings its agents inherit."
-					>
-						<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-							<div>
-								<label class="mb-1 block text-xs font-medium text-gray-400">Autonomy level</label>
-								<div class="space-y-1">
-									{AUTONOMY_LEVELS.map(({ level, label, description }) => (
-										<button
-											key={level}
-											type="button"
-											onClick={() => setAutonomyLevel(level)}
-											data-testid={`autonomy-level-${level}`}
-											class={cn(
-												'w-full rounded-lg px-3 py-2 text-left transition-colors',
-												autonomyLevel === level
-													? 'bg-white/10 text-gray-100'
-													: 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
-											)}
-										>
-											<div class="flex items-center gap-3">
-												<span
-													class={cn(
-														'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
-														autonomyLevel === level
-															? 'bg-blue-500/20 text-blue-300'
-															: 'bg-white/5 text-gray-500'
-													)}
-												>
-													{level}
-												</span>
-												<div class="min-w-0">
-													<div class="text-sm font-medium">{label}</div>
-													<div class="text-xs text-gray-500">{description}</div>
-												</div>
-											</div>
-										</button>
-									))}
-								</div>
-								<AutonomyWorkflowSummary
-									level={autonomyLevel}
-									workflows={spaceStore.workflows.value}
-									class="mt-2"
-								/>
-							</div>
+          <SettingsBlock
+            title="Runtime"
+            description="Control how independent the space is and which local settings its agents inherit."
+          >
+            <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-400">Autonomy level</label>
+                <div class="space-y-1">
+                  {AUTONOMY_LEVELS.map(({ level, label, description }) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => setAutonomyLevel(level)}
+                      data-testid={`autonomy-level-${level}`}
+                      class={cn(
+                        'w-full rounded-lg px-3 py-2 text-left transition-colors',
+                        autonomyLevel === level
+                          ? 'bg-white/10 text-gray-100'
+                          : 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
+                      )}
+                    >
+                      <div class="flex items-center gap-3">
+                        <span
+                          class={cn(
+                            'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
+                            autonomyLevel === level
+                              ? 'bg-blue-500/20 text-blue-300'
+                              : 'bg-white/5 text-gray-500'
+                          )}
+                        >
+                          {level}
+                        </span>
+                        <div class="min-w-0">
+                          <div class="text-sm font-medium">{label}</div>
+                          <div class="text-xs text-gray-500">{description}</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <AutonomyWorkflowSummary
+                  level={autonomyLevel}
+                  workflows={spaceStore.workflows.value}
+                  class="mt-2"
+                />
+              </div>
 
-							<div class="space-y-5">
-								<div>
-									<label class="mb-1 block text-xs font-medium text-gray-400">
-										Concurrent tasks
-									</label>
-									<div class="flex items-center gap-3">
-										<input
-											type="range"
-											min={MIN_SPACE_CONCURRENT_TASKS}
-											max={MAX_SPACE_CONCURRENT_TASKS}
-											step={1}
-											value={maxConcurrentTasks}
-											data-testid="concurrent-tasks-slider"
-											onInput={(e) =>
-												setMaxConcurrentTasks(Number((e.target as HTMLInputElement).value))
-											}
-											class="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-dark-700 accent-blue-500"
-										/>
-										<span
-											class="w-8 text-center font-mono text-sm tabular-nums text-gray-200"
-											data-testid="concurrent-tasks-value"
-										>
-											{maxConcurrentTasks}
-										</span>
-									</div>
-								</div>
+              <div class="space-y-5">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-400">
+                    Concurrent tasks
+                  </label>
+                  <div class="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={MIN_SPACE_CONCURRENT_TASKS}
+                      max={MAX_SPACE_CONCURRENT_TASKS}
+                      step={1}
+                      value={maxConcurrentTasks}
+                      data-testid="concurrent-tasks-slider"
+                      onInput={(e) =>
+                        setMaxConcurrentTasks(Number((e.target as HTMLInputElement).value))
+                      }
+                      class="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-dark-700 accent-blue-500"
+                    />
+                    <span
+                      class="w-8 text-center font-mono text-sm tabular-nums text-gray-200"
+                      data-testid="concurrent-tasks-value"
+                    >
+                      {maxConcurrentTasks}
+                    </span>
+                  </div>
+                </div>
 
-								<div>
-									<div class="flex items-start justify-between gap-3">
-										<div>
-											<label class="block text-xs font-medium text-gray-400">Setting sources</label>
-											<p class="mt-1 text-xs leading-5 text-gray-600">
-												Choose which on-disk settings files agents load.
-											</p>
-										</div>
-										{hadExplicitSettingSources && !clearSettingSources && (
-											<button
-												type="button"
-												onClick={() => setClearSettingSources(true)}
-												class="shrink-0 text-xs text-blue-400 hover:text-blue-300"
-											>
-												Use defaults
-											</button>
-										)}
-									</div>
-									{clearSettingSources && (
-										<div class="mt-2 flex items-center gap-2">
-											<span class="text-xs text-gray-400">
-												Will revert to inherited defaults on save.
-											</span>
-											<button
-												type="button"
-												onClick={() => setClearSettingSources(false)}
-												class="text-xs text-blue-400 hover:text-blue-300"
-											>
-												Cancel
-											</button>
-										</div>
-									)}
-									<div class="mt-3 space-y-1">
-										{SETTING_SOURCE_OPTIONS.map(([source, label, detail]) => (
-											<label
-												key={source}
-												class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-sm text-gray-300 hover:bg-white/5"
-											>
-												<input
-													type="checkbox"
-													checked={settingSources.includes(source)}
-													onChange={() => {
-														setSettingSources((prev) =>
-															prev.includes(source)
-																? prev.filter((s) => s !== source)
-																: [...prev, source]
-														);
-													}}
-													disabled={clearSettingSources}
-													class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-												/>
-												<span class="min-w-0">
-													<span class="block">{label}</span>
-													<span class="block truncate text-xs text-gray-600">{detail}</span>
-												</span>
-											</label>
-										))}
-									</div>
-								</div>
-							</div>
-						</div>
-					</SettingsBlock>
+                <div>
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400">Setting sources</label>
+                      <p class="mt-1 text-xs leading-5 text-gray-600">
+                        Choose which on-disk settings files agents load.
+                      </p>
+                    </div>
+                    {hadExplicitSettingSources && !clearSettingSources && (
+                      <button
+                        type="button"
+                        onClick={() => setClearSettingSources(true)}
+                        class="shrink-0 text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        Use defaults
+                      </button>
+                    )}
+                  </div>
+                  {clearSettingSources && (
+                    <div class="mt-2 flex items-center gap-2">
+                      <span class="text-xs text-gray-400">
+                        Will revert to inherited defaults on save.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setClearSettingSources(false)}
+                        class="text-xs text-blue-400 hover:text-blue-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  <div class="mt-3 space-y-1">
+                    {SETTING_SOURCE_OPTIONS.map(([source, label, detail]) => (
+                      <label
+                        key={source}
+                        class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-sm text-gray-300 hover:bg-white/5"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={settingSources.includes(source)}
+                          onChange={() => {
+                            setSettingSources((prev) =>
+                              prev.includes(source)
+                                ? prev.filter((s) => s !== source)
+                                : [...prev, source]
+                            );
+                          }}
+                          disabled={clearSettingSources}
+                          class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                        />
+                        <span class="min-w-0">
+                          <span class="block">{label}</span>
+                          <span class="block truncate text-xs text-gray-600">{detail}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </SettingsBlock>
 
-					{isDirty && (
-						<div class="sticky bottom-0 z-10 flex justify-end gap-2 rounded-lg border border-white/10 bg-dark-900/95 px-3 py-3 backdrop-blur">
-							<Button type="button" variant="secondary" size="sm" onClick={resetChanges}>
-								Discard
-							</Button>
-							<Button type="submit" size="sm" loading={saving}>
-								Save Changes
-							</Button>
-						</div>
-					)}
-				</form>
+          {isDirty && (
+            <div class="sticky bottom-0 z-10 flex justify-end gap-2 rounded-lg border border-white/10 bg-dark-900/95 px-3 py-3 backdrop-blur">
+              <Button type="button" variant="secondary" size="sm" onClick={resetChanges}>
+                Discard
+              </Button>
+              <Button type="submit" size="sm" loading={saving}>
+                Save Changes
+              </Button>
+            </div>
+          )}
+        </form>
 
-				<SettingsBlock
-					title="Tools"
-					description="Enable MCP servers and wire external events into this space."
-				>
-					<div class="space-y-5">
-						<SpaceMcpSettings spaceId={space.id} disabled={saving} />
-						<div class="border-t border-white/10 pt-4">
-							<SpaceExternalEventsSettings spaceId={space.id} disabled={saving} />
-						</div>
-					</div>
-				</SettingsBlock>
+        <SettingsBlock
+          title="Tools"
+          description="Enable MCP servers and wire external events into this space."
+        >
+          <div class="space-y-5">
+            <SpaceMcpSettings spaceId={space.id} disabled={saving} />
+            <div class="border-t border-white/10 pt-4">
+              <SpaceExternalEventsSettings spaceId={space.id} disabled={saving} />
+            </div>
+          </div>
+        </SettingsBlock>
 
-				<SettingsBlock
-					title="Export"
-					description="Download the space definition and inspect lightweight metadata."
-				>
-					<div class="flex flex-wrap items-start justify-between gap-4">
-						<div>
-							<p class="text-sm text-gray-300">Portable Space bundle</p>
-							<p class="mt-0.5 text-xs text-gray-500">
-								Download all agents and workflows as a <span class="font-mono">.neokai.json</span>{' '}
-								bundle.
-							</p>
-						</div>
-						<button
-							type="button"
-							onClick={exportBundle}
-							class="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100"
-						>
-							<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-								/>
-							</svg>
-							Export Bundle
-						</button>
-					</div>
-					<dl class="mt-4 grid gap-2 text-xs sm:grid-cols-3">
-						<div>
-							<dt class="text-gray-600">Status</dt>
-							<dd class="mt-0.5 capitalize text-gray-300">{space.status}</dd>
-						</div>
-						<div>
-							<dt class="text-gray-600">Created</dt>
-							<dd class="mt-0.5 text-gray-300">{new Date(space.createdAt).toLocaleDateString()}</dd>
-						</div>
-						<div class="min-w-0">
-							<dt class="text-gray-600">ID</dt>
-							<dd class="mt-0.5 truncate font-mono text-gray-500">{space.id}</dd>
-						</div>
-					</dl>
-				</SettingsBlock>
+        <SettingsBlock
+          title="Export"
+          description="Download the space definition and inspect lightweight metadata."
+        >
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="text-sm text-gray-300">Portable Space bundle</p>
+              <p class="mt-0.5 text-xs text-gray-500">
+                Download all agents and workflows as a <span class="font-mono">.neokai.json</span>{' '}
+                bundle.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={exportBundle}
+              class="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                />
+              </svg>
+              Export Bundle
+            </button>
+          </div>
+          <dl class="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+            <div>
+              <dt class="text-gray-600">Status</dt>
+              <dd class="mt-0.5 capitalize text-gray-300">{space.status}</dd>
+            </div>
+            <div>
+              <dt class="text-gray-600">Created</dt>
+              <dd class="mt-0.5 text-gray-300">{new Date(space.createdAt).toLocaleDateString()}</dd>
+            </div>
+            <div class="min-w-0">
+              <dt class="text-gray-600">ID</dt>
+              <dd class="mt-0.5 truncate font-mono text-gray-500">{space.id}</dd>
+            </div>
+          </dl>
+        </SettingsBlock>
 
-				<SettingsBlock
-					title="Danger"
-					description="Destructive actions for this space. Archive is reversible; delete is permanent."
-					tone="danger"
-				>
-					<div class="divide-y divide-red-900/30 rounded-lg border border-red-900/30">
-						<div class="flex items-center justify-between gap-4 px-3 py-3">
-							<div>
-								<p class="text-sm text-gray-300">Archive space</p>
-								<p class="mt-0.5 text-xs text-gray-500">
-									Hide from the main list. Can be restored later.
-								</p>
-							</div>
-							<Button
-								type="button"
-								variant="secondary"
-								size="sm"
-								onClick={handleArchive}
-								disabled={space.status === 'archived' || isArchiving}
-								loading={isArchiving}
-							>
-								Archive
-							</Button>
-						</div>
+        <SettingsBlock
+          title="Danger"
+          description="Destructive actions for this space. Archive is reversible; delete is permanent."
+          tone="danger"
+        >
+          <div class="divide-y divide-red-900/30 rounded-lg border border-red-900/30">
+            <div class="flex items-center justify-between gap-4 px-3 py-3">
+              <div>
+                <p class="text-sm text-gray-300">Archive space</p>
+                <p class="mt-0.5 text-xs text-gray-500">
+                  Hide from the main list. Can be restored later.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleArchive}
+                disabled={space.status === 'archived' || isArchiving}
+                loading={isArchiving}
+              >
+                Archive
+              </Button>
+            </div>
 
-						<div class="flex items-center justify-between gap-4 px-3 py-3">
-							<div>
-								<p class="text-sm text-gray-300">Delete space</p>
-								<p class="mt-0.5 text-xs text-gray-500">
-									Permanently remove this space and all its data.
-								</p>
-							</div>
-							<Button
-								type="button"
-								variant="danger"
-								size="sm"
-								onClick={handleDelete}
-								disabled={isDeleting}
-								loading={isDeleting}
-							>
-								Delete
-							</Button>
-						</div>
-					</div>
-				</SettingsBlock>
-			</div>
-		</div>
-	);
+            <div class="flex items-center justify-between gap-4 px-3 py-3">
+              <div>
+                <p class="text-sm text-gray-300">Delete space</p>
+                <p class="mt-0.5 text-xs text-gray-500">
+                  Permanently remove this space and all its data.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                loading={isDeleting}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </SettingsBlock>
+      </div>
+    </div>
+  );
 }

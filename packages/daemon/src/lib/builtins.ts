@@ -36,18 +36,18 @@
  * encoded in the type so typos can't silently produce invalid registry rows.
  */
 export interface BuiltinMcpServer {
-	name: string;
-	description: string;
-	sourceType: 'stdio';
-	command: string;
-	args: string[];
-	env: Record<string, string>;
-	/**
-	 * Initial `enabled` flag on the `app_mcp_servers` row. Independent of
-	 * whether the skill that references it is enabled — users can keep a
-	 * server around while turning its skill on/off.
-	 */
-	enabled: boolean;
+  name: string;
+  description: string;
+  sourceType: 'stdio';
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  /**
+   * Initial `enabled` flag on the `app_mcp_servers` row. Independent of
+   * whether the skill that references it is enabled — users can keep a
+   * server around while turning its skill on/off.
+   */
+  enabled: boolean;
 }
 
 /**
@@ -60,50 +60,50 @@ export interface BuiltinMcpServer {
  *     have no MCP server (e.g. Playwright).
  */
 export type BuiltinSkill =
-	| {
-			kind: 'mcp_server';
-			name: string;
-			displayName: string;
-			description: string;
-			/** Must match `name` of an entry in {@link BUILTIN_MCP_SERVERS}. */
-			appMcpServerName: string;
-			enabled: boolean;
-	  }
-	| {
-			kind: 'builtin-command';
-			name: string;
-			displayName: string;
-			description: string;
-			commandName: string;
-			enabled: boolean;
-			/** Restrict this built-in skill to sessions with Space context. */
-			spaceOnly?: boolean;
-	  };
+  | {
+      kind: 'mcp_server';
+      name: string;
+      displayName: string;
+      description: string;
+      /** Must match `name` of an entry in {@link BUILTIN_MCP_SERVERS}. */
+      appMcpServerName: string;
+      enabled: boolean;
+    }
+  | {
+      kind: 'builtin-command';
+      name: string;
+      displayName: string;
+      description: string;
+      commandName: string;
+      enabled: boolean;
+      /** Restrict this built-in skill to sessions with Space context. */
+      spaceOnly?: boolean;
+    };
 
 /**
  * Built-in MCP server definitions, seeded into `app_mcp_servers` on first
  * boot (idempotent — pre-existing rows by name are left untouched).
  */
 export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
-	{
-		name: 'fetch-mcp',
-		description: 'Fetch web pages and convert to Markdown for reading documentation and articles',
-		sourceType: 'stdio',
-		command: 'npx',
-		args: ['-y', '@tokenizin/mcp-npx-fetch'],
-		env: {},
-		enabled: true,
-	},
-	{
-		name: 'chrome-devtools',
-		description:
-			'Browser automation and DevTools integration via Chrome DevTools MCP (isolated mode)',
-		sourceType: 'stdio',
-		command: 'bunx',
-		args: ['chrome-devtools-mcp@latest', '--isolated'],
-		env: {},
-		enabled: false,
-	},
+  {
+    name: 'fetch-mcp',
+    description: 'Fetch web pages and convert to Markdown for reading documentation and articles',
+    sourceType: 'stdio',
+    command: 'npx',
+    args: ['-y', '@tokenizin/mcp-npx-fetch'],
+    env: {},
+    enabled: true,
+  },
+  {
+    name: 'chrome-devtools',
+    description:
+      'Browser automation and DevTools integration via Chrome DevTools MCP (isolated mode)',
+    sourceType: 'stdio',
+    command: 'bunx',
+    args: ['chrome-devtools-mcp@latest', '--isolated'],
+    env: {},
+    enabled: false,
+  },
 ] as const;
 
 /**
@@ -115,47 +115,47 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
  * the registry can't ship in a broken state.
  */
 export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
-	{
-		kind: 'mcp_server',
-		name: 'fetch-mcp',
-		displayName: 'Fetch MCP',
-		description: 'Fetch web pages and convert to Markdown for reading documentation and articles',
-		appMcpServerName: 'fetch-mcp',
-		enabled: true, // was always on before M1 strictMcpConfig — preserve that
-	},
-	{
-		kind: 'mcp_server',
-		name: 'chrome-devtools-mcp',
-		displayName: 'Chrome DevTools (MCP)',
-		description:
-			'Browser automation and DevTools integration via Chrome DevTools MCP. Runs in isolated mode.',
-		appMcpServerName: 'chrome-devtools',
-		enabled: false, // opt-in, not default
-	},
-	{
-		kind: 'builtin-command',
-		name: 'playwright',
-		displayName: 'Playwright',
-		description: 'Browser automation and testing via Playwright.',
-		commandName: 'playwright',
-		enabled: true,
-	},
-	{
-		kind: 'builtin-command',
-		name: 'playwright-interactive',
-		displayName: 'Playwright Interactive',
-		description: 'Interactive browser automation via Playwright with step-by-step control.',
-		commandName: 'playwright-interactive',
-		enabled: true,
-	},
-	{
-		kind: 'builtin-command',
-		name: 'space-coordination',
-		displayName: 'Space Coordination (POC)',
-		description:
-			'POC fallback for Space task/workflow coordination through local runtime APIs instead of MCP.',
-		commandName: 'space-coordination',
-		enabled: true,
-		spaceOnly: true,
-	},
+  {
+    kind: 'mcp_server',
+    name: 'fetch-mcp',
+    displayName: 'Fetch MCP',
+    description: 'Fetch web pages and convert to Markdown for reading documentation and articles',
+    appMcpServerName: 'fetch-mcp',
+    enabled: true, // was always on before M1 strictMcpConfig — preserve that
+  },
+  {
+    kind: 'mcp_server',
+    name: 'chrome-devtools-mcp',
+    displayName: 'Chrome DevTools (MCP)',
+    description:
+      'Browser automation and DevTools integration via Chrome DevTools MCP. Runs in isolated mode.',
+    appMcpServerName: 'chrome-devtools',
+    enabled: false, // opt-in, not default
+  },
+  {
+    kind: 'builtin-command',
+    name: 'playwright',
+    displayName: 'Playwright',
+    description: 'Browser automation and testing via Playwright.',
+    commandName: 'playwright',
+    enabled: true,
+  },
+  {
+    kind: 'builtin-command',
+    name: 'playwright-interactive',
+    displayName: 'Playwright Interactive',
+    description: 'Interactive browser automation via Playwright with step-by-step control.',
+    commandName: 'playwright-interactive',
+    enabled: true,
+  },
+  {
+    kind: 'builtin-command',
+    name: 'space-coordination',
+    displayName: 'Space Coordination (POC)',
+    description:
+      'POC fallback for Space task/workflow coordination through local runtime APIs instead of MCP.',
+    commandName: 'space-coordination',
+    enabled: true,
+    spaceOnly: true,
+  },
 ] as const;

@@ -55,9 +55,9 @@ Always err on the side of caution. If uncertain, set requiresHumanReview to true
  * Parsed security classification result from AI analysis
  */
 export interface SecurityClassification {
-	safe: boolean;
-	injectionRisk: 'none' | 'low' | 'medium' | 'high';
-	reason: string;
-	requiresHumanReview: boolean;
-	detectedPatterns?: string[];
+  safe: boolean;
+  injectionRisk: 'none' | 'low' | 'medium' | 'high';
+  reason: string;
+  requiresHumanReview: boolean;
+  detectedPatterns?: string[];
 }

@@ -9,11 +9,11 @@
 export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
 export interface WorkflowCondition {
-	type: WorkflowConditionType;
-	expression?: string;
-	description?: string;
-	maxRetries?: number;
-	timeoutMs?: number;
+  type: WorkflowConditionType;
+  expression?: string;
+  description?: string;
+  maxRetries?: number;
+  timeoutMs?: number;
 }
 
 /**
@@ -21,28 +21,28 @@ export interface WorkflowCondition {
  * This replaces the removed backend `WorkflowTransition` type for UI-only use.
  */
 export interface VisualTransition {
-	id: string;
-	from: string;
-	to: string;
-	condition?: WorkflowCondition;
-	order?: number;
-	isCyclic?: boolean;
+  id: string;
+  from: string;
+  to: string;
+  condition?: WorkflowCondition;
+  order?: number;
+  isCyclic?: boolean;
 }
 
 export interface Point {
-	x: number;
-	y: number;
+  x: number;
+  y: number;
 }
 
 export interface Size {
-	width: number;
-	height: number;
+  width: number;
+  height: number;
 }
 
 export interface ViewportState {
-	offsetX: number;
-	offsetY: number;
-	scale: number;
+  offsetX: number;
+  offsetY: number;
+  scale: number;
 }
 
 /** Per-node position and size keyed by node ID. */
@@ -53,11 +53,11 @@ export type NodePosition = Record<string, { x: number; y: number; width: number;
  * Inverse of canvasToScreen.
  */
 export function screenToCanvas(point: Point, viewport: ViewportState): Point {
-	const scale = viewport.scale || 1;
-	return {
-		x: (point.x - viewport.offsetX) / scale,
-		y: (point.y - viewport.offsetY) / scale,
-	};
+  const scale = viewport.scale || 1;
+  return {
+    x: (point.x - viewport.offsetX) / scale,
+    y: (point.y - viewport.offsetY) / scale,
+  };
 }
 
 /**
@@ -65,8 +65,8 @@ export function screenToCanvas(point: Point, viewport: ViewportState): Point {
  * Inverse of screenToCanvas.
  */
 export function canvasToScreen(point: Point, viewport: ViewportState): Point {
-	return {
-		x: point.x * viewport.scale + viewport.offsetX,
-		y: point.y * viewport.scale + viewport.offsetY,
-	};
+  return {
+    x: point.x * viewport.scale + viewport.offsetX,
+    y: point.y * viewport.scale + viewport.offsetY,
+  };
 }

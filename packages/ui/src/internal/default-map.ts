@@ -21,30 +21,30 @@
  * ```
  */
 export class DefaultMap<T = string, V = unknown> extends Map<T, V> {
-	/**
-	 * Creates a new DefaultMap.
-	 *
-	 * @param factory - A function that creates the default value for a missing key.
-	 *                   The key is passed as an argument in case the default depends on it.
-	 */
-	constructor(private factory: (key: T) => V) {
-		super();
-	}
+  /**
+   * Creates a new DefaultMap.
+   *
+   * @param factory - A function that creates the default value for a missing key.
+   *                   The key is passed as an argument in case the default depends on it.
+   */
+  constructor(private factory: (key: T) => V) {
+    super();
+  }
 
-	/**
-	 * Gets the value for a key, creating it with the factory if it doesn't exist.
-	 *
-	 * @param key - The key to look up
-	 * @returns The existing value or a newly created one
-	 */
-	get(key: T): V {
-		let value = super.get(key);
+  /**
+   * Gets the value for a key, creating it with the factory if it doesn't exist.
+   *
+   * @param key - The key to look up
+   * @returns The existing value or a newly created one
+   */
+  get(key: T): V {
+    let value = super.get(key);
 
-		if (value === undefined) {
-			value = this.factory(key);
-			this.set(key, value);
-		}
+    if (value === undefined) {
+      value = this.factory(key);
+      this.set(key, value);
+    }
 
-		return value;
-	}
+    return value;
+  }
 }

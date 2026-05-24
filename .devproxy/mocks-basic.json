@@ -1,335 +1,335 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
-	"mocks": [
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST"
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-limit",
-						"value": "50"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-remaining",
-						"value": "49"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
-					}
-				],
-				"body": {
-					"id": "msg_basic_001",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "Hello! This is a simple mock response from Dev Proxy. I'm here to help with testing."
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 15,
-						"output_tokens": 25,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "What is 2+2? Answer with just the number."
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json (math)"
-					}
-				],
-				"body": {
-					"id": "msg_basic_002",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "4"
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 20,
-						"output_tokens": 2,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "What is 1+1? Just the number."
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
-					}
-				],
-				"body": {
-					"id": "msg_basic_003",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "2"
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 18,
-						"output_tokens": 2,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "What is 3+3? Answer with just the number."
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
-					}
-				],
-				"body": {
-					"id": "msg_basic_004",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "6"
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 20,
-						"output_tokens": 2,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Say hello"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
-					}
-				],
-				"body": {
-					"id": "msg_basic_005",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "Hello! How can I help you today?"
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 10,
-						"output_tokens": 12,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "Tell me a joke"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
-					}
-				],
-				"body": {
-					"id": "msg_basic_006",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "Why do programmers prefer dark mode? Because light attracts bugs!"
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 12,
-						"output_tokens": 18,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"bodyFragment": {
-					"messages": [
-						{
-							"content": "room ok"
-						}
-					]
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json (room)"
-					}
-				],
-				"body": {
-					"id": "msg_basic_room",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "Room chat response acknowledged. I'm ready to help with your room tasks."
-						}
-					],
-					"model": "claude-sonnet-4-20250514",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 8,
-						"output_tokens": 20,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		}
-	]
+  "$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
+  "mocks": [
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST"
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-limit",
+            "value": "50"
+          },
+          {
+            "name": "anthropic-ratelimit-requests-remaining",
+            "value": "49"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_001",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello! This is a simple mock response from Dev Proxy. I'm here to help with testing."
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "output_tokens": 25,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "What is 2+2? Answer with just the number."
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json (math)"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_002",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "4"
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "output_tokens": 2,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "What is 1+1? Just the number."
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_003",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "2"
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "output_tokens": 2,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "What is 3+3? Answer with just the number."
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_004",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "6"
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "output_tokens": 2,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Say hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_005",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hello! How can I help you today?"
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 10,
+            "output_tokens": 12,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "Tell me a joke"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_006",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Why do programmers prefer dark mode? Because light attracts bugs!"
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 18,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "bodyFragment": {
+          "messages": [
+            {
+              "content": "room ok"
+            }
+          ]
+        }
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-mocked-by",
+            "value": "Dev Proxy MockResponsePlugin - mocks-basic.json (room)"
+          }
+        ],
+        "body": {
+          "id": "msg_basic_room",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Room chat response acknowledged. I'm ready to help with your room tasks."
+            }
+          ],
+          "model": "claude-sonnet-4-20250514",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 8,
+            "output_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      }
+    }
+  ]
 }

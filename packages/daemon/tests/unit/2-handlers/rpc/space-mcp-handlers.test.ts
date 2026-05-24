@@ -17,10 +17,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
-	MessageHub,
-	Space,
-	SpaceMcpListResponse,
-	McpImportsRefreshResponse,
+  MessageHub,
+  Space,
+  SpaceMcpListResponse,
+  McpImportsRefreshResponse,
 } from '@neokai/shared';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -36,445 +36,445 @@ import type { ReactiveDatabase } from '../../../../src/storage/reactive-database
 type RequestHandler = (data: unknown, context?: unknown) => unknown;
 
 function createMockHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
-	const handlers = new Map<string, RequestHandler>();
-	const hub = {
-		onRequest: mock((method: string, handler: RequestHandler) => {
-			handlers.set(method, handler);
-			return () => handlers.delete(method);
-		}),
-		onEvent: mock(() => () => {}),
-		onClientDisconnect: mock(() => () => {}),
-		request: mock(async () => {}),
-		event: mock(() => {}),
-		joinChannel: mock(async () => {}),
-		leaveChannel: mock(async () => {}),
-		isConnected: mock(() => true),
-		getState: mock(() => 'connected' as const),
-		onConnection: mock(() => () => {}),
-		onMessage: mock(() => () => {}),
-		cleanup: mock(() => {}),
-		registerTransport: mock(() => () => {}),
-		registerRouter: mock(() => {}),
-		getRouter: mock(() => null),
-		getPendingCallCount: mock(() => 0),
-	} as unknown as MessageHub;
-	return { hub, handlers };
+  const handlers = new Map<string, RequestHandler>();
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    onEvent: mock(() => () => {}),
+    onClientDisconnect: mock(() => () => {}),
+    request: mock(async () => {}),
+    event: mock(() => {}),
+    joinChannel: mock(async () => {}),
+    leaveChannel: mock(async () => {}),
+    isConnected: mock(() => true),
+    getState: mock(() => 'connected' as const),
+    onConnection: mock(() => () => {}),
+    onMessage: mock(() => () => {}),
+    cleanup: mock(() => {}),
+    registerTransport: mock(() => () => {}),
+    registerRouter: mock(() => {}),
+    getRouter: mock(() => null),
+    getPendingCallCount: mock(() => 0),
+  } as unknown as MessageHub;
+  return { hub, handlers };
 }
 
 function createMockDaemonHub(): { daemonHub: DaemonHub; emit: ReturnType<typeof mock> } {
-	const emit = mock(async () => {});
-	const daemonHub = {
-		emit,
-		on: mock(() => () => {}),
-		off: mock(() => {}),
-		once: mock(async () => {}),
-	} as unknown as DaemonHub;
-	return { daemonHub, emit };
+  const emit = mock(async () => {});
+  const daemonHub = {
+    emit,
+    on: mock(() => () => {}),
+    off: mock(() => {}),
+    once: mock(async () => {}),
+  } as unknown as DaemonHub;
+  return { daemonHub, emit };
 }
 
 function createMockInternalEventBus(): InternalEventBus<any> {
-	return {
-		publish: mock(async () => {}),
-		subscribe: mock(() => () => {}),
-	} as unknown as InternalEventBus<any>;
+  return {
+    publish: mock(async () => {}),
+    subscribe: mock(() => () => {}),
+  } as unknown as InternalEventBus<any>;
 }
 
 function fakeSpace(id: string, workspacePath?: string): Space {
-	return {
-		id,
-		name: id,
-		slug: id,
-		workspacePath: workspacePath ?? `/tmp/${id}`,
-		archivedAt: null,
-		createdAt: 0,
-		updatedAt: 0,
-	} as unknown as Space;
+  return {
+    id,
+    name: id,
+    slug: id,
+    workspacePath: workspacePath ?? `/tmp/${id}`,
+    archivedAt: null,
+    createdAt: 0,
+    updatedAt: 0,
+  } as unknown as Space;
 }
 
 function createSpaceManagerMock(spaces: Space[]): SpaceManager {
-	return {
-		getSpace: mock(async (id: string) => spaces.find((s) => s.id === id) ?? null),
-		listSpaces: mock(async () => spaces),
-	} as unknown as SpaceManager;
+  return {
+    getSpace: mock(async (id: string) => spaces.find((s) => s.id === id) ?? null),
+    listSpaces: mock(async () => spaces),
+  } as unknown as SpaceManager;
 }
 
 describe('space-mcp-handlers', () => {
-	let bunDb: BunDatabase;
-	let reactiveDb: ReactiveDatabase;
-	let db: Database;
-	let appMcpRepo: AppMcpServerRepository;
-	let enablementRepo: McpEnablementRepository;
-	let tmpRoot: string;
+  let bunDb: BunDatabase;
+  let reactiveDb: ReactiveDatabase;
+  let db: Database;
+  let appMcpRepo: AppMcpServerRepository;
+  let enablementRepo: McpEnablementRepository;
+  let tmpRoot: string;
 
-	beforeEach(() => {
-		bunDb = new BunDatabase(':memory:');
-		bunDb.exec('PRAGMA foreign_keys = ON');
-		createTables(bunDb);
-		reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
+  beforeEach(() => {
+    bunDb = new BunDatabase(':memory:');
+    bunDb.exec('PRAGMA foreign_keys = ON');
+    createTables(bunDb);
+    reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
 
-		appMcpRepo = new AppMcpServerRepository(bunDb, reactiveDb);
-		enablementRepo = new McpEnablementRepository(bunDb, reactiveDb);
+    appMcpRepo = new AppMcpServerRepository(bunDb, reactiveDb);
+    enablementRepo = new McpEnablementRepository(bunDb, reactiveDb);
 
-		db = {
-			appMcpServers: appMcpRepo,
-			mcpEnablement: enablementRepo,
-		} as unknown as Database;
+    db = {
+      appMcpServers: appMcpRepo,
+      mcpEnablement: enablementRepo,
+    } as unknown as Database;
 
-		tmpRoot = mkdtempSync(join(tmpdir(), 'space-mcp-handlers-'));
-	});
+    tmpRoot = mkdtempSync(join(tmpdir(), 'space-mcp-handlers-'));
+  });
 
-	afterEach(() => {
-		bunDb.close();
-		rmSync(tmpRoot, { recursive: true, force: true });
-	});
+  afterEach(() => {
+    bunDb.close();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
 
-	// ---------------------------------------------------------------------------
-	// space.mcp.list
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // space.mcp.list
+  // ---------------------------------------------------------------------------
 
-	describe('space.mcp.list', () => {
-		test('returns one entry per registry row with resolved enabled state', async () => {
-			const globalOn = appMcpRepo.create({
-				name: 'global-on',
-				sourceType: 'stdio',
-				command: 'on',
-				enabled: true,
-				source: 'user',
-			});
-			const globalOff = appMcpRepo.create({
-				name: 'global-off',
-				sourceType: 'stdio',
-				command: 'off',
-				enabled: false,
-				source: 'user',
-			});
+  describe('space.mcp.list', () => {
+    test('returns one entry per registry row with resolved enabled state', async () => {
+      const globalOn = appMcpRepo.create({
+        name: 'global-on',
+        sourceType: 'stdio',
+        command: 'on',
+        enabled: true,
+        source: 'user',
+      });
+      const globalOff = appMcpRepo.create({
+        name: 'global-off',
+        sourceType: 'stdio',
+        command: 'off',
+        enabled: false,
+        source: 'user',
+      });
 
-			// Override: disable global-on for space-A
-			enablementRepo.setOverride('space', 'space-A', globalOn.id, false);
+      // Override: disable global-on for space-A
+      enablementRepo.setOverride('space', 'space-A', globalOn.id, false);
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.list')!;
-			const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
+      const handler = handlers.get('space.mcp.list')!;
+      const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
 
-			expect(result.entries).toHaveLength(2);
-			const on = result.entries.find((e) => e.serverId === globalOn.id)!;
-			expect(on.globallyEnabled).toBe(true);
-			expect(on.overridden).toBe(true);
-			expect(on.enabled).toBe(false);
+      expect(result.entries).toHaveLength(2);
+      const on = result.entries.find((e) => e.serverId === globalOn.id)!;
+      expect(on.globallyEnabled).toBe(true);
+      expect(on.overridden).toBe(true);
+      expect(on.enabled).toBe(false);
 
-			const off = result.entries.find((e) => e.serverId === globalOff.id)!;
-			expect(off.globallyEnabled).toBe(false);
-			expect(off.overridden).toBe(false);
-			expect(off.enabled).toBe(false);
-		});
+      const off = result.entries.find((e) => e.serverId === globalOff.id)!;
+      expect(off.globallyEnabled).toBe(false);
+      expect(off.overridden).toBe(false);
+      expect(off.enabled).toBe(false);
+    });
 
-		test('surfaces imported source + sourcePath on entries', async () => {
-			appMcpRepo.create({
-				name: 'imp',
-				sourceType: 'stdio',
-				command: 'x',
-				source: 'imported',
-				sourcePath: '/repo/.mcp.json',
-				enabled: true,
-			});
+    test('surfaces imported source + sourcePath on entries', async () => {
+      appMcpRepo.create({
+        name: 'imp',
+        sourceType: 'stdio',
+        command: 'x',
+        source: 'imported',
+        sourcePath: '/repo/.mcp.json',
+        enabled: true,
+      });
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.list')!;
-			const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
-			const entry = result.entries.find((e) => e.name === 'imp')!;
-			expect(entry.source).toBe('imported');
-			expect(entry.sourcePath).toBe('/repo/.mcp.json');
-		});
+      const handler = handlers.get('space.mcp.list')!;
+      const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
+      const entry = result.entries.find((e) => e.name === 'imp')!;
+      expect(entry.source).toBe('imported');
+      expect(entry.sourcePath).toBe('/repo/.mcp.json');
+    });
 
-		test('throws when spaceId is missing', async () => {
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+    test('throws when spaceId is missing', async () => {
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.list')!;
-			await expect(handler({})).rejects.toThrow('spaceId is required');
-		});
+      const handler = handlers.get('space.mcp.list')!;
+      await expect(handler({})).rejects.toThrow('spaceId is required');
+    });
 
-		test('throws when space does not exist', async () => {
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+    test('throws when space does not exist', async () => {
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.list')!;
-			await expect(handler({ spaceId: 'nope' })).rejects.toThrow('Space not found');
-		});
-	});
+      const handler = handlers.get('space.mcp.list')!;
+      await expect(handler({ spaceId: 'nope' })).rejects.toThrow('Space not found');
+    });
+  });
 
-	// ---------------------------------------------------------------------------
-	// space.mcp.setEnabled
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // space.mcp.setEnabled
+  // ---------------------------------------------------------------------------
 
-	describe('space.mcp.setEnabled', () => {
-		test('upserts an override row and emits mcp.registry.changed', async () => {
-			const srv = appMcpRepo.create({
-				name: 's1',
-				sourceType: 'stdio',
-				command: 'x',
-				enabled: true,
-			});
+  describe('space.mcp.setEnabled', () => {
+    test('upserts an override row and emits mcp.registry.changed', async () => {
+      const srv = appMcpRepo.create({
+        name: 's1',
+        sourceType: 'stdio',
+        command: 'x',
+        enabled: true,
+      });
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			const internalEventBus = createMockInternalEventBus();
-			const publish = internalEventBus.publish as ReturnType<typeof mock>;
-			setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      const internalEventBus = createMockInternalEventBus();
+      const publish = internalEventBus.publish as ReturnType<typeof mock>;
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
 
-			const handler = handlers.get('space.mcp.setEnabled')!;
-			const result = (await handler({
-				spaceId: 'space-A',
-				serverId: srv.id,
-				enabled: false,
-			})) as { ok: boolean };
+      const handler = handlers.get('space.mcp.setEnabled')!;
+      const result = (await handler({
+        spaceId: 'space-A',
+        serverId: srv.id,
+        enabled: false,
+      })) as { ok: boolean };
 
-			expect(result.ok).toBe(true);
-			expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toEqual({
-				scopeType: 'space',
-				scopeId: 'space-A',
-				serverId: srv.id,
-				enabled: false,
-			});
-			expect(publish).toHaveBeenCalledWith('mcp.registry.changed', {
-				sessionId: 'global',
-			});
-		});
+      expect(result.ok).toBe(true);
+      expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toEqual({
+        scopeType: 'space',
+        scopeId: 'space-A',
+        serverId: srv.id,
+        enabled: false,
+      });
+      expect(publish).toHaveBeenCalledWith('mcp.registry.changed', {
+        sessionId: 'global',
+      });
+    });
 
-		test('flip — second call replaces the prior override', async () => {
-			const srv = appMcpRepo.create({
-				name: 'flipper',
-				sourceType: 'stdio',
-				command: 'x',
-				enabled: true,
-			});
+    test('flip — second call replaces the prior override', async () => {
+      const srv = appMcpRepo.create({
+        name: 'flipper',
+        sourceType: 'stdio',
+        command: 'x',
+        enabled: true,
+      });
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.setEnabled')!;
-			await handler({ spaceId: 'space-A', serverId: srv.id, enabled: false });
-			await handler({ spaceId: 'space-A', serverId: srv.id, enabled: true });
+      const handler = handlers.get('space.mcp.setEnabled')!;
+      await handler({ spaceId: 'space-A', serverId: srv.id, enabled: false });
+      await handler({ spaceId: 'space-A', serverId: srv.id, enabled: true });
 
-			expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toEqual({
-				scopeType: 'space',
-				scopeId: 'space-A',
-				serverId: srv.id,
-				enabled: true,
-			});
-		});
+      expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toEqual({
+        scopeType: 'space',
+        scopeId: 'space-A',
+        serverId: srv.id,
+        enabled: true,
+      });
+    });
 
-		test('throws when serverId does not exist', async () => {
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+    test('throws when serverId does not exist', async () => {
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.setEnabled')!;
-			await expect(
-				handler({ spaceId: 'space-A', serverId: 'ghost', enabled: true })
-			).rejects.toThrow('MCP server not found');
-		});
+      const handler = handlers.get('space.mcp.setEnabled')!;
+      await expect(
+        handler({ spaceId: 'space-A', serverId: 'ghost', enabled: true })
+      ).rejects.toThrow('MCP server not found');
+    });
 
-		test('throws on missing required fields', async () => {
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+    test('throws on missing required fields', async () => {
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.setEnabled')!;
-			await expect(handler({ serverId: 'x', enabled: true })).rejects.toThrow(
-				'spaceId is required'
-			);
-			await expect(handler({ spaceId: 'space-A', enabled: true })).rejects.toThrow(
-				'serverId is required'
-			);
-			await expect(
-				handler({ spaceId: 'space-A', serverId: 'x', enabled: 'nope' as never })
-			).rejects.toThrow('enabled must be a boolean');
-		});
+      const handler = handlers.get('space.mcp.setEnabled')!;
+      await expect(handler({ serverId: 'x', enabled: true })).rejects.toThrow(
+        'spaceId is required'
+      );
+      await expect(handler({ spaceId: 'space-A', enabled: true })).rejects.toThrow(
+        'serverId is required'
+      );
+      await expect(
+        handler({ spaceId: 'space-A', serverId: 'x', enabled: 'nope' as never })
+      ).rejects.toThrow('enabled must be a boolean');
+    });
 
-		test('throws when space does not exist', async () => {
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+    test('throws when space does not exist', async () => {
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.setEnabled')!;
-			await expect(handler({ spaceId: 'missing', serverId: 'x', enabled: true })).rejects.toThrow(
-				'Space not found'
-			);
-		});
-	});
+      const handler = handlers.get('space.mcp.setEnabled')!;
+      await expect(handler({ spaceId: 'missing', serverId: 'x', enabled: true })).rejects.toThrow(
+        'Space not found'
+      );
+    });
+  });
 
-	// ---------------------------------------------------------------------------
-	// space.mcp.clearOverride
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // space.mcp.clearOverride
+  // ---------------------------------------------------------------------------
 
-	describe('space.mcp.clearOverride', () => {
-		test('removes the override row and emits changed', async () => {
-			const srv = appMcpRepo.create({
-				name: 'c1',
-				sourceType: 'stdio',
-				command: 'x',
-				enabled: true,
-			});
-			enablementRepo.setOverride('space', 'space-A', srv.id, false);
+  describe('space.mcp.clearOverride', () => {
+    test('removes the override row and emits changed', async () => {
+      const srv = appMcpRepo.create({
+        name: 'c1',
+        sourceType: 'stdio',
+        command: 'x',
+        enabled: true,
+      });
+      enablementRepo.setOverride('space', 'space-A', srv.id, false);
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			const internalEventBus = createMockInternalEventBus();
-			const publish = internalEventBus.publish as ReturnType<typeof mock>;
-			setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      const internalEventBus = createMockInternalEventBus();
+      const publish = internalEventBus.publish as ReturnType<typeof mock>;
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
 
-			const handler = handlers.get('space.mcp.clearOverride')!;
-			const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
-				ok: boolean;
-			};
+      const handler = handlers.get('space.mcp.clearOverride')!;
+      const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
+        ok: boolean;
+      };
 
-			expect(result.ok).toBe(true);
-			expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toBeNull();
-			expect(publish).toHaveBeenCalledWith('mcp.registry.changed', {
-				sessionId: 'global',
-			});
-		});
+      expect(result.ok).toBe(true);
+      expect(enablementRepo.getOverride('space', 'space-A', srv.id)).toBeNull();
+      expect(publish).toHaveBeenCalledWith('mcp.registry.changed', {
+        sessionId: 'global',
+      });
+    });
 
-		test('idempotent — no override row still returns ok:true and no emit', async () => {
-			const srv = appMcpRepo.create({
-				name: 'noop',
-				sourceType: 'stdio',
-				command: 'x',
-				enabled: true,
-			});
+    test('idempotent — no override row still returns ok:true and no emit', async () => {
+      const srv = appMcpRepo.create({
+        name: 'noop',
+        sourceType: 'stdio',
+        command: 'x',
+        enabled: true,
+      });
 
-			const { hub, handlers } = createMockHub();
-			const { emit } = createMockDaemonHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const { emit } = createMockDaemonHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.clearOverride')!;
-			const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
-				ok: boolean;
-			};
-			expect(result.ok).toBe(true);
-			expect(emit).not.toHaveBeenCalled();
-		});
+      const handler = handlers.get('space.mcp.clearOverride')!;
+      const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
+        ok: boolean;
+      };
+      expect(result.ok).toBe(true);
+      expect(emit).not.toHaveBeenCalled();
+    });
 
-		test('throws on missing ids', async () => {
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+    test('throws on missing ids', async () => {
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('space.mcp.clearOverride')!;
-			await expect(handler({ serverId: 'x' })).rejects.toThrow('spaceId is required');
-			await expect(handler({ spaceId: 'space-A' })).rejects.toThrow('serverId is required');
-		});
-	});
+      const handler = handlers.get('space.mcp.clearOverride')!;
+      await expect(handler({ serverId: 'x' })).rejects.toThrow('spaceId is required');
+      await expect(handler({ spaceId: 'space-A' })).rejects.toThrow('serverId is required');
+    });
+  });
 
-	// ---------------------------------------------------------------------------
-	// mcp.imports.refresh
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // mcp.imports.refresh
+  // ---------------------------------------------------------------------------
 
-	describe('mcp.imports.refresh', () => {
-		test('scans the given workspace and imports new rows', async () => {
-			const wsPath = join(tmpRoot, 'ws');
-			writeFileSync(
-				join(tmpRoot, 'mcp.json'),
-				JSON.stringify({ mcpServers: { foo: { command: 'x' } } })
-			);
-			// put .mcp.json inside wsPath
-			const fs = await import('node:fs');
-			fs.mkdirSync(wsPath, { recursive: true });
-			writeFileSync(
-				join(wsPath, '.mcp.json'),
-				JSON.stringify({ mcpServers: { foo: { command: 'x' } } })
-			);
+  describe('mcp.imports.refresh', () => {
+    test('scans the given workspace and imports new rows', async () => {
+      const wsPath = join(tmpRoot, 'ws');
+      writeFileSync(
+        join(tmpRoot, 'mcp.json'),
+        JSON.stringify({ mcpServers: { foo: { command: 'x' } } })
+      );
+      // put .mcp.json inside wsPath
+      const fs = await import('node:fs');
+      fs.mkdirSync(wsPath, { recursive: true });
+      writeFileSync(
+        join(wsPath, '.mcp.json'),
+        JSON.stringify({ mcpServers: { foo: { command: 'x' } } })
+      );
 
-			const { hub, handlers } = createMockHub();
-			const { emit } = createMockDaemonHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-			const internalEventBus = createMockInternalEventBus();
-			const publish = internalEventBus.publish as ReturnType<typeof mock>;
-			setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const { emit } = createMockDaemonHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
+      const internalEventBus = createMockInternalEventBus();
+      const publish = internalEventBus.publish as ReturnType<typeof mock>;
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
 
-			const handler = handlers.get('mcp.imports.refresh')!;
-			const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
+      const handler = handlers.get('mcp.imports.refresh')!;
+      const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
 
-			expect(result.ok).toBe(true);
-			expect(result.imported).toBe(1);
-			expect(result.removed).toBe(0);
-			expect(appMcpRepo.getByName('foo')?.source).toBe('imported');
-			expect(publish).toHaveBeenCalledWith('mcp.registry.changed', {
-				sessionId: 'global',
-			});
-		});
+      expect(result.ok).toBe(true);
+      expect(result.imported).toBe(1);
+      expect(result.removed).toBe(0);
+      expect(appMcpRepo.getByName('foo')?.source).toBe('imported');
+      expect(publish).toHaveBeenCalledWith('mcp.registry.changed', {
+        sessionId: 'global',
+      });
+    });
 
-		test('scans every space when no workspacePath narrow is given', async () => {
-			const ws1 = join(tmpRoot, 'ws1');
-			const ws2 = join(tmpRoot, 'ws2');
-			const fs = await import('node:fs');
-			fs.mkdirSync(ws1, { recursive: true });
-			fs.mkdirSync(ws2, { recursive: true });
-			writeFileSync(
-				join(ws1, '.mcp.json'),
-				JSON.stringify({ mcpServers: { one: { command: 'x' } } })
-			);
-			writeFileSync(
-				join(ws2, '.mcp.json'),
-				JSON.stringify({ mcpServers: { two: { command: 'y' } } })
-			);
+    test('scans every space when no workspacePath narrow is given', async () => {
+      const ws1 = join(tmpRoot, 'ws1');
+      const ws2 = join(tmpRoot, 'ws2');
+      const fs = await import('node:fs');
+      fs.mkdirSync(ws1, { recursive: true });
+      fs.mkdirSync(ws2, { recursive: true });
+      writeFileSync(
+        join(ws1, '.mcp.json'),
+        JSON.stringify({ mcpServers: { one: { command: 'x' } } })
+      );
+      writeFileSync(
+        join(ws2, '.mcp.json'),
+        JSON.stringify({ mcpServers: { two: { command: 'y' } } })
+      );
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('sA', ws1), fakeSpace('sB', ws2)]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('sA', ws1), fakeSpace('sB', ws2)]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('mcp.imports.refresh')!;
-			const result = (await handler({})) as McpImportsRefreshResponse;
+      const handler = handlers.get('mcp.imports.refresh')!;
+      const result = (await handler({})) as McpImportsRefreshResponse;
 
-			expect(result.imported).toBe(2);
-			expect(appMcpRepo.getByName('one')).toBeTruthy();
-			expect(appMcpRepo.getByName('two')).toBeTruthy();
-		});
+      expect(result.imported).toBe(2);
+      expect(appMcpRepo.getByName('one')).toBeTruthy();
+      expect(appMcpRepo.getByName('two')).toBeTruthy();
+    });
 
-		test('does not emit when no import rows changed', async () => {
-			const wsPath = join(tmpRoot, 'empty-ws');
-			const fs = await import('node:fs');
-			fs.mkdirSync(wsPath, { recursive: true });
-			// No .mcp.json at all — scanner should return zero changes.
+    test('does not emit when no import rows changed', async () => {
+      const wsPath = join(tmpRoot, 'empty-ws');
+      const fs = await import('node:fs');
+      fs.mkdirSync(wsPath, { recursive: true });
+      // No .mcp.json at all — scanner should return zero changes.
 
-			const { hub, handlers } = createMockHub();
-			const { emit } = createMockDaemonHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const { emit } = createMockDaemonHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('mcp.imports.refresh')!;
-			const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
+      const handler = handlers.get('mcp.imports.refresh')!;
+      const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
 
-			expect(result.imported).toBe(0);
-			expect(result.removed).toBe(0);
-			expect(emit).not.toHaveBeenCalled();
-		});
+      expect(result.imported).toBe(0);
+      expect(result.removed).toBe(0);
+      expect(emit).not.toHaveBeenCalled();
+    });
 
-		test('surfaces parse-error notes from the scanner', async () => {
-			const wsPath = join(tmpRoot, 'bad-ws');
-			const fs = await import('node:fs');
-			fs.mkdirSync(wsPath, { recursive: true });
-			writeFileSync(join(wsPath, '.mcp.json'), '{ not valid json');
+    test('surfaces parse-error notes from the scanner', async () => {
+      const wsPath = join(tmpRoot, 'bad-ws');
+      const fs = await import('node:fs');
+      fs.mkdirSync(wsPath, { recursive: true });
+      writeFileSync(join(wsPath, '.mcp.json'), '{ not valid json');
 
-			const { hub, handlers } = createMockHub();
-			const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-			setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const { hub, handlers } = createMockHub();
+      const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
 
-			const handler = handlers.get('mcp.imports.refresh')!;
-			const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
+      const handler = handlers.get('mcp.imports.refresh')!;
+      const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
 
-			expect(result.notes.some((n) => n.includes('parse error'))).toBe(true);
-		});
-	});
+      expect(result.notes.some((n) => n.includes('parse error'))).toBe(true);
+    });
+  });
 });

@@ -13,45 +13,45 @@
 import type { WorkflowChannel } from '@neokai/shared';
 
 export class ChannelResolver {
-	constructor(private readonly channels: WorkflowChannel[]) {}
+  constructor(private readonly channels: WorkflowChannel[]) {}
 
-	/**
-	 * Returns true if the declared channel topology permits the sender node to message
-	 * the target node. `from` and `to` are node names (WorkflowNode.name).
-	 *
-	 * When no channels are declared, always returns false.
-	 */
-	canSend(fromNode: string, toNode: string): boolean {
-		return this.channels.some((ch) => {
-			if (ch.from !== fromNode && ch.from !== '*') return false;
-			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-			return toList.includes(toNode) || toList.includes('*');
-		});
-	}
+  /**
+   * Returns true if the declared channel topology permits the sender node to message
+   * the target node. `from` and `to` are node names (WorkflowNode.name).
+   *
+   * When no channels are declared, always returns false.
+   */
+  canSend(fromNode: string, toNode: string): boolean {
+    return this.channels.some((ch) => {
+      if (ch.from !== fromNode && ch.from !== '*') return false;
+      const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+      return toList.includes(toNode) || toList.includes('*');
+    });
+  }
 
-	/**
-	 * Returns all target node names that the given sender node is permitted to message.
-	 * Returns an empty array when no channels are declared or none match.
-	 */
-	getPermittedTargets(fromNode: string): string[] {
-		const targets: string[] = [];
-		for (const ch of this.channels) {
-			if (ch.from !== fromNode && ch.from !== '*') continue;
-			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-			targets.push(...toList);
-		}
-		return [...new Set(targets)];
-	}
+  /**
+   * Returns all target node names that the given sender node is permitted to message.
+   * Returns an empty array when no channels are declared or none match.
+   */
+  getPermittedTargets(fromNode: string): string[] {
+    const targets: string[] = [];
+    for (const ch of this.channels) {
+      if (ch.from !== fromNode && ch.from !== '*') continue;
+      const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+      targets.push(...toList);
+    }
+    return [...new Set(targets)];
+  }
 
-	/**
-	 * Returns a shallow copy of the channel definitions.
-	 */
-	getChannels(): WorkflowChannel[] {
-		return [...this.channels];
-	}
+  /**
+   * Returns a shallow copy of the channel definitions.
+   */
+  getChannels(): WorkflowChannel[] {
+    return [...this.channels];
+  }
 
-	/** True when no channels are declared (open topology — no routing constraints). */
-	isEmpty(): boolean {
-		return this.channels.length === 0;
-	}
+  /** True when no channels are declared (open topology — no routing constraints). */
+  isEmpty(): boolean {
+    return this.channels.length === 0;
+  }
 }

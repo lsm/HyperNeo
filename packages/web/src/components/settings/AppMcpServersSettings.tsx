@@ -8,10 +8,10 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { AppMcpServer, AppMcpServerSourceType } from '@neokai/shared';
 import {
-	createAppMcpServer,
-	updateAppMcpServer,
-	deleteAppMcpServer,
-	setAppMcpServerEnabled,
+  createAppMcpServer,
+  updateAppMcpServer,
+  deleteAppMcpServer,
+  setAppMcpServerEnabled,
 } from '../../lib/api-helpers.ts';
 import { appMcpStore } from '../../lib/app-mcp-store.ts';
 import { skillsStore } from '../../lib/skills-store.ts';
@@ -24,648 +24,648 @@ import { cn } from '../../lib/utils.ts';
 import { computeMcpServerSkillLinkage } from '../ToolsModal.utils.ts';
 
 interface FormData {
-	name: string;
-	description: string;
-	sourceType: AppMcpServerSourceType;
-	command: string;
-	args: string;
-	envVars: string;
-	url: string;
-	headers: string;
+  name: string;
+  description: string;
+  sourceType: AppMcpServerSourceType;
+  command: string;
+  args: string;
+  envVars: string;
+  url: string;
+  headers: string;
 }
 
 interface FormErrors {
-	name?: string;
-	sourceType?: string;
-	command?: string;
-	args?: string;
-	envVars?: string;
-	url?: string;
-	headers?: string;
+  name?: string;
+  sourceType?: string;
+  command?: string;
+  args?: string;
+  envVars?: string;
+  url?: string;
+  headers?: string;
 }
 
 const EMPTY_FORM: FormData = {
-	name: '',
-	description: '',
-	sourceType: 'stdio',
-	command: '',
-	args: '',
-	envVars: '',
-	url: '',
-	headers: '',
+  name: '',
+  description: '',
+  sourceType: 'stdio',
+  command: '',
+  args: '',
+  envVars: '',
+  url: '',
+  headers: '',
 };
 
 export function AppMcpServersSettings() {
-	const servers = appMcpStore.appMcpServers.value;
-	const loading = appMcpStore.loading.value;
-	const error = appMcpStore.error.value;
-	// Read the skills signal so the component re-renders when wrappers are added
-	// or removed. We cross-reference skills against servers to show "this server
-	// is exposed via skill X" (or warn when a server has no wrapper and is
-	// therefore never injected into any session).
-	const skills = skillsStore.skills.value;
-	// Explicit "first snapshot arrived" flag from the skills store. We need this
-	// (not `skills.length > 0`) to correctly distinguish "subscription still
-	// loading" from "there genuinely are zero skills" — otherwise a space with
-	// MCP servers but zero wrapper skills would never show orphan warnings.
-	const skillsLoaded = skillsStore.loaded.value;
+  const servers = appMcpStore.appMcpServers.value;
+  const loading = appMcpStore.loading.value;
+  const error = appMcpStore.error.value;
+  // Read the skills signal so the component re-renders when wrappers are added
+  // or removed. We cross-reference skills against servers to show "this server
+  // is exposed via skill X" (or warn when a server has no wrapper and is
+  // therefore never injected into any session).
+  const skills = skillsStore.skills.value;
+  // Explicit "first snapshot arrived" flag from the skills store. We need this
+  // (not `skills.length > 0`) to correctly distinguish "subscription still
+  // loading" from "there genuinely are zero skills" — otherwise a space with
+  // MCP servers but zero wrapper skills would never show orphan warnings.
+  const skillsLoaded = skillsStore.loaded.value;
 
-	const [showForm, setShowForm] = useState(false);
-	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-	const [editingServer, setEditingServer] = useState<AppMcpServer | null>(null);
-	const [deletingServer, setDeletingServer] = useState<AppMcpServer | null>(null);
-	const [formData, setFormData] = useState<FormData>(EMPTY_FORM);
-	const [formErrors, setFormErrors] = useState<FormErrors>({});
-	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [editingServer, setEditingServer] = useState<AppMcpServer | null>(null);
+  const [deletingServer, setDeletingServer] = useState<AppMcpServer | null>(null);
+  const [formData, setFormData] = useState<FormData>(EMPTY_FORM);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
-	// Subscribe to both stores on mount.
-	// - appMcpStore drives the server list shown in this panel.
-	// - skillsStore drives the cross-linkage: each server row needs to know
-	//   whether a skill wraps it so we can render "Exposed via skill X" vs the
-	//   "⚠️ Not exposed to sessions" warning. Missing either subscription hides
-	//   a real and actionable state from the user.
-	useEffect(() => {
-		appMcpStore.subscribe().catch((err) => {
-			toast.error(
-				'Failed to load MCP servers: ' + (err instanceof Error ? err.message : 'Unknown error')
-			);
-		});
-		skillsStore.subscribe().catch((err) => {
-			// Non-fatal: the panel still works without linkage info; we just lose
-			// the "Exposed via skill …" / "No skill wrapper" annotations. Use a
-			// softer warning rather than a blocking error toast.
-			// eslint-disable-next-line no-console
-			console.warn(
-				'Failed to load skills for MCP linkage:',
-				err instanceof Error ? err.message : err
-			);
-		});
+  // Subscribe to both stores on mount.
+  // - appMcpStore drives the server list shown in this panel.
+  // - skillsStore drives the cross-linkage: each server row needs to know
+  //   whether a skill wraps it so we can render "Exposed via skill X" vs the
+  //   "⚠️ Not exposed to sessions" warning. Missing either subscription hides
+  //   a real and actionable state from the user.
+  useEffect(() => {
+    appMcpStore.subscribe().catch((err) => {
+      toast.error(
+        'Failed to load MCP servers: ' + (err instanceof Error ? err.message : 'Unknown error')
+      );
+    });
+    skillsStore.subscribe().catch((err) => {
+      // Non-fatal: the panel still works without linkage info; we just lose
+      // the "Exposed via skill …" / "No skill wrapper" annotations. Use a
+      // softer warning rather than a blocking error toast.
+      // eslint-disable-next-line no-console
+      console.warn(
+        'Failed to load skills for MCP linkage:',
+        err instanceof Error ? err.message : err
+      );
+    });
 
-		return () => {
-			appMcpStore.unsubscribe();
-			skillsStore.unsubscribe();
-		};
-	}, []);
+    return () => {
+      appMcpStore.unsubscribe();
+      skillsStore.unsubscribe();
+    };
+  }, []);
 
-	// Memoise the (serverId → wrapping skill) map so the O(n) scan runs once per
-	// skills-array change rather than once per server row.
-	const skillLinkage = useMemo(() => computeMcpServerSkillLinkage(skills), [skills]);
+  // Memoise the (serverId → wrapping skill) map so the O(n) scan runs once per
+  // skills-array change rather than once per server row.
+  const skillLinkage = useMemo(() => computeMcpServerSkillLinkage(skills), [skills]);
 
-	const validateForm = (): boolean => {
-		const errors: FormErrors = {};
+  const validateForm = (): boolean => {
+    const errors: FormErrors = {};
 
-		if (!formData.name.trim()) {
-			errors.name = 'Name is required';
-		}
+    if (!formData.name.trim()) {
+      errors.name = 'Name is required';
+    }
 
-		if (formData.sourceType === 'stdio') {
-			if (!formData.command.trim()) {
-				errors.command = 'Command is required for stdio servers';
-			}
-		} else {
-			// sse or http
-			if (!formData.url.trim()) {
-				errors.url = 'URL is required for SSE/HTTP servers';
-			} else if (!/^https?:\/\//i.test(formData.url.trim())) {
-				errors.url = 'URL must start with http:// or https://';
-			}
-		}
+    if (formData.sourceType === 'stdio') {
+      if (!formData.command.trim()) {
+        errors.command = 'Command is required for stdio servers';
+      }
+    } else {
+      // sse or http
+      if (!formData.url.trim()) {
+        errors.url = 'URL is required for SSE/HTTP servers';
+      } else if (!/^https?:\/\//i.test(formData.url.trim())) {
+        errors.url = 'URL must start with http:// or https://';
+      }
+    }
 
-		if (formData.args.trim()) {
-			// Validate that args are space-separated without quotes issues
-			const args = formData.args.trim().split(/\s+/);
-			if (args.some((a) => a.includes('"'))) {
-				errors.args = 'Args should be space-separated without quotes';
-			}
-		}
+    if (formData.args.trim()) {
+      // Validate that args are space-separated without quotes issues
+      const args = formData.args.trim().split(/\s+/);
+      if (args.some((a) => a.includes('"'))) {
+        errors.args = 'Args should be space-separated without quotes';
+      }
+    }
 
-		if (formData.envVars.trim()) {
-			// Validate key=value format
-			const lines = formData.envVars.trim().split('\n');
-			for (const line of lines) {
-				if (!line.includes('=')) {
-					errors.envVars = 'Each env var must be in key=value format';
-					break;
-				}
-				const [key] = line.split('=');
-				if (!key.trim()) {
-					errors.envVars = 'Each env var must be in key=value format';
-					break;
-				}
-			}
-		}
+    if (formData.envVars.trim()) {
+      // Validate key=value format
+      const lines = formData.envVars.trim().split('\n');
+      for (const line of lines) {
+        if (!line.includes('=')) {
+          errors.envVars = 'Each env var must be in key=value format';
+          break;
+        }
+        const [key] = line.split('=');
+        if (!key.trim()) {
+          errors.envVars = 'Each env var must be in key=value format';
+          break;
+        }
+      }
+    }
 
-		if (formData.headers.trim()) {
-			// Validate key=value format
-			const lines = formData.headers.trim().split('\n');
-			for (const line of lines) {
-				if (!line.includes('=')) {
-					errors.headers = 'Each header must be in key=value format';
-					break;
-				}
-				const [key] = line.split('=');
-				if (!key.trim()) {
-					errors.headers = 'Each header must be in key=value format';
-					break;
-				}
-			}
-		}
+    if (formData.headers.trim()) {
+      // Validate key=value format
+      const lines = formData.headers.trim().split('\n');
+      for (const line of lines) {
+        if (!line.includes('=')) {
+          errors.headers = 'Each header must be in key=value format';
+          break;
+        }
+        const [key] = line.split('=');
+        if (!key.trim()) {
+          errors.headers = 'Each header must be in key=value format';
+          break;
+        }
+      }
+    }
 
-		setFormErrors(errors);
-		return Object.keys(errors).length === 0;
-	};
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
 
-	const resetForm = () => {
-		setFormData(EMPTY_FORM);
-		setFormErrors({});
-		setEditingServer(null);
-	};
+  const resetForm = () => {
+    setFormData(EMPTY_FORM);
+    setFormErrors({});
+    setEditingServer(null);
+  };
 
-	const openAddForm = () => {
-		resetForm();
-		setShowForm(true);
-	};
+  const openAddForm = () => {
+    resetForm();
+    setShowForm(true);
+  };
 
-	const openEditForm = (server: AppMcpServer) => {
-		setEditingServer(server);
-		setFormData({
-			name: server.name,
-			description: server.description ?? '',
-			sourceType: server.sourceType,
-			command: server.command ?? '',
-			args: server.args?.join(' ') ?? '',
-			envVars: server.env
-				? Object.entries(server.env)
-						.map(([k, v]) => `${k}=${v}`)
-						.join('\n')
-				: '',
-			url: server.url ?? '',
-			headers: server.headers
-				? Object.entries(server.headers)
-						.map(([k, v]) => `${k}=${v}`)
-						.join('\n')
-				: '',
-		});
-		setFormErrors({});
-		setShowForm(true);
-	};
+  const openEditForm = (server: AppMcpServer) => {
+    setEditingServer(server);
+    setFormData({
+      name: server.name,
+      description: server.description ?? '',
+      sourceType: server.sourceType,
+      command: server.command ?? '',
+      args: server.args?.join(' ') ?? '',
+      envVars: server.env
+        ? Object.entries(server.env)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('\n')
+        : '',
+      url: server.url ?? '',
+      headers: server.headers
+        ? Object.entries(server.headers)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('\n')
+        : '',
+    });
+    setFormErrors({});
+    setShowForm(true);
+  };
 
-	const closeForm = () => {
-		setShowForm(false);
-		resetForm();
-	};
+  const closeForm = () => {
+    setShowForm(false);
+    resetForm();
+  };
 
-	const handleSubmit = async (e: Event) => {
-		e.preventDefault();
+  const handleSubmit = async (e: Event) => {
+    e.preventDefault();
 
-		if (!validateForm()) return;
+    if (!validateForm()) return;
 
-		setIsSubmitting(true);
+    setIsSubmitting(true);
 
-		try {
-			const parsedArgs = formData.args.trim() ? formData.args.trim().split(/\s+/) : undefined;
-			const parsedEnv = formData.envVars.trim()
-				? Object.fromEntries(
-						formData.envVars
-							.trim()
-							.split('\n')
-							.map((line) => {
-								const [key, ...valueParts] = line.split('=');
-								return [key.trim(), valueParts.join('=')];
-							})
-					)
-				: undefined;
-			const parsedHeaders = formData.headers.trim()
-				? Object.fromEntries(
-						formData.headers
-							.trim()
-							.split('\n')
-							.map((line) => {
-								const [key, ...valueParts] = line.split('=');
-								return [key.trim(), valueParts.join('=')];
-							})
-					)
-				: undefined;
+    try {
+      const parsedArgs = formData.args.trim() ? formData.args.trim().split(/\s+/) : undefined;
+      const parsedEnv = formData.envVars.trim()
+        ? Object.fromEntries(
+            formData.envVars
+              .trim()
+              .split('\n')
+              .map((line) => {
+                const [key, ...valueParts] = line.split('=');
+                return [key.trim(), valueParts.join('=')];
+              })
+          )
+        : undefined;
+      const parsedHeaders = formData.headers.trim()
+        ? Object.fromEntries(
+            formData.headers
+              .trim()
+              .split('\n')
+              .map((line) => {
+                const [key, ...valueParts] = line.split('=');
+                return [key.trim(), valueParts.join('=')];
+              })
+          )
+        : undefined;
 
-			if (editingServer) {
-				await updateAppMcpServer(editingServer.id, {
-					name: formData.name.trim(),
-					description: formData.description.trim() || undefined,
-					sourceType: formData.sourceType,
-					command:
-						formData.sourceType === 'stdio' ? formData.command.trim() || undefined : undefined,
-					args: formData.sourceType === 'stdio' ? parsedArgs : undefined,
-					env: parsedEnv,
-					url: formData.sourceType !== 'stdio' ? formData.url.trim() || undefined : undefined,
-					headers: formData.sourceType !== 'stdio' ? parsedHeaders : undefined,
-				});
-				toast.success(`Updated "${formData.name}"`);
-			} else {
-				await createAppMcpServer({
-					name: formData.name.trim(),
-					description: formData.description.trim() || undefined,
-					sourceType: formData.sourceType,
-					command:
-						formData.sourceType === 'stdio' ? formData.command.trim() || undefined : undefined,
-					args: formData.sourceType === 'stdio' ? parsedArgs : undefined,
-					env: parsedEnv,
-					url: formData.sourceType !== 'stdio' ? formData.url.trim() || undefined : undefined,
-					headers: formData.sourceType !== 'stdio' ? parsedHeaders : undefined,
-				});
-				toast.success(`Added "${formData.name}"`);
-			}
+      if (editingServer) {
+        await updateAppMcpServer(editingServer.id, {
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          sourceType: formData.sourceType,
+          command:
+            formData.sourceType === 'stdio' ? formData.command.trim() || undefined : undefined,
+          args: formData.sourceType === 'stdio' ? parsedArgs : undefined,
+          env: parsedEnv,
+          url: formData.sourceType !== 'stdio' ? formData.url.trim() || undefined : undefined,
+          headers: formData.sourceType !== 'stdio' ? parsedHeaders : undefined,
+        });
+        toast.success(`Updated "${formData.name}"`);
+      } else {
+        await createAppMcpServer({
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          sourceType: formData.sourceType,
+          command:
+            formData.sourceType === 'stdio' ? formData.command.trim() || undefined : undefined,
+          args: formData.sourceType === 'stdio' ? parsedArgs : undefined,
+          env: parsedEnv,
+          url: formData.sourceType !== 'stdio' ? formData.url.trim() || undefined : undefined,
+          headers: formData.sourceType !== 'stdio' ? parsedHeaders : undefined,
+        });
+        toast.success(`Added "${formData.name}"`);
+      }
 
-			closeForm();
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Failed to save MCP server';
-			toast.error(message);
-		} finally {
-			setIsSubmitting(false);
-		}
-	};
+      closeForm();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save MCP server';
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-	const handleDelete = async () => {
-		if (!deletingServer) return;
+  const handleDelete = async () => {
+    if (!deletingServer) return;
 
-		setIsSubmitting(true);
-		try {
-			await deleteAppMcpServer(deletingServer.id);
-			toast.success(`Deleted "${deletingServer.name}"`);
-			setShowDeleteConfirm(false);
-			setDeletingServer(null);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Failed to delete MCP server';
-			toast.error(message);
-		} finally {
-			setIsSubmitting(false);
-		}
-	};
+    setIsSubmitting(true);
+    try {
+      await deleteAppMcpServer(deletingServer.id);
+      toast.success(`Deleted "${deletingServer.name}"`);
+      setShowDeleteConfirm(false);
+      setDeletingServer(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete MCP server';
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-	const handleToggle = async (server: AppMcpServer, enabled: boolean) => {
-		setTogglingId(server.id);
-		try {
-			await setAppMcpServerEnabled(server.id, enabled);
-			toast.success(`${enabled ? 'Enabled' : 'Disabled'} "${server.name}"`);
-		} catch (err) {
-			const message =
-				err instanceof Error
-					? err.message
-					: `Failed to ${enabled ? 'enable' : 'disable'} MCP server`;
-			toast.error(message);
-		} finally {
-			setTogglingId(null);
-		}
-	};
+  const handleToggle = async (server: AppMcpServer, enabled: boolean) => {
+    setTogglingId(server.id);
+    try {
+      await setAppMcpServerEnabled(server.id, enabled);
+      toast.success(`${enabled ? 'Enabled' : 'Disabled'} "${server.name}"`);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : `Failed to ${enabled ? 'enable' : 'disable'} MCP server`;
+      toast.error(message);
+    } finally {
+      setTogglingId(null);
+    }
+  };
 
-	if (loading && servers.length === 0) {
-		return (
-			<SettingsSection title="MCP Servers">
-				<div class="text-sm text-gray-500 py-2">Loading servers...</div>
-			</SettingsSection>
-		);
-	}
+  if (loading && servers.length === 0) {
+    return (
+      <SettingsSection title="MCP Servers">
+        <div class="text-sm text-gray-500 py-2">Loading servers...</div>
+      </SettingsSection>
+    );
+  }
 
-	if (error) {
-		return (
-			<SettingsSection title="MCP Servers">
-				<div class="text-sm text-red-400 py-2">Error: {error}</div>
-			</SettingsSection>
-		);
-	}
+  if (error) {
+    return (
+      <SettingsSection title="MCP Servers">
+        <div class="text-sm text-red-400 py-2">Error: {error}</div>
+      </SettingsSection>
+    );
+  }
 
-	return (
-		<>
-			<SettingsSection title="MCP Servers">
-				<div class="mb-4">
-					<p class="text-xs text-gray-500 mb-3">
-						MCP servers are available to any space or session. Configure external MCP servers here.
-						For API keys and secrets, set them in your system environment (e.g.,{' '}
-						<code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export MY_API_KEY=...</code>) and
-						reference them by name in the env vars field below. Values stored here are saved in
-						plain text.
-					</p>
-					<Button variant="primary" size="sm" onClick={openAddForm}>
-						Add MCP Server
-					</Button>
-				</div>
+  return (
+    <>
+      <SettingsSection title="MCP Servers">
+        <div class="mb-4">
+          <p class="text-xs text-gray-500 mb-3">
+            MCP servers are available to any space or session. Configure external MCP servers here.
+            For API keys and secrets, set them in your system environment (e.g.,{' '}
+            <code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export MY_API_KEY=...</code>) and
+            reference them by name in the env vars field below. Values stored here are saved in
+            plain text.
+          </p>
+          <Button variant="primary" size="sm" onClick={openAddForm}>
+            Add MCP Server
+          </Button>
+        </div>
 
-				{servers.length === 0 ? (
-					<div class="text-sm text-gray-500 py-4">
-						No MCP servers configured. Click "Add MCP Server" to add one.
-					</div>
-				) : (
-					<div class="space-y-2">
-						{servers.map((server) => {
-							// Show linkage info only after the skills subscription has delivered
-							// its first snapshot (`skillsLoaded`). Before that, we genuinely
-							// don't know whether a wrapper exists, so suppressing the annotation
-							// prevents a misleading "⚠️ Not exposed" flash during initial mount.
-							const linkedSkill = skillLinkage.get(server.id);
-							return (
-								<div
-									key={server.id}
-									class={cn(
-										'flex items-center justify-between gap-3 py-3 px-3',
-										'bg-dark-800/50 rounded-lg border border-dark-700'
-									)}
-								>
-									<div class="flex-1 min-w-0">
-										<div class="text-sm text-gray-200 truncate font-medium">{server.name}</div>
-										<div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
-											<span
-												class={cn(
-													'px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
-													server.sourceType === 'stdio' && 'bg-green-500/20 text-green-400',
-													server.sourceType === 'sse' && 'bg-blue-500/20 text-blue-400',
-													server.sourceType === 'http' && 'bg-purple-500/20 text-purple-400'
-												)}
-											>
-												{server.sourceType}
-											</span>
-											{server.sourceType === 'stdio' && server.command && (
-												<span class="font-mono truncate max-w-[200px]">{server.command}</span>
-											)}
-											{server.sourceType !== 'stdio' && server.url && (
-												<span class="truncate max-w-[200px]">{server.url}</span>
-											)}
-										</div>
-										{server.description && (
-											<div class="text-xs text-gray-500 mt-1 truncate">{server.description}</div>
-										)}
-										{skillsLoaded && linkedSkill && (
-											<div
-												class="text-[11px] text-sky-400/80 mt-1 truncate"
-												data-testid={`skill-link-${server.name}`}
-											>
-												Exposed to sessions via the{' '}
-												<span class="font-medium">{linkedSkill.displayName}</span> skill
-												{!linkedSkill.enabled && ' (skill is off)'}
-											</div>
-										)}
-										{skillsLoaded && !linkedSkill && (
-											<div
-												class="text-[11px] text-amber-400/90 mt-1"
-												data-testid={`skill-orphan-${server.name}`}
-											>
-												⚠️ No skill wrapper — this server is not injected into any session. Toggling
-												it here has no runtime effect.
-											</div>
-										)}
-									</div>
+        {servers.length === 0 ? (
+          <div class="text-sm text-gray-500 py-4">
+            No MCP servers configured. Click "Add MCP Server" to add one.
+          </div>
+        ) : (
+          <div class="space-y-2">
+            {servers.map((server) => {
+              // Show linkage info only after the skills subscription has delivered
+              // its first snapshot (`skillsLoaded`). Before that, we genuinely
+              // don't know whether a wrapper exists, so suppressing the annotation
+              // prevents a misleading "⚠️ Not exposed" flash during initial mount.
+              const linkedSkill = skillLinkage.get(server.id);
+              return (
+                <div
+                  key={server.id}
+                  class={cn(
+                    'flex items-center justify-between gap-3 py-3 px-3',
+                    'bg-dark-800/50 rounded-lg border border-dark-700'
+                  )}
+                >
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm text-gray-200 truncate font-medium">{server.name}</div>
+                    <div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span
+                        class={cn(
+                          'px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
+                          server.sourceType === 'stdio' && 'bg-green-500/20 text-green-400',
+                          server.sourceType === 'sse' && 'bg-blue-500/20 text-blue-400',
+                          server.sourceType === 'http' && 'bg-purple-500/20 text-purple-400'
+                        )}
+                      >
+                        {server.sourceType}
+                      </span>
+                      {server.sourceType === 'stdio' && server.command && (
+                        <span class="font-mono truncate max-w-[200px]">{server.command}</span>
+                      )}
+                      {server.sourceType !== 'stdio' && server.url && (
+                        <span class="truncate max-w-[200px]">{server.url}</span>
+                      )}
+                    </div>
+                    {server.description && (
+                      <div class="text-xs text-gray-500 mt-1 truncate">{server.description}</div>
+                    )}
+                    {skillsLoaded && linkedSkill && (
+                      <div
+                        class="text-[11px] text-sky-400/80 mt-1 truncate"
+                        data-testid={`skill-link-${server.name}`}
+                      >
+                        Exposed to sessions via the{' '}
+                        <span class="font-medium">{linkedSkill.displayName}</span> skill
+                        {!linkedSkill.enabled && ' (skill is off)'}
+                      </div>
+                    )}
+                    {skillsLoaded && !linkedSkill && (
+                      <div
+                        class="text-[11px] text-amber-400/90 mt-1"
+                        data-testid={`skill-orphan-${server.name}`}
+                      >
+                        ⚠️ No skill wrapper — this server is not injected into any session. Toggling
+                        it here has no runtime effect.
+                      </div>
+                    )}
+                  </div>
 
-									<div class="flex items-center gap-2 flex-shrink-0">
-										<button
-											onClick={() => openEditForm(server)}
-											class="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-dark-700 rounded transition-colors"
-											title="Edit"
-										>
-											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width={2}
-													d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-												/>
-											</svg>
-										</button>
-										<button
-											onClick={() => {
-												setDeletingServer(server);
-												setShowDeleteConfirm(true);
-											}}
-											class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-dark-700 rounded transition-colors"
-											title="Delete"
-										>
-											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width={2}
-													d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-												/>
-											</svg>
-										</button>
-										<SettingsToggle
-											checked={server.enabled}
-											onChange={(enabled) => handleToggle(server, enabled)}
-											disabled={togglingId === server.id}
-										/>
-									</div>
-								</div>
-							);
-						})}
-					</div>
-				)}
-			</SettingsSection>
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => openEditForm(server)}
+                      class="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-dark-700 rounded transition-colors"
+                      title="Edit"
+                    >
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width={2}
+                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeletingServer(server);
+                        setShowDeleteConfirm(true);
+                      }}
+                      class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-dark-700 rounded transition-colors"
+                      title="Delete"
+                    >
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                    <SettingsToggle
+                      checked={server.enabled}
+                      onChange={(enabled) => handleToggle(server, enabled)}
+                      disabled={togglingId === server.id}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </SettingsSection>
 
-			{/* Add/Edit Form Modal */}
-			<Modal
-				isOpen={showForm}
-				onClose={closeForm}
-				title={editingServer ? 'Edit MCP Server' : 'Add MCP Server'}
-				size="lg"
-			>
-				<form onSubmit={handleSubmit} class="space-y-4">
-					{/* Name */}
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1">
-							Name <span class="text-red-400">*</span>
-						</label>
-						<input
-							type="text"
-							value={formData.name}
-							onChange={(e) =>
-								setFormData({ ...formData, name: (e.target as HTMLInputElement).value })
-							}
-							class={cn(
-								'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
-								'focus:outline-none focus:ring-1 focus:ring-blue-500',
-								formErrors.name ? 'border-red-500' : 'border-dark-700'
-							)}
-							placeholder="e.g., my-mcp-server"
-						/>
-						{formErrors.name && <p class="text-xs text-red-400 mt-1">{formErrors.name}</p>}
-					</div>
+      {/* Add/Edit Form Modal */}
+      <Modal
+        isOpen={showForm}
+        onClose={closeForm}
+        title={editingServer ? 'Edit MCP Server' : 'Add MCP Server'}
+        size="lg"
+      >
+        <form onSubmit={handleSubmit} class="space-y-4">
+          {/* Name */}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">
+              Name <span class="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) =>
+                setFormData({ ...formData, name: (e.target as HTMLInputElement).value })
+              }
+              class={cn(
+                'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
+                'focus:outline-none focus:ring-1 focus:ring-blue-500',
+                formErrors.name ? 'border-red-500' : 'border-dark-700'
+              )}
+              placeholder="e.g., my-mcp-server"
+            />
+            {formErrors.name && <p class="text-xs text-red-400 mt-1">{formErrors.name}</p>}
+          </div>
 
-					{/* Description */}
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
-						<input
-							type="text"
-							value={formData.description}
-							onChange={(e) =>
-								setFormData({ ...formData, description: (e.target as HTMLInputElement).value })
-							}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-							placeholder="Optional description"
-						/>
-					</div>
+          {/* Description */}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+            <input
+              type="text"
+              value={formData.description}
+              onChange={(e) =>
+                setFormData({ ...formData, description: (e.target as HTMLInputElement).value })
+              }
+              class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Optional description"
+            />
+          </div>
 
-					{/* Source Type */}
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1">
-							Source Type <span class="text-red-400">*</span>
-						</label>
-						<select
-							value={formData.sourceType}
-							onChange={(e) =>
-								setFormData({
-									...formData,
-									sourceType: (e.target as HTMLSelectElement).value as AppMcpServerSourceType,
-								})
-							}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-						>
-							<option value="stdio">Stdio (local process)</option>
-							<option value="sse">SSE (Server-Sent Events)</option>
-							<option value="http">HTTP</option>
-						</select>
-					</div>
+          {/* Source Type */}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">
+              Source Type <span class="text-red-400">*</span>
+            </label>
+            <select
+              value={formData.sourceType}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  sourceType: (e.target as HTMLSelectElement).value as AppMcpServerSourceType,
+                })
+              }
+              class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="stdio">Stdio (local process)</option>
+              <option value="sse">SSE (Server-Sent Events)</option>
+              <option value="http">HTTP</option>
+            </select>
+          </div>
 
-					{/* Stdio-specific fields */}
-					{formData.sourceType === 'stdio' && (
-						<>
-							<div>
-								<label class="block text-sm font-medium text-gray-300 mb-1">
-									Command <span class="text-red-400">*</span>
-								</label>
-								<input
-									type="text"
-									value={formData.command}
-									onChange={(e) =>
-										setFormData({ ...formData, command: (e.target as HTMLInputElement).value })
-									}
-									class={cn(
-										'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-										'focus:outline-none focus:ring-1 focus:ring-blue-500',
-										formErrors.command ? 'border-red-500' : 'border-dark-700'
-									)}
-									placeholder="e.g., npx"
-								/>
-								{formErrors.command && (
-									<p class="text-xs text-red-400 mt-1">{formErrors.command}</p>
-								)}
-							</div>
+          {/* Stdio-specific fields */}
+          {formData.sourceType === 'stdio' && (
+            <>
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">
+                  Command <span class="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.command}
+                  onChange={(e) =>
+                    setFormData({ ...formData, command: (e.target as HTMLInputElement).value })
+                  }
+                  class={cn(
+                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
+                    'focus:outline-none focus:ring-1 focus:ring-blue-500',
+                    formErrors.command ? 'border-red-500' : 'border-dark-700'
+                  )}
+                  placeholder="e.g., npx"
+                />
+                {formErrors.command && (
+                  <p class="text-xs text-red-400 mt-1">{formErrors.command}</p>
+                )}
+              </div>
 
-							<div>
-								<label class="block text-sm font-medium text-gray-300 mb-1">Args</label>
-								<input
-									type="text"
-									value={formData.args}
-									onChange={(e) =>
-										setFormData({ ...formData, args: (e.target as HTMLInputElement).value })
-									}
-									class={cn(
-										'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-										'focus:outline-none focus:ring-1 focus:ring-blue-500',
-										formErrors.args ? 'border-red-500' : 'border-dark-700'
-									)}
-									placeholder="e.g., -y @tokenizin/mcp-npx-fetch"
-								/>
-								{formErrors.args && <p class="text-xs text-red-400 mt-1">{formErrors.args}</p>}
-								<p class="text-xs text-gray-500 mt-1">Space-separated arguments</p>
-							</div>
-						</>
-					)}
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Args</label>
+                <input
+                  type="text"
+                  value={formData.args}
+                  onChange={(e) =>
+                    setFormData({ ...formData, args: (e.target as HTMLInputElement).value })
+                  }
+                  class={cn(
+                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
+                    'focus:outline-none focus:ring-1 focus:ring-blue-500',
+                    formErrors.args ? 'border-red-500' : 'border-dark-700'
+                  )}
+                  placeholder="e.g., -y @tokenizin/mcp-npx-fetch"
+                />
+                {formErrors.args && <p class="text-xs text-red-400 mt-1">{formErrors.args}</p>}
+                <p class="text-xs text-gray-500 mt-1">Space-separated arguments</p>
+              </div>
+            </>
+          )}
 
-					{/* SSE/HTTP-specific fields */}
-					{formData.sourceType !== 'stdio' && (
-						<>
-							<div>
-								<label class="block text-sm font-medium text-gray-300 mb-1">
-									URL <span class="text-red-400">*</span>
-								</label>
-								<input
-									type="text"
-									value={formData.url}
-									onChange={(e) =>
-										setFormData({ ...formData, url: (e.target as HTMLInputElement).value })
-									}
-									class={cn(
-										'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
-										'focus:outline-none focus:ring-1 focus:ring-blue-500',
-										formErrors.url ? 'border-red-500' : 'border-dark-700'
-									)}
-									placeholder="e.g., http://localhost:8080/sse"
-								/>
-								{formErrors.url && <p class="text-xs text-red-400 mt-1">{formErrors.url}</p>}
-							</div>
+          {/* SSE/HTTP-specific fields */}
+          {formData.sourceType !== 'stdio' && (
+            <>
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">
+                  URL <span class="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.url}
+                  onChange={(e) =>
+                    setFormData({ ...formData, url: (e.target as HTMLInputElement).value })
+                  }
+                  class={cn(
+                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
+                    'focus:outline-none focus:ring-1 focus:ring-blue-500',
+                    formErrors.url ? 'border-red-500' : 'border-dark-700'
+                  )}
+                  placeholder="e.g., http://localhost:8080/sse"
+                />
+                {formErrors.url && <p class="text-xs text-red-400 mt-1">{formErrors.url}</p>}
+              </div>
 
-							<div>
-								<label class="block text-sm font-medium text-gray-300 mb-1">Headers</label>
-								<textarea
-									value={formData.headers}
-									onChange={(e) =>
-										setFormData({ ...formData, headers: (e.target as HTMLTextAreaElement).value })
-									}
-									class={cn(
-										'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-										'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
-										formErrors.headers ? 'border-red-500' : 'border-dark-700'
-									)}
-									rows={3}
-									placeholder="e.g., Authorization=Bearer token"
-								/>
-								{formErrors.headers && (
-									<p class="text-xs text-red-400 mt-1">{formErrors.headers}</p>
-								)}
-								<p class="text-xs text-gray-500 mt-1">One header per line in key=value format</p>
-							</div>
-						</>
-					)}
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Headers</label>
+                <textarea
+                  value={formData.headers}
+                  onChange={(e) =>
+                    setFormData({ ...formData, headers: (e.target as HTMLTextAreaElement).value })
+                  }
+                  class={cn(
+                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
+                    'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
+                    formErrors.headers ? 'border-red-500' : 'border-dark-700'
+                  )}
+                  rows={3}
+                  placeholder="e.g., Authorization=Bearer token"
+                />
+                {formErrors.headers && (
+                  <p class="text-xs text-red-400 mt-1">{formErrors.headers}</p>
+                )}
+                <p class="text-xs text-gray-500 mt-1">One header per line in key=value format</p>
+              </div>
+            </>
+          )}
 
-					{/* Env Vars (for all source types) */}
-					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-1">
-							Environment Variables
-						</label>
-						<textarea
-							value={formData.envVars}
-							onChange={(e) =>
-								setFormData({ ...formData, envVars: (e.target as HTMLTextAreaElement).value })
-							}
-							class={cn(
-								'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-								'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
-								formErrors.envVars ? 'border-red-500' : 'border-dark-700'
-							)}
-							rows={3}
-							placeholder="e.g., MY_API_KEY=MY_API_KEY"
-						/>
-						{formErrors.envVars && <p class="text-xs text-red-400 mt-1">{formErrors.envVars}</p>}
-						<p class="text-xs text-gray-500 mt-1">
-							One env var per line in key=value format. For secrets, set the value in your system
-							environment and reference the env var name here.
-						</p>
-					</div>
+          {/* Env Vars (for all source types) */}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">
+              Environment Variables
+            </label>
+            <textarea
+              value={formData.envVars}
+              onChange={(e) =>
+                setFormData({ ...formData, envVars: (e.target as HTMLTextAreaElement).value })
+              }
+              class={cn(
+                'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
+                'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
+                formErrors.envVars ? 'border-red-500' : 'border-dark-700'
+              )}
+              rows={3}
+              placeholder="e.g., MY_API_KEY=MY_API_KEY"
+            />
+            {formErrors.envVars && <p class="text-xs text-red-400 mt-1">{formErrors.envVars}</p>}
+            <p class="text-xs text-gray-500 mt-1">
+              One env var per line in key=value format. For secrets, set the value in your system
+              environment and reference the env var name here.
+            </p>
+          </div>
 
-					{/* Form Actions */}
-					<div class="flex items-center justify-end gap-3 pt-2">
-						<Button type="button" variant="secondary" size="sm" onClick={closeForm}>
-							Cancel
-						</Button>
-						<Button type="submit" variant="primary" size="sm" loading={isSubmitting}>
-							{editingServer ? 'Save Changes' : 'Add Server'}
-						</Button>
-					</div>
-				</form>
-			</Modal>
+          {/* Form Actions */}
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <Button type="button" variant="secondary" size="sm" onClick={closeForm}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm" loading={isSubmitting}>
+              {editingServer ? 'Save Changes' : 'Add Server'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
-			{/* Delete Confirmation Modal */}
-			<ConfirmModal
-				isOpen={showDeleteConfirm}
-				onClose={() => {
-					setShowDeleteConfirm(false);
-					setDeletingServer(null);
-				}}
-				onConfirm={handleDelete}
-				title="Delete MCP Server"
-				message={`Are you sure you want to delete "${deletingServer?.name}"? This action cannot be undone.`}
-				confirmText="Delete"
-				confirmButtonVariant="danger"
-				isLoading={isSubmitting}
-			/>
-		</>
-	);
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => {
+          setShowDeleteConfirm(false);
+          setDeletingServer(null);
+        }}
+        onConfirm={handleDelete}
+        title="Delete MCP Server"
+        message={`Are you sure you want to delete "${deletingServer?.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        confirmButtonVariant="danger"
+        isLoading={isSubmitting}
+      />
+    </>
+  );
 }

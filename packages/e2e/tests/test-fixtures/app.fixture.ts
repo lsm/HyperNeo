@@ -14,19 +14,19 @@ import { test as base, expect, type Page } from '@playwright/test';
  * that indicate the app is ready for interaction.
  */
 async function waitForAppReady(page: Page) {
-	// Wait for the sidebar to be visible (indicates app shell loaded)
-	await page
-		.getByRole('button', { name: /New Session/i })
-		.waitFor({ state: 'visible', timeout: 10000 });
+  // Wait for the sidebar to be visible (indicates app shell loaded)
+  await page
+    .getByRole('button', { name: /New Session/i })
+    .waitFor({ state: 'visible', timeout: 10000 });
 
-	// Wait for authentication status to be shown in footer
-	await page
-		.locator('text=/Authentication|OAuth Token|Connected|Status/i')
-		.first()
-		.waitFor({ state: 'visible', timeout: 10000 });
+  // Wait for authentication status to be shown in footer
+  await page
+    .locator('text=/Authentication|OAuth Token|Connected|Status/i')
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 });
 
-	// Give a bit of time for WebSocket connection to establish and initial data to load
-	await page.waitForTimeout(1000);
+  // Give a bit of time for WebSocket connection to establish and initial data to load
+  await page.waitForTimeout(1000);
 }
 
 /**
@@ -35,16 +35,16 @@ async function waitForAppReady(page: Page) {
  * Usage: import { test, expect } from '../fixtures/app.fixture';
  */
 export const test = base.extend<{ app: Page }>({
-	app: async ({ page }, use) => {
-		// Navigate to the app
-		await page.goto('/');
+  app: async ({ page }, use) => {
+    // Navigate to the app
+    await page.goto('/');
 
-		// Wait for app to be ready (DOM-based checks only)
-		await waitForAppReady(page);
+    // Wait for app to be ready (DOM-based checks only)
+    await waitForAppReady(page);
 
-		// Expose the page as 'app'
-		await use(page);
-	},
+    // Expose the page as 'app'
+    await use(page);
+  },
 });
 
 export { expect };

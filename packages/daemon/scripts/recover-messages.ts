@@ -24,9 +24,9 @@ import { Database } from 'bun:sqlite';
 const dbPath = process.argv[2];
 
 if (!dbPath) {
-	console.error('Usage: bun recover-messages.ts <db-path>');
-	console.error('Example: bun recover-messages.ts ./tmp/self-dev/daemon.db');
-	process.exit(1);
+  console.error('Usage: bun recover-messages.ts <db-path>');
+  console.error('Example: bun recover-messages.ts ./tmp/self-dev/daemon.db');
+  process.exit(1);
 }
 
 console.log(`\n🔍 Recovering messages from: ${dbPath}\n`);
@@ -38,10 +38,10 @@ const raw = readFileSync(dbPath);
 const content = raw.toString('utf8', 0, raw.length);
 
 interface RecoveredMessage {
-	type: string;
-	uuid: string;
-	sdk_session_id?: string; // SDK session ID from JSON (NOT NeoKai session ID)
-	raw: string;
+  type: string;
+  uuid: string;
+  sdk_session_id?: string; // SDK session ID from JSON (NOT NeoKai session ID)
+  raw: string;
 }
 
 const messages: RecoveredMessage[] = [];
@@ -49,44 +49,44 @@ const seen = new Set<string>();
 
 let pos = 0;
 while (pos < raw.length) {
-	const idx = content.indexOf('{"type":"', pos);
-	if (idx === -1) break;
+  const idx = content.indexOf('{"type":"', pos);
+  if (idx === -1) break;
 
-	let depth = 0;
-	const start = idx;
-	let end = idx;
+  let depth = 0;
+  const start = idx;
+  let end = idx;
 
-	for (let i = idx; i < Math.min(idx + 100000, raw.length); i++) {
-		const char = content[i];
-		if (char === '{') depth++;
-		else if (char === '}') {
-			depth--;
-			if (depth === 0) {
-				end = i + 1;
-				break;
-			}
-		}
-	}
+  for (let i = idx; i < Math.min(idx + 100000, raw.length); i++) {
+    const char = content[i];
+    if (char === '{') depth++;
+    else if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+  }
 
-	if (end > start && depth === 0) {
-		const jsonStr = content.slice(start, end);
-		try {
-			const obj = JSON.parse(jsonStr);
-			if (obj.type && obj.uuid && !seen.has(obj.uuid)) {
-				seen.add(obj.uuid);
-				messages.push({
-					type: obj.type,
-					uuid: obj.uuid,
-					sdk_session_id: obj.session_id, // This is the SDK session ID!
-					raw: jsonStr,
-				});
-			}
-		} catch {
-			// Invalid JSON, skip
-		}
-	}
+  if (end > start && depth === 0) {
+    const jsonStr = content.slice(start, end);
+    try {
+      const obj = JSON.parse(jsonStr);
+      if (obj.type && obj.uuid && !seen.has(obj.uuid)) {
+        seen.add(obj.uuid);
+        messages.push({
+          type: obj.type,
+          uuid: obj.uuid,
+          sdk_session_id: obj.session_id, // This is the SDK session ID!
+          raw: jsonStr,
+        });
+      }
+    } catch {
+      // Invalid JSON, skip
+    }
+  }
 
-	pos = idx + 1;
+  pos = idx + 1;
 }
 
 console.log(`   Found ${messages.length} unique messages`);
@@ -99,22 +99,22 @@ const db = new Database(dbPath);
 // Map: SDK session ID -> NeoKai session ID
 const sdkToKai = new Map<string, string>();
 const sessions = db.query('SELECT id, sdk_session_id FROM sessions').all() as {
-	id: string;
-	sdk_session_id: string | null;
+  id: string;
+  sdk_session_id: string | null;
 }[];
 
 for (const s of sessions) {
-	if (s.sdk_session_id) {
-		sdkToKai.set(s.sdk_session_id, s.id);
-	}
+  if (s.sdk_session_id) {
+    sdkToKai.set(s.sdk_session_id, s.id);
+  }
 }
 
 const existingSessionIds = new Set(sessions.map((s) => s.id));
 const existingMessageIds = new Set(
-	db
-		.query('SELECT id FROM sdk_messages')
-		.all()
-		.map((r: unknown) => (r as { id: string }).id)
+  db
+    .query('SELECT id FROM sdk_messages')
+    .all()
+    .map((r: unknown) => (r as { id: string }).id)
 );
 
 console.log(`   Existing sessions: ${existingSessionIds.size}`);
@@ -128,23 +128,23 @@ const messagesByKaiSession = new Map<string, RecoveredMessage[]>();
 const orphanMessages: RecoveredMessage[] = [];
 
 for (const msg of messages) {
-	if (!msg.sdk_session_id) {
-		orphanMessages.push(msg);
-		continue;
-	}
+  if (!msg.sdk_session_id) {
+    orphanMessages.push(msg);
+    continue;
+  }
 
-	// Try to find the NeoKai session for this SDK session
-	const kaiSessionId = sdkToKai.get(msg.sdk_session_id);
+  // Try to find the NeoKai session for this SDK session
+  const kaiSessionId = sdkToKai.get(msg.sdk_session_id);
 
-	if (kaiSessionId) {
-		if (!messagesByKaiSession.has(kaiSessionId)) {
-			messagesByKaiSession.set(kaiSessionId, []);
-		}
-		messagesByKaiSession.get(kaiSessionId)!.push(msg);
-	} else {
-		// No existing session has this SDK session ID - treat as orphan
-		orphanMessages.push(msg);
-	}
+  if (kaiSessionId) {
+    if (!messagesByKaiSession.has(kaiSessionId)) {
+      messagesByKaiSession.set(kaiSessionId, []);
+    }
+    messagesByKaiSession.get(kaiSessionId)!.push(msg);
+  } else {
+    // No existing session has this SDK session ID - treat as orphan
+    orphanMessages.push(msg);
+  }
 }
 
 console.log(`   Messages matched to existing sessions: ${messages.length - orphanMessages.length}`);
@@ -161,24 +161,24 @@ const insertMessage = db.prepare(`
 let messagesInserted = 0;
 
 for (const [kaiSessionId, msgs] of messagesByKaiSession.entries()) {
-	for (const msg of msgs) {
-		if (existingMessageIds.has(msg.uuid)) continue;
+  for (const msg of msgs) {
+    if (existingMessageIds.has(msg.uuid)) continue;
 
-		try {
-			const parsed = JSON.parse(msg.raw);
-			const result = insertMessage.run(
-				msg.uuid,
-				kaiSessionId,
-				msg.type,
-				parsed.subtype || null,
-				msg.raw,
-				new Date().toISOString()
-			);
-			if (result.changes > 0) messagesInserted++;
-		} catch {
-			// Skip insert errors
-		}
-	}
+    try {
+      const parsed = JSON.parse(msg.raw);
+      const result = insertMessage.run(
+        msg.uuid,
+        kaiSessionId,
+        msg.type,
+        parsed.subtype || null,
+        msg.raw,
+        new Date().toISOString()
+      );
+      if (result.changes > 0) messagesInserted++;
+    } catch {
+      // Skip insert errors
+    }
+  }
 }
 
 console.log(`   Messages restored to existing sessions: ${messagesInserted}`);
@@ -189,11 +189,11 @@ console.log('\nStep 5: Handling orphan messages...');
 // Group orphans by SDK session ID
 const orphansBySDKSession = new Map<string, RecoveredMessage[]>();
 for (const msg of orphanMessages) {
-	const key = msg.sdk_session_id || 'unknown';
-	if (!orphansBySDKSession.has(key)) {
-		orphansBySDKSession.set(key, []);
-	}
-	orphansBySDKSession.get(key)!.push(msg);
+  const key = msg.sdk_session_id || 'unknown';
+  if (!orphansBySDKSession.has(key)) {
+    orphansBySDKSession.set(key, []);
+  }
+  orphansBySDKSession.get(key)!.push(msg);
 }
 
 const insertSession = db.prepare(`
@@ -209,98 +209,98 @@ let orphanSessionsCreated = 0;
 let orphanMessagesInserted = 0;
 
 for (const [sdkSessionId, msgs] of orphansBySDKSession.entries()) {
-	if (sdkSessionId === 'unknown' || msgs.length === 0) continue;
+  if (sdkSessionId === 'unknown' || msgs.length === 0) continue;
 
-	// Extract metadata from messages
-	let workspacePath = '/tmp/recovered';
-	let title = 'Recovered Session';
+  // Extract metadata from messages
+  let workspacePath = '/tmp/recovered';
+  let title = 'Recovered Session';
 
-	for (const msg of msgs) {
-		try {
-			const parsed = JSON.parse(msg.raw);
+  for (const msg of msgs) {
+    try {
+      const parsed = JSON.parse(msg.raw);
 
-			if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.cwd) {
-				workspacePath = parsed.cwd;
-			}
+      if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.cwd) {
+        workspacePath = parsed.cwd;
+      }
 
-			if (parsed.type === 'user' && title === 'Recovered Session') {
-				const msgContent = parsed.message?.content;
-				let text = '';
-				if (typeof msgContent === 'string') {
-					text = msgContent;
-				} else if (Array.isArray(msgContent)) {
-					const textBlock = msgContent.find(
-						(b: unknown) => (b as { type: string }).type === 'text'
-					);
-					if (textBlock) text = (textBlock as { text: string }).text;
-				}
-				if (text) {
-					title = text.slice(0, 50).replace(/\n/g, ' ').trim();
-					if (text.length > 50) title += '...';
-				}
-			}
-		} catch {
-			// Skip parse errors
-		}
-	}
+      if (parsed.type === 'user' && title === 'Recovered Session') {
+        const msgContent = parsed.message?.content;
+        let text = '';
+        if (typeof msgContent === 'string') {
+          text = msgContent;
+        } else if (Array.isArray(msgContent)) {
+          const textBlock = msgContent.find(
+            (b: unknown) => (b as { type: string }).type === 'text'
+          );
+          if (textBlock) text = (textBlock as { text: string }).text;
+        }
+        if (text) {
+          title = text.slice(0, 50).replace(/\n/g, ' ').trim();
+          if (text.length > 50) title += '...';
+        }
+      }
+    } catch {
+      // Skip parse errors
+    }
+  }
 
-	// Generate a new NeoKai session ID (don't reuse SDK session ID!)
-	const newSessionId = crypto.randomUUID();
+  // Generate a new NeoKai session ID (don't reuse SDK session ID!)
+  const newSessionId = crypto.randomUUID();
 
-	try {
-		const config = JSON.stringify({
-			model: 'claude-sonnet-4-20250514',
-			maxTokens: 16000,
-			temperature: 1,
-		});
-		const metadata = JSON.stringify({
-			messageCount: msgs.length,
-			recovered: true,
-			recoveredAt: new Date().toISOString(),
-		});
-		const now = new Date().toISOString();
+  try {
+    const config = JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      maxTokens: 16000,
+      temperature: 1,
+    });
+    const metadata = JSON.stringify({
+      messageCount: msgs.length,
+      recovered: true,
+      recoveredAt: new Date().toISOString(),
+    });
+    const now = new Date().toISOString();
 
-		insertSession.run(
-			newSessionId,
-			title,
-			workspacePath,
-			now,
-			now,
-			'active',
-			config,
-			metadata,
-			0,
-			null,
-			null,
-			null,
-			null,
-			sdkSessionId, // Store SDK session ID for future reference
-			null,
-			null,
-			null
-		);
-		orphanSessionsCreated++;
+    insertSession.run(
+      newSessionId,
+      title,
+      workspacePath,
+      now,
+      now,
+      'active',
+      config,
+      metadata,
+      0,
+      null,
+      null,
+      null,
+      null,
+      sdkSessionId, // Store SDK session ID for future reference
+      null,
+      null,
+      null
+    );
+    orphanSessionsCreated++;
 
-		// Insert messages for this new session
-		for (const msg of msgs) {
-			try {
-				const parsed = JSON.parse(msg.raw);
-				const result = insertMessage.run(
-					msg.uuid,
-					newSessionId, // Use the NEW NeoKai session ID
-					msg.type,
-					parsed.subtype || null,
-					msg.raw,
-					new Date().toISOString()
-				);
-				if (result.changes > 0) orphanMessagesInserted++;
-			} catch {
-				// Skip insert errors
-			}
-		}
-	} catch (e) {
-		console.error(`   Failed to create orphan session:`, e);
-	}
+    // Insert messages for this new session
+    for (const msg of msgs) {
+      try {
+        const parsed = JSON.parse(msg.raw);
+        const result = insertMessage.run(
+          msg.uuid,
+          newSessionId, // Use the NEW NeoKai session ID
+          msg.type,
+          parsed.subtype || null,
+          msg.raw,
+          new Date().toISOString()
+        );
+        if (result.changes > 0) orphanMessagesInserted++;
+      } catch {
+        // Skip insert errors
+      }
+    }
+  } catch (e) {
+    console.error(`   Failed to create orphan session:`, e);
+  }
 }
 
 console.log(`   Orphan sessions created: ${orphanSessionsCreated}`);
@@ -309,7 +309,7 @@ console.log(`   Orphan messages restored: ${orphanMessagesInserted}`);
 // Final summary
 const finalSessions = db.query('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
 const finalMessages = db.query('SELECT COUNT(*) as count FROM sdk_messages').get() as {
-	count: number;
+  count: number;
 };
 
 console.log('\n✅ Recovery complete!');

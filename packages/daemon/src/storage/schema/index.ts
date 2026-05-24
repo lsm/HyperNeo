@@ -128,8 +128,8 @@ export { runMigration144 } from './migrations';
  * Create all database tables and initialize defaults
  */
 export function createTables(db: BunDatabase): void {
-	// Sessions table
-	db.exec(`
+  // Sessions table
+  db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -155,11 +155,11 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Messages and tool_calls tables removed - we now only use sdk_messages table
-	// This provides a cleaner design with single source of truth
+  // Messages and tool_calls tables removed - we now only use sdk_messages table
+  // This provides a cleaner design with single source of truth
 
-	// Authentication configuration table (stores current auth method and credentials)
-	db.exec(`
+  // Authentication configuration table (stores current auth method and credentials)
+  db.exec(`
       CREATE TABLE IF NOT EXISTS auth_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         auth_method TEXT NOT NULL CHECK(auth_method IN ('oauth', 'oauth_token', 'api_key', 'none')),
@@ -170,18 +170,18 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// OAuth state table removed - web-based OAuth flow is no longer supported
-	// Authentication is now handled via environment variables only
+  // OAuth state table removed - web-based OAuth flow is no longer supported
+  // Authentication is now handled via environment variables only
 
-	// SDK Messages table (stores full SDK messages with all metadata).
-	//
-	// `task_id` is denormalised from the writing session's
-	// `session_context.taskId` at INSERT time. It supports task-scoped
-	// activity feeds without a separate map table. Nullable (most non-Space
-	// sessions are not task-bound) and intentionally has no FK — task
-	// lifecycle is managed independently and we don't want a task delete
-	// to cascade-blow-away historic messages.
-	db.exec(`
+  // SDK Messages table (stores full SDK messages with all metadata).
+  //
+  // `task_id` is denormalised from the writing session's
+  // `session_context.taskId` at INSERT time. It supports task-scoped
+  // activity feeds without a separate map table. Nullable (most non-Space
+  // sessions are not task-bound) and intentionally has no FK — task
+  // lifecycle is managed independently and we don't want a task delete
+  // to cascade-blow-away historic messages.
+  db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -199,14 +199,14 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Initialize auth_config with default values if not exists
-	db.exec(`
+  // Initialize auth_config with default values if not exists
+  db.exec(`
       INSERT OR IGNORE INTO auth_config (id, auth_method, updated_at)
       VALUES (1, 'none', datetime('now'))
     `);
 
-	// Global tools configuration table
-	db.exec(`
+  // Global tools configuration table
+  db.exec(`
       CREATE TABLE IF NOT EXISTS global_tools_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         config TEXT NOT NULL,
@@ -214,14 +214,14 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Initialize global_tools_config with default values if not exists
-	db.exec(`
+  // Initialize global_tools_config with default values if not exists
+  db.exec(`
       INSERT OR IGNORE INTO global_tools_config (id, config, updated_at)
       VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_TOOLS_CONFIG)}', datetime('now'))
     `);
 
-	// Global settings table
-	db.exec(`
+  // Global settings table
+  db.exec(`
       CREATE TABLE IF NOT EXISTS global_settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         settings TEXT NOT NULL,
@@ -229,16 +229,16 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Initialize global_settings with default values if not exists
-	db.exec(`
+  // Initialize global_settings with default values if not exists
+  db.exec(`
       INSERT OR IGNORE INTO global_settings (id, settings, updated_at)
       VALUES (1, '${JSON.stringify(DEFAULT_GLOBAL_SETTINGS)}', datetime('now'))
     `);
 
-	// Room tables - self-aware architecture foundation
+  // Room tables - self-aware architecture foundation
 
-	// Rooms table - conceptual workspaces
-	db.exec(`
+  // Rooms table - conceptual workspaces
+  db.exec(`
       CREATE TABLE IF NOT EXISTS rooms (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -256,8 +256,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Tasks table - task management
-	db.exec(`
+  // Tasks table - task management
+  db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         room_id TEXT NOT NULL,
@@ -289,8 +289,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Goals table
-	db.exec(`
+  // Goals table
+  db.exec(`
       CREATE TABLE IF NOT EXISTS goals (
         id TEXT PRIMARY KEY,
         room_id TEXT NOT NULL,
@@ -325,10 +325,10 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Space-native long-horizon goals. These intentionally do not couple to
-	// the legacy room `goals` / mission execution tables above: goal state lives
-	// here, concrete execution happens through linked `space_tasks` rows.
-	db.exec(`
+  // Space-native long-horizon goals. These intentionally do not couple to
+  // the legacy room `goals` / mission execution tables above: goal state lives
+  // here, concrete execution happens through linked `space_tasks` rows.
+  db.exec(`
       CREATE TABLE IF NOT EXISTS space_goals (
         id TEXT PRIMARY KEY,
         space_id TEXT NOT NULL,
@@ -360,7 +360,7 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	db.exec(`
+  db.exec(`
 	      CREATE TABLE IF NOT EXISTS space_goal_events (
 	        id TEXT PRIMARY KEY,
 	        space_id TEXT NOT NULL,
@@ -382,8 +382,8 @@ export function createTables(db: BunDatabase): void {
 	      )
 	    `);
 
-	// Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
-	db.exec(`
+  // Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
+  db.exec(`
       CREATE TABLE IF NOT EXISTS short_id_counters (
         entity_type TEXT NOT NULL,
         scope_id    TEXT NOT NULL,
@@ -392,17 +392,17 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Partial unique indexes for short_id on tasks and goals — scoped to room so that
-	// different rooms can each have their own t-1, t-2, ... sequence without collision.
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
-	);
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
-	);
+  // Partial unique indexes for short_id on tasks and goals — scoped to room so that
+  // different rooms can each have their own t-1, t-2, ... sequence without collision.
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
+  );
 
-	// Mission metric history table
-	db.exec(`
+  // Mission metric history table
+  db.exec(`
       CREATE TABLE IF NOT EXISTS mission_metric_history (
         id TEXT PRIMARY KEY,
         goal_id TEXT NOT NULL,
@@ -413,8 +413,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Mission executions table
-	db.exec(`
+  // Mission executions table
+  db.exec(`
       CREATE TABLE IF NOT EXISTS mission_executions (
         id TEXT PRIMARY KEY,
         goal_id TEXT NOT NULL,
@@ -430,10 +430,10 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// GitHub integration tables
+  // GitHub integration tables
 
-	// Room GitHub mappings - maps repositories to rooms
-	db.exec(`
+  // Room GitHub mappings - maps repositories to rooms
+  db.exec(`
       CREATE TABLE IF NOT EXISTS room_github_mappings (
         id TEXT PRIMARY KEY,
         room_id TEXT NOT NULL,
@@ -445,8 +445,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Space-level watched GitHub repositories and PR activity events
-	db.exec(`
+  // Space-level watched GitHub repositories and PR activity events
+  db.exec(`
       CREATE TABLE IF NOT EXISTS space_github_watched_repos (
         id TEXT PRIMARY KEY,
         space_id TEXT NOT NULL,
@@ -464,7 +464,7 @@ export function createTables(db: BunDatabase): void {
         UNIQUE(space_id, owner, repo)
       )
     `);
-	db.exec(`
+  db.exec(`
       CREATE TABLE IF NOT EXISTS space_github_events (
         id TEXT PRIMARY KEY,
         space_id TEXT NOT NULL,
@@ -496,8 +496,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Inbox items - GitHub events awaiting routing
-	db.exec(`
+  // Inbox items - GitHub events awaiting routing
+  db.exec(`
       CREATE TABLE IF NOT EXISTS inbox_items (
         id TEXT PRIMARY KEY,
         source TEXT NOT NULL CHECK(source IN ('github_issue', 'github_comment', 'github_pr')),
@@ -520,9 +520,9 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Room Runtime tables — session groups for multi-agent collaboration
+  // Room Runtime tables — session groups for multi-agent collaboration
 
-	db.exec(`
+  db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
         group_type TEXT NOT NULL DEFAULT 'task',
@@ -534,7 +534,7 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	db.exec(`
+  db.exec(`
       CREATE TABLE IF NOT EXISTS session_group_members (
         group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
         session_id TEXT NOT NULL,
@@ -544,7 +544,7 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	db.exec(`
+  db.exec(`
       CREATE TABLE IF NOT EXISTS task_group_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
@@ -554,12 +554,12 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// task_session_map has been removed. Task-scoped lookups now read
-	// `sdk_messages.task_id` directly (see migration 122 + the column
-	// declared in `sdk_messages` above). This bootstrap path no longer
-	// needs to know about the legacy table at all.
+  // task_session_map has been removed. Task-scoped lookups now read
+  // `sdk_messages.task_id` directly (see migration 122 + the column
+  // declared in `sdk_messages` above). This bootstrap path no longer
+  // needs to know about the legacy table at all.
 
-	db.exec(`
+  db.exec(`
       CREATE TABLE IF NOT EXISTS app_mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
@@ -578,17 +578,17 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Partial unique index on (source_path, name) for imported rows — enables
-	// idempotent upserts from McpImportService without a pre-check round trip.
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
+  // Partial unique index on (source_path, name) for imported rows — enables
+  // idempotent upserts from McpImportService without a pre-check round trip.
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
 		 ON app_mcp_servers(source_path, name)
 		 WHERE source = 'imported' AND source_path IS NOT NULL`
-	);
+  );
 
-	// Per-room MCP enablement overrides (legacy — superseded by `mcp_enablement`
-	// with scope_type='room'. Kept here until M5 purges it.)
-	db.exec(`
+  // Per-room MCP enablement overrides (legacy — superseded by `mcp_enablement`
+  // with scope_type='room'. Kept here until M5 purges it.)
+  db.exec(`
       CREATE TABLE IF NOT EXISTS room_mcp_enablement (
         room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
         server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
@@ -597,11 +597,11 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Generalized MCP enablement overrides — one row per explicit override at a
-	// specific scope (space / room / session). Missing rows inherit from the
-	// next most-specific scope, falling back to the registry default. Added in
-	// M3 (Migration 100); supersedes `room_mcp_enablement`, which is dropped in M5.
-	db.exec(`
+  // Generalized MCP enablement overrides — one row per explicit override at a
+  // specific scope (space / room / session). Missing rows inherit from the
+  // next most-specific scope, falling back to the registry default. Added in
+  // M3 (Migration 100); supersedes `room_mcp_enablement`, which is dropped in M5.
+  db.exec(`
       CREATE TABLE IF NOT EXISTS mcp_enablement (
         server_id  TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
         scope_type TEXT NOT NULL CHECK (scope_type IN ('space', 'room', 'session')),
@@ -610,13 +610,13 @@ export function createTables(db: BunDatabase): void {
         PRIMARY KEY (server_id, scope_type, scope_id)
       )
     `);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_scope ON mcp_enablement(scope_type, scope_id)`
-	);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_server ON mcp_enablement(server_id)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_mcp_enablement_scope ON mcp_enablement(scope_type, scope_id)`
+  );
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_enablement_server ON mcp_enablement(server_id)`);
 
-	// Application-level Skills registry
-	db.exec(`
+  // Application-level Skills registry
+  db.exec(`
       CREATE TABLE IF NOT EXISTS skills (
         id TEXT PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
@@ -631,8 +631,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Per-room skill enablement overrides
-	db.exec(`
+  // Per-room skill enablement overrides
+  db.exec(`
       CREATE TABLE IF NOT EXISTS room_skill_overrides (
         skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
         room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -641,7 +641,7 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	db.exec(`
+  db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
         queue TEXT NOT NULL,
@@ -660,8 +660,8 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Workspace history — persists recently-used workspace paths
-	db.exec(`
+  // Workspace history — persists recently-used workspace paths
+  db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         path TEXT NOT NULL UNIQUE,
@@ -670,10 +670,10 @@ export function createTables(db: BunDatabase): void {
       )
 	    `);
 
-	// Durable Codex tool continuation recovery state. The full space schema is
-	// migration-owned, so these tables avoid foreign keys here and are also
-	// created by migration 109 for existing databases.
-	db.exec(`
+  // Durable Codex tool continuation recovery state. The full space schema is
+  // migration-owned, so these tables avoid foreign keys here and are also
+  // created by migration 109 for existing databases.
+  db.exec(`
 	      CREATE TABLE IF NOT EXISTS tool_continuation_recovery (
 	        tool_use_id TEXT PRIMARY KEY,
 	        session_id TEXT NOT NULL,
@@ -688,7 +688,7 @@ export function createTables(db: BunDatabase): void {
 	        expires_at INTEGER NOT NULL
 	      )
 	    `);
-	db.exec(`
+  db.exec(`
 	      CREATE TABLE IF NOT EXISTS tool_continuation_inbox (
 	        id TEXT PRIMARY KEY,
 	        tool_use_id TEXT NOT NULL,
@@ -705,17 +705,17 @@ export function createTables(db: BunDatabase): void {
 	      )
 	    `);
 
-	createSpaceAgentInboxTables(db);
-	createAgentMemoryTables(db);
-	createEvolutionTables(db);
-	createLongHorizonAgentTables(db);
+  createSpaceAgentInboxTables(db);
+  createAgentMemoryTables(db);
+  createEvolutionTables(db);
+  createLongHorizonAgentTables(db);
 
-	// Create indexes
-	createIndexes(db);
+  // Create indexes
+  createIndexes(db);
 }
 
 function createSpaceAgentInboxTables(db: BunDatabase): void {
-	db.exec(`
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_inbox_messages (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -739,23 +739,23 @@ function createSpaceAgentInboxTables(db: BunDatabase): void {
 			FOREIGN KEY (target_agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_agent_inbox_target_status ` +
-			`ON space_agent_inbox_messages(space_id, target_agent_id, status, created_at)`
-	);
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agent_inbox_idempotency ` +
-			`ON space_agent_inbox_messages(space_id, target_agent_id, idempotency_key) ` +
-			`WHERE idempotency_key IS NOT NULL AND status = 'pending'`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +
-			`ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`
-	);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_inbox_target_status ` +
+      `ON space_agent_inbox_messages(space_id, target_agent_id, status, created_at)`
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agent_inbox_idempotency ` +
+      `ON space_agent_inbox_messages(space_id, target_agent_id, idempotency_key) ` +
+      `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +
+      `ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`
+  );
 }
 
 function createAgentMemoryTables(db: BunDatabase): void {
-	db.exec(`
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
 			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
@@ -778,7 +778,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
 			key,
 			content,
@@ -788,7 +788,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			tokenize='trigram'
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS memory_vectors (
 			memory_id INTEGER PRIMARY KEY,
 			embedding BLOB NOT NULL,
@@ -798,7 +798,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_core_memory (
 			space_id TEXT NOT NULL,
 			memory_id INTEGER NOT NULL,
@@ -811,21 +811,21 @@ function createAgentMemoryTables(db: BunDatabase): void {
 			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
 		AFTER INSERT ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
 			VALUES (new.id, new.key, new.content, new.tags);
 		END
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
 		AFTER DELETE ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
 			VALUES ('delete', old.id, old.key, old.content, old.tags);
 		END
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
 		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
 			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
@@ -840,136 +840,136 @@ function createAgentMemoryTables(db: BunDatabase): void {
  * Create database indexes for performance
  */
 function createIndexes(db: BunDatabase): void {
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
       ON sdk_messages(session_id, timestamp)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
-	// Plain B-tree index over the materialised parent_tool_use_id column.
-	// The earlier json_extract function index (idx_sdk_messages_parent_tool)
-	// was dropped in migration 126 — all callers now use the column directly.
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
+  // Plain B-tree index over the materialised parent_tool_use_id column.
+  // The earlier json_extract function index (idx_sdk_messages_parent_tool)
+  // was dropped in migration 126 — all callers now use the column directly.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
       ON sdk_messages(session_id, parent_tool_use_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
       ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
       ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
       ON sdk_messages(message_type, message_subtype)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
-	// Task-scoped feeds and activity views read directly from this column.
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
+  // Task-scoped feeds and activity views read directly from this column.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
       ON sdk_messages(task_id, timestamp)`);
-	// Covers the `SELECT DISTINCT session_id WHERE task_id = ?` dedup in the
-	// SPACE_TASK_ACTIVITY_BY_TASK_SQL `contributing_sessions` CTE — turns it
-	// into an index-only scan rather than walking the (task_id, timestamp)
-	// index and dropping the timestamp column.
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
+  // Covers the `SELECT DISTINCT session_id WHERE task_id = ?` dedup in the
+  // SPACE_TASK_ACTIVITY_BY_TASK_SQL `contributing_sessions` CTE — turns it
+  // into an index-only scan rather than walking the (task_id, timestamp)
+  // index and dropping the timestamp column.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
       ON sdk_messages(task_id, session_id)`);
 
-	// Legacy `task_session_map` indexes no longer exist — see the
-	// `sdk_messages.task_id` column above for the replacement.
+  // Legacy `task_session_map` indexes no longer exist — see the
+  // `sdk_messages.task_id` column above for the replacement.
 
-	// Agent memory indexes
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
-	);
+  // Agent memory indexes
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
+  );
 
-	// Room indexes
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_goals_next_check_in ON space_goals(status, next_check_in_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup ON mission_metric_history(goal_id, metric_name, recorded_at)`
-	);
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
-	);
+  // Room indexes
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_goals_next_check_in ON space_goals(status, next_check_in_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup ON mission_metric_history(goal_id, metric_name, recorded_at)`
+  );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
+  );
 
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
-	);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_goal_events_goal_created ON space_goal_events(goal_id, created_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_goal_events_space_created ON space_goal_events(space_id, created_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
+  );
 
-	// GitHub integration indexes
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_room_github_mappings_room ON room_github_mappings(room_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_github_watched_repo_lookup ON space_github_watched_repos(owner, repo, enabled)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_github_events_task ON space_github_events(task_id, occurred_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_github_events_repo ON space_github_events(space_id, repo_owner, repo_name, pr_number)`
-	);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
-	);
-	// Room Runtime indexes
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
-	// Partial unique index: at most one active group per task ref_id at the DB level.
-	// Scoped to task/task_pair group types only — other future group types may share
-	// ref_id values without violating this constraint.
-	db.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
+  // GitHub integration indexes
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_room_github_mappings_room ON room_github_mappings(room_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_github_watched_repo_lookup ON space_github_watched_repos(owner, repo, enabled)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_github_events_task ON space_github_events(task_id, occurred_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_github_events_repo ON space_github_events(space_id, repo_owner, repo_name, pr_number)`
+  );
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
+  );
+  // Room Runtime indexes
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
+  // Partial unique index: at most one active group per task ref_id at the DB level.
+  // Scoped to task/task_pair group types only — other future group types may share
+  // ref_id values without violating this constraint.
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_groups_active_ref
 		 ON session_groups(ref_id) WHERE completed_at IS NULL AND (group_type = 'task' OR group_type = 'task_pair')`
-	);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
-	// Job queue indexes
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
-	);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
-	// Workspace history index — supports ORDER BY last_used_at DESC in list()
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_session
+  );
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
+  // Job queue indexes
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
+  );
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
+  // Workspace history index — supports ORDER BY last_used_at DESC in list()
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_session
 		 ON tool_continuation_recovery(session_id, status, expires_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_execution
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_tool_continuation_recovery_execution
 		 ON tool_continuation_recovery(execution_id, status, expires_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_execution
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_execution
 		 ON tool_continuation_inbox(execution_id, status, expires_at)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
-	);
+  );
 }

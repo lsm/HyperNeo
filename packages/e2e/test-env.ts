@@ -23,10 +23,10 @@ export const e2eDatabasePath = join(e2eDatabaseDir, 'daemon.db');
 
 // Ensure directories exist (only created once due to module caching)
 if (!existsSync(e2eWorkspaceDir)) {
-	mkdirSync(e2eWorkspaceDir, { recursive: true });
+  mkdirSync(e2eWorkspaceDir, { recursive: true });
 }
 if (!existsSync(e2eDatabaseDir)) {
-	mkdirSync(e2eDatabaseDir, { recursive: true });
+  mkdirSync(e2eDatabaseDir, { recursive: true });
 }
 
 // Seed the workspace with sample files so the daemon's FileIndex has entries
@@ -34,19 +34,19 @@ if (!existsSync(e2eDatabaseDir)) {
 // at config evaluation time (before the webServer starts) because the FileIndex
 // scans the workspace during server init — before globalSetup runs.
 const seedFiles: Record<string, string> = {
-	'package.json': '{ "name": "e2e-test-workspace", "version": "1.0.0" }',
-	'README.md': '# E2E Test Workspace',
-	'src/index.ts': 'export const hello = "world";',
-	'src/utils/helpers.ts': 'export function add(a: number, b: number) { return a + b; }',
-	'docs/guide.md': '# User Guide',
+  'package.json': '{ "name": "e2e-test-workspace", "version": "1.0.0" }',
+  'README.md': '# E2E Test Workspace',
+  'src/index.ts': 'export const hello = "world";',
+  'src/utils/helpers.ts': 'export function add(a: number, b: number) { return a + b; }',
+  'docs/guide.md': '# User Guide',
 };
 for (const [relPath, content] of Object.entries(seedFiles)) {
-	const absPath = join(e2eWorkspaceDir, relPath);
-	const dir = dirname(absPath);
-	if (!existsSync(dir)) {
-		mkdirSync(dir, { recursive: true });
-	}
-	if (!existsSync(absPath)) {
-		writeFileSync(absPath, content, 'utf-8');
-	}
+  const absPath = join(e2eWorkspaceDir, relPath);
+  const dir = dirname(absPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  if (!existsSync(absPath)) {
+    writeFileSync(absPath, content, 'utf-8');
+  }
 }

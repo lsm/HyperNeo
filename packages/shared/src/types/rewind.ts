@@ -13,18 +13,18 @@
  * Shows what would change without actually modifying anything.
  */
 export interface RewindPreview {
-	/** Whether rewind is possible */
-	canRewind: boolean;
-	/** Error message if rewind is not possible */
-	error?: string;
-	/** List of files that would be changed */
-	filesChanged?: string[];
-	/** Number of line insertions */
-	insertions?: number;
-	/** Number of line deletions */
-	deletions?: number;
-	/** Number of messages that would be deleted (for conversation/both modes) */
-	messagesAffected?: number;
+  /** Whether rewind is possible */
+  canRewind: boolean;
+  /** Error message if rewind is not possible */
+  error?: string;
+  /** List of files that would be changed */
+  filesChanged?: string[];
+  /** Number of line insertions */
+  insertions?: number;
+  /** Number of line deletions */
+  deletions?: number;
+  /** Number of messages that would be deleted (for conversation/both modes) */
+  messagesAffected?: number;
 }
 
 /**
@@ -32,20 +32,20 @@ export interface RewindPreview {
  * Contains the actual changes made.
  */
 export interface RewindResult {
-	/** Whether the rewind operation succeeded */
-	success: boolean;
-	/** Error message if the operation failed */
-	error?: string;
-	/** List of files that were changed */
-	filesChanged?: string[];
-	/** Number of line insertions */
-	insertions?: number;
-	/** Number of line deletions */
-	deletions?: number;
-	/** Whether the conversation was rewound (messages deleted) */
-	conversationRewound?: boolean;
-	/** Number of messages deleted from the conversation */
-	messagesDeleted?: number;
+  /** Whether the rewind operation succeeded */
+  success: boolean;
+  /** Error message if the operation failed */
+  error?: string;
+  /** List of files that were changed */
+  filesChanged?: string[];
+  /** Number of line insertions */
+  insertions?: number;
+  /** Number of line deletions */
+  deletions?: number;
+  /** Whether the conversation was rewound (messages deleted) */
+  conversationRewound?: boolean;
+  /** Number of messages deleted from the conversation */
+  messagesDeleted?: number;
 }
 
 /**
@@ -61,12 +61,12 @@ export type RewindMode = 'files' | 'conversation' | 'both';
  * deleting all messages from the first selected message onward.
  */
 export interface SelectiveRewindRequest {
-	/** Message UUIDs to rewind (all messages from first selected to end) */
-	messageIds: string[];
-	/** Session ID */
-	sessionId: string;
-	/** Rewind mode - what to restore when rewinding */
-	mode?: RewindMode;
+  /** Message UUIDs to rewind (all messages from first selected to end) */
+  messageIds: string[];
+  /** Session ID */
+  sessionId: string;
+  /** Rewind mode - what to restore when rewinding */
+  mode?: RewindMode;
 }
 
 /**
@@ -74,21 +74,21 @@ export interface SelectiveRewindRequest {
  * Shows what would change without actually modifying anything.
  */
 export interface SelectiveRewindPreview {
-	/** Whether selective rewind is possible */
-	canRewind: boolean;
-	/** Error message if rewind is not possible */
-	error?: string;
-	/** Number of messages that would be deleted */
-	messagesToDelete: number;
-	/** Files that would be reverted, with strategy information */
-	filesToRevert: Array<{
-		/** File path relative to workspace root */
-		path: string;
-		/** Whether SDK checkpoint is available for this file */
-		hasCheckpoint: boolean;
-		/** Whether Edit tool diff is available as fallback */
-		hasEditDiff: boolean;
-	}>;
+  /** Whether selective rewind is possible */
+  canRewind: boolean;
+  /** Error message if rewind is not possible */
+  error?: string;
+  /** Number of messages that would be deleted */
+  messagesToDelete: number;
+  /** Files that would be reverted, with strategy information */
+  filesToRevert: Array<{
+    /** File path relative to workspace root */
+    path: string;
+    /** Whether SDK checkpoint is available for this file */
+    hasCheckpoint: boolean;
+    /** Whether Edit tool diff is available as fallback */
+    hasEditDiff: boolean;
+  }>;
 }
 
 /**
@@ -96,16 +96,16 @@ export interface SelectiveRewindPreview {
  * Contains the actual changes made.
  */
 export interface SelectiveRewindResult {
-	/** Whether the selective rewind operation succeeded */
-	success: boolean;
-	/** Error message if the operation failed */
-	error?: string;
-	/** Number of messages deleted from the conversation */
-	messagesDeleted: number;
-	/** List of file paths that were reverted */
-	filesReverted: string[];
-	/** Which rewind case was used for file reversion */
-	rewindCase?: 'sdk-native' | 'diff-based' | 'hybrid';
-	/** Files reverted via diff-based approach */
-	diffRevertedFiles?: string[];
+  /** Whether the selective rewind operation succeeded */
+  success: boolean;
+  /** Error message if the operation failed */
+  error?: string;
+  /** Number of messages deleted from the conversation */
+  messagesDeleted: number;
+  /** List of file paths that were reverted */
+  filesReverted: string[];
+  /** Which rewind case was used for file reversion */
+  rewindCase?: 'sdk-native' | 'diff-based' | 'hybrid';
+  /** Files reverted via diff-based approach */
+  diffRevertedFiles?: string[];
 }

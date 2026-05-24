@@ -17,14 +17,14 @@
 
 /** Anthropic API error type discriminators. */
 export type AnthropicErrorType =
-	| 'invalid_request_error'
-	| 'authentication_error'
-	| 'permission_error'
-	| 'not_found_error'
-	| 'request_too_large'
-	| 'rate_limit_error'
-	| 'api_error'
-	| 'overloaded_error';
+  | 'invalid_request_error'
+  | 'authentication_error'
+  | 'permission_error'
+  | 'not_found_error'
+  | 'request_too_large'
+  | 'rate_limit_error'
+  | 'api_error'
+  | 'overloaded_error';
 
 /**
  * Serialize an Anthropic-format error envelope as a JSON string.
@@ -32,5 +32,5 @@ export type AnthropicErrorType =
  * Use as the body of HTTP non-2xx responses from bridge servers.
  */
 export function createAnthropicErrorBody(errorType: AnthropicErrorType, message: string): string {
-	return JSON.stringify({ type: 'error', error: { type: errorType, message } });
+  return JSON.stringify({ type: 'error', error: { type: errorType, message } });
 }

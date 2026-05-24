@@ -4,14 +4,14 @@ import { isUUID } from '@neokai/shared';
  * Minimal interface for task short-ID lookup. Satisfied by TaskRepository.
  */
 export type TaskRepoForResolve = {
-	getTaskByShortId(roomId: string, shortId: string): { id: string } | null;
+  getTaskByShortId(roomId: string, shortId: string): { id: string } | null;
 };
 
 /**
  * Minimal interface for goal short-ID lookup. Satisfied by GoalRepository.
  */
 export type GoalRepoForResolve = {
-	getGoalByShortId(roomId: string, shortId: string): { id: string } | null;
+  getGoalByShortId(roomId: string, shortId: string): { id: string } | null;
 };
 
 /**
@@ -21,14 +21,14 @@ export type GoalRepoForResolve = {
  * @throws {Error} with message 'Task not found' when the short ID cannot be resolved.
  */
 export function resolveTaskId(input: string, roomId: string, taskRepo: TaskRepoForResolve): string {
-	if (isUUID(input)) {
-		return input;
-	}
-	const task = taskRepo.getTaskByShortId(roomId, input);
-	if (!task) {
-		throw new Error(`Task not found: ${input}`);
-	}
-	return task.id;
+  if (isUUID(input)) {
+    return input;
+  }
+  const task = taskRepo.getTaskByShortId(roomId, input);
+  if (!task) {
+    throw new Error(`Task not found: ${input}`);
+  }
+  return task.id;
 }
 
 /**
@@ -38,12 +38,12 @@ export function resolveTaskId(input: string, roomId: string, taskRepo: TaskRepoF
  * @throws {Error} with message 'Goal not found' when the short ID cannot be resolved.
  */
 export function resolveGoalId(input: string, roomId: string, goalRepo: GoalRepoForResolve): string {
-	if (isUUID(input)) {
-		return input;
-	}
-	const goal = goalRepo.getGoalByShortId(roomId, input);
-	if (!goal) {
-		throw new Error(`Goal not found: ${input}`);
-	}
-	return goal.id;
+  if (isUUID(input)) {
+    return input;
+  }
+  const goal = goalRepo.getGoalByShortId(roomId, input);
+  if (!goal) {
+    throw new Error(`Goal not found: ${input}`);
+  }
+  return goal.id;
 }

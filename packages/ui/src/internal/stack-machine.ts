@@ -17,15 +17,15 @@ type Id = string;
  * State interface for the stack machine.
  */
 interface State {
-	stack: Id[];
+  stack: Id[];
 }
 
 /**
  * Action types for stack machine operations.
  */
 export enum ActionTypes {
-	Push,
-	Pop,
+  Push,
+  Pop,
 }
 
 /**
@@ -37,35 +37,35 @@ export type Actions = { type: ActionTypes.Push; id: Id } | { type: ActionTypes.P
  * Reducers for each action type.
  */
 const reducers: {
-	[P in ActionTypes]: (state: State, action: Extract<Actions, { type: P }>) => State;
+  [P in ActionTypes]: (state: State, action: Extract<Actions, { type: P }>) => State;
 } = {
-	[ActionTypes.Push](state, action) {
-		const id = action.id;
-		const idx = state.stack.indexOf(id);
+  [ActionTypes.Push](state, action) {
+    const id = action.id;
+    const idx = state.stack.indexOf(id);
 
-		// Already in the stack, move it to the top
-		if (idx !== -1) {
-			const copy = state.stack.slice();
-			copy.splice(idx, 1);
-			copy.push(id);
+    // Already in the stack, move it to the top
+    if (idx !== -1) {
+      const copy = state.stack.slice();
+      copy.splice(idx, 1);
+      copy.push(id);
 
-			return { ...state, stack: copy };
-		}
+      return { ...state, stack: copy };
+    }
 
-		// Not in the stack, add it to the top
-		return { ...state, stack: [...state.stack, id] };
-	},
+    // Not in the stack, add it to the top
+    return { ...state, stack: [...state.stack, id] };
+  },
 
-	[ActionTypes.Pop](state, action) {
-		const id = action.id;
-		const idx = state.stack.indexOf(id);
-		if (idx === -1) return state; // Not in the stack
+  [ActionTypes.Pop](state, action) {
+    const id = action.id;
+    const idx = state.stack.indexOf(id);
+    if (idx === -1) return state; // Not in the stack
 
-		const copy = state.stack.slice();
-		copy.splice(idx, 1);
+    const copy = state.stack.slice();
+    copy.splice(idx, 1);
 
-		return { ...state, stack: copy };
-	},
+    return { ...state, stack: copy };
+  },
 };
 
 /**
@@ -89,57 +89,57 @@ const reducers: {
  * ```
  */
 class StackMachine extends Machine<State, Actions> {
-	/**
-	 * Create a new StackMachine instance.
-	 */
-	static new(): StackMachine {
-		return new StackMachine({ stack: [] });
-	}
+  /**
+   * Create a new StackMachine instance.
+   */
+  static new(): StackMachine {
+    return new StackMachine({ stack: [] });
+  }
 
-	/**
-	 * Reduce state based on action.
-	 */
-	reduce(state: Readonly<State>, action: Actions): State {
-		// Cast reducers to match the match function's expected signature
-		return match(
-			action.type,
-			reducers as Record<ActionTypes, State | ((...args: unknown[]) => State)>,
-			state,
-			action
-		) as State;
-	}
+  /**
+   * Reduce state based on action.
+   */
+  reduce(state: Readonly<State>, action: Actions): State {
+    // Cast reducers to match the match function's expected signature
+    return match(
+      action.type,
+      reducers as Record<ActionTypes, State | ((...args: unknown[]) => State)>,
+      state,
+      action
+    ) as State;
+  }
 
-	/**
-	 * Action methods for dispatching events.
-	 */
-	actions = {
-		/**
-		 * Push an item onto the stack.
-		 * If already present, moves it to the top.
-		 */
-		push: (id: Id): void => this.send({ type: ActionTypes.Push, id }),
+  /**
+   * Action methods for dispatching events.
+   */
+  actions = {
+    /**
+     * Push an item onto the stack.
+     * If already present, moves it to the top.
+     */
+    push: (id: Id): void => this.send({ type: ActionTypes.Push, id }),
 
-		/**
-		 * Pop an item from the stack.
-		 * Does nothing if not present.
-		 */
-		pop: (id: Id): void => this.send({ type: ActionTypes.Pop, id }),
-	};
+    /**
+     * Pop an item from the stack.
+     * Does nothing if not present.
+     */
+    pop: (id: Id): void => this.send({ type: ActionTypes.Pop, id }),
+  };
 
-	/**
-	 * Selector methods for querying state.
-	 */
-	selectors = {
-		/**
-		 * Check if an item is at the top of the stack.
-		 */
-		isTop: (state: State, id: Id): boolean => state.stack[state.stack.length - 1] === id,
+  /**
+   * Selector methods for querying state.
+   */
+  selectors = {
+    /**
+     * Check if an item is at the top of the stack.
+     */
+    isTop: (state: State, id: Id): boolean => state.stack[state.stack.length - 1] === id,
 
-		/**
-		 * Check if an item is anywhere in the stack.
-		 */
-		inStack: (state: State, id: Id): boolean => state.stack.includes(id),
-	};
+    /**
+     * Check if an item is anywhere in the stack.
+     */
+    inStack: (state: State, id: Id): boolean => state.stack.includes(id),
+  };
 }
 
 /**

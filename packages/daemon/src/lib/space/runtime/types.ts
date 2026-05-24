@@ -15,9 +15,9 @@ import type { MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
  * surface.
  */
 export interface SessionFactory {
-	injectMessage(
-		sessionId: string,
-		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
-	): Promise<void>;
+  injectMessage(
+    sessionId: string,
+    message: string,
+    opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
+  ): Promise<void>;
 }

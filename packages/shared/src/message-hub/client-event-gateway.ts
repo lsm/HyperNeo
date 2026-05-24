@@ -49,25 +49,25 @@ import { channelRegistry as defaultChannelRegistry } from './channels.ts';
  * so the module stays free of transport dependencies.
  */
 export interface ClientEventSink {
-	event(method: string, data?: unknown, options?: { channel?: string }): void;
+  event(method: string, data?: unknown, options?: { channel?: string }): void;
 }
 
 /**
  * Options for constructing a `ClientEventGateway`.
  */
 export interface ClientEventGatewayOptions {
-	/**
-	 * Underlying sink — production code passes a `MessageHub` (which
-	 * structurally satisfies `ClientEventSink`); tests can pass any object
-	 * implementing the interface.
-	 */
-	hub: ClientEventSink;
+  /**
+   * Underlying sink — production code passes a `MessageHub` (which
+   * structurally satisfies `ClientEventSink`); tests can pass any object
+   * implementing the interface.
+   */
+  hub: ClientEventSink;
 
-	/**
-	 * Channel registry to serialize `EventChannel` descriptors. Defaults to the
-	 * package-level `channelRegistry`.
-	 */
-	registry?: ChannelRegistry;
+  /**
+   * Channel registry to serialize `EventChannel` descriptors. Defaults to the
+   * package-level `channelRegistry`.
+   */
+  registry?: ChannelRegistry;
 }
 
 /**
@@ -78,25 +78,25 @@ export interface ClientEventGatewayOptions {
  * can slot in without touching publishers.
  */
 export interface IClientEventGateway {
-	/**
-	 * Publish an event to a typed channel.
-	 *
-	 * @param method The event/method name (matches the wire `method` clients
-	 *               see when they `onEvent('foo', ...)`).
-	 * @param data   Optional payload. Must already be JSON-serializable; the
-	 *               gateway does not transform payloads.
-	 * @param channel Typed `EventChannel` descriptor — serialized via the
-	 *                registry before being handed to the transport.
-	 */
-	publish(method: string, data: unknown, channel: EventChannel): void;
+  /**
+   * Publish an event to a typed channel.
+   *
+   * @param method The event/method name (matches the wire `method` clients
+   *               see when they `onEvent('foo', ...)`).
+   * @param data   Optional payload. Must already be JSON-serializable; the
+   *               gateway does not transform payloads.
+   * @param channel Typed `EventChannel` descriptor — serialized via the
+   *                registry before being handed to the transport.
+   */
+  publish(method: string, data: unknown, channel: EventChannel): void;
 
-	/**
-	 * Publish an event globally (channel = `Channels.global()`).
-	 *
-	 * Convenience wrapper for the common case where a publisher knows the
-	 * event is application-wide. Equivalent to passing `{ kind: 'global' }`.
-	 */
-	publishGlobal(method: string, data?: unknown): void;
+  /**
+   * Publish an event globally (channel = `Channels.global()`).
+   *
+   * Convenience wrapper for the common case where a publisher knows the
+   * event is application-wide. Equivalent to passing `{ kind: 'global' }`.
+   */
+  publishGlobal(method: string, data?: unknown): void;
 }
 
 /**
@@ -108,27 +108,27 @@ export interface IClientEventGateway {
  * receive the bare `MessageHub`.
  */
 export class ClientEventGateway implements IClientEventGateway {
-	private readonly hub: ClientEventSink;
-	private readonly registry: ChannelRegistry;
+  private readonly hub: ClientEventSink;
+  private readonly registry: ChannelRegistry;
 
-	constructor(options: ClientEventGatewayOptions) {
-		this.hub = options.hub;
-		this.registry = options.registry ?? defaultChannelRegistry;
-	}
+  constructor(options: ClientEventGatewayOptions) {
+    this.hub = options.hub;
+    this.registry = options.registry ?? defaultChannelRegistry;
+  }
 
-	publish(method: string, data: unknown, channel: EventChannel): void {
-		const wire = this.registry.toWire(channel);
-		this.hub.event(method, data, { channel: wire });
-	}
+  publish(method: string, data: unknown, channel: EventChannel): void {
+    const wire = this.registry.toWire(channel);
+    this.hub.event(method, data, { channel: wire });
+  }
 
-	publishGlobal(method: string, data?: unknown): void {
-		this.publish(method, data, { kind: 'global' });
-	}
+  publishGlobal(method: string, data?: unknown): void {
+    this.publish(method, data, { kind: 'global' });
+  }
 }
 
 /**
  * Convenience factory mirroring the rest of the message-hub module.
  */
 export function createClientEventGateway(options: ClientEventGatewayOptions): ClientEventGateway {
-	return new ClientEventGateway(options);
+  return new ClientEventGateway(options);
 }

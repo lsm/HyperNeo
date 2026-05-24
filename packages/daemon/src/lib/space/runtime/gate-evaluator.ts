@@ -23,9 +23,9 @@
 
 import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
 import {
-	deepMergeWithDepthLimit,
-	type GateScriptContext,
-	type GateScriptResult,
+  deepMergeWithDepthLimit,
+  type GateScriptContext,
+  type GateScriptResult,
 } from './gate-script-executor';
 
 // ---------------------------------------------------------------------------
@@ -34,16 +34,16 @@ import {
 
 /** Result of evaluating a gate. */
 export interface GateEvalResult {
-	/** Whether the gate is open (all fields passed). */
-	open: boolean;
-	/** Human-readable explanation when the gate is closed. */
-	reason?: string;
+  /** Whether the gate is open (all fields passed). */
+  open: boolean;
+  /** Human-readable explanation when the gate is closed. */
+  reason?: string;
 }
 
 // Re-export executor types from gate-script-executor for consumer convenience.
 export type {
-	GateScriptContext as GateScriptExecutorContext,
-	GateScriptResult as GateScriptExecutorResult,
+  GateScriptContext as GateScriptExecutorContext,
+  GateScriptResult as GateScriptExecutorResult,
 };
 
 /**
@@ -55,8 +55,8 @@ export type {
  * reference implementation.
  */
 export type GateScriptExecutorFn = (
-	script: GateScript,
-	context: GateScriptContext
+  script: GateScript,
+  context: GateScriptContext
 ) => Promise<GateScriptResult>;
 
 // ---------------------------------------------------------------------------
@@ -75,69 +75,69 @@ const VALID_SCALAR_OPS = new Set(['exists', '==', '!=']);
  * @returns Array of human-readable error strings. Empty array = valid.
  */
 export function validateGateFields(fields: unknown, path = 'fields'): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	if (!Array.isArray(fields)) {
-		errors.push(`${path}: expected an array, got ${typeof fields}`);
-		return errors;
-	}
+  if (!Array.isArray(fields)) {
+    errors.push(`${path}: expected an array, got ${typeof fields}`);
+    return errors;
+  }
 
-	for (let i = 0; i < fields.length; i++) {
-		const field = fields[i];
-		const fp = `${path}[${i}]`;
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    const fp = `${path}[${i}]`;
 
-		if (!field || typeof field !== 'object') {
-			errors.push(`${fp}: expected an object, got ${typeof field}`);
-			continue;
-		}
+    if (!field || typeof field !== 'object') {
+      errors.push(`${fp}: expected an object, got ${typeof field}`);
+      continue;
+    }
 
-		const f = field as Record<string, unknown>;
+    const f = field as Record<string, unknown>;
 
-		if (typeof f.name !== 'string' || f.name.length === 0) {
-			errors.push(`${fp}.name: expected non-empty string`);
-		}
+    if (typeof f.name !== 'string' || f.name.length === 0) {
+      errors.push(`${fp}.name: expected non-empty string`);
+    }
 
-		if (typeof f.type !== 'string' || !VALID_FIELD_TYPES.has(f.type)) {
-			errors.push(
-				`${fp}.type: expected one of [boolean, string, number, map], got ${JSON.stringify(f.type)}`
-			);
-		}
+    if (typeof f.type !== 'string' || !VALID_FIELD_TYPES.has(f.type)) {
+      errors.push(
+        `${fp}.type: expected one of [boolean, string, number, map], got ${JSON.stringify(f.type)}`
+      );
+    }
 
-		if (!Array.isArray(f.writers)) {
-			errors.push(`${fp}.writers: expected array, got ${typeof f.writers}`);
-		}
+    if (!Array.isArray(f.writers)) {
+      errors.push(`${fp}.writers: expected array, got ${typeof f.writers}`);
+    }
 
-		// Validate check
-		if (!f.check || typeof f.check !== 'object') {
-			errors.push(`${fp}.check: expected an object, got ${typeof f.check}`);
-		} else {
-			const check = f.check as Record<string, unknown>;
-			if (f.type === 'map') {
-				if (check.op !== 'count') {
-					errors.push(
-						`${fp}.check.op: expected "count" for map field, got ${JSON.stringify(check.op)}`
-					);
-				}
-				if (typeof check.min !== 'number') {
-					errors.push(`${fp}.check.min: expected number, got ${typeof check.min}`);
-				}
-				if (check.match === undefined) {
-					errors.push(`${fp}.check.match: required but missing`);
-				}
-			} else {
-				if (typeof check.op !== 'string' || !VALID_SCALAR_OPS.has(check.op)) {
-					errors.push(
-						`${fp}.check.op: expected one of [exists, ==, !=], got ${JSON.stringify(check.op)}`
-					);
-				}
-				if (check.op === 'exists' && check.value !== undefined) {
-					errors.push(`${fp}.check: "value" is set but ignored when op is "exists"`);
-				}
-			}
-		}
-	}
+    // Validate check
+    if (!f.check || typeof f.check !== 'object') {
+      errors.push(`${fp}.check: expected an object, got ${typeof f.check}`);
+    } else {
+      const check = f.check as Record<string, unknown>;
+      if (f.type === 'map') {
+        if (check.op !== 'count') {
+          errors.push(
+            `${fp}.check.op: expected "count" for map field, got ${JSON.stringify(check.op)}`
+          );
+        }
+        if (typeof check.min !== 'number') {
+          errors.push(`${fp}.check.min: expected number, got ${typeof check.min}`);
+        }
+        if (check.match === undefined) {
+          errors.push(`${fp}.check.match: required but missing`);
+        }
+      } else {
+        if (typeof check.op !== 'string' || !VALID_SCALAR_OPS.has(check.op)) {
+          errors.push(
+            `${fp}.check.op: expected one of [exists, ==, !=], got ${JSON.stringify(check.op)}`
+          );
+        }
+        if (check.op === 'exists' && check.value !== undefined) {
+          errors.push(`${fp}.check: "value" is set but ignored when op is "exists"`);
+        }
+      }
+    }
+  }
 
-	return errors;
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,22 +154,22 @@ const VALID_INTERPRETERS = new Set(['bash', 'node', 'python3']);
  * @returns Array of human-readable error strings. Empty array = valid.
  */
 export function validateGateColor(color: unknown): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	if (color === undefined || color === null) {
-		return errors;
-	}
+  if (color === undefined || color === null) {
+    return errors;
+  }
 
-	if (typeof color !== 'string') {
-		errors.push(`color: expected string, got ${typeof color}`);
-		return errors;
-	}
+  if (typeof color !== 'string') {
+    errors.push(`color: expected string, got ${typeof color}`);
+    return errors;
+  }
 
-	if (!HEX_COLOR_RE.test(color)) {
-		errors.push(`color: expected hex format #rrggbb, got "${color}"`);
-	}
+  if (!HEX_COLOR_RE.test(color)) {
+    errors.push(`color: expected hex format #rrggbb, got "${color}"`);
+  }
 
-	return errors;
+  return errors;
 }
 
 /**
@@ -179,22 +179,22 @@ export function validateGateColor(color: unknown): string[] {
  * @returns Array of human-readable error strings. Empty array = valid.
  */
 export function validateGateLabel(label: unknown): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	if (label === undefined || label === null) {
-		return errors;
-	}
+  if (label === undefined || label === null) {
+    return errors;
+  }
 
-	if (typeof label !== 'string') {
-		errors.push(`label: expected string, got ${typeof label}`);
-		return errors;
-	}
+  if (typeof label !== 'string') {
+    errors.push(`label: expected string, got ${typeof label}`);
+    return errors;
+  }
 
-	if (label.length > 20) {
-		errors.push(`label: must be at most 20 characters, got ${label.length}`);
-	}
+  if (label.length > 20) {
+    errors.push(`label: must be at most 20 characters, got ${label.length}`);
+  }
 
-	return errors;
+  return errors;
 }
 
 /**
@@ -204,40 +204,40 @@ export function validateGateLabel(label: unknown): string[] {
  * @returns Array of human-readable error strings. Empty array = valid.
  */
 export function validateGateScript(script: unknown): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	if (script === undefined || script === null) {
-		return errors;
-	}
+  if (script === undefined || script === null) {
+    return errors;
+  }
 
-	if (typeof script !== 'object') {
-		errors.push(`script: expected object, got ${typeof script}`);
-		return errors;
-	}
+  if (typeof script !== 'object') {
+    errors.push(`script: expected object, got ${typeof script}`);
+    return errors;
+  }
 
-	const s = script as Record<string, unknown>;
+  const s = script as Record<string, unknown>;
 
-	if (typeof s.interpreter !== 'string' || !VALID_INTERPRETERS.has(s.interpreter)) {
-		errors.push(
-			`script.interpreter: expected one of [bash, node, python3], got ${JSON.stringify(s.interpreter)}`
-		);
-	}
+  if (typeof s.interpreter !== 'string' || !VALID_INTERPRETERS.has(s.interpreter)) {
+    errors.push(
+      `script.interpreter: expected one of [bash, node, python3], got ${JSON.stringify(s.interpreter)}`
+    );
+  }
 
-	if (typeof s.source !== 'string' || s.source.length === 0) {
-		errors.push('script.source: expected non-empty string');
-	}
+  if (typeof s.source !== 'string' || s.source.length === 0) {
+    errors.push('script.source: expected non-empty string');
+  }
 
-	if (s.timeoutMs !== undefined) {
-		if (typeof s.timeoutMs !== 'number') {
-			errors.push(`script.timeoutMs: expected number, got ${typeof s.timeoutMs}`);
-		} else if (s.timeoutMs <= 0) {
-			errors.push(`script.timeoutMs: must be positive, got ${s.timeoutMs}`);
-		} else if (s.timeoutMs > 120000) {
-			errors.push(`script.timeoutMs: must be at most 120000ms (120s), got ${s.timeoutMs}`);
-		}
-	}
+  if (s.timeoutMs !== undefined) {
+    if (typeof s.timeoutMs !== 'number') {
+      errors.push(`script.timeoutMs: expected number, got ${typeof s.timeoutMs}`);
+    } else if (s.timeoutMs <= 0) {
+      errors.push(`script.timeoutMs: must be positive, got ${s.timeoutMs}`);
+    } else if (s.timeoutMs > 120000) {
+      errors.push(`script.timeoutMs: must be at most 120000ms (120s), got ${s.timeoutMs}`);
+    }
+  }
 
-	return errors;
+  return errors;
 }
 
 /**
@@ -247,38 +247,38 @@ export function validateGateScript(script: unknown): string[] {
  * @returns Array of human-readable error strings. Empty array = valid.
  */
 export function validateGatePoll(poll: unknown): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	if (poll === undefined || poll === null) {
-		return errors;
-	}
+  if (poll === undefined || poll === null) {
+    return errors;
+  }
 
-	if (typeof poll !== 'object') {
-		errors.push(`poll: expected object, got ${typeof poll}`);
-		return errors;
-	}
+  if (typeof poll !== 'object') {
+    errors.push(`poll: expected object, got ${typeof poll}`);
+    return errors;
+  }
 
-	const p = poll as Record<string, unknown>;
+  const p = poll as Record<string, unknown>;
 
-	if (typeof p.intervalMs !== 'number' || !Number.isFinite(p.intervalMs) || p.intervalMs < 10_000) {
-		errors.push(
-			`poll.intervalMs: must be a finite number >= 10000 (10 seconds), got ${p.intervalMs}`
-		);
-	}
+  if (typeof p.intervalMs !== 'number' || !Number.isFinite(p.intervalMs) || p.intervalMs < 10_000) {
+    errors.push(
+      `poll.intervalMs: must be a finite number >= 10000 (10 seconds), got ${p.intervalMs}`
+    );
+  }
 
-	if (typeof p.script !== 'string' || p.script.trim().length === 0) {
-		errors.push('poll.script: expected non-empty string');
-	}
+  if (typeof p.script !== 'string' || p.script.trim().length === 0) {
+    errors.push('poll.script: expected non-empty string');
+  }
 
-	if (p.target !== 'from' && p.target !== 'to') {
-		errors.push(`poll.target: expected "from" or "to", got ${JSON.stringify(p.target)}`);
-	}
+  if (p.target !== 'from' && p.target !== 'to') {
+    errors.push(`poll.target: expected "from" or "to", got ${JSON.stringify(p.target)}`);
+  }
 
-	if (p.messageTemplate !== undefined && typeof p.messageTemplate !== 'string') {
-		errors.push(`poll.messageTemplate: expected string, got ${typeof p.messageTemplate}`);
-	}
+  if (p.messageTemplate !== undefined && typeof p.messageTemplate !== 'string') {
+    errors.push(`poll.messageTemplate: expected string, got ${typeof p.messageTemplate}`);
+  }
 
-	return errors;
+  return errors;
 }
 
 /**
@@ -299,36 +299,36 @@ export function validateGatePoll(poll: unknown): string[] {
  * @returns Array of human-readable error strings. Empty array = valid.
  */
 export function validateGate(gate: unknown): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	if (!gate || typeof gate !== 'object') {
-		errors.push(`gate: expected object, got ${typeof gate}`);
-		return errors;
-	}
+  if (!gate || typeof gate !== 'object') {
+    errors.push(`gate: expected object, got ${typeof gate}`);
+    return errors;
+  }
 
-	const g = gate as Record<string, unknown>;
+  const g = gate as Record<string, unknown>;
 
-	// Validate optional fields — sub-validators handle null/undefined gracefully
-	errors.push(...validateGateColor(g.color));
-	errors.push(...validateGateLabel(g.label));
-	errors.push(...validateGateScript(g.script));
-	errors.push(...validateGatePoll(g.poll));
+  // Validate optional fields — sub-validators handle null/undefined gracefully
+  errors.push(...validateGateColor(g.color));
+  errors.push(...validateGateLabel(g.label));
+  errors.push(...validateGateScript(g.script));
+  errors.push(...validateGatePoll(g.poll));
 
-	// Validate fields when present (validateGateFields handles non-array gracefully)
-	if (g.fields !== undefined && g.fields !== null) {
-		errors.push(...validateGateFields(g.fields));
-	}
+  // Validate fields when present (validateGateFields handles non-array gracefully)
+  if (g.fields !== undefined && g.fields !== null) {
+    errors.push(...validateGateFields(g.fields));
+  }
 
-	// At least one of fields (non-empty array) or script must be present
-	// Note: poll does NOT count as a gate check mechanism — it is a side-channel
-	// for message injection only. A gate still needs fields or a script.
-	const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
-	const hasScript = g.script !== undefined && g.script !== null;
-	if (!hasFields && !hasScript) {
-		errors.push('gate: must have at least one non-empty "fields" array or a "script"');
-	}
+  // At least one of fields (non-empty array) or script must be present
+  // Note: poll does NOT count as a gate check mechanism — it is a side-channel
+  // for message injection only. A gate still needs fields or a script.
+  const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
+  const hasScript = g.script !== undefined && g.script !== null;
+  if (!hasFields && !hasScript) {
+    errors.push('gate: must have at least one non-empty "fields" array or a "script"');
+  }
 
-	return errors;
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,36 +352,36 @@ export function validateGate(gate: unknown): string[] {
  *                 (no fields satisfied).
  */
 export function isChannelOpen(
-	channel: Channel,
-	gates: ReadonlyMap<string, Gate> | Record<string, Gate>,
-	gateData?: ReadonlyMap<string, Record<string, unknown>> | Record<string, Record<string, unknown>>
+  channel: Channel,
+  gates: ReadonlyMap<string, Gate> | Record<string, Gate>,
+  gateData?: ReadonlyMap<string, Record<string, unknown>> | Record<string, Record<string, unknown>>
 ): GateEvalResult {
-	if (!channel.gateId) {
-		return { open: true };
-	}
+  if (!channel.gateId) {
+    return { open: true };
+  }
 
-	const gate =
-		gates instanceof Map
-			? gates.get(channel.gateId)
-			: (gates as Record<string, Gate>)[channel.gateId];
-	if (!gate) {
-		return {
-			open: false,
-			reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
-		};
-	}
+  const gate =
+    gates instanceof Map
+      ? gates.get(channel.gateId)
+      : (gates as Record<string, Gate>)[channel.gateId];
+  if (!gate) {
+    return {
+      open: false,
+      reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
+    };
+  }
 
-	// Load runtime data if provided
-	let data: Record<string, unknown> = {};
-	if (gateData) {
-		const d =
-			gateData instanceof Map
-				? gateData.get(channel.gateId)
-				: (gateData as Record<string, Record<string, unknown>>)[channel.gateId];
-		if (d) data = d;
-	}
+  // Load runtime data if provided
+  let data: Record<string, unknown> = {};
+  if (gateData) {
+    const d =
+      gateData instanceof Map
+        ? gateData.get(channel.gateId)
+        : (gateData as Record<string, Record<string, unknown>>)[channel.gateId];
+    if (d) data = d;
+  }
 
-	return evaluateFields(gate, data);
+  return evaluateFields(gate, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -402,11 +402,11 @@ export function isChannelOpen(
  *                 Agents write to this data via the `write_gate` MCP tool.
  */
 export function evaluateFields(gate: Gate, gateData: Record<string, unknown>): GateEvalResult {
-	for (const field of gate.fields ?? []) {
-		const result = evaluateFieldCheck(field, gateData);
-		if (!result.open) return result;
-	}
-	return { open: true };
+  for (const field of gate.fields ?? []) {
+    const result = evaluateFieldCheck(field, gateData);
+    if (!result.open) return result;
+  }
+  return { open: true };
 }
 
 /**
@@ -436,47 +436,47 @@ export function evaluateFields(gate: Gate, gateData: Record<string, unknown>): G
  *                       is provided.
  */
 export async function evaluateGate(
-	gate: Gate,
-	gateData: Record<string, unknown>,
-	scriptExecutor?: GateScriptExecutorFn,
-	context?: GateScriptContext
+  gate: Gate,
+  gateData: Record<string, unknown>,
+  scriptExecutor?: GateScriptExecutorFn,
+  context?: GateScriptContext
 ): Promise<GateEvalResult> {
-	// ── Script pre-check ──────────────────────────────────────────────────
-	if (gate.script && scriptExecutor && context) {
-		const scriptResult = await scriptExecutor(gate.script, context);
-		if (!scriptResult.success) {
-			return {
-				open: false,
-				reason: `Script check failed: ${scriptResult.error ?? 'unknown error'}`,
-			};
-		}
+  // ── Script pre-check ──────────────────────────────────────────────────
+  if (gate.script && scriptExecutor && context) {
+    const scriptResult = await scriptExecutor(gate.script, context);
+    if (!scriptResult.success) {
+      return {
+        open: false,
+        reason: `Script check failed: ${scriptResult.error ?? 'unknown error'}`,
+      };
+    }
 
-		// Deep-merge script output into gateData (spread avoids mutating caller's object)
-		if (scriptResult.data && Object.keys(scriptResult.data).length > 0) {
-			gateData = deepMergeWithDepthLimit({ ...gateData }, scriptResult.data);
-		}
-	}
+    // Deep-merge script output into gateData (spread avoids mutating caller's object)
+    if (scriptResult.data && Object.keys(scriptResult.data).length > 0) {
+      gateData = deepMergeWithDepthLimit({ ...gateData }, scriptResult.data);
+    }
+  }
 
-	// ── Field evaluation ──────────────────────────────────────────────────
-	return evaluateFields(gate, gateData);
+  // ── Field evaluation ──────────────────────────────────────────────────
+  return evaluateFields(gate, gateData);
 }
 
 /**
  * Evaluates a single GateField's check against the provided data.
  */
 export function evaluateFieldCheck(
-	field: GateField,
-	data: Record<string, unknown>
+  field: GateField,
+  data: Record<string, unknown>
 ): GateEvalResult {
-	const check: GateFieldCheck = field.check;
+  const check: GateFieldCheck = field.check;
 
-	if (check.op === 'count') {
-		// Map check
-		return evaluateCount(field.name, check.match, check.min, data);
-	}
+  if (check.op === 'count') {
+    // Map check
+    return evaluateCount(field.name, check.match, check.min, data);
+  }
 
-	// Scalar check
-	return evaluateScalar(field.name, check.op, check.value, data);
+  // Scalar check
+  return evaluateScalar(field.name, check.op, check.value, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -484,75 +484,75 @@ export function evaluateFieldCheck(
 // ---------------------------------------------------------------------------
 
 function evaluateScalar(
-	fieldName: string,
-	op: '==' | '!=' | 'exists',
-	expected: unknown,
-	data: Record<string, unknown>
+  fieldName: string,
+  op: '==' | '!=' | 'exists',
+  expected: unknown,
+  data: Record<string, unknown>
 ): GateEvalResult {
-	switch (op) {
-		case 'exists': {
-			if (data[fieldName] !== undefined) {
-				return { open: true };
-			}
-			return {
-				open: false,
-				reason: `Gate check failed: data["${fieldName}"] does not exist`,
-			};
-		}
+  switch (op) {
+    case 'exists': {
+      if (data[fieldName] !== undefined) {
+        return { open: true };
+      }
+      return {
+        open: false,
+        reason: `Gate check failed: data["${fieldName}"] does not exist`,
+      };
+    }
 
-		case '==': {
-			const actual = data[fieldName];
-			if (actual === expected) {
-				return { open: true };
-			}
-			return {
-				open: false,
-				reason: `Gate check failed: data["${fieldName}"] is ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`,
-			};
-		}
+    case '==': {
+      const actual = data[fieldName];
+      if (actual === expected) {
+        return { open: true };
+      }
+      return {
+        open: false,
+        reason: `Gate check failed: data["${fieldName}"] is ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`,
+      };
+    }
 
-		case '!=': {
-			const actual = data[fieldName];
-			if (actual !== expected) {
-				return { open: true };
-			}
-			return {
-				open: false,
-				reason: `Gate check failed: data["${fieldName}"] is ${JSON.stringify(actual)}, expected != ${JSON.stringify(expected)}`,
-			};
-		}
+    case '!=': {
+      const actual = data[fieldName];
+      if (actual !== expected) {
+        return { open: true };
+      }
+      return {
+        open: false,
+        reason: `Gate check failed: data["${fieldName}"] is ${JSON.stringify(actual)}, expected != ${JSON.stringify(expected)}`,
+      };
+    }
 
-		default: {
-			return {
-				open: false,
-				reason: `Gate check failed: unknown op "${op as string}"`,
-			};
-		}
-	}
+    default: {
+      return {
+        open: false,
+        reason: `Gate check failed: unknown op "${op as string}"`,
+      };
+    }
+  }
 }
 
 function evaluateCount(
-	fieldName: string,
-	matchValue: unknown,
-	min: number,
-	data: Record<string, unknown>
+  fieldName: string,
+  matchValue: unknown,
+  min: number,
+  data: Record<string, unknown>
 ): GateEvalResult {
-	const raw = data[fieldName];
+  const raw = data[fieldName];
 
-	// Field must be a non-null object (Record/map). Missing or non-object -> count 0.
-	let count = 0;
-	if (raw !== null && raw !== undefined && typeof raw === 'object' && !Array.isArray(raw)) {
-		const map = raw as Record<string, unknown>;
-		for (const val of Object.values(map)) {
-			if (val === matchValue) count++;
-		}
-	}
+  // Field must be a non-null object (Record/map). Missing or non-object -> count 0.
+  let count = 0;
+  if (raw !== null && raw !== undefined && typeof raw === 'object' && !Array.isArray(raw)) {
+    const map = raw as Record<string, unknown>;
+    for (const val of Object.values(map)) {
+      if (val === matchValue) count++;
+    }
+  }
 
-	if (count >= min) {
-		return { open: true };
-	}
-	return {
-		open: false,
-		reason: `Gate count failed: data["${fieldName}"] has ${count} entries matching ${JSON.stringify(matchValue)}, need >= ${min}`,
-	};
+  if (count >= min) {
+    return { open: true };
+  }
+  return {
+    open: false,
+    reason: `Gate count failed: data["${fieldName}"] has ${count} entries matching ${JSON.stringify(matchValue)}, need >= ${min}`,
+  };
 }

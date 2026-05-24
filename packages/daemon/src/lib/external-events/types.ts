@@ -26,31 +26,31 @@ import type { ExternalEventPublisher } from './external-event-service';
  * task-system concerns — task matching is the responsibility of subscribers.
  */
 export interface ExternalEvent {
-	/** Unique event ID (UUID) assigned by the extension for this publication. */
-	id: string;
-	/** Space this event belongs to. Required to prevent cross-space delivery. */
-	spaceId: string;
-	/** Fully qualified topic: 'github/owner/repo/resource/entityId.action'. */
-	topic: string;
-	/** Timestamp when the event occurred at the source (epoch ms). */
-	occurredAt: number;
-	/** Timestamp when the event was accepted by the extension (epoch ms). */
-	ingestedAt: number;
-	/** Source extension identifier (e.g. 'github'). */
-	source: string;
-	/** Optional source-native event id / delivery id for diagnostics. */
-	sourceEventId?: string;
-	/** Human-readable summary for agent consumption. */
-	summary: string;
-	/** External URL (e.g. GitHub PR link). */
-	externalUrl?: string;
-	/** Structured source payload — extension-specific, not constrained. */
-	payload: Record<string, unknown>;
-	/**
-	 * Stable source-level identity used by bus dedup. Must be stable across
-	 * webhook and polling observations of the same external event.
-	 */
-	dedupeKey: string;
+  /** Unique event ID (UUID) assigned by the extension for this publication. */
+  id: string;
+  /** Space this event belongs to. Required to prevent cross-space delivery. */
+  spaceId: string;
+  /** Fully qualified topic: 'github/owner/repo/resource/entityId.action'. */
+  topic: string;
+  /** Timestamp when the event occurred at the source (epoch ms). */
+  occurredAt: number;
+  /** Timestamp when the event was accepted by the extension (epoch ms). */
+  ingestedAt: number;
+  /** Source extension identifier (e.g. 'github'). */
+  source: string;
+  /** Optional source-native event id / delivery id for diagnostics. */
+  sourceEventId?: string;
+  /** Human-readable summary for agent consumption. */
+  summary: string;
+  /** External URL (e.g. GitHub PR link). */
+  externalUrl?: string;
+  /** Structured source payload — extension-specific, not constrained. */
+  payload: Record<string, unknown>;
+  /**
+   * Stable source-level identity used by bus dedup. Must be stable across
+   * webhook and polling observations of the same external event.
+   */
+  dedupeKey: string;
 }
 
 /**
@@ -64,9 +64,9 @@ export interface ExternalEvent {
 export type ExternalEventState = 'published' | 'delivered' | 'failed' | 'ignored';
 
 export const TERMINAL_EVENT_STATES: ReadonlySet<ExternalEventState> = new Set<ExternalEventState>([
-	'delivered',
-	'failed',
-	'ignored',
+  'delivered',
+  'failed',
+  'ignored',
 ]);
 
 /**
@@ -80,32 +80,32 @@ export const TERMINAL_EVENT_STATES: ReadonlySet<ExternalEventState> = new Set<Ex
 export type ExternalEventDeliveryState = 'pending' | 'delivered' | 'failed';
 
 export const TERMINAL_DELIVERY_STATES: ReadonlySet<ExternalEventDeliveryState> =
-	new Set<ExternalEventDeliveryState>(['delivered', 'failed']);
+  new Set<ExternalEventDeliveryState>(['delivered', 'failed']);
 
 /**
  * Stored event row, including current state. Useful for diagnostics and tests.
  */
 export interface ExternalEventRecord {
-	event: ExternalEvent;
-	state: ExternalEventState;
-	createdAt: number;
-	updatedAt: number;
+  event: ExternalEvent;
+  state: ExternalEventState;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /**
  * Stored delivery row. The `(eventId, deliveryKey)` pair is the row's primary key.
  */
 export interface ExternalEventDeliveryRecord {
-	eventId: string;
-	deliveryKey: string;
-	workflowRunId: string;
-	taskId: string;
-	nodeId: string;
-	agentName: string;
-	state: ExternalEventDeliveryState;
-	failureReason: string | null;
-	deliveredAt: number | null;
-	updatedAt: number;
+  eventId: string;
+  deliveryKey: string;
+  workflowRunId: string;
+  taskId: string;
+  nodeId: string;
+  agentName: string;
+  state: ExternalEventDeliveryState;
+  failureReason: string | null;
+  deliveredAt: number | null;
+  updatedAt: number;
 }
 
 /**
@@ -120,90 +120,90 @@ export interface ExternalEventDeliveryRecord {
  *   The returned `event` carries the *original* event id.
  */
 export interface StoreResult {
-	event: ExternalEvent;
-	duplicate: boolean;
-	terminal: boolean;
+  event: ExternalEvent;
+  duplicate: boolean;
+  terminal: boolean;
 }
 
 /**
  * Target identity of a delivery, captured at expected-delivery registration time.
  */
 export interface DeliveryTarget {
-	workflowRunId: string;
-	taskId: string;
-	nodeId: string;
-	agentName: string;
+  workflowRunId: string;
+  taskId: string;
+  nodeId: string;
+  agentName: string;
 }
 
 export interface DeliveryFailure {
-	/** Whether the failure is terminal (`true`) or transient (`false`, retryable). */
-	terminal: boolean;
-	/** Free-form failure reason for diagnostics (logged + persisted). */
-	reason: string;
+  /** Whether the failure is terminal (`true`) or transient (`false`, retryable). */
+  terminal: boolean;
+  /** Free-form failure reason for diagnostics (logged + persisted). */
+  reason: string;
 }
 
 export interface ExternalEventExtensionConfig {
-	source: string;
-	globallyEnabled: boolean;
-	capabilities: {
-		webhooks?: boolean;
-		polling?: boolean;
-		rpcConfig?: boolean;
-	};
-	secretsRef?: string;
-	settings?: Record<string, unknown>;
+  source: string;
+  globallyEnabled: boolean;
+  capabilities: {
+    webhooks?: boolean;
+    polling?: boolean;
+    rpcConfig?: boolean;
+  };
+  secretsRef?: string;
+  settings?: Record<string, unknown>;
 }
 
 export interface SpaceExternalEventSourceConfig {
-	spaceId: string;
-	source: string;
-	enabled: boolean;
-	settings: Record<string, unknown>;
+  spaceId: string;
+  source: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
 }
 
 export interface ExternalEventExtensionContext {
-	/** Publish a normalized event into the shared external-event subsystem. */
-	publisher: ExternalEventPublisher;
-	/** Read global extension config, secrets references, and per-space config. */
-	config: ExternalEventExtensionConfigStore;
-	/** Notify core services that source configuration changed for a space. */
-	onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }): void;
+  /** Publish a normalized event into the shared external-event subsystem. */
+  publisher: ExternalEventPublisher;
+  /** Read global extension config, secrets references, and per-space config. */
+  config: ExternalEventExtensionConfigStore;
+  /** Notify core services that source configuration changed for a space. */
+  onSourceConfigChanged(change: { source: string; spaceId?: string; kind: string }): void;
 }
 
 export interface ExternalEventExtensionConfigStore {
-	getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig>;
-	getSpaceConfig(spaceId: string, source: string): Promise<SpaceExternalEventSourceConfig | null>;
-	listEnabledSpaces(source: string): Promise<SpaceExternalEventSourceConfig[]>;
-	setGlobalConfig(source: string, config: ExternalEventExtensionConfig): Promise<void>;
-	setSpaceConfig(
-		spaceId: string,
-		source: string,
-		config: SpaceExternalEventSourceConfig
-	): Promise<void>;
+  getGlobalConfig(source: string): Promise<ExternalEventExtensionConfig>;
+  getSpaceConfig(spaceId: string, source: string): Promise<SpaceExternalEventSourceConfig | null>;
+  listEnabledSpaces(source: string): Promise<SpaceExternalEventSourceConfig[]>;
+  setGlobalConfig(source: string, config: ExternalEventExtensionConfig): Promise<void>;
+  setSpaceConfig(
+    spaceId: string,
+    source: string,
+    config: SpaceExternalEventSourceConfig
+  ): Promise<void>;
 }
 
 /** Interface that event source extensions must implement. */
 export interface ExternalEventExtension {
-	/** Source identifier used in topic namespace: '{source}/...'. */
-	readonly sourceId: string;
+  /** Source identifier used in topic namespace: '{source}/...'. */
+  readonly sourceId: string;
 
-	/** Start the extension. Called once when the source is globally enabled. */
-	start(context: ExternalEventExtensionContext): Promise<void>;
+  /** Start the extension. Called once when the source is globally enabled. */
+  start(context: ExternalEventExtensionContext): Promise<void>;
 
-	/** Stop the extension. Called at daemon shutdown or when globally disabled. */
-	stop(): Promise<void>;
+  /** Stop the extension. Called at daemon shutdown or when globally disabled. */
+  stop(): Promise<void>;
 }
 
 export interface Route {
-	readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-	readonly path: string;
-	handle(req: Request, context: ExternalEventExtensionContext): Promise<Response>;
+  readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  readonly path: string;
+  handle(req: Request, context: ExternalEventExtensionContext): Promise<Response>;
 }
 
 export interface HttpExternalEventExtension extends ExternalEventExtension {
-	readonly routes: readonly Route[];
+  readonly routes: readonly Route[];
 }
 
 export interface RpcExternalEventExtension extends ExternalEventExtension {
-	registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void;
+  registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void;
 }

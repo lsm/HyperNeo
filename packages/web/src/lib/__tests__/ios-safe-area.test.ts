@@ -15,38 +15,38 @@ import bottomTabBarTsx from '../../islands/BottomTabBar.tsx?raw';
  * environment so we verify their usage in source files instead.
  */
 describe('iOS iPad Safari safe area support', () => {
-	it('viewport meta tag includes viewport-fit=cover', () => {
-		expect(indexHtml).toContain('viewport-fit=cover');
-	});
+  it('viewport meta tag includes viewport-fit=cover', () => {
+    expect(indexHtml).toContain('viewport-fit=cover');
+  });
 
-	it('App.tsx applies pt-safe class to the root container for top safe area', () => {
-		expect(appTsx).toContain('pt-safe');
-	});
+  it('App.tsx applies pt-safe class to the root container for top safe area', () => {
+    expect(appTsx).toContain('pt-safe');
+  });
 
-	it('App.tsx uses h-dvh for the root container', () => {
-		expect(appTsx).toContain('h-dvh');
-	});
+  it('App.tsx uses h-dvh for the root container', () => {
+    expect(appTsx).toContain('h-dvh');
+  });
 
-	it('styles.css defines the .h-safe-screen utility class (verified via hook referencing --safe-height)', () => {
-		// CSS content is stripped in Vite's test environment; instead we verify
-		// that useViewportSafety sets the --safe-height custom property which
-		// is consumed by the .h-safe-screen utility defined in styles.css.
-		expect(useViewportSafetyTs).toContain('--safe-height');
-	});
+  it('styles.css defines the .h-safe-screen utility class (verified via hook referencing --safe-height)', () => {
+    // CSS content is stripped in Vite's test environment; instead we verify
+    // that useViewportSafety sets the --safe-height custom property which
+    // is consumed by the .h-safe-screen utility defined in styles.css.
+    expect(useViewportSafetyTs).toContain('--safe-height');
+  });
 
-	it('App.tsx does not use hardcoded pb-16 for main content bottom padding', () => {
-		expect(appTsx).not.toContain('pb-16');
-	});
+  it('App.tsx does not use hardcoded pb-16 for main content bottom padding', () => {
+    expect(appTsx).not.toContain('pb-16');
+  });
 
-	it('BottomTabBar sets --bottom-bar-height CSS custom property', () => {
-		expect(bottomTabBarTsx).toContain('--bottom-bar-height');
-	});
+  it('BottomTabBar sets --bottom-bar-height CSS custom property', () => {
+    expect(bottomTabBarTsx).toContain('--bottom-bar-height');
+  });
 
-	it('BottomTabBar uses a fixed height constant instead of dynamic measurement', () => {
-		expect(bottomTabBarTsx).toContain('BOTTOM_BAR_HEIGHT');
-	});
+  it('BottomTabBar uses a fixed height constant instead of dynamic measurement', () => {
+    expect(bottomTabBarTsx).toContain('BOTTOM_BAR_HEIGHT');
+  });
 
-	it('BottomTabBar resets --bottom-bar-height on unmount', () => {
-		expect(bottomTabBarTsx).toContain("'--bottom-bar-height', '0px'");
-	});
+  it('BottomTabBar resets --bottom-bar-height on unmount', () => {
+    expect(bottomTabBarTsx).toContain("'--bottom-bar-height', '0px'");
+  });
 });

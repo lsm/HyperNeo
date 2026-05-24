@@ -9,252 +9,252 @@ import { stat, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 
 export interface FileInfo {
-	path: string;
-	name: string;
-	type: 'file' | 'directory';
-	size?: number;
-	mtime?: string;
+  path: string;
+  name: string;
+  type: 'file' | 'directory';
+  size?: number;
+  mtime?: string;
 }
 
 export interface FileTree {
-	name: string;
-	path: string;
-	type: 'file' | 'directory';
-	children?: FileTree[];
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: FileTree[];
 }
 
 export class FileManager {
-	constructor(private workspacePath: string) {}
+  constructor(private workspacePath: string) {}
 
-	/**
-	 * Validate that a path is within the workspace (prevent path traversal)
-	 */
-	private validatePath(targetPath: string): string {
-		const normalizedWorkspace = normalize(this.workspacePath);
-		const normalizedTarget = normalize(join(this.workspacePath, targetPath));
+  /**
+   * Validate that a path is within the workspace (prevent path traversal)
+   */
+  private validatePath(targetPath: string): string {
+    const normalizedWorkspace = normalize(this.workspacePath);
+    const normalizedTarget = normalize(join(this.workspacePath, targetPath));
 
-		const rel = relative(normalizedWorkspace, normalizedTarget);
+    const rel = relative(normalizedWorkspace, normalizedTarget);
 
-		if (rel.startsWith('..') || rel === '..') {
-			throw new Error('Path traversal detected - access denied');
-		}
+    if (rel.startsWith('..') || rel === '..') {
+      throw new Error('Path traversal detected - access denied');
+    }
 
-		return normalizedTarget;
-	}
+    return normalizedTarget;
+  }
 
-	/**
-	 * Read file content
-	 */
-	async readFile(
-		filePath: string,
-		encoding: 'utf-8' | 'base64' = 'utf-8'
-	): Promise<{
-		path: string;
-		content: string;
-		encoding: string;
-		size: number;
-		mtime: string;
-	}> {
-		const absolutePath = this.validatePath(filePath);
+  /**
+   * Read file content
+   */
+  async readFile(
+    filePath: string,
+    encoding: 'utf-8' | 'base64' = 'utf-8'
+  ): Promise<{
+    path: string;
+    content: string;
+    encoding: string;
+    size: number;
+    mtime: string;
+  }> {
+    const absolutePath = this.validatePath(filePath);
 
-		if (!existsSync(absolutePath)) {
-			throw new Error(`File not found: ${filePath}`);
-		}
+    if (!existsSync(absolutePath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
 
-		const stats = await stat(absolutePath);
-		if (stats.isDirectory()) {
-			throw new Error(`Path is a directory, not a file: ${filePath}`);
-		}
+    const stats = await stat(absolutePath);
+    if (stats.isDirectory()) {
+      throw new Error(`Path is a directory, not a file: ${filePath}`);
+    }
 
-		let content: string;
-		if (encoding === 'base64') {
-			const bytes = await readFile(absolutePath);
-			content = bytes.toString('base64');
-		} else {
-			content = await readFile(absolutePath, 'utf-8');
-		}
+    let content: string;
+    if (encoding === 'base64') {
+      const bytes = await readFile(absolutePath);
+      content = bytes.toString('base64');
+    } else {
+      content = await readFile(absolutePath, 'utf-8');
+    }
 
-		return {
-			path: filePath,
-			content,
-			encoding,
-			size: stats.size,
-			mtime: stats.mtime.toISOString(),
-		};
-	}
+    return {
+      path: filePath,
+      content,
+      encoding,
+      size: stats.size,
+      mtime: stats.mtime.toISOString(),
+    };
+  }
 
-	/**
-	 * List directory contents
-	 */
-	async listDirectory(dirPath: string = '.', recursive: boolean = false): Promise<FileInfo[]> {
-		const absolutePath = this.validatePath(dirPath);
+  /**
+   * List directory contents
+   */
+  async listDirectory(dirPath: string = '.', recursive: boolean = false): Promise<FileInfo[]> {
+    const absolutePath = this.validatePath(dirPath);
 
-		if (!existsSync(absolutePath)) {
-			throw new Error(`Directory not found: ${dirPath}`);
-		}
+    if (!existsSync(absolutePath)) {
+      throw new Error(`Directory not found: ${dirPath}`);
+    }
 
-		const stats = await stat(absolutePath);
-		if (!stats.isDirectory()) {
-			throw new Error(`Path is not a directory: ${dirPath}`);
-		}
+    const stats = await stat(absolutePath);
+    if (!stats.isDirectory()) {
+      throw new Error(`Path is not a directory: ${dirPath}`);
+    }
 
-		const files: FileInfo[] = [];
+    const files: FileInfo[] = [];
 
-		if (recursive) {
-			await this.walkDirectory(absolutePath, files);
-		} else {
-			const entries = await readdir(absolutePath, { withFileTypes: true });
+    if (recursive) {
+      await this.walkDirectory(absolutePath, files);
+    } else {
+      const entries = await readdir(absolutePath, { withFileTypes: true });
 
-			for (const entry of entries) {
-				const entryPath = join(absolutePath, entry.name);
-				const entryStats = await stat(entryPath);
-				const relativePath = relative(this.workspacePath, entryPath);
+      for (const entry of entries) {
+        const entryPath = join(absolutePath, entry.name);
+        const entryStats = await stat(entryPath);
+        const relativePath = relative(this.workspacePath, entryPath);
 
-				files.push({
-					path: relativePath,
-					name: entry.name,
-					type: entry.isDirectory() ? 'directory' : 'file',
-					size: entry.isFile() ? entryStats.size : undefined,
-					mtime: entryStats.mtime.toISOString(),
-				});
-			}
-		}
+        files.push({
+          path: relativePath,
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' : 'file',
+          size: entry.isFile() ? entryStats.size : undefined,
+          mtime: entryStats.mtime.toISOString(),
+        });
+      }
+    }
 
-		return files.sort((a, b) => {
-			// Directories first, then alphabetical
-			if (a.type !== b.type) {
-				return a.type === 'directory' ? -1 : 1;
-			}
-			return a.name.localeCompare(b.name);
-		});
-	}
+    return files.sort((a, b) => {
+      // Directories first, then alphabetical
+      if (a.type !== b.type) {
+        return a.type === 'directory' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }
 
-	/**
-	 * Helper method to recursively walk a directory
-	 */
-	private async walkDirectory(dirPath: string, files: FileInfo[]): Promise<void> {
-		const entries = await readdir(dirPath, { withFileTypes: true });
+  /**
+   * Helper method to recursively walk a directory
+   */
+  private async walkDirectory(dirPath: string, files: FileInfo[]): Promise<void> {
+    const entries = await readdir(dirPath, { withFileTypes: true });
 
-		for (const entry of entries) {
-			const entryPath = join(dirPath, entry.name);
-			const entryStats = await stat(entryPath);
-			const relativePath = relative(this.workspacePath, entryPath);
+    for (const entry of entries) {
+      const entryPath = join(dirPath, entry.name);
+      const entryStats = await stat(entryPath);
+      const relativePath = relative(this.workspacePath, entryPath);
 
-			files.push({
-				path: relativePath,
-				name: entry.name,
-				type: entry.isDirectory() ? 'directory' : 'file',
-				size: entry.isFile() ? entryStats.size : undefined,
-				mtime: entryStats.mtime.toISOString(),
-			});
+      files.push({
+        path: relativePath,
+        name: entry.name,
+        type: entry.isDirectory() ? 'directory' : 'file',
+        size: entry.isFile() ? entryStats.size : undefined,
+        mtime: entryStats.mtime.toISOString(),
+      });
 
-			if (entry.isDirectory()) {
-				await this.walkDirectory(entryPath, files);
-			}
-		}
-	}
+      if (entry.isDirectory()) {
+        await this.walkDirectory(entryPath, files);
+      }
+    }
+  }
 
-	/**
-	 * Get file tree for UI (with max depth)
-	 */
-	async getFileTree(
-		dirPath: string = '.',
-		maxDepth: number = 3,
-		currentDepth: number = 0
-	): Promise<FileTree> {
-		const absolutePath = this.validatePath(dirPath);
+  /**
+   * Get file tree for UI (with max depth)
+   */
+  async getFileTree(
+    dirPath: string = '.',
+    maxDepth: number = 3,
+    currentDepth: number = 0
+  ): Promise<FileTree> {
+    const absolutePath = this.validatePath(dirPath);
 
-		if (!existsSync(absolutePath)) {
-			throw new Error(`Path not found: ${dirPath}`);
-		}
+    if (!existsSync(absolutePath)) {
+      throw new Error(`Path not found: ${dirPath}`);
+    }
 
-		const stats = await stat(absolutePath);
-		const name =
-			dirPath === '.'
-				? this.workspacePath.split('/').pop() || 'workspace'
-				: dirPath.split('/').pop() || dirPath;
+    const stats = await stat(absolutePath);
+    const name =
+      dirPath === '.'
+        ? this.workspacePath.split('/').pop() || 'workspace'
+        : dirPath.split('/').pop() || dirPath;
 
-		if (!stats.isDirectory()) {
-			return {
-				name,
-				path: dirPath,
-				type: 'file',
-			};
-		}
+    if (!stats.isDirectory()) {
+      return {
+        name,
+        path: dirPath,
+        type: 'file',
+      };
+    }
 
-		const tree: FileTree = {
-			name,
-			path: dirPath,
-			type: 'directory',
-			children: [],
-		};
+    const tree: FileTree = {
+      name,
+      path: dirPath,
+      type: 'directory',
+      children: [],
+    };
 
-		// Stop recursion at max depth
-		if (currentDepth >= maxDepth) {
-			return tree;
-		}
+    // Stop recursion at max depth
+    if (currentDepth >= maxDepth) {
+      return tree;
+    }
 
-		const entries: FileInfo[] = [];
-		const dirEntries = await readdir(absolutePath, { withFileTypes: true });
+    const entries: FileInfo[] = [];
+    const dirEntries = await readdir(absolutePath, { withFileTypes: true });
 
-		for (const entry of dirEntries) {
-			// Skip hidden files and common ignore patterns
-			if (entry.name.startsWith('.')) continue;
-			if (['node_modules', 'dist', 'build', 'coverage'].includes(entry.name)) {
-				continue;
-			}
+    for (const entry of dirEntries) {
+      // Skip hidden files and common ignore patterns
+      if (entry.name.startsWith('.')) continue;
+      if (['node_modules', 'dist', 'build', 'coverage'].includes(entry.name)) {
+        continue;
+      }
 
-			const entryPath = join(absolutePath, entry.name);
-			const relativePath = relative(this.workspacePath, entryPath);
+      const entryPath = join(absolutePath, entry.name);
+      const relativePath = relative(this.workspacePath, entryPath);
 
-			entries.push({
-				path: relativePath,
-				name: entry.name,
-				type: entry.isDirectory() ? 'directory' : 'file',
-			});
-		}
+      entries.push({
+        path: relativePath,
+        name: entry.name,
+        type: entry.isDirectory() ? 'directory' : 'file',
+      });
+    }
 
-		// Sort: directories first, then files
-		entries.sort((a, b) => {
-			if (a.type !== b.type) {
-				return a.type === 'directory' ? -1 : 1;
-			}
-			return a.name.localeCompare(b.name);
-		});
+    // Sort: directories first, then files
+    entries.sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === 'directory' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
 
-		// Recursively build tree
-		for (const entry of entries) {
-			if (entry.type === 'directory') {
-				const subtree = await this.getFileTree(entry.path, maxDepth, currentDepth + 1);
-				tree.children!.push(subtree);
-			} else {
-				tree.children!.push({
-					name: entry.name,
-					path: entry.path,
-					type: 'file',
-				});
-			}
-		}
+    // Recursively build tree
+    for (const entry of entries) {
+      if (entry.type === 'directory') {
+        const subtree = await this.getFileTree(entry.path, maxDepth, currentDepth + 1);
+        tree.children!.push(subtree);
+      } else {
+        tree.children!.push({
+          name: entry.name,
+          path: entry.path,
+          type: 'file',
+        });
+      }
+    }
 
-		return tree;
-	}
+    return tree;
+  }
 
-	/**
-	 * Check if path exists
-	 */
-	async pathExists(filePath: string): Promise<boolean> {
-		try {
-			const absolutePath = this.validatePath(filePath);
-			return existsSync(absolutePath);
-		} catch {
-			return false;
-		}
-	}
+  /**
+   * Check if path exists
+   */
+  async pathExists(filePath: string): Promise<boolean> {
+    try {
+      const absolutePath = this.validatePath(filePath);
+      return existsSync(absolutePath);
+    } catch {
+      return false;
+    }
+  }
 
-	/**
-	 * Get workspace path
-	 */
-	getWorkspacePath(): string {
-		return this.workspacePath;
-	}
+  /**
+   * Get workspace path
+   */
+  getWorkspacePath(): string {
+    return this.workspacePath;
+  }
 }

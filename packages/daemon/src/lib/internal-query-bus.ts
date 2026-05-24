@@ -44,14 +44,14 @@
  * handler threw, etc).
  */
 export interface QueryResult<T = unknown> {
-	/** Whether the query handler completed successfully. */
-	ok: boolean;
+  /** Whether the query handler completed successfully. */
+  ok: boolean;
 
-	/** The result payload when `ok` is true. */
-	data?: T;
+  /** The result payload when `ok` is true. */
+  data?: T;
 
-	/** Error payload when `ok` is false. */
-	error?: unknown;
+  /** Error payload when `ok` is false. */
+  error?: unknown;
 }
 
 /**
@@ -59,10 +59,10 @@ export interface QueryResult<T = unknown> {
  * has an owner.  This is thrown at registration time, not execution time.
  */
 export class DuplicateQueryHandlerError extends Error {
-	constructor(public readonly queryName: string) {
-		super(`Query '${queryName}' already has a registered handler`);
-		this.name = 'DuplicateQueryHandlerError';
-	}
+  constructor(public readonly queryName: string) {
+    super(`Query '${queryName}' already has a registered handler`);
+    this.name = 'DuplicateQueryHandlerError';
+  }
 }
 
 /**
@@ -71,31 +71,31 @@ export class DuplicateQueryHandlerError extends Error {
  * thrown so callers can handle missing queries gracefully.
  */
 export class MissingQueryHandlerError extends Error {
-	constructor(public readonly queryName: string) {
-		super(`No handler registered for query '${queryName}'`);
-		this.name = 'MissingQueryHandlerError';
-	}
+  constructor(public readonly queryName: string) {
+    super(`No handler registered for query '${queryName}'`);
+    this.name = 'MissingQueryHandlerError';
+  }
 }
 
 export type QueryHandler<TInput, TOutput> = (query: TInput) => Promise<TOutput>;
 
 interface RegisteredQueryHandler {
-	handler: (query: unknown) => Promise<unknown>;
+  handler: (query: unknown) => Promise<unknown>;
 }
 
 /** Extract the input type for a given query map entry. */
 type QueryInput<TQueryMap, K extends keyof TQueryMap> = TQueryMap[K] extends {
-	input: infer I;
+  input: infer I;
 }
-	? I
-	: never;
+  ? I
+  : never;
 
 /** Extract the output type for a given query map entry. */
 type QueryOutput<TQueryMap, K extends keyof TQueryMap> = TQueryMap[K] extends {
-	output: infer O;
+  output: infer O;
 }
-	? O
-	: never;
+  ? O
+  : never;
 
 /**
  * InternalQueryBus
@@ -106,99 +106,99 @@ type QueryOutput<TQueryMap, K extends keyof TQueryMap> = TQueryMap[K] extends {
  *   'space.workflowRun.get': { input: { runId: string }; output: WorkflowRun | null }
  */
 export class InternalQueryBus<
-	TQueryMap extends object = Record<string, { input: unknown; output: unknown }>,
+  TQueryMap extends object = Record<string, { input: unknown; output: unknown }>,
 > {
-	private handlers = new Map<string, RegisteredQueryHandler>();
+  private handlers = new Map<string, RegisteredQueryHandler>();
 
-	/**
-	 * Register a handler for a query.
-	 *
-	 * @param queryName — typed query name
-	 * @param handler   — callback invoked when the query is executed
-	 * @returns unsubscribe function
-	 * @throws DuplicateQueryHandlerError if a handler already exists for this query
-	 */
-	register<K extends keyof TQueryMap & string>(
-		queryName: K,
-		handler: QueryHandler<QueryInput<TQueryMap, K>, QueryOutput<TQueryMap, K>>
-	): () => void {
-		const key = queryName;
+  /**
+   * Register a handler for a query.
+   *
+   * @param queryName — typed query name
+   * @param handler   — callback invoked when the query is executed
+   * @returns unsubscribe function
+   * @throws DuplicateQueryHandlerError if a handler already exists for this query
+   */
+  register<K extends keyof TQueryMap & string>(
+    queryName: K,
+    handler: QueryHandler<QueryInput<TQueryMap, K>, QueryOutput<TQueryMap, K>>
+  ): () => void {
+    const key = queryName;
 
-		if (this.handlers.has(key)) {
-			throw new DuplicateQueryHandlerError(key);
-		}
+    if (this.handlers.has(key)) {
+      throw new DuplicateQueryHandlerError(key);
+    }
 
-		const registered: RegisteredQueryHandler = {
-			handler: handler as (query: unknown) => Promise<unknown>,
-		};
+    const registered: RegisteredQueryHandler = {
+      handler: handler as (query: unknown) => Promise<unknown>,
+    };
 
-		this.handlers.set(key, registered);
+    this.handlers.set(key, registered);
 
-		return () => {
-			const current = this.handlers.get(key);
-			if (current === registered) {
-				this.handlers.delete(key);
-			}
-		};
-	}
+    return () => {
+      const current = this.handlers.get(key);
+      if (current === registered) {
+        this.handlers.delete(key);
+      }
+    };
+  }
 
-	/**
-	 * Execute a query through its registered handler and await the result.
-	 *
-	 * @param queryName — typed query name
-	 * @param query     — query payload
-	 * @returns structured `QueryResult<TOutput>`
-	 *
-	 * Returns `{ ok: false, error: MissingQueryHandlerError }` when no handler
-	 * is registered.  Handler throws are caught and returned as
-	 * `{ ok: false, error }` so callers never need to try/catch execute().
-	 */
-	async execute<K extends keyof TQueryMap & string>(
-		queryName: K,
-		query: QueryInput<TQueryMap, K>
-	): Promise<QueryResult<QueryOutput<TQueryMap, K>>> {
-		const key = queryName;
-		const registered = this.handlers.get(key);
+  /**
+   * Execute a query through its registered handler and await the result.
+   *
+   * @param queryName — typed query name
+   * @param query     — query payload
+   * @returns structured `QueryResult<TOutput>`
+   *
+   * Returns `{ ok: false, error: MissingQueryHandlerError }` when no handler
+   * is registered.  Handler throws are caught and returned as
+   * `{ ok: false, error }` so callers never need to try/catch execute().
+   */
+  async execute<K extends keyof TQueryMap & string>(
+    queryName: K,
+    query: QueryInput<TQueryMap, K>
+  ): Promise<QueryResult<QueryOutput<TQueryMap, K>>> {
+    const key = queryName;
+    const registered = this.handlers.get(key);
 
-		if (!registered) {
-			return { ok: false, error: new MissingQueryHandlerError(key) };
-		}
+    if (!registered) {
+      return { ok: false, error: new MissingQueryHandlerError(key) };
+    }
 
-		try {
-			const data = (await registered.handler(query)) as QueryOutput<TQueryMap, K>;
-			return { ok: true, data };
-		} catch (error) {
-			return { ok: false, error };
-		}
-	}
+    try {
+      const data = (await registered.handler(query)) as QueryOutput<TQueryMap, K>;
+      return { ok: true, data };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
 
-	/**
-	 * Return true if a handler is registered for the given query name.
-	 */
-	hasHandler<K extends keyof TQueryMap & string>(queryName: K): boolean {
-		return this.handlers.has(queryName);
-	}
+  /**
+   * Return true if a handler is registered for the given query name.
+   */
+  hasHandler<K extends keyof TQueryMap & string>(queryName: K): boolean {
+    return this.handlers.has(queryName);
+  }
 
-	/**
-	 * Remove the handler for a specific query.
-	 */
-	unregister<K extends keyof TQueryMap & string>(queryName: K): void {
-		this.handlers.delete(queryName);
-	}
+  /**
+   * Remove the handler for a specific query.
+   */
+  unregister<K extends keyof TQueryMap & string>(queryName: K): void {
+    this.handlers.delete(queryName);
+  }
 
-	/**
-	 * Remove all handlers.
-	 */
-	clear(): void {
-		this.handlers.clear();
-	}
+  /**
+   * Remove all handlers.
+   */
+  clear(): void {
+    this.handlers.clear();
+  }
 
-	/**
-	 * Return the number of registered handlers.
-	 */
-	getHandlerCount(): number {
-		return this.handlers.size;
-	}
+  /**
+   * Return the number of registered handlers.
+   */
+  getHandlerCount(): number {
+    return this.handlers.size;
+  }
 }
 
 /**
@@ -211,9 +211,9 @@ export class InternalQueryBus<
  *   const bus = createInternalQueryBus<MyQueryMap>();
  */
 export function createInternalQueryBus<
-	TQueryMap extends object = Record<string, { input: unknown; output: unknown }>,
+  TQueryMap extends object = Record<string, { input: unknown; output: unknown }>,
 >(): InternalQueryBus<TQueryMap> {
-	return new InternalQueryBus<TQueryMap>();
+  return new InternalQueryBus<TQueryMap>();
 }
 
 // ---------------------------------------------------------------------------
@@ -226,34 +226,34 @@ export function createInternalQueryBus<
  * Payload for `space.workflowRun.get` — fetch a single workflow run by id.
  */
 export interface SpaceWorkflowRunGetQuery {
-	/** Workflow run identifier. */
-	runId: string;
+  /** Workflow run identifier. */
+  runId: string;
 }
 
 /**
  * Result for `space.workflowRun.get`.
  */
 export interface SpaceWorkflowRunGetResult {
-	/** The run, or null if not found. */
-	run: Record<string, unknown> | null;
+  /** The run, or null if not found. */
+  run: Record<string, unknown> | null;
 }
 
 /**
  * Payload for `room.tasks.list` — list tasks in a room.
  */
 export interface RoomTasksListQuery {
-	/** Room identifier. */
-	roomId: string;
-	/** Include archived tasks. */
-	includeArchived?: boolean;
+  /** Room identifier. */
+  roomId: string;
+  /** Include archived tasks. */
+  includeArchived?: boolean;
 }
 
 /**
  * Result for `room.tasks.list`.
  */
 export interface RoomTasksListResult {
-	/** Task summaries. */
-	tasks: Array<Record<string, unknown>>;
+  /** Task summaries. */
+  tasks: Array<Record<string, unknown>>;
 }
 
 /**
@@ -263,6 +263,6 @@ export interface RoomTasksListResult {
  * domain query maps so the bus can be typed with the full surface.
  */
 export interface DaemonQueryMap {
-	'space.workflowRun.get': { input: SpaceWorkflowRunGetQuery; output: SpaceWorkflowRunGetResult };
-	'room.tasks.list': { input: RoomTasksListQuery; output: RoomTasksListResult };
+  'space.workflowRun.get': { input: SpaceWorkflowRunGetQuery; output: SpaceWorkflowRunGetResult };
+  'room.tasks.list': { input: RoomTasksListQuery; output: RoomTasksListResult };
 }

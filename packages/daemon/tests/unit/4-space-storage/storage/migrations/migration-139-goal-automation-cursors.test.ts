@@ -5,7 +5,7 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration139 } from '../../../../../src/storage/schema/index.ts';
 
 function createLegacyCursorTable(db: BunDatabase): void {
-	db.exec(`
+  db.exec(`
 		CREATE TABLE goal_automation_cursors (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -32,49 +32,49 @@ function createLegacyCursorTable(db: BunDatabase): void {
 }
 
 describe('Migration 139: Goal automation cursors', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-139', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
-		db = new BunDatabase(join(testDir, 'test.db'));
-	});
+  beforeEach(() => {
+    testDir = join(process.cwd(), 'tmp', 'test-migration-139', `test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    db = new BunDatabase(join(testDir, 'test.db'));
+  });
 
-	afterEach(() => {
-		db.close();
-		rmSync(testDir, { recursive: true, force: true });
-	});
+  afterEach(() => {
+    db.close();
+    rmSync(testDir, { recursive: true, force: true });
+  });
 
-	test('recreates cursor indexes after rebuilding the legacy unique constraint', () => {
-		createLegacyCursorTable(db);
+  test('recreates cursor indexes after rebuilding the legacy unique constraint', () => {
+    createLegacyCursorTable(db);
 
-		runMigration139(db);
+    runMigration139(db);
 
-		const tableSql = db
-			.prepare(
-				`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'goal_automation_cursors'`
-			)
-			.get() as { sql: string };
-		expect(tableSql.sql).toContain('last_evidence_id TEXT');
-		expect(tableSql.sql).toContain('UNIQUE(goal_id, scope_id, trigger_kind, trigger_key)');
+    const tableSql = db
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'goal_automation_cursors'`
+      )
+      .get() as { sql: string };
+    expect(tableSql.sql).toContain('last_evidence_id TEXT');
+    expect(tableSql.sql).toContain('UNIQUE(goal_id, scope_id, trigger_kind, trigger_key)');
 
-		const indexes = db
-			.prepare(
-				`SELECT name, tbl_name FROM sqlite_master
+    const indexes = db
+      .prepare(
+        `SELECT name, tbl_name FROM sqlite_master
 				 WHERE type = 'index' AND name IN (
 					'idx_goal_automation_cursors_scope',
 					'idx_goal_automation_cursors_external_event'
 				 )
 				 ORDER BY name`
-			)
-			.all() as Array<{ name: string; tbl_name: string }>;
-		expect(indexes).toEqual([
-			{
-				name: 'idx_goal_automation_cursors_external_event',
-				tbl_name: 'goal_automation_cursors',
-			},
-			{ name: 'idx_goal_automation_cursors_scope', tbl_name: 'goal_automation_cursors' },
-		]);
-	});
+      )
+      .all() as Array<{ name: string; tbl_name: string }>;
+    expect(indexes).toEqual([
+      {
+        name: 'idx_goal_automation_cursors_external_event',
+        tbl_name: 'goal_automation_cursors',
+      },
+      { name: 'idx_goal_automation_cursors_scope', tbl_name: 'goal_automation_cursors' },
+    ]);
+  });
 });

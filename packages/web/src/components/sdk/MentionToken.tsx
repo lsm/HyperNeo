@@ -19,194 +19,194 @@ import { REFERENCE_PATTERN } from '@neokai/shared';
 // ─── Type-specific styles ────────────────────────────────────────────────────
 
 const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
-	task: {
-		pill: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/30',
-		label: 'task',
-	},
-	goal: {
-		pill: 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30',
-		label: 'goal',
-	},
-	file: {
-		pill: 'bg-blue-500/20 text-blue-300 border-blue-500/40 hover:bg-blue-500/30',
-		label: 'file',
-	},
-	folder: {
-		pill: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40 hover:bg-yellow-500/30',
-		label: 'folder',
-	},
+  task: {
+    pill: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/30',
+    label: 'task',
+  },
+  goal: {
+    pill: 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30',
+    label: 'goal',
+  },
+  file: {
+    pill: 'bg-blue-500/20 text-blue-300 border-blue-500/40 hover:bg-blue-500/30',
+    label: 'file',
+  },
+  folder: {
+    pill: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40 hover:bg-yellow-500/30',
+    label: 'folder',
+  },
 };
 
 // ─── Popover content helpers ─────────────────────────────────────────────────
 
 function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
-	switch (resolved.type) {
-		// task and goal share the same shape
-		case 'task':
-		case 'goal': {
-			const d = resolved.data as { title?: string; status?: string; description?: string };
-			return (
-				<div>
-					{d.title && <div class="font-medium text-white">{d.title}</div>}
-					{d.status && <div class="text-xs text-gray-400 mt-0.5">Status: {d.status}</div>}
-					{d.description && (
-						<div class="text-xs text-gray-400 mt-1 line-clamp-2">{d.description}</div>
-					)}
-				</div>
-			);
-		}
-		case 'file': {
-			const d = resolved.data as {
-				path: string;
-				size: number;
-				binary: boolean;
-				truncated: boolean;
-			};
-			return (
-				<div>
-					<div class="font-medium text-white font-mono text-xs truncate">{d.path}</div>
-					<div class="text-xs text-gray-400 mt-0.5">
-						{d.binary ? 'Binary file' : `${Math.round(d.size / 1024)} KB`}
-						{d.truncated && ' (truncated)'}
-					</div>
-				</div>
-			);
-		}
-		case 'folder': {
-			const d = resolved.data as { path: string; entries: Array<{ name: string }> };
-			return (
-				<div>
-					<div class="font-medium text-white font-mono text-xs truncate">{d.path}</div>
-					<div class="text-xs text-gray-400 mt-0.5">{d.entries.length} entries</div>
-				</div>
-			);
-		}
-		default: {
-			return <div class="text-xs text-gray-400">Unknown reference type</div>;
-		}
-	}
+  switch (resolved.type) {
+    // task and goal share the same shape
+    case 'task':
+    case 'goal': {
+      const d = resolved.data as { title?: string; status?: string; description?: string };
+      return (
+        <div>
+          {d.title && <div class="font-medium text-white">{d.title}</div>}
+          {d.status && <div class="text-xs text-gray-400 mt-0.5">Status: {d.status}</div>}
+          {d.description && (
+            <div class="text-xs text-gray-400 mt-1 line-clamp-2">{d.description}</div>
+          )}
+        </div>
+      );
+    }
+    case 'file': {
+      const d = resolved.data as {
+        path: string;
+        size: number;
+        binary: boolean;
+        truncated: boolean;
+      };
+      return (
+        <div>
+          <div class="font-medium text-white font-mono text-xs truncate">{d.path}</div>
+          <div class="text-xs text-gray-400 mt-0.5">
+            {d.binary ? 'Binary file' : `${Math.round(d.size / 1024)} KB`}
+            {d.truncated && ' (truncated)'}
+          </div>
+        </div>
+      );
+    }
+    case 'folder': {
+      const d = resolved.data as { path: string; entries: Array<{ name: string }> };
+      return (
+        <div>
+          <div class="font-medium text-white font-mono text-xs truncate">{d.path}</div>
+          <div class="text-xs text-gray-400 mt-0.5">{d.entries.length} entries</div>
+        </div>
+      );
+    }
+    default: {
+      return <div class="text-xs text-gray-400">Unknown reference type</div>;
+    }
+  }
 }
 
 // ─── MentionToken component ──────────────────────────────────────────────────
 
 export interface MentionTokenProps {
-	refType: ReferenceType;
-	id: string;
-	displayText: string;
-	status?: string;
-	/** Session ID used for reference.resolve RPC calls. Required for hover preview. */
-	sessionId?: string;
+  refType: ReferenceType;
+  id: string;
+  displayText: string;
+  status?: string;
+  /** Session ID used for reference.resolve RPC calls. Required for hover preview. */
+  sessionId?: string;
 }
 
 type LoadState = 'idle' | 'loading' | 'loaded' | 'error';
 
 /** Popover position computed from getBoundingClientRect, used for fixed positioning. */
 interface PopoverPos {
-	top: number;
-	left: number;
-	/** True when the popover is rendered below the token (not enough space above). */
-	below: boolean;
+  top: number;
+  left: number;
+  /** True when the popover is rendered below the token (not enough space above). */
+  below: boolean;
 }
 
 function MentionTokenBase({ refType, id, displayText, status, sessionId }: MentionTokenProps) {
-	const [isHovered, setIsHovered] = useState(false);
-	const [loadState, setLoadState] = useState<LoadState>('idle');
-	const [resolvedData, setResolvedData] = useState<ResolvedReference | null>(null);
-	const [popoverPos, setPopoverPos] = useState<PopoverPos>({ top: 0, left: 0, below: false });
-	const tokenRef = useRef<HTMLSpanElement>(null);
-	const { callIfConnected } = useMessageHub();
+  const [isHovered, setIsHovered] = useState(false);
+  const [loadState, setLoadState] = useState<LoadState>('idle');
+  const [resolvedData, setResolvedData] = useState<ResolvedReference | null>(null);
+  const [popoverPos, setPopoverPos] = useState<PopoverPos>({ top: 0, left: 0, below: false });
+  const tokenRef = useRef<HTMLSpanElement>(null);
+  const { callIfConnected } = useMessageHub();
 
-	const typeStyle = TYPE_STYLES[refType];
+  const typeStyle = TYPE_STYLES[refType];
 
-	// Entity is considered deleted/not-found when:
-	// 1. The persisted metadata status was 'not_found' at message-save time, OR
-	// 2. The live RPC resolve returned null after a successful fetch
-	const isNotFound = status === 'not_found' || (loadState === 'loaded' && resolvedData === null);
+  // Entity is considered deleted/not-found when:
+  // 1. The persisted metadata status was 'not_found' at message-save time, OR
+  // 2. The live RPC resolve returned null after a successful fetch
+  const isNotFound = status === 'not_found' || (loadState === 'loaded' && resolvedData === null);
 
-	const handleMouseEnter = useCallback(async () => {
-		// Compute fixed viewport position before showing — escapes scroll containers
-		// and overflow:hidden ancestors that would clip an absolute popover.
-		if (tokenRef.current) {
-			const rect = tokenRef.current.getBoundingClientRect();
-			// Flip below the token when there is insufficient space above (< 160 px)
-			const below = rect.top < 160;
-			setPopoverPos({ top: below ? rect.bottom : rect.top, left: rect.left, below });
-		}
-		setIsHovered(true);
+  const handleMouseEnter = useCallback(async () => {
+    // Compute fixed viewport position before showing — escapes scroll containers
+    // and overflow:hidden ancestors that would clip an absolute popover.
+    if (tokenRef.current) {
+      const rect = tokenRef.current.getBoundingClientRect();
+      // Flip below the token when there is insufficient space above (< 160 px)
+      const below = rect.top < 160;
+      setPopoverPos({ top: below ? rect.bottom : rect.top, left: rect.left, below });
+    }
+    setIsHovered(true);
 
-		// Only fetch once; skip if already fetched or no sessionId to call with
-		if (loadState === 'idle' && sessionId) {
-			setLoadState('loading');
-			try {
-				const result = await callIfConnected<{ resolved: ResolvedReference | null }>(
-					'reference.resolve',
-					{ sessionId, type: refType, id }
-				);
-				setResolvedData(result?.resolved ?? null);
-				setLoadState('loaded');
-			} catch {
-				setLoadState('error');
-			}
-		}
-	}, [loadState, sessionId, refType, id, callIfConnected]);
+    // Only fetch once; skip if already fetched or no sessionId to call with
+    if (loadState === 'idle' && sessionId) {
+      setLoadState('loading');
+      try {
+        const result = await callIfConnected<{ resolved: ResolvedReference | null }>(
+          'reference.resolve',
+          { sessionId, type: refType, id }
+        );
+        setResolvedData(result?.resolved ?? null);
+        setLoadState('loaded');
+      } catch {
+        setLoadState('error');
+      }
+    }
+  }, [loadState, sessionId, refType, id, callIfConnected]);
 
-	const handleMouseLeave = useCallback(() => {
-		setIsHovered(false);
-	}, []);
+  const handleMouseLeave = useCallback(() => {
+    setIsHovered(false);
+  }, []);
 
-	// Popover offset from the token edge (px)
-	const POPOVER_GAP = 6;
+  // Popover offset from the token edge (px)
+  const POPOVER_GAP = 6;
 
-	return (
-		<span class="inline-block align-baseline">
-			<span
-				ref={tokenRef}
-				class={cn(
-					'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs font-medium cursor-default transition-colors',
-					typeStyle.pill,
-					isNotFound && 'opacity-50 line-through'
-				)}
-				onMouseEnter={handleMouseEnter}
-				onMouseLeave={handleMouseLeave}
-				data-testid="mention-token"
-				data-ref-type={refType}
-				data-ref-id={id}
-				data-not-found={isNotFound ? 'true' : undefined}
-			>
-				<span class="opacity-60 text-[10px] uppercase tracking-wide">{typeStyle.label}</span>
-				<span>{displayText}</span>
-			</span>
+  return (
+    <span class="inline-block align-baseline">
+      <span
+        ref={tokenRef}
+        class={cn(
+          'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-xs font-medium cursor-default transition-colors',
+          typeStyle.pill,
+          isNotFound && 'opacity-50 line-through'
+        )}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        data-testid="mention-token"
+        data-ref-type={refType}
+        data-ref-id={id}
+        data-not-found={isNotFound ? 'true' : undefined}
+      >
+        <span class="opacity-60 text-[10px] uppercase tracking-wide">{typeStyle.label}</span>
+        <span>{displayText}</span>
+      </span>
 
-			{isHovered && (
-				<div
-					style={{
-						position: 'fixed',
-						left: `${popoverPos.left}px`,
-						top: popoverPos.below
-							? `${popoverPos.top + POPOVER_GAP}px`
-							: `${popoverPos.top - POPOVER_GAP}px`,
-						transform: popoverPos.below ? 'none' : 'translateY(-100%)',
-						zIndex: 9999,
-					}}
-					class="min-w-[180px] max-w-[280px] bg-dark-800 border border-gray-600/50 rounded-md shadow-lg p-3 text-sm pointer-events-none animate-fadeIn"
-					role="tooltip"
-					data-testid="mention-token-popover"
-				>
-					{loadState === 'loading' && <div class="text-xs text-gray-400">Loading...</div>}
-					{loadState === 'loaded' && resolvedData && renderResolvedContent(resolvedData)}
-					{loadState === 'loaded' && !resolvedData && (
-						<div class="text-xs text-gray-400">Not found</div>
-					)}
-					{loadState === 'error' && <div class="text-xs text-red-400">Failed to load</div>}
-					{loadState === 'idle' && (
-						<div class="text-xs text-gray-400">
-							{refType}/{id}
-						</div>
-					)}
-				</div>
-			)}
-		</span>
-	);
+      {isHovered && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${popoverPos.left}px`,
+            top: popoverPos.below
+              ? `${popoverPos.top + POPOVER_GAP}px`
+              : `${popoverPos.top - POPOVER_GAP}px`,
+            transform: popoverPos.below ? 'none' : 'translateY(-100%)',
+            zIndex: 9999,
+          }}
+          class="min-w-[180px] max-w-[280px] bg-dark-800 border border-gray-600/50 rounded-md shadow-lg p-3 text-sm pointer-events-none animate-fadeIn"
+          role="tooltip"
+          data-testid="mention-token-popover"
+        >
+          {loadState === 'loading' && <div class="text-xs text-gray-400">Loading...</div>}
+          {loadState === 'loaded' && resolvedData && renderResolvedContent(resolvedData)}
+          {loadState === 'loaded' && !resolvedData && (
+            <div class="text-xs text-gray-400">Not found</div>
+          )}
+          {loadState === 'error' && <div class="text-xs text-red-400">Failed to load</div>}
+          {loadState === 'idle' && (
+            <div class="text-xs text-gray-400">
+              {refType}/{id}
+            </div>
+          )}
+        </div>
+      )}
+    </span>
+  );
 }
 
 export const MentionToken = memo(MentionTokenBase);
@@ -215,22 +215,22 @@ export const MentionToken = memo(MentionTokenBase);
 
 export type TextSegment = { kind: 'text'; content: string };
 export type MentionSegment = {
-	kind: 'mention';
-	raw: string;
-	refType: ReferenceType;
-	id: string;
-	displayText: string;
-	status?: string;
+  kind: 'mention';
+  raw: string;
+  refType: ReferenceType;
+  id: string;
+  displayText: string;
+  status?: string;
 };
 export type UnknownMentionSegment = { kind: 'unknown-mention'; content: string };
 export type Segment = TextSegment | MentionSegment | UnknownMentionSegment;
 
 // Use `satisfies` so the compiler catches any mismatch with the ReferenceType union
 const VALID_REF_TYPES: ReadonlySet<string> = new Set<string>([
-	'task',
-	'goal',
-	'file',
-	'folder',
+  'task',
+  'goal',
+  'file',
+  'folder',
 ] satisfies readonly ReferenceType[]);
 
 /**
@@ -242,43 +242,43 @@ const VALID_REF_TYPES: ReadonlySet<string> = new Set<string>([
  * - Plain text / plain @     → TextSegment (rendered as-is)
  */
 export function parseTextWithReferences(text: string, metadata: ReferenceMetadata): Segment[] {
-	const segments: Segment[] = [];
-	// Clone the regex to get a fresh lastIndex; never mutate the shared export
-	const pattern = new RegExp(REFERENCE_PATTERN.source, REFERENCE_PATTERN.flags);
-	let lastIndex = 0;
-	let match: RegExpExecArray | null;
+  const segments: Segment[] = [];
+  // Clone the regex to get a fresh lastIndex; never mutate the shared export
+  const pattern = new RegExp(REFERENCE_PATTERN.source, REFERENCE_PATTERN.flags);
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
 
-	while ((match = pattern.exec(text)) !== null) {
-		const raw = match[0];
-		const type = match[1];
-		const id = match[2];
-		const start = match.index;
+  while ((match = pattern.exec(text)) !== null) {
+    const raw = match[0];
+    const type = match[1];
+    const id = match[2];
+    const start = match.index;
 
-		if (start > lastIndex) {
-			segments.push({ kind: 'text', content: text.slice(lastIndex, start) });
-		}
+    if (start > lastIndex) {
+      segments.push({ kind: 'text', content: text.slice(lastIndex, start) });
+    }
 
-		if (VALID_REF_TYPES.has(type)) {
-			const meta = metadata[raw];
-			segments.push({
-				kind: 'mention',
-				raw,
-				refType: type as ReferenceType,
-				id,
-				displayText: meta?.displayText ?? id,
-				status: meta?.status,
-			});
-		} else {
-			// Unrecognised type — render as plain text with a subtle warning indicator
-			segments.push({ kind: 'unknown-mention', content: raw });
-		}
+    if (VALID_REF_TYPES.has(type)) {
+      const meta = metadata[raw];
+      segments.push({
+        kind: 'mention',
+        raw,
+        refType: type as ReferenceType,
+        id,
+        displayText: meta?.displayText ?? id,
+        status: meta?.status,
+      });
+    } else {
+      // Unrecognised type — render as plain text with a subtle warning indicator
+      segments.push({ kind: 'unknown-mention', content: raw });
+    }
 
-		lastIndex = pattern.lastIndex;
-	}
+    lastIndex = pattern.lastIndex;
+  }
 
-	if (lastIndex < text.length) {
-		segments.push({ kind: 'text', content: text.slice(lastIndex) });
-	}
+  if (lastIndex < text.length) {
+    segments.push({ kind: 'text', content: text.slice(lastIndex) });
+  }
 
-	return segments;
+  return segments;
 }

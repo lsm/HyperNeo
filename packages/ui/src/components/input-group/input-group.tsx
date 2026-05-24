@@ -6,79 +6,79 @@ import type { ElementType } from '../../internal/types.ts';
 // --- InputGroupContext ---
 
 interface InputGroupContextValue {
-	disabled: boolean;
-	hover: boolean;
-	focus: boolean;
+  disabled: boolean;
+  hover: boolean;
+  focus: boolean;
 }
 
 const InputGroupContext = createContext<InputGroupContextValue | null>(null);
 InputGroupContext.displayName = 'InputGroupContext';
 
 export function useInputGroupContext(): InputGroupContextValue | null {
-	return useContext(InputGroupContext);
+  return useContext(InputGroupContext);
 }
 
 // --- InputGroup ---
 
 interface InputGroupProps {
-	as?: ElementType;
-	disabled?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  disabled?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function InputGroupFn({ as: Tag = 'div', disabled = false, children, ...rest }: InputGroupProps) {
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
-	const focusCountRef = useRef(0);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const focusCountRef = useRef(0);
 
-	const handleFocusIn = useCallback(() => {
-		focusCountRef.current++;
-		setFocus(true);
-	}, []);
+  const handleFocusIn = useCallback(() => {
+    focusCountRef.current++;
+    setFocus(true);
+  }, []);
 
-	const handleFocusOut = useCallback(() => {
-		focusCountRef.current--;
-		if (focusCountRef.current <= 0) {
-			focusCountRef.current = 0;
-			setFocus(false);
-		}
-	}, []);
+  const handleFocusOut = useCallback(() => {
+    focusCountRef.current--;
+    if (focusCountRef.current <= 0) {
+      focusCountRef.current = 0;
+      setFocus(false);
+    }
+  }, []);
 
-	const handleMouseEnter = useCallback(() => {
-		setHover(true);
-	}, []);
+  const handleMouseEnter = useCallback(() => {
+    setHover(true);
+  }, []);
 
-	const handleMouseLeave = useCallback(() => {
-		setHover(false);
-	}, []);
+  const handleMouseLeave = useCallback(() => {
+    setHover(false);
+  }, []);
 
-	const ctx: InputGroupContextValue = {
-		disabled,
-		hover,
-		focus,
-	};
+  const ctx: InputGroupContextValue = {
+    disabled,
+    hover,
+    focus,
+  };
 
-	const slot = { disabled, hover, focus };
+  const slot = { disabled, hover, focus };
 
-	const ourProps: Record<string, unknown> = {
-		onFocusIn: handleFocusIn,
-		onFocusOut: handleFocusOut,
-		onMouseEnter: handleMouseEnter,
-		onMouseLeave: handleMouseLeave,
-	};
+  const ourProps: Record<string, unknown> = {
+    onFocusIn: handleFocusIn,
+    onFocusOut: handleFocusOut,
+    onMouseEnter: handleMouseEnter,
+    onMouseLeave: handleMouseLeave,
+  };
 
-	return createElement(
-		InputGroupContext.Provider,
-		{ value: ctx },
-		render({
-			ourProps,
-			theirProps: { as: Tag, children, ...rest },
-			slot,
-			defaultTag: 'div',
-			name: 'InputGroup',
-		})
-	);
+  return createElement(
+    InputGroupContext.Provider,
+    { value: ctx },
+    render({
+      ourProps,
+      theirProps: { as: Tag, children, ...rest },
+      slot,
+      defaultTag: 'div',
+      name: 'InputGroup',
+    })
+  );
 }
 
 InputGroupFn.displayName = 'InputGroup';
@@ -87,29 +87,29 @@ export const InputGroup = InputGroupFn;
 // --- InputAddon ---
 
 interface InputAddonProps {
-	as?: ElementType;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function InputAddonFn({ as: Tag = 'div', children, ...rest }: InputAddonProps) {
-	const groupCtx = useContext(InputGroupContext);
+  const groupCtx = useContext(InputGroupContext);
 
-	const slot = {
-		disabled: groupCtx?.disabled ?? false,
-		hover: groupCtx?.hover ?? false,
-		focus: groupCtx?.focus ?? false,
-	};
+  const slot = {
+    disabled: groupCtx?.disabled ?? false,
+    hover: groupCtx?.hover ?? false,
+    focus: groupCtx?.focus ?? false,
+  };
 
-	const ourProps: Record<string, unknown> = {};
+  const ourProps: Record<string, unknown> = {};
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'div',
-		name: 'InputAddon',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'div',
+    name: 'InputAddon',
+  });
 }
 
 InputAddonFn.displayName = 'InputAddon';

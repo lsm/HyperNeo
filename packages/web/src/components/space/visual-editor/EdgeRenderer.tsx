@@ -48,10 +48,10 @@ export const CONTROL_OFFSET = 60;
 
 /** Stroke colors matching GATE_COLORS from WorkflowList.tsx */
 export const EDGE_COLORS: Record<WorkflowConditionType, string> = {
-	always: '#3b82f6', // blue-500
-	human: '#facc15', // yellow-400
-	condition: '#c084fc', // purple-400
-	task_result: '#f97316', // orange-500
+  always: '#3b82f6', // blue-500
+  human: '#facc15', // yellow-400
+  condition: '#c084fc', // purple-400
+  task_result: '#f97316', // orange-500
 };
 
 export const NORMAL_STROKE_WIDTH = 1.5;
@@ -70,46 +70,46 @@ const HITBOX_STROKE_WIDTH = 12;
  * have been resolved to actual node/step IDs.
  */
 export interface ResolvedWorkflowChannel {
-	fromStepId: string;
-	toStepId: string;
-	/** Visual direction derived from channel topology: 'bidirectional' means arrows in both directions. */
-	direction: 'one-way' | 'bidirectional';
-	isCyclic?: boolean;
-	/**
-	 * Gate condition type for the forward direction (from→to).
-	 * For one-way channels this is the only gate.
-	 * For bidirectional channels this is the gate on the fromStepId→toStepId direction.
-	 */
-	gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
-	/**
-	 * Gate condition type for the reverse direction (to→from).
-	 * Only set on bidirectional channels where the reverse direction has its own gate.
-	 */
-	reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
-	/** Custom badge label for the forward gate. `undefined` → heuristic fallback. */
-	gateLabel?: string;
-	/** Custom badge color for the forward gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
-	gateColor?: string;
-	/** Whether the forward gate has a script-based pre-check. */
-	hasScript?: boolean;
-	/** Custom badge label for the reverse gate. `undefined` → heuristic fallback. */
-	reverseGateLabel?: string;
-	/** Custom badge color for the reverse gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
-	reverseGateColor?: string;
-	/** Whether the reverse gate has a script-based pre-check. */
-	reverseHasScript?: boolean;
-	/** Stable ID for selection -- typically the workflow-level channel array index as a string. */
-	id?: string;
-	/** Optional display label from WorkflowChannel.label */
-	label?: string;
-	sourceSide?: AnchorSide;
-	targetSide?: AnchorSide;
-	/** Runtime gate status for the forward direction (from→to). Only set in runtime/read-only view mode. */
-	runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
-	/** Forward gate ID — set when the channel has a gate with runtime status. */
-	gateId?: string;
-	/** Vote count for count-type gates: current number of matching votes and the required minimum. */
-	voteCount?: { current: number; min: number };
+  fromStepId: string;
+  toStepId: string;
+  /** Visual direction derived from channel topology: 'bidirectional' means arrows in both directions. */
+  direction: 'one-way' | 'bidirectional';
+  isCyclic?: boolean;
+  /**
+   * Gate condition type for the forward direction (from→to).
+   * For one-way channels this is the only gate.
+   * For bidirectional channels this is the gate on the fromStepId→toStepId direction.
+   */
+  gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+  /**
+   * Gate condition type for the reverse direction (to→from).
+   * Only set on bidirectional channels where the reverse direction has its own gate.
+   */
+  reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
+  /** Custom badge label for the forward gate. `undefined` → heuristic fallback. */
+  gateLabel?: string;
+  /** Custom badge color for the forward gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
+  gateColor?: string;
+  /** Whether the forward gate has a script-based pre-check. */
+  hasScript?: boolean;
+  /** Custom badge label for the reverse gate. `undefined` → heuristic fallback. */
+  reverseGateLabel?: string;
+  /** Custom badge color for the reverse gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
+  reverseGateColor?: string;
+  /** Whether the reverse gate has a script-based pre-check. */
+  reverseHasScript?: boolean;
+  /** Stable ID for selection -- typically the workflow-level channel array index as a string. */
+  id?: string;
+  /** Optional display label from WorkflowChannel.label */
+  label?: string;
+  sourceSide?: AnchorSide;
+  targetSide?: AnchorSide;
+  /** Runtime gate status for the forward direction (from→to). Only set in runtime/read-only view mode. */
+  runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
+  /** Forward gate ID — set when the channel has a gate with runtime status. */
+  gateId?: string;
+  /** Vote count for count-type gates: current number of matching votes and the required minimum. */
+  voteCount?: { current: number; min: number };
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -136,35 +136,35 @@ const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
 const CHANNEL_GATE_BADGE_COLORS: Record<
-	NonNullable<ResolvedWorkflowChannel['gateType']>,
-	string
+  NonNullable<ResolvedWorkflowChannel['gateType']>,
+  string
 > = {
-	human: EDGE_COLORS.human,
-	condition: EDGE_COLORS.condition,
-	task_result: EDGE_COLORS.task_result,
-	check: '#60a5fa',
-	count: '#ec4899',
+  human: EDGE_COLORS.human,
+  condition: EDGE_COLORS.condition,
+  task_result: EDGE_COLORS.task_result,
+  check: '#60a5fa',
+  count: '#ec4899',
 };
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface EdgeRendererProps {
-	transitions: VisualTransition[];
-	nodePositions: NodePosition;
-	selectedEdgeId?: string | null;
-	onEdgeSelect?: (transitionId: string) => void;
-	onEdgeDelete?: (transitionId: string) => void;
-	/** Channel edges to render between nodes (with resolved source/target node IDs). */
-	channels?: ResolvedWorkflowChannel[];
-	/** Selected channel ID -- highlights the matching channel edge. */
-	selectedChannelId?: string | null;
-	/** Called when the user clicks a channel edge. Receives the channel's `id` field. */
-	onChannelSelect?: (channelId: string) => void;
-	/** Called when the user clicks a gate runtime-status icon. Receives the gateId and mouse event for popup positioning. */
-	onGateClick?: (gateId: string, event: MouseEvent) => void;
-	/** When true, the Delete/Backspace keydown listener is not registered. */
-	readOnly?: boolean;
+  transitions: VisualTransition[];
+  nodePositions: NodePosition;
+  selectedEdgeId?: string | null;
+  onEdgeSelect?: (transitionId: string) => void;
+  onEdgeDelete?: (transitionId: string) => void;
+  /** Channel edges to render between nodes (with resolved source/target node IDs). */
+  channels?: ResolvedWorkflowChannel[];
+  /** Selected channel ID -- highlights the matching channel edge. */
+  selectedChannelId?: string | null;
+  /** Called when the user clicks a channel edge. Receives the channel's `id` field. */
+  onChannelSelect?: (channelId: string) => void;
+  /** Called when the user clicks a gate runtime-status icon. Receives the gateId and mouse event for popup positioning. */
+  onGateClick?: (gateId: string, event: MouseEvent) => void;
+  /** When true, the Delete/Backspace keydown listener is not registered. */
+  readOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,19 +172,19 @@ export interface EdgeRendererProps {
 // ---------------------------------------------------------------------------
 
 export interface EdgePoints {
-	sx: number;
-	sy: number;
-	tx: number;
-	ty: number;
-	cp1x: number;
-	cp1y: number;
-	cp2x: number;
-	cp2y: number;
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+  cp1x: number;
+  cp1y: number;
+  cp2x: number;
+  cp2y: number;
 }
 
 interface Point2D {
-	x: number;
-	y: number;
+  x: number;
+  y: number;
 }
 
 /**
@@ -192,33 +192,33 @@ interface Point2D {
  * Returns null when either node position is missing.
  */
 export function computeEdgePoints(
-	transition: VisualTransition,
-	nodePositions: NodePosition
+  transition: VisualTransition,
+  nodePositions: NodePosition
 ): EdgePoints | null {
-	const fromPos = nodePositions[transition.from];
-	const toPos = nodePositions[transition.to];
-	if (!fromPos || !toPos) return null;
+  const fromPos = nodePositions[transition.from];
+  const toPos = nodePositions[transition.to];
+  if (!fromPos || !toPos) return null;
 
-	// Source: bottom-center of from-node (output port center)
-	const sx = fromPos.x + fromPos.width / 2;
-	const sy = fromPos.y + fromPos.height;
+  // Source: bottom-center of from-node (output port center)
+  const sx = fromPos.x + fromPos.width / 2;
+  const sy = fromPos.y + fromPos.height;
 
-	// Target: top-center of to-node (input port center)
-	const tx = toPos.x + toPos.width / 2;
-	const ty = toPos.y;
+  // Target: top-center of to-node (input port center)
+  const tx = toPos.x + toPos.width / 2;
+  const ty = toPos.y;
 
-	// Bezier control points offset vertically
-	const cp1x = sx;
-	const cp1y = sy + CONTROL_OFFSET;
-	const cp2x = tx;
-	const cp2y = ty - CONTROL_OFFSET;
+  // Bezier control points offset vertically
+  const cp1x = sx;
+  const cp1y = sy + CONTROL_OFFSET;
+  const cp2x = tx;
+  const cp2y = ty - CONTROL_OFFSET;
 
-	return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
+  return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
 }
 
 /** Build the SVG path `d` attribute string from computed edge points. */
 export function buildPathD(pts: EdgePoints): string {
-	return `M ${pts.sx} ${pts.sy} C ${pts.cp1x} ${pts.cp1y}, ${pts.cp2x} ${pts.cp2y}, ${pts.tx} ${pts.ty}`;
+  return `M ${pts.sx} ${pts.sy} C ${pts.cp1x} ${pts.cp1y}, ${pts.cp2x} ${pts.cp2y}, ${pts.tx} ${pts.ty}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,123 +226,123 @@ export function buildPathD(pts: EdgePoints): string {
 // ---------------------------------------------------------------------------
 
 function getNodeAnchorPoint(
-	nodePos: NodePosition[string],
-	side: AnchorSide
+  nodePos: NodePosition[string],
+  side: AnchorSide
 ): Pick<EdgePoints, 'sx' | 'sy'> {
-	switch (side) {
-		case 'top':
-			return { sx: nodePos.x + nodePos.width / 2, sy: nodePos.y };
-		case 'bottom':
-			return { sx: nodePos.x + nodePos.width / 2, sy: nodePos.y + nodePos.height };
-		case 'left':
-			return { sx: nodePos.x, sy: nodePos.y + nodePos.height / 2 };
-		case 'right':
-			return { sx: nodePos.x + nodePos.width, sy: nodePos.y + nodePos.height / 2 };
-	}
+  switch (side) {
+    case 'top':
+      return { sx: nodePos.x + nodePos.width / 2, sy: nodePos.y };
+    case 'bottom':
+      return { sx: nodePos.x + nodePos.width / 2, sy: nodePos.y + nodePos.height };
+    case 'left':
+      return { sx: nodePos.x, sy: nodePos.y + nodePos.height / 2 };
+    case 'right':
+      return { sx: nodePos.x + nodePos.width, sy: nodePos.y + nodePos.height / 2 };
+  }
 }
 
 function buildChannelControlPoints(
-	sx: number,
-	sy: number,
-	tx: number,
-	ty: number,
-	sourceSide: AnchorSide,
-	targetSide: AnchorSide
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+  sourceSide: AnchorSide,
+  targetSide: AnchorSide
 ) {
-	const offset = Math.max(56, Math.min(120, Math.max(Math.abs(tx - sx), Math.abs(ty - sy)) * 0.35));
+  const offset = Math.max(56, Math.min(120, Math.max(Math.abs(tx - sx), Math.abs(ty - sy)) * 0.35));
 
-	const cp1x = sourceSide === 'left' ? sx - offset : sourceSide === 'right' ? sx + offset : sx;
-	const cp1y = sourceSide === 'top' ? sy - offset : sourceSide === 'bottom' ? sy + offset : sy;
+  const cp1x = sourceSide === 'left' ? sx - offset : sourceSide === 'right' ? sx + offset : sx;
+  const cp1y = sourceSide === 'top' ? sy - offset : sourceSide === 'bottom' ? sy + offset : sy;
 
-	const cp2x = targetSide === 'left' ? tx - offset : targetSide === 'right' ? tx + offset : tx;
-	const cp2y = targetSide === 'top' ? ty - offset : targetSide === 'bottom' ? ty + offset : ty;
+  const cp2x = targetSide === 'left' ? tx - offset : targetSide === 'right' ? tx + offset : tx;
+  const cp2y = targetSide === 'top' ? ty - offset : targetSide === 'bottom' ? ty + offset : ty;
 
-	return { cp1x, cp1y, cp2x, cp2y };
+  return { cp1x, cp1y, cp2x, cp2y };
 }
 
 function movePoint(point: Point2D, side: AnchorSide, distance: number): Point2D {
-	switch (side) {
-		case 'top':
-			return { x: point.x, y: point.y - distance };
-		case 'bottom':
-			return { x: point.x, y: point.y + distance };
-		case 'left':
-			return { x: point.x - distance, y: point.y };
-		case 'right':
-			return { x: point.x + distance, y: point.y };
-	}
+  switch (side) {
+    case 'top':
+      return { x: point.x, y: point.y - distance };
+    case 'bottom':
+      return { x: point.x, y: point.y + distance };
+    case 'left':
+      return { x: point.x - distance, y: point.y };
+    case 'right':
+      return { x: point.x + distance, y: point.y };
+  }
 }
 
 function pointsEqual(a: Point2D | undefined, b: Point2D | undefined): boolean {
-	return !!a && !!b && a.x === b.x && a.y === b.y;
+  return !!a && !!b && a.x === b.x && a.y === b.y;
 }
 
 function isCollinear(a: Point2D, b: Point2D, c: Point2D): boolean {
-	return (a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y);
+  return (a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y);
 }
 
 function normalizeOrthogonalPoints(points: Point2D[]): Point2D[] {
-	const normalized: Point2D[] = [];
+  const normalized: Point2D[] = [];
 
-	for (const point of points) {
-		const last = normalized[normalized.length - 1];
-		if (pointsEqual(last, point)) continue;
+  for (const point of points) {
+    const last = normalized[normalized.length - 1];
+    if (pointsEqual(last, point)) continue;
 
-		if (normalized.length >= 2) {
-			const prev = normalized[normalized.length - 2];
-			if (isCollinear(prev, last!, point)) {
-				normalized[normalized.length - 1] = point;
-				continue;
-			}
-		}
+    if (normalized.length >= 2) {
+      const prev = normalized[normalized.length - 2];
+      if (isCollinear(prev, last!, point)) {
+        normalized[normalized.length - 1] = point;
+        continue;
+      }
+    }
 
-		normalized.push(point);
-	}
+    normalized.push(point);
+  }
 
-	return normalized;
+  return normalized;
 }
 
 function trimOrthogonalEndpoint(a: Point2D, b: Point2D, distance: number): Point2D {
-	if (a.x === b.x) {
-		return {
-			x: a.x,
-			y: a.y + Math.sign(b.y - a.y) * Math.min(distance, Math.abs(b.y - a.y)),
-		};
-	}
+  if (a.x === b.x) {
+    return {
+      x: a.x,
+      y: a.y + Math.sign(b.y - a.y) * Math.min(distance, Math.abs(b.y - a.y)),
+    };
+  }
 
-	return {
-		x: a.x + Math.sign(b.x - a.x) * Math.min(distance, Math.abs(b.x - a.x)),
-		y: a.y,
-	};
+  return {
+    x: a.x + Math.sign(b.x - a.x) * Math.min(distance, Math.abs(b.x - a.x)),
+    y: a.y,
+  };
 }
 
 function trimOrthogonalPathPoints(
-	points: Point2D[],
-	trimStart: number,
-	trimEnd: number
+  points: Point2D[],
+  trimStart: number,
+  trimEnd: number
 ): Point2D[] {
-	const normalized = normalizeOrthogonalPoints(points);
-	if (normalized.length < 2) return normalized;
+  const normalized = normalizeOrthogonalPoints(points);
+  if (normalized.length < 2) return normalized;
 
-	const trimmed = [...normalized];
-	if (trimStart > 0) {
-		trimmed[0] = trimOrthogonalEndpoint(trimmed[0], trimmed[1], trimStart);
-	}
-	if (trimEnd > 0) {
-		const lastIndex = trimmed.length - 1;
-		trimmed[lastIndex] = trimOrthogonalEndpoint(
-			trimmed[lastIndex],
-			trimmed[lastIndex - 1],
-			trimEnd
-		);
-	}
+  const trimmed = [...normalized];
+  if (trimStart > 0) {
+    trimmed[0] = trimOrthogonalEndpoint(trimmed[0], trimmed[1], trimStart);
+  }
+  if (trimEnd > 0) {
+    const lastIndex = trimmed.length - 1;
+    trimmed[lastIndex] = trimOrthogonalEndpoint(
+      trimmed[lastIndex],
+      trimmed[lastIndex - 1],
+      trimEnd
+    );
+  }
 
-	return normalizeOrthogonalPoints(trimmed);
+  return normalizeOrthogonalPoints(trimmed);
 }
 
 export interface OrthogonalMidpointWithAngle extends Point2D {
-	/** Direction angle in degrees: 0 = right, 90 = down, 180 = left, 270 = up */
-	angle: number;
+  /** Direction angle in degrees: 0 = right, 90 = down, 180 = left, 270 = up */
+  angle: number;
 }
 
 /**
@@ -352,184 +352,184 @@ export interface OrthogonalMidpointWithAngle extends Point2D {
  * 0, 90, 180, or 270.
  */
 export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): OrthogonalMidpointWithAngle {
-	const normalized = normalizeOrthogonalPoints(points);
-	if (normalized.length === 0) return { x: 0, y: 0, angle: 0 };
-	if (normalized.length === 1) return { ...normalized[0], angle: 0 };
+  const normalized = normalizeOrthogonalPoints(points);
+  if (normalized.length === 0) return { x: 0, y: 0, angle: 0 };
+  if (normalized.length === 1) return { ...normalized[0], angle: 0 };
 
-	let totalLength = 0;
-	for (let index = 1; index < normalized.length; index += 1) {
-		totalLength +=
-			Math.abs(normalized[index].x - normalized[index - 1].x) +
-			Math.abs(normalized[index].y - normalized[index - 1].y);
-	}
+  let totalLength = 0;
+  for (let index = 1; index < normalized.length; index += 1) {
+    totalLength +=
+      Math.abs(normalized[index].x - normalized[index - 1].x) +
+      Math.abs(normalized[index].y - normalized[index - 1].y);
+  }
 
-	const midpointDistance = totalLength / 2;
-	let traversed = 0;
+  const midpointDistance = totalLength / 2;
+  let traversed = 0;
 
-	for (let index = 1; index < normalized.length; index += 1) {
-		const start = normalized[index - 1];
-		const end = normalized[index];
-		const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
-		if (traversed + segmentLength < midpointDistance) {
-			traversed += segmentLength;
-			continue;
-		}
+  for (let index = 1; index < normalized.length; index += 1) {
+    const start = normalized[index - 1];
+    const end = normalized[index];
+    const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+    if (traversed + segmentLength < midpointDistance) {
+      traversed += segmentLength;
+      continue;
+    }
 
-		const distanceIntoSegment = midpointDistance - traversed;
-		if (start.x === end.x) {
-			// Vertical segment
-			const angle = end.y > start.y ? 90 : 270;
-			return {
-				x: start.x,
-				y: start.y + Math.sign(end.y - start.y) * distanceIntoSegment,
-				angle,
-			};
-		}
+    const distanceIntoSegment = midpointDistance - traversed;
+    if (start.x === end.x) {
+      // Vertical segment
+      const angle = end.y > start.y ? 90 : 270;
+      return {
+        x: start.x,
+        y: start.y + Math.sign(end.y - start.y) * distanceIntoSegment,
+        angle,
+      };
+    }
 
-		// Horizontal segment
-		const angle = end.x > start.x ? 0 : 180;
-		return {
-			x: start.x + Math.sign(end.x - start.x) * distanceIntoSegment,
-			y: start.y,
-			angle,
-		};
-	}
+    // Horizontal segment
+    const angle = end.x > start.x ? 0 : 180;
+    return {
+      x: start.x + Math.sign(end.x - start.x) * distanceIntoSegment,
+      y: start.y,
+      angle,
+    };
+  }
 
-	return { ...normalized[normalized.length - 1], angle: 0 };
+  return { ...normalized[normalized.length - 1], angle: 0 };
 }
 
 /** Returns the midpoint of an orthogonal path. Delegates to `getOrthogonalPathMidpointWithAngle`. */
 function getOrthogonalPathMidpoint(points: Point2D[]): Point2D {
-	return getOrthogonalPathMidpointWithAngle(points);
+  return getOrthogonalPathMidpointWithAngle(points);
 }
 
 function roundedOrthogonalPath(points: Point2D[], cornerRadius = 14): string {
-	const normalized = normalizeOrthogonalPoints(points);
-	if (normalized.length === 0) return '';
-	if (normalized.length === 1) return `M ${normalized[0].x} ${normalized[0].y}`;
+  const normalized = normalizeOrthogonalPoints(points);
+  if (normalized.length === 0) return '';
+  if (normalized.length === 1) return `M ${normalized[0].x} ${normalized[0].y}`;
 
-	let d = `M ${normalized[0].x} ${normalized[0].y}`;
+  let d = `M ${normalized[0].x} ${normalized[0].y}`;
 
-	for (let index = 1; index < normalized.length - 1; index += 1) {
-		const prev = normalized[index - 1];
-		const current = normalized[index];
-		const next = normalized[index + 1];
+  for (let index = 1; index < normalized.length - 1; index += 1) {
+    const prev = normalized[index - 1];
+    const current = normalized[index];
+    const next = normalized[index + 1];
 
-		if (isCollinear(prev, current, next)) {
-			d += ` L ${current.x} ${current.y}`;
-			continue;
-		}
+    if (isCollinear(prev, current, next)) {
+      d += ` L ${current.x} ${current.y}`;
+      continue;
+    }
 
-		const radius = Math.min(
-			cornerRadius,
-			Math.abs(current.x - prev.x || current.y - prev.y) / 2,
-			Math.abs(next.x - current.x || next.y - current.y) / 2
-		);
+    const radius = Math.min(
+      cornerRadius,
+      Math.abs(current.x - prev.x || current.y - prev.y) / 2,
+      Math.abs(next.x - current.x || next.y - current.y) / 2
+    );
 
-		const entry: Point2D =
-			prev.x === current.x
-				? { x: current.x, y: current.y - Math.sign(current.y - prev.y) * radius }
-				: { x: current.x - Math.sign(current.x - prev.x) * radius, y: current.y };
+    const entry: Point2D =
+      prev.x === current.x
+        ? { x: current.x, y: current.y - Math.sign(current.y - prev.y) * radius }
+        : { x: current.x - Math.sign(current.x - prev.x) * radius, y: current.y };
 
-		const exit: Point2D =
-			next.x === current.x
-				? { x: current.x, y: current.y + Math.sign(next.y - current.y) * radius }
-				: { x: current.x + Math.sign(next.x - current.x) * radius, y: current.y };
+    const exit: Point2D =
+      next.x === current.x
+        ? { x: current.x, y: current.y + Math.sign(next.y - current.y) * radius }
+        : { x: current.x + Math.sign(next.x - current.x) * radius, y: current.y };
 
-		d += ` L ${entry.x} ${entry.y} Q ${current.x} ${current.y} ${exit.x} ${exit.y}`;
-	}
+    d += ` L ${entry.x} ${entry.y} Q ${current.x} ${current.y} ${exit.x} ${exit.y}`;
+  }
 
-	const last = normalized[normalized.length - 1];
-	d += ` L ${last.x} ${last.y}`;
-	return d;
+  const last = normalized[normalized.length - 1];
+  d += ` L ${last.x} ${last.y}`;
+  return d;
 }
 
 function buildChannelOrthogonalPoints(
-	channel: ResolvedWorkflowChannel,
-	pts: EdgePoints
+  channel: ResolvedWorkflowChannel,
+  pts: EdgePoints
 ): Point2D[] {
-	const sourceSide = channel.sourceSide ?? 'bottom';
-	const targetSide = channel.targetSide ?? 'top';
-	const start = { x: pts.sx, y: pts.sy };
-	const end = { x: pts.tx, y: pts.ty };
-	const startLead = movePoint(start, sourceSide, 28);
-	const endLead = movePoint(end, targetSide, 28);
+  const sourceSide = channel.sourceSide ?? 'bottom';
+  const targetSide = channel.targetSide ?? 'top';
+  const start = { x: pts.sx, y: pts.sy };
+  const end = { x: pts.tx, y: pts.ty };
+  const startLead = movePoint(start, sourceSide, 28);
+  const endLead = movePoint(end, targetSide, 28);
 
-	let midPoints: Point2D[] = [];
-	const sourceVertical = sourceSide === 'top' || sourceSide === 'bottom';
-	const targetVertical = targetSide === 'top' || targetSide === 'bottom';
+  let midPoints: Point2D[] = [];
+  const sourceVertical = sourceSide === 'top' || sourceSide === 'bottom';
+  const targetVertical = targetSide === 'top' || targetSide === 'bottom';
 
-	if (sourceVertical && targetVertical) {
-		const midY = (startLead.y + endLead.y) / 2;
-		midPoints = [
-			{ x: startLead.x, y: midY },
-			{ x: endLead.x, y: midY },
-		];
-	} else if (!sourceVertical && !targetVertical) {
-		const midX = (startLead.x + endLead.x) / 2;
-		midPoints = [
-			{ x: midX, y: startLead.y },
-			{ x: midX, y: endLead.y },
-		];
-	} else {
-		midPoints = [{ x: endLead.x, y: startLead.y }];
-	}
+  if (sourceVertical && targetVertical) {
+    const midY = (startLead.y + endLead.y) / 2;
+    midPoints = [
+      { x: startLead.x, y: midY },
+      { x: endLead.x, y: midY },
+    ];
+  } else if (!sourceVertical && !targetVertical) {
+    const midX = (startLead.x + endLead.x) / 2;
+    midPoints = [
+      { x: midX, y: startLead.y },
+      { x: midX, y: endLead.y },
+    ];
+  } else {
+    midPoints = [{ x: endLead.x, y: startLead.y }];
+  }
 
-	return [start, startLead, ...midPoints, endLead, end];
+  return [start, startLead, ...midPoints, endLead, end];
 }
 
 export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoints): string {
-	return roundedOrthogonalPath(buildChannelOrthogonalPoints(channel, pts));
+  return roundedOrthogonalPath(buildChannelOrthogonalPoints(channel, pts));
 }
 
 export function buildVisibleChannelPathD(
-	channel: ResolvedWorkflowChannel,
-	pts: EdgePoints
+  channel: ResolvedWorkflowChannel,
+  pts: EdgePoints
 ): string {
-	const trimmedPoints = trimOrthogonalPathPoints(
-		buildChannelOrthogonalPoints(channel, pts),
-		channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
-		CHANNEL_DOCK_RADIUS
-	);
+  const trimmedPoints = trimOrthogonalPathPoints(
+    buildChannelOrthogonalPoints(channel, pts),
+    channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
+    CHANNEL_DOCK_RADIUS
+  );
 
-	return roundedOrthogonalPath(trimmedPoints);
+  return roundedOrthogonalPath(trimmedPoints);
 }
 
 function getVisibleChannelPathPoints(channel: ResolvedWorkflowChannel, pts: EdgePoints): Point2D[] {
-	return trimOrthogonalPathPoints(
-		buildChannelOrthogonalPoints(channel, pts),
-		channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
-		CHANNEL_DOCK_RADIUS
-	);
+  return trimOrthogonalPathPoints(
+    buildChannelOrthogonalPoints(channel, pts),
+    channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
+    CHANNEL_DOCK_RADIUS
+  );
 }
 
 /** Compute the bezier path for a channel edge connecting node ports. */
 export function computeChannelEdgePoints(
-	channel: ResolvedWorkflowChannel,
-	nodePositions: NodePosition
+  channel: ResolvedWorkflowChannel,
+  nodePositions: NodePosition
 ): EdgePoints | null {
-	const fromPos = nodePositions[channel.fromStepId];
-	const toPos = nodePositions[channel.toStepId];
-	if (!fromPos || !toPos) return null;
+  const fromPos = nodePositions[channel.fromStepId];
+  const toPos = nodePositions[channel.toStepId];
+  if (!fromPos || !toPos) return null;
 
-	const sourceSide = channel.sourceSide ?? 'bottom';
-	const targetSide = channel.targetSide ?? 'top';
-	const sourcePoint = getNodeAnchorPoint(fromPos, sourceSide);
-	const targetPoint = getNodeAnchorPoint(toPos, targetSide);
-	const sx = sourcePoint.sx;
-	const sy = sourcePoint.sy;
-	const tx = targetPoint.sx;
-	const ty = targetPoint.sy;
-	const { cp1x, cp1y, cp2x, cp2y } = buildChannelControlPoints(
-		sx,
-		sy,
-		tx,
-		ty,
-		sourceSide,
-		targetSide
-	);
+  const sourceSide = channel.sourceSide ?? 'bottom';
+  const targetSide = channel.targetSide ?? 'top';
+  const sourcePoint = getNodeAnchorPoint(fromPos, sourceSide);
+  const targetPoint = getNodeAnchorPoint(toPos, targetSide);
+  const sx = sourcePoint.sx;
+  const sy = sourcePoint.sy;
+  const tx = targetPoint.sx;
+  const ty = targetPoint.sy;
+  const { cp1x, cp1y, cp2x, cp2y } = buildChannelControlPoints(
+    sx,
+    sy,
+    tx,
+    ty,
+    sourceSide,
+    targetSide
+  );
 
-	return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
+  return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
 }
 
 // ---------------------------------------------------------------------------
@@ -537,522 +537,522 @@ export function computeChannelEdgePoints(
 // ---------------------------------------------------------------------------
 
 export function EdgeRenderer({
-	transitions,
-	nodePositions,
-	selectedEdgeId,
-	onEdgeSelect,
-	onEdgeDelete,
-	channels = [],
-	selectedChannelId,
-	onChannelSelect,
-	onGateClick,
-	readOnly = false,
+  transitions,
+  nodePositions,
+  selectedEdgeId,
+  onEdgeSelect,
+  onEdgeDelete,
+  channels = [],
+  selectedChannelId,
+  onChannelSelect,
+  onGateClick,
+  readOnly = false,
 }: EdgeRendererProps) {
-	// Stable per-instance prefix to prevent marker ID collisions across instances
-	const markerPrefixRef = useRef<string | null>(null);
-	if (markerPrefixRef.current === null) {
-		markerPrefixRef.current = `edge-arrow-${_instanceCounter++}`;
-	}
-	const markerPrefix = markerPrefixRef.current;
+  // Stable per-instance prefix to prevent marker ID collisions across instances
+  const markerPrefixRef = useRef<string | null>(null);
+  if (markerPrefixRef.current === null) {
+    markerPrefixRef.current = `edge-arrow-${_instanceCounter++}`;
+  }
+  const markerPrefix = markerPrefixRef.current;
 
-	// Keep refs so the keyboard handler always sees the latest values
-	const selectedEdgeIdRef = useRef(selectedEdgeId);
-	selectedEdgeIdRef.current = selectedEdgeId;
+  // Keep refs so the keyboard handler always sees the latest values
+  const selectedEdgeIdRef = useRef(selectedEdgeId);
+  selectedEdgeIdRef.current = selectedEdgeId;
 
-	const onEdgeDeleteRef = useRef(onEdgeDelete);
-	onEdgeDeleteRef.current = onEdgeDelete;
+  const onEdgeDeleteRef = useRef(onEdgeDelete);
+  onEdgeDeleteRef.current = onEdgeDelete;
 
-	// ---- Keyboard: Delete / Backspace deletes the selected edge ----
-	// Skipped in readOnly mode — no destructive editing affordances.
-	useEffect(() => {
-		if (readOnly) return;
+  // ---- Keyboard: Delete / Backspace deletes the selected edge ----
+  // Skipped in readOnly mode — no destructive editing affordances.
+  useEffect(() => {
+    if (readOnly) return;
 
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-			const target = e.target as HTMLElement;
-			const tag = target?.tagName;
-			if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
 
-			const current = selectedEdgeIdRef.current;
-			if (!current || !onEdgeDeleteRef.current) return;
+      const current = selectedEdgeIdRef.current;
+      if (!current || !onEdgeDeleteRef.current) return;
 
-			e.preventDefault();
-			onEdgeDeleteRef.current(current);
-		};
+      e.preventDefault();
+      onEdgeDeleteRef.current(current);
+    };
 
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [readOnly]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [readOnly]);
 
-	return (
-		<>
-			{/* Arrowhead marker definitions -- one per condition type + one for selected state.
+  return (
+    <>
+      {/* Arrowhead marker definitions -- one per condition type + one for selected state.
 			    IDs are prefixed with instanceId to prevent collisions between multiple instances. */}
-			<defs>
-				{(Object.entries(EDGE_COLORS) as [WorkflowConditionType, string][]).map(([type, color]) => (
-					<marker
-						key={`${markerPrefix}-${type}`}
-						id={`${markerPrefix}-${type}`}
-						viewBox="0 0 10 10"
-						refX="10"
-						refY="5"
-						markerWidth="6"
-						markerHeight="6"
-						orient="auto-start-reverse"
-					>
-						<path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
-					</marker>
-				))}
-				<marker
-					id={`${markerPrefix}-selected`}
-					viewBox="0 0 10 10"
-					refX="10"
-					refY="5"
-					markerWidth="6"
-					markerHeight="6"
-					orient="auto-start-reverse"
-				>
-					<path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
-				</marker>
-				{/* Channel edge arrowhead markers -- rendered when channels are present */}
-				{channels.length > 0 && (
-					<>
-						<marker
-							id={`${markerPrefix}-channel-end`}
-							viewBox="0 0 10 10"
-							refX="10"
-							refY="5"
-							markerWidth={CHANNEL_MARKER_SIZE}
-							markerHeight={CHANNEL_MARKER_SIZE}
-							orient="auto-start-reverse"
-						>
-							<path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
-						</marker>
-						{/* White markers for selected channel state */}
-						<marker
-							id={`${markerPrefix}-channel-selected`}
-							viewBox="0 0 10 10"
-							refX="10"
-							refY="5"
-							markerWidth={CHANNEL_MARKER_SIZE}
-							markerHeight={CHANNEL_MARKER_SIZE}
-							orient="auto-start-reverse"
-						>
-							<path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
-						</marker>
-					</>
-				)}
-			</defs>
+      <defs>
+        {(Object.entries(EDGE_COLORS) as [WorkflowConditionType, string][]).map(([type, color]) => (
+          <marker
+            key={`${markerPrefix}-${type}`}
+            id={`${markerPrefix}-${type}`}
+            viewBox="0 0 10 10"
+            refX="10"
+            refY="5"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
+          </marker>
+        ))}
+        <marker
+          id={`${markerPrefix}-selected`}
+          viewBox="0 0 10 10"
+          refX="10"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
+        </marker>
+        {/* Channel edge arrowhead markers -- rendered when channels are present */}
+        {channels.length > 0 && (
+          <>
+            <marker
+              id={`${markerPrefix}-channel-end`}
+              viewBox="0 0 10 10"
+              refX="10"
+              refY="5"
+              markerWidth={CHANNEL_MARKER_SIZE}
+              markerHeight={CHANNEL_MARKER_SIZE}
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
+            </marker>
+            {/* White markers for selected channel state */}
+            <marker
+              id={`${markerPrefix}-channel-selected`}
+              viewBox="0 0 10 10"
+              refX="10"
+              refY="5"
+              markerWidth={CHANNEL_MARKER_SIZE}
+              markerHeight={CHANNEL_MARKER_SIZE}
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
+            </marker>
+          </>
+        )}
+      </defs>
 
-			{transitions.map((transition) => {
-				const pts = computeEdgePoints(transition, nodePositions);
-				if (!pts) return null;
+      {transitions.map((transition) => {
+        const pts = computeEdgePoints(transition, nodePositions);
+        if (!pts) return null;
 
-				const d = buildPathD(pts);
-				const conditionType: WorkflowConditionType = transition.condition?.type ?? 'always';
-				const color = EDGE_COLORS[conditionType];
-				const isSelected = transition.id === selectedEdgeId;
-				const strokeColor = isSelected ? 'white' : color;
-				const strokeWidth = isSelected ? SELECTED_STROKE_WIDTH : NORMAL_STROKE_WIDTH;
-				const markerId = isSelected
-					? `${markerPrefix}-selected`
-					: `${markerPrefix}-${conditionType}`;
+        const d = buildPathD(pts);
+        const conditionType: WorkflowConditionType = transition.condition?.type ?? 'always';
+        const color = EDGE_COLORS[conditionType];
+        const isSelected = transition.id === selectedEdgeId;
+        const strokeColor = isSelected ? 'white' : color;
+        const strokeWidth = isSelected ? SELECTED_STROKE_WIDTH : NORMAL_STROKE_WIDTH;
+        const markerId = isSelected
+          ? `${markerPrefix}-selected`
+          : `${markerPrefix}-${conditionType}`;
 
-				return (
-					<g
-						key={transition.id}
-						data-testid={`edge-${transition.id}`}
-						data-edge-id={transition.id}
-						data-selected={isSelected ? 'true' : 'false'}
-						data-condition-type={conditionType}
-						style={{ pointerEvents: 'auto' }}
-					>
-						{/* Invisible wider hitbox for easier click selection */}
-						<path
-							d={d}
-							stroke="transparent"
-							strokeWidth={HITBOX_STROKE_WIDTH}
-							fill="none"
-							style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
-							onClick={(e: MouseEvent) => {
-								e.stopPropagation();
-								onEdgeSelect?.(transition.id);
-							}}
-						/>
-						{/* Visible edge path */}
-						<path
-							d={d}
-							stroke={strokeColor}
-							strokeWidth={strokeWidth}
-							strokeOpacity={isSelected ? 1 : 0.85}
-							fill="none"
-							markerEnd={`url(#${markerId})`}
-							data-stroke-color={strokeColor}
-							data-stroke-width={String(strokeWidth)}
-							style={{ pointerEvents: 'none' }}
-						/>
-					</g>
-				);
-			})}
+        return (
+          <g
+            key={transition.id}
+            data-testid={`edge-${transition.id}`}
+            data-edge-id={transition.id}
+            data-selected={isSelected ? 'true' : 'false'}
+            data-condition-type={conditionType}
+            style={{ pointerEvents: 'auto' }}
+          >
+            {/* Invisible wider hitbox for easier click selection */}
+            <path
+              d={d}
+              stroke="transparent"
+              strokeWidth={HITBOX_STROKE_WIDTH}
+              fill="none"
+              style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
+              onClick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onEdgeSelect?.(transition.id);
+              }}
+            />
+            {/* Visible edge path */}
+            <path
+              d={d}
+              stroke={strokeColor}
+              strokeWidth={strokeWidth}
+              strokeOpacity={isSelected ? 1 : 0.85}
+              fill="none"
+              markerEnd={`url(#${markerId})`}
+              data-stroke-color={strokeColor}
+              data-stroke-width={String(strokeWidth)}
+              style={{ pointerEvents: 'none' }}
+            />
+          </g>
+        );
+      })}
 
-			{/* Channel edges -- teal edges connecting semantic node relationships.
+      {/* Channel edges -- teal edges connecting semantic node relationships.
 			    One-way channels render dashed. Bidirectional channels render solid.
 			    Gates are shown as midpoint badges instead of changing the line style. */}
-			{channels.map((channel, idx) => {
-				const pts = computeChannelEdgePoints(channel, nodePositions);
-				if (!pts) return null;
+      {channels.map((channel, idx) => {
+        const pts = computeChannelEdgePoints(channel, nodePositions);
+        if (!pts) return null;
 
-				const d = buildChannelPathD(channel, pts);
-				const visiblePoints = getVisibleChannelPathPoints(channel, pts);
-				const visibleD = roundedOrthogonalPath(visiblePoints);
-				const isBidirectional = channel.direction === 'bidirectional';
-				// A channel is gated if either the forward or reverse direction has a gate.
-				const isGated = !!(channel.gateType || channel.reverseGateType);
-				const isCyclic = !!channel.isCyclic;
-				const isSelected = channel.id != null && channel.id === selectedChannelId;
-				// A bidirectional gate badge has arrows on both sides when both directions
-				// are gated. When only one direction is gated on a bidirectional channel the
-				// badge shows a single directional arrow (just like a one-way channel).
-				const hasBothDirectionGates =
-					isBidirectional && !!channel.gateType && !!channel.reverseGateType;
+        const d = buildChannelPathD(channel, pts);
+        const visiblePoints = getVisibleChannelPathPoints(channel, pts);
+        const visibleD = roundedOrthogonalPath(visiblePoints);
+        const isBidirectional = channel.direction === 'bidirectional';
+        // A channel is gated if either the forward or reverse direction has a gate.
+        const isGated = !!(channel.gateType || channel.reverseGateType);
+        const isCyclic = !!channel.isCyclic;
+        const isSelected = channel.id != null && channel.id === selectedChannelId;
+        // A bidirectional gate badge has arrows on both sides when both directions
+        // are gated. When only one direction is gated on a bidirectional channel the
+        // badge shows a single directional arrow (just like a one-way channel).
+        const hasBothDirectionGates =
+          isBidirectional && !!channel.gateType && !!channel.reverseGateType;
 
-				const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
-				const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
-				const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
-				const strokeOpacity = isSelected ? 1 : 0.85;
-				// Always compute midpoint + angle — needed for all badge variants.
-				const gateBadgeMidpoint = isGated
-					? getOrthogonalPathMidpointWithAngle(visiblePoints)
-					: null;
-				const gateBadgePosition = gateBadgeMidpoint;
-				const loopBadgePosition = isCyclic
-					? {
-							x: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).x,
-							y:
-								(gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y +
-								(isGated ? 26 : 0),
-						}
-					: null;
-				// Determine which gate type to use for the color/label.
-				// For one-way or single-direction bidirectional: use whichever is set.
-				// For both-direction bidirectional: use forward gate type (gateType).
-				const effectiveGateType = channel.gateType ?? channel.reverseGateType ?? undefined;
-				// When only the reverse direction is gated on a bidirectional channel,
-				// use the reverse direction's custom fields.
-				const effectiveGateLabel = channel.gateType ? channel.gateLabel : channel.reverseGateLabel;
-				const effectiveGateColor = channel.gateType ? channel.gateColor : channel.reverseGateColor;
-				// Prefer custom gate color, fall back to type-based color.
-				const gateColor =
-					effectiveGateColor ??
-					(effectiveGateType ? CHANNEL_GATE_BADGE_COLORS[effectiveGateType] : CHANNEL_EDGE_COLOR);
-				// gate.label is the authoritative badge text — no heuristic fallback.
-				const gateLabel = effectiveGateLabel ?? 'Gate';
-				// Whether to show a script icon next to the badge.
-				// For bidirectional channels, use the forward direction's hasScript when available.
-				const effectiveHasScript = channel.gateType
-					? !!channel.hasScript
-					: !!channel.reverseHasScript;
-				// Arrow count determines badge width:
-				//   0 arrows (no gate):              base label width
-				//   1 arrow (one-way / single-dir):  label + ARROW_TOTAL
-				//   2 arrows (both-direction gate):  label + 2 * ARROW_TOTAL
-				const arrowCount = hasBothDirectionGates ? 2 : isGated ? 1 : 0;
-				const scriptIconExtra = effectiveHasScript
-					? CHANNEL_GATE_SCRIPT_ICON_WIDTH + CHANNEL_GATE_SCRIPT_ICON_GAP
-					: 0;
-				const gateBadgeWidth =
-					gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
-					scriptIconExtra +
-					CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
-					(arrowCount > 0
-						? arrowCount * CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
-						: 0);
+        const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
+        const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
+        const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
+        const strokeOpacity = isSelected ? 1 : 0.85;
+        // Always compute midpoint + angle — needed for all badge variants.
+        const gateBadgeMidpoint = isGated
+          ? getOrthogonalPathMidpointWithAngle(visiblePoints)
+          : null;
+        const gateBadgePosition = gateBadgeMidpoint;
+        const loopBadgePosition = isCyclic
+          ? {
+              x: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).x,
+              y:
+                (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y +
+                (isGated ? 26 : 0),
+            }
+          : null;
+        // Determine which gate type to use for the color/label.
+        // For one-way or single-direction bidirectional: use whichever is set.
+        // For both-direction bidirectional: use forward gate type (gateType).
+        const effectiveGateType = channel.gateType ?? channel.reverseGateType ?? undefined;
+        // When only the reverse direction is gated on a bidirectional channel,
+        // use the reverse direction's custom fields.
+        const effectiveGateLabel = channel.gateType ? channel.gateLabel : channel.reverseGateLabel;
+        const effectiveGateColor = channel.gateType ? channel.gateColor : channel.reverseGateColor;
+        // Prefer custom gate color, fall back to type-based color.
+        const gateColor =
+          effectiveGateColor ??
+          (effectiveGateType ? CHANNEL_GATE_BADGE_COLORS[effectiveGateType] : CHANNEL_EDGE_COLOR);
+        // gate.label is the authoritative badge text — no heuristic fallback.
+        const gateLabel = effectiveGateLabel ?? 'Gate';
+        // Whether to show a script icon next to the badge.
+        // For bidirectional channels, use the forward direction's hasScript when available.
+        const effectiveHasScript = channel.gateType
+          ? !!channel.hasScript
+          : !!channel.reverseHasScript;
+        // Arrow count determines badge width:
+        //   0 arrows (no gate):              base label width
+        //   1 arrow (one-way / single-dir):  label + ARROW_TOTAL
+        //   2 arrows (both-direction gate):  label + 2 * ARROW_TOTAL
+        const arrowCount = hasBothDirectionGates ? 2 : isGated ? 1 : 0;
+        const scriptIconExtra = effectiveHasScript
+          ? CHANNEL_GATE_SCRIPT_ICON_WIDTH + CHANNEL_GATE_SCRIPT_ICON_GAP
+          : 0;
+        const gateBadgeWidth =
+          gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
+          scriptIconExtra +
+          CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
+          (arrowCount > 0
+            ? arrowCount * CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
+            : 0);
 
-				// Pre-compute layout values used in badge JSX.
-				const labelPixelWidth = gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH;
-				// For single-arrow badges: text shifts right by ARROW_TOTAL/2; arrow is to its left.
-				const singleArrowTextX = CHANNEL_GATE_ARROW_TOTAL / 2;
-				const singleArrowX = -(labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP / 2);
-				// For dual-arrow badges: text is centered; arrows flank the label.
-				const dualArrowOffsetX =
-					labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP + CHANNEL_GATE_ARROW_WIDTH / 2;
-				// Forward arrow points toward toStepId (path direction = gateBadgeMidpoint.angle).
-				// Reverse arrow points toward fromStepId = (angle + 180) % 360.
-				const forwardAngle = gateBadgeMidpoint?.angle ?? 0;
-				const reverseAngle = (forwardAngle + 180) % 360;
-				// For single-arrow on a bidirectional channel where only the reverse direction is
-				// gated, the arrow points toward fromStepId (reverseAngle).
-				const singleArrowAngle =
-					isBidirectional && !channel.gateType && !!channel.reverseGateType
-						? reverseAngle
-						: forwardAngle;
-				const loopBadgeWidth =
-					'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
+        // Pre-compute layout values used in badge JSX.
+        const labelPixelWidth = gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH;
+        // For single-arrow badges: text shifts right by ARROW_TOTAL/2; arrow is to its left.
+        const singleArrowTextX = CHANNEL_GATE_ARROW_TOTAL / 2;
+        const singleArrowX = -(labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP / 2);
+        // For dual-arrow badges: text is centered; arrows flank the label.
+        const dualArrowOffsetX =
+          labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP + CHANNEL_GATE_ARROW_WIDTH / 2;
+        // Forward arrow points toward toStepId (path direction = gateBadgeMidpoint.angle).
+        // Reverse arrow points toward fromStepId = (angle + 180) % 360.
+        const forwardAngle = gateBadgeMidpoint?.angle ?? 0;
+        const reverseAngle = (forwardAngle + 180) % 360;
+        // For single-arrow on a bidirectional channel where only the reverse direction is
+        // gated, the arrow points toward fromStepId (reverseAngle).
+        const singleArrowAngle =
+          isBidirectional && !channel.gateType && !!channel.reverseGateType
+            ? reverseAngle
+            : forwardAngle;
+        const loopBadgeWidth =
+          'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
-				// Use the same marker geometry on both ends. `auto-start-reverse`
-				// handles the start-end orientation flip for markerStart.
-				const markerEndId = isSelected
-					? `${markerPrefix}-channel-selected`
-					: `${markerPrefix}-channel-end`;
+        // Use the same marker geometry on both ends. `auto-start-reverse`
+        // handles the start-end orientation flip for markerStart.
+        const markerEndId = isSelected
+          ? `${markerPrefix}-channel-selected`
+          : `${markerPrefix}-channel-end`;
 
-				const channelKey = channel.id ?? `${channel.fromStepId}-${channel.toStepId}-${idx}`;
-				const channelRenderKey = `${channelKey}-${isSelected ? 'selected' : 'idle'}`;
+        const channelKey = channel.id ?? `${channel.fromStepId}-${channel.toStepId}-${idx}`;
+        const channelRenderKey = `${channelKey}-${isSelected ? 'selected' : 'idle'}`;
 
-				return (
-					<g
-						key={channelRenderKey}
-						data-testid={`channel-edge-${channel.fromStepId}-${channel.toStepId}`}
-						data-channel-edge="true"
-						data-channel-direction={channel.direction}
-						data-channel-id={channel.id}
-						data-channel-gated={isGated ? 'true' : undefined}
-						data-channel-cyclic={isCyclic ? 'true' : undefined}
-						data-selected={isSelected ? 'true' : 'false'}
-						style={{ pointerEvents: 'auto' }}
-					>
-						{/* Invisible wider hitbox for easier click selection */}
-						<path
-							d={d}
-							stroke="transparent"
-							strokeWidth={HITBOX_STROKE_WIDTH}
-							fill="none"
-							style={{
-								cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
-								pointerEvents: 'stroke',
-							}}
-							onClick={
-								onChannelSelect && channel.id != null
-									? (e: MouseEvent) => {
-											e.stopPropagation();
-											onChannelSelect(channel.id!);
-										}
-									: undefined
-							}
-						/>
-						{/* Visible channel edge path */}
-						<path
-							d={visibleD}
-							stroke={strokeColor}
-							strokeWidth={strokeWidth}
-							strokeDasharray={strokeDasharray}
-							strokeOpacity={strokeOpacity}
-							fill="none"
-							markerEnd={`url(#${markerEndId})`}
-							markerStart={isBidirectional ? `url(#${markerEndId})` : undefined}
-							data-stroke-color={strokeColor}
-							data-stroke-width={String(strokeWidth)}
-							data-channel-gated={isGated ? 'true' : undefined}
-							style={{ pointerEvents: 'none' }}
-						/>
-						{gateBadgePosition && (
-							<g
-								transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
-								data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
-								data-gate-angle={isGated ? String(forwardAngle) : undefined}
-								style={{
-									pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
-									cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
-								}}
-								onClick={
-									onChannelSelect && channel.id != null
-										? (e: MouseEvent) => {
-												e.stopPropagation();
-												onChannelSelect(channel.id!);
-											}
-										: undefined
-								}
-							>
-								<rect
-									x={-gateBadgeWidth / 2}
-									y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
-									width={gateBadgeWidth}
-									height={CHANNEL_GATE_BADGE_HEIGHT}
-									rx="10"
-									fill={CHANNEL_GATE_BADGE_BG}
-									stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
-									strokeWidth="1"
-								/>
-								{arrowCount === 1 && (
-									// Single arrow: one-way channel, or bidirectional channel where
-									// only one direction is gated.
-									// Layout: [arrow(8px) | gap(4px) | text] centered as a unit at x=0.
-									//
-									// SVG applies transforms right-to-left to points:
-									//   rotate(angle)  — pivots the right-pointing triangle around (0,0)
-									//   translate(tx)  — shifts the rotated arrow to singleArrowX
-									// This order is deliberate: rotating around origin first ensures the
-									// arrow stays centred at singleArrowX for all four cardinal angles.
-									<polygon
-										points="-4,-5 4,0 -4,5"
-										fill={isSelected ? 'white' : gateColor}
-										transform={`translate(${singleArrowX}, 0) rotate(${singleArrowAngle})`}
-										data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
-									/>
-								)}
-								{arrowCount === 2 && (
-									// Dual arrows: bidirectional channel where both directions are gated.
-									// Layout: [←(8px) | gap(4px) | text | gap(4px) | →(8px)] centered at x=0.
-									// Left arrow = reverse direction (toStepId → fromStepId).
-									// Right arrow = forward direction (fromStepId → toStepId).
-									<>
-										<polygon
-											points="-4,-5 4,0 -4,5"
-											fill={isSelected ? 'white' : gateColor}
-											transform={`translate(${-dualArrowOffsetX}, 0) rotate(${reverseAngle})`}
-											data-testid={`channel-gate-reverse-arrow-${channel.fromStepId}-${channel.toStepId}`}
-										/>
-										<polygon
-											points="-4,-5 4,0 -4,5"
-											fill={isSelected ? 'white' : gateColor}
-											transform={`translate(${dualArrowOffsetX}, 0) rotate(${forwardAngle})`}
-											data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
-										/>
-									</>
-								)}
-								<text
-									x={
-										arrowCount === 1 ? singleArrowTextX + scriptIconExtra / 2 : scriptIconExtra / 2
-									}
-									y="4"
-									textAnchor="middle"
-									fontSize="11"
-									fontWeight="600"
-									letterSpacing="0.06em"
-									fill={isSelected ? 'white' : gateColor}
-								>
-									{gateLabel}
-								</text>
-								{effectiveHasScript && (
-									<text
-										x={
-											arrowCount === 1
-												? singleArrowTextX - labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
-												: -labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
-										}
-										y="3"
-										textAnchor="middle"
-										fontSize="9"
-										fill={isSelected ? 'white' : gateColor}
-										opacity={0.7}
-									>
-										{'\u26A1'}
-									</text>
-								)}
-							</g>
-						)}
-						{loopBadgePosition && (
-							<g
-								transform={`translate(${loopBadgePosition.x}, ${loopBadgePosition.y})`}
-								data-testid={`channel-loop-${channel.fromStepId}-${channel.toStepId}`}
-								style={{
-									pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
-									cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
-								}}
-								onClick={
-									onChannelSelect && channel.id != null
-										? (e: MouseEvent) => {
-												e.stopPropagation();
-												onChannelSelect(channel.id!);
-											}
-										: undefined
-								}
-							>
-								<rect
-									x={-loopBadgeWidth / 2}
-									y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
-									width={loopBadgeWidth}
-									height={CHANNEL_GATE_BADGE_HEIGHT}
-									rx="10"
-									fill={CHANNEL_GATE_BADGE_BG}
-									stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
-									strokeWidth="1"
-								/>
-								<text
-									x="0"
-									y="4"
-									textAnchor="middle"
-									fontSize="11"
-									fontWeight="600"
-									letterSpacing="0.06em"
-									fill={isSelected ? 'white' : CHANNEL_LOOP_BADGE_COLOR}
-								>
-									Loop
-								</text>
-							</g>
-						)}
-						{/* Runtime gate status icon — clickable when waiting_human */}
-						{channel.runtimeStatus && gateBadgePosition && (
-							<g
-								data-testid={`gate-icon-${channel.runtimeStatus}`}
-								data-gate-id={channel.gateId ?? ''}
-								style={{
-									pointerEvents:
-										channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
-											? 'auto'
-											: 'none',
-									cursor:
-										channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
-											? 'pointer'
-											: 'default',
-								}}
-								onClick={
-									channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
-										? (e: MouseEvent) => {
-												e.stopPropagation();
-												onGateClick(channel.gateId!, e);
-											}
-										: undefined
-								}
-							>
-								<circle
-									cx={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
-									cy={gateBadgePosition.y}
-									r={channel.runtimeStatus === 'waiting_human' ? 7 : 5}
-									fill={
-										channel.runtimeStatus === 'open'
-											? '#16a34a'
-											: channel.runtimeStatus === 'waiting_human'
-												? '#f59e0b'
-												: '#ef4444'
-									}
-									data-testid={`channel-runtime-status-${channel.id ?? ''}`}
-								>
-									{channel.runtimeStatus === 'waiting_human' && (
-										<animate
-											attributeName="opacity"
-											values="1;0.4;1"
-											dur="1.5s"
-											repeatCount="indefinite"
-										/>
-									)}
-								</circle>
-								{/* Blocked icon: small X */}
-								{channel.runtimeStatus === 'blocked' && (
-									<g
-										transform={`translate(${gateBadgePosition.x + gateBadgeWidth / 2 + 10}, ${gateBadgePosition.y})`}
-									>
-										<line x1="-2.5" y1="-2.5" x2="2.5" y2="2.5" stroke="white" stroke-width="1.5" />
-										<line x1="2.5" y1="-2.5" x2="-2.5" y2="2.5" stroke="white" stroke-width="1.5" />
-									</g>
-								)}
-								{/* Vote count label for count-type gates (e.g. "2/3") */}
-								{channel.voteCount && (
-									<text
-										data-testid="gate-vote-count"
-										x={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
-										y={gateBadgePosition.y + 16}
-										textAnchor="middle"
-										fontSize="9"
-										fill="#9ca3af"
-									>
-										{channel.voteCount.current}/{channel.voteCount.min}
-									</text>
-								)}
-							</g>
-						)}
-					</g>
-				);
-			})}
-		</>
-	);
+        return (
+          <g
+            key={channelRenderKey}
+            data-testid={`channel-edge-${channel.fromStepId}-${channel.toStepId}`}
+            data-channel-edge="true"
+            data-channel-direction={channel.direction}
+            data-channel-id={channel.id}
+            data-channel-gated={isGated ? 'true' : undefined}
+            data-channel-cyclic={isCyclic ? 'true' : undefined}
+            data-selected={isSelected ? 'true' : 'false'}
+            style={{ pointerEvents: 'auto' }}
+          >
+            {/* Invisible wider hitbox for easier click selection */}
+            <path
+              d={d}
+              stroke="transparent"
+              strokeWidth={HITBOX_STROKE_WIDTH}
+              fill="none"
+              style={{
+                cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
+                pointerEvents: 'stroke',
+              }}
+              onClick={
+                onChannelSelect && channel.id != null
+                  ? (e: MouseEvent) => {
+                      e.stopPropagation();
+                      onChannelSelect(channel.id!);
+                    }
+                  : undefined
+              }
+            />
+            {/* Visible channel edge path */}
+            <path
+              d={visibleD}
+              stroke={strokeColor}
+              strokeWidth={strokeWidth}
+              strokeDasharray={strokeDasharray}
+              strokeOpacity={strokeOpacity}
+              fill="none"
+              markerEnd={`url(#${markerEndId})`}
+              markerStart={isBidirectional ? `url(#${markerEndId})` : undefined}
+              data-stroke-color={strokeColor}
+              data-stroke-width={String(strokeWidth)}
+              data-channel-gated={isGated ? 'true' : undefined}
+              style={{ pointerEvents: 'none' }}
+            />
+            {gateBadgePosition && (
+              <g
+                transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
+                data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
+                data-gate-angle={isGated ? String(forwardAngle) : undefined}
+                style={{
+                  pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
+                  cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
+                }}
+                onClick={
+                  onChannelSelect && channel.id != null
+                    ? (e: MouseEvent) => {
+                        e.stopPropagation();
+                        onChannelSelect(channel.id!);
+                      }
+                    : undefined
+                }
+              >
+                <rect
+                  x={-gateBadgeWidth / 2}
+                  y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
+                  width={gateBadgeWidth}
+                  height={CHANNEL_GATE_BADGE_HEIGHT}
+                  rx="10"
+                  fill={CHANNEL_GATE_BADGE_BG}
+                  stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
+                  strokeWidth="1"
+                />
+                {arrowCount === 1 && (
+                  // Single arrow: one-way channel, or bidirectional channel where
+                  // only one direction is gated.
+                  // Layout: [arrow(8px) | gap(4px) | text] centered as a unit at x=0.
+                  //
+                  // SVG applies transforms right-to-left to points:
+                  //   rotate(angle)  — pivots the right-pointing triangle around (0,0)
+                  //   translate(tx)  — shifts the rotated arrow to singleArrowX
+                  // This order is deliberate: rotating around origin first ensures the
+                  // arrow stays centred at singleArrowX for all four cardinal angles.
+                  <polygon
+                    points="-4,-5 4,0 -4,5"
+                    fill={isSelected ? 'white' : gateColor}
+                    transform={`translate(${singleArrowX}, 0) rotate(${singleArrowAngle})`}
+                    data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
+                  />
+                )}
+                {arrowCount === 2 && (
+                  // Dual arrows: bidirectional channel where both directions are gated.
+                  // Layout: [←(8px) | gap(4px) | text | gap(4px) | →(8px)] centered at x=0.
+                  // Left arrow = reverse direction (toStepId → fromStepId).
+                  // Right arrow = forward direction (fromStepId → toStepId).
+                  <>
+                    <polygon
+                      points="-4,-5 4,0 -4,5"
+                      fill={isSelected ? 'white' : gateColor}
+                      transform={`translate(${-dualArrowOffsetX}, 0) rotate(${reverseAngle})`}
+                      data-testid={`channel-gate-reverse-arrow-${channel.fromStepId}-${channel.toStepId}`}
+                    />
+                    <polygon
+                      points="-4,-5 4,0 -4,5"
+                      fill={isSelected ? 'white' : gateColor}
+                      transform={`translate(${dualArrowOffsetX}, 0) rotate(${forwardAngle})`}
+                      data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
+                    />
+                  </>
+                )}
+                <text
+                  x={
+                    arrowCount === 1 ? singleArrowTextX + scriptIconExtra / 2 : scriptIconExtra / 2
+                  }
+                  y="4"
+                  textAnchor="middle"
+                  fontSize="11"
+                  fontWeight="600"
+                  letterSpacing="0.06em"
+                  fill={isSelected ? 'white' : gateColor}
+                >
+                  {gateLabel}
+                </text>
+                {effectiveHasScript && (
+                  <text
+                    x={
+                      arrowCount === 1
+                        ? singleArrowTextX - labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
+                        : -labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
+                    }
+                    y="3"
+                    textAnchor="middle"
+                    fontSize="9"
+                    fill={isSelected ? 'white' : gateColor}
+                    opacity={0.7}
+                  >
+                    {'\u26A1'}
+                  </text>
+                )}
+              </g>
+            )}
+            {loopBadgePosition && (
+              <g
+                transform={`translate(${loopBadgePosition.x}, ${loopBadgePosition.y})`}
+                data-testid={`channel-loop-${channel.fromStepId}-${channel.toStepId}`}
+                style={{
+                  pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
+                  cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
+                }}
+                onClick={
+                  onChannelSelect && channel.id != null
+                    ? (e: MouseEvent) => {
+                        e.stopPropagation();
+                        onChannelSelect(channel.id!);
+                      }
+                    : undefined
+                }
+              >
+                <rect
+                  x={-loopBadgeWidth / 2}
+                  y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
+                  width={loopBadgeWidth}
+                  height={CHANNEL_GATE_BADGE_HEIGHT}
+                  rx="10"
+                  fill={CHANNEL_GATE_BADGE_BG}
+                  stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
+                  strokeWidth="1"
+                />
+                <text
+                  x="0"
+                  y="4"
+                  textAnchor="middle"
+                  fontSize="11"
+                  fontWeight="600"
+                  letterSpacing="0.06em"
+                  fill={isSelected ? 'white' : CHANNEL_LOOP_BADGE_COLOR}
+                >
+                  Loop
+                </text>
+              </g>
+            )}
+            {/* Runtime gate status icon — clickable when waiting_human */}
+            {channel.runtimeStatus && gateBadgePosition && (
+              <g
+                data-testid={`gate-icon-${channel.runtimeStatus}`}
+                data-gate-id={channel.gateId ?? ''}
+                style={{
+                  pointerEvents:
+                    channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
+                      ? 'auto'
+                      : 'none',
+                  cursor:
+                    channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
+                      ? 'pointer'
+                      : 'default',
+                }}
+                onClick={
+                  channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
+                    ? (e: MouseEvent) => {
+                        e.stopPropagation();
+                        onGateClick(channel.gateId!, e);
+                      }
+                    : undefined
+                }
+              >
+                <circle
+                  cx={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
+                  cy={gateBadgePosition.y}
+                  r={channel.runtimeStatus === 'waiting_human' ? 7 : 5}
+                  fill={
+                    channel.runtimeStatus === 'open'
+                      ? '#16a34a'
+                      : channel.runtimeStatus === 'waiting_human'
+                        ? '#f59e0b'
+                        : '#ef4444'
+                  }
+                  data-testid={`channel-runtime-status-${channel.id ?? ''}`}
+                >
+                  {channel.runtimeStatus === 'waiting_human' && (
+                    <animate
+                      attributeName="opacity"
+                      values="1;0.4;1"
+                      dur="1.5s"
+                      repeatCount="indefinite"
+                    />
+                  )}
+                </circle>
+                {/* Blocked icon: small X */}
+                {channel.runtimeStatus === 'blocked' && (
+                  <g
+                    transform={`translate(${gateBadgePosition.x + gateBadgeWidth / 2 + 10}, ${gateBadgePosition.y})`}
+                  >
+                    <line x1="-2.5" y1="-2.5" x2="2.5" y2="2.5" stroke="white" stroke-width="1.5" />
+                    <line x1="2.5" y1="-2.5" x2="-2.5" y2="2.5" stroke="white" stroke-width="1.5" />
+                  </g>
+                )}
+                {/* Vote count label for count-type gates (e.g. "2/3") */}
+                {channel.voteCount && (
+                  <text
+                    data-testid="gate-vote-count"
+                    x={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
+                    y={gateBadgePosition.y + 16}
+                    textAnchor="middle"
+                    fontSize="9"
+                    fill="#9ca3af"
+                  >
+                    {channel.voteCount.current}/{channel.voteCount.min}
+                  </text>
+                )}
+              </g>
+            )}
+          </g>
+        );
+      })}
+    </>
+  );
 }

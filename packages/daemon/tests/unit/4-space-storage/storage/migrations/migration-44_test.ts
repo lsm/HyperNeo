@@ -14,53 +14,53 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations, createTables } from '../../../../../src/storage/schema/index.ts';
 
 function getSdkMessagesTableSql(db: BunDatabase): string {
-	const row = db
-		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sdk_messages'`)
-		.get() as { sql: string } | null;
-	return row?.sql ?? '';
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sdk_messages'`)
+    .get() as { sql: string } | null;
+  return row?.sql ?? '';
 }
 
 describe('Migration 44: rename sdk_messages send_status values', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-44', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
+  beforeEach(() => {
+    testDir = join(process.cwd(), 'tmp', 'test-migration-44', `test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
 
-		const dbPath = join(testDir, 'test.db');
-		db = new BunDatabase(dbPath);
-		db.exec('PRAGMA foreign_keys = ON');
-	});
+    const dbPath = join(testDir, 'test.db');
+    db = new BunDatabase(dbPath);
+    db.exec('PRAGMA foreign_keys = ON');
+  });
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	});
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
-	test('fresh DB uses deferred/enqueued/consumed constraint', () => {
-		runMigrations(db, () => {});
-		createTables(db);
+  test('fresh DB uses deferred/enqueued/consumed constraint', () => {
+    runMigrations(db, () => {});
+    createTables(db);
 
-		const sql = getSdkMessagesTableSql(db);
-		expect(sql).toContain("'deferred'");
-		expect(sql).toContain("'enqueued'");
-		expect(sql).toContain("'consumed'");
-		expect(sql).toContain("'failed'");
-		expect(sql).not.toContain("'saved'");
-		expect(sql).not.toContain("'sent'");
-	});
+    const sql = getSdkMessagesTableSql(db);
+    expect(sql).toContain("'deferred'");
+    expect(sql).toContain("'enqueued'");
+    expect(sql).toContain("'consumed'");
+    expect(sql).toContain("'failed'");
+    expect(sql).not.toContain("'saved'");
+    expect(sql).not.toContain("'sent'");
+  });
 
-	test('existing DB rows are renamed from saved/queued/sent', () => {
-		db.exec(`
+  test('existing DB rows are renamed from saved/queued/sent', () => {
+    db.exec(`
 			CREATE TABLE sessions (
 				id TEXT PRIMARY KEY,
 				title TEXT NOT NULL,
@@ -85,38 +85,38 @@ describe('Migration 44: rename sdk_messages send_status values', () => {
 			CREATE INDEX idx_sdk_messages_send_status ON sdk_messages(session_id, send_status);
 		`);
 
-		const now = new Date().toISOString();
-		db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('session-1', 'S', '/tmp', now, now, 'active', '{}', '{}');
+    ).run('session-1', 'S', '/tmp', now, now, 'active', '{}', '{}');
 
-		const insert = db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
 			 VALUES (?, ?, 'user', NULL, ?, ?, ?)`
-		);
-		insert.run('m-saved', 'session-1', '{"type":"user"}', now, 'saved');
-		insert.run('m-queued', 'session-1', '{"type":"user"}', now, 'queued');
-		insert.run('m-sent', 'session-1', '{"type":"user"}', now, 'sent');
-		insert.run('m-failed', 'session-1', '{"type":"user"}', now, 'failed');
-		insert.run('m-null', 'session-1', '{"type":"user"}', now, null);
+    );
+    insert.run('m-saved', 'session-1', '{"type":"user"}', now, 'saved');
+    insert.run('m-queued', 'session-1', '{"type":"user"}', now, 'queued');
+    insert.run('m-sent', 'session-1', '{"type":"user"}', now, 'sent');
+    insert.run('m-failed', 'session-1', '{"type":"user"}', now, 'failed');
+    insert.run('m-null', 'session-1', '{"type":"user"}', now, null);
 
-		runMigrations(db, () => {});
+    runMigrations(db, () => {});
 
-		const rows = db
-			.prepare(`SELECT id, send_status FROM sdk_messages ORDER BY id ASC`)
-			.all() as Array<{ id: string; send_status: string }>;
-		const byId = new Map(rows.map((r) => [r.id, r.send_status]));
-		expect(byId.get('m-saved')).toBe('deferred');
-		expect(byId.get('m-queued')).toBe('enqueued');
-		expect(byId.get('m-sent')).toBe('consumed');
-		expect(byId.get('m-failed')).toBe('failed');
-		expect(byId.get('m-null')).toBe('consumed');
+    const rows = db
+      .prepare(`SELECT id, send_status FROM sdk_messages ORDER BY id ASC`)
+      .all() as Array<{ id: string; send_status: string }>;
+    const byId = new Map(rows.map((r) => [r.id, r.send_status]));
+    expect(byId.get('m-saved')).toBe('deferred');
+    expect(byId.get('m-queued')).toBe('enqueued');
+    expect(byId.get('m-sent')).toBe('consumed');
+    expect(byId.get('m-failed')).toBe('failed');
+    expect(byId.get('m-null')).toBe('consumed');
 
-		const sql = getSdkMessagesTableSql(db);
-		expect(sql).toContain("'deferred'");
-		expect(sql).toContain("'enqueued'");
-		expect(sql).toContain("'consumed'");
-		expect(sql).toContain("'failed'");
-	});
+    const sql = getSdkMessagesTableSql(db);
+    expect(sql).toContain("'deferred'");
+    expect(sql).toContain("'enqueued'");
+    expect(sql).toContain("'consumed'");
+    expect(sql).toContain("'failed'");
+  });
 });

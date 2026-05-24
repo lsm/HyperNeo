@@ -1,10 +1,10 @@
 import { test, expect } from '../../fixtures';
 import {
-	cleanupTestSession,
-	createSessionViaUI,
-	setupMessageHubTesting,
-	waitForElement,
-	waitForAssistantResponse,
+  cleanupTestSession,
+  createSessionViaUI,
+  setupMessageHubTesting,
+  waitForElement,
+  waitForAssistantResponse,
 } from '../helpers/wait-helpers';
 
 /**
@@ -17,117 +17,117 @@ import {
  * - Collapsible tool output block rendering
  */
 test.describe('Message Operations', () => {
-	let sessionId: string | null = null;
+  let sessionId: string | null = null;
 
-	test.beforeEach(async ({ page }) => {
-		await setupMessageHubTesting(page);
-	});
+  test.beforeEach(async ({ page }) => {
+    await setupMessageHubTesting(page);
+  });
 
-	test.afterEach(async ({ page }) => {
-		if (sessionId) {
-			try {
-				await cleanupTestSession(page, sessionId);
-			} catch {
-				// Cleanup errors are logged but don't fail the test
-			}
-			sessionId = null;
-		}
-	});
+  test.afterEach(async ({ page }) => {
+    if (sessionId) {
+      try {
+        await cleanupTestSession(page, sessionId);
+      } catch {
+        // Cleanup errors are logged but don't fail the test
+      }
+      sessionId = null;
+    }
+  });
 
-	test('should show tool output in message when present', async ({ page }) => {
-		// Create a new session
-		sessionId = await createSessionViaUI(page);
+  test('should show tool output in message when present', async ({ page }) => {
+    // Create a new session
+    sessionId = await createSessionViaUI(page);
 
-		// Get message input and send button
-		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+    // Get message input and send button
+    const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+    const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
-		// Send a message that will trigger tool use
-		await messageInput.fill('List the files in the current directory');
-		await sendButton.click();
+    // Send a message that will trigger tool use
+    await messageInput.fill('List the files in the current directory');
+    await sendButton.click();
 
-		// Wait for assistant response using robust helper
-		await waitForAssistantResponse(page, { timeout: 90000 });
+    // Wait for assistant response using robust helper
+    await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// Verify the assistant responded with tool-related content
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		await expect(assistantMessage).toBeVisible();
+    // Verify the assistant responded with tool-related content
+    const assistantMessage = page.locator('[data-message-role="assistant"]').first();
+    await expect(assistantMessage).toBeVisible();
 
-		// Verify the message contains meaningful content (assistant responded)
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
-		expect(content!.length).toBeGreaterThan(0);
-	});
+    // Verify the message contains meaningful content (assistant responded)
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
+    expect(content!.length).toBeGreaterThan(0);
+  });
 
-	test('should display message content after tool execution', async ({ page }) => {
-		// Create a new session
-		sessionId = await createSessionViaUI(page);
+  test('should display message content after tool execution', async ({ page }) => {
+    // Create a new session
+    sessionId = await createSessionViaUI(page);
 
-		// Get message input and send button
-		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+    // Get message input and send button
+    const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+    const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
-		// Send a message that triggers tool use
-		await messageInput.fill('What files are in this workspace?');
-		await sendButton.click();
+    // Send a message that triggers tool use
+    await messageInput.fill('What files are in this workspace?');
+    await sendButton.click();
 
-		// Wait for assistant response using robust helper
-		await waitForAssistantResponse(page, { timeout: 90000 });
+    // Wait for assistant response using robust helper
+    await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// The assistant message should be visible
-		const assistantMessage = page.locator('[data-message-role="assistant"]').first();
-		await expect(assistantMessage).toBeVisible();
+    // The assistant message should be visible
+    const assistantMessage = page.locator('[data-message-role="assistant"]').first();
+    await expect(assistantMessage).toBeVisible();
 
-		// Message should have some content
-		const content = await assistantMessage.textContent();
-		expect(content).toBeTruthy();
-		expect(content!.length).toBeGreaterThan(0);
-	});
+    // Message should have some content
+    const content = await assistantMessage.textContent();
+    expect(content).toBeTruthy();
+    expect(content!.length).toBeGreaterThan(0);
+  });
 
-	test('should maintain conversation after viewing tool output', async ({ page }) => {
-		// Create a new session
-		sessionId = await createSessionViaUI(page);
+  test('should maintain conversation after viewing tool output', async ({ page }) => {
+    // Create a new session
+    sessionId = await createSessionViaUI(page);
 
-		// Get message input and send button
-		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+    // Get message input and send button
+    const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+    const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
-		// Send first message
-		await messageInput.fill('Hello, what is 2+2?');
-		await sendButton.click();
+    // Send first message
+    await messageInput.fill('Hello, what is 2+2?');
+    await sendButton.click();
 
-		// Wait for first assistant response using robust helper
-		await waitForAssistantResponse(page, { timeout: 90000 });
+    // Wait for first assistant response using robust helper
+    await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// Send follow-up message
-		await messageInput.fill('And what is that multiplied by 3?');
-		await sendButton.click();
+    // Send follow-up message
+    await messageInput.fill('And what is that multiplied by 3?');
+    await sendButton.click();
 
-		// Wait for second assistant response using robust helper
-		await waitForAssistantResponse(page, { timeout: 90000 });
+    // Wait for second assistant response using robust helper
+    await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// Verify both messages were received (multi-turn conversation)
-		const assistantMessages = page.locator('[data-message-role="assistant"]');
-		const count = await assistantMessages.count();
-		expect(count).toBeGreaterThanOrEqual(2);
-	});
+    // Verify both messages were received (multi-turn conversation)
+    const assistantMessages = page.locator('[data-message-role="assistant"]');
+    const count = await assistantMessages.count();
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
 
-	test('should show collapsible tool output blocks', async ({ page }) => {
-		// Create a new session
-		sessionId = await createSessionViaUI(page);
+  test('should show collapsible tool output blocks', async ({ page }) => {
+    // Create a new session
+    sessionId = await createSessionViaUI(page);
 
-		// Get message input and send button
-		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
-		const sendButton = await waitForElement(page, '[data-testid="send-button"]');
+    // Get message input and send button
+    const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
+    const sendButton = await waitForElement(page, '[data-testid="send-button"]');
 
-		// Send a message that should trigger file reading
-		await messageInput.fill('Read the package.json file and tell me the project name');
-		await sendButton.click();
+    // Send a message that should trigger file reading
+    await messageInput.fill('Read the package.json file and tell me the project name');
+    await sendButton.click();
 
-		// Wait for assistant response using robust helper
-		await waitForAssistantResponse(page, { timeout: 90000 });
+    // Wait for assistant response using robust helper
+    await waitForAssistantResponse(page, { timeout: 90000 });
 
-		// Verify assistant responded
-		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible();
-	});
+    // Verify assistant responded
+    await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible();
+  });
 });

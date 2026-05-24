@@ -28,7 +28,7 @@ export type ActionRequiredTaskInput = Pick<SpaceTask, 'status'>;
  * either `'review'` (awaiting approval) or `'blocked'` (any reason).
  */
 export function isActionRequired(task: ActionRequiredTaskInput): boolean {
-	return task.status === 'blocked' || task.status === 'review';
+  return task.status === 'blocked' || task.status === 'review';
 }
 
 /**
@@ -55,7 +55,7 @@ export function isActionRequired(task: ActionRequiredTaskInput): boolean {
  *   "Drafts" grouping.
  */
 export function isActiveTask(task: ActionRequiredTaskInput): boolean {
-	return task.status === 'open' || task.status === 'in_progress' || task.status === 'approved';
+  return task.status === 'open' || task.status === 'in_progress' || task.status === 'approved';
 }
 
 /**
@@ -64,5 +64,5 @@ export function isActiveTask(task: ActionRequiredTaskInput): boolean {
  * Used to group draft tasks separately from active tasks.
  */
 export function isDraftTask(task: ActionRequiredTaskInput): boolean {
-	return task.status === 'draft';
+  return task.status === 'draft';
 }

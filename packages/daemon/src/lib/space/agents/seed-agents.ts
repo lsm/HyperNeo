@@ -32,11 +32,11 @@ import { computeAgentTemplateHash } from './agent-template-hash';
  * archive, or sessionInfo UI features.
  */
 export const SUB_SESSION_FEATURES = {
-	rewind: false,
-	worktree: false,
-	coordinator: false,
-	archive: false,
-	sessionInfo: false,
+  rewind: false,
+  worktree: false,
+  coordinator: false,
+  archive: false,
+  sessionInfo: false,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ export const SUB_SESSION_FEATURES = {
 
 /** Full coding toolset: read, write, shell, search, web */
 const CODER_TOOLS = KNOWN_TOOLS.filter(
-	(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
+  (t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
 ) as string[];
 
 /** General-purpose worker: full coding toolset */
@@ -65,42 +65,42 @@ const RESEARCH_TOOLS = CODER_TOOLS;
  * but will live in workflow templates / SpaceAgent data, not code.
  */
 const REVIEWER_TOOLS: string[] = [
-	'Read',
-	'Bash',
-	'Grep',
-	'Glob',
-	'WebFetch',
-	'WebSearch',
-	'Skill',
-	'ToolSearch',
-	'Task',
-	'TaskOutput',
-	'TaskStop',
+  'Read',
+  'Bash',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'Skill',
+  'ToolSearch',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
 ];
 
 /** QA: read-only + bash for running tests — no Write or Edit */
 const QA_TOOLS: string[] = [
-	'Read',
-	'Bash',
-	'Grep',
-	'Glob',
-	'WebFetch',
-	'WebSearch',
-	'Skill',
-	'ToolSearch',
+  'Read',
+  'Bash',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'Skill',
+  'ToolSearch',
 ];
 
 /**
  * Tool profiles per preset agent name. Exported for testing and external consumption.
  */
 export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
-	coordinator: GENERAL_TOOLS,
-	coder: CODER_TOOLS,
-	general: GENERAL_TOOLS,
-	planner: PLANNER_TOOLS,
-	research: RESEARCH_TOOLS,
-	reviewer: REVIEWER_TOOLS,
-	qa: QA_TOOLS,
+  coordinator: GENERAL_TOOLS,
+  coder: CODER_TOOLS,
+  general: GENERAL_TOOLS,
+  planner: PLANNER_TOOLS,
+  research: RESEARCH_TOOLS,
+  reviewer: REVIEWER_TOOLS,
+  qa: QA_TOOLS,
 };
 
 // ---------------------------------------------------------------------------
@@ -108,13 +108,13 @@ export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
 // ---------------------------------------------------------------------------
 
 interface PresetDefinition {
-	name: string;
-	description: string;
-	tools: string[];
-	/** Thinking-level override for sessions created from this preset; unset inherits app default. */
-	thinkingLevel?: import('@neokai/shared').ThinkingLevel;
-	/** Combined operator-supplied prompt (persona + operating procedure). */
-	customPrompt: string;
+  name: string;
+  description: string;
+  tools: string[];
+  /** Thinking-level override for sessions created from this preset; unset inherits app default. */
+  thinkingLevel?: import('@neokai/shared').ThinkingLevel;
+  /** Combined operator-supplied prompt (persona + operating procedure). */
+  customPrompt: string;
 }
 
 /**
@@ -270,76 +270,76 @@ summary: <1–2 sentence summary of key findings>
 Treat the code as work from a competent but unfamiliar developer — it likely handles the happy path but may miss edge cases and project-specific constraints. Be critical, honest, and actionable; always include file paths and line numbers. Don't nitpick what a linter already covers. Always include the identity block in every PR comment you post.`;
 
 const PRESET_AGENTS: PresetDefinition[] = [
-	{
-		name: 'Coder',
-		description:
-			'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
-		tools: CODER_TOOLS,
-		customPrompt:
-			'You are an expert software engineer. You write clean, well-tested code following the ' +
-			"project's existing conventions. You always commit your work, keep the working tree clean, " +
-			'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
-			'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
-			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
-	},
-	{
-		name: 'General',
-		description:
-			'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
-			'debugging, and analysis.',
-		tools: GENERAL_TOOLS,
-		customPrompt:
-			'You are a versatile software development assistant. You can write code, fix bugs, write documentation, ' +
-			'analyze problems, and handle any general development task. You adapt to what is needed.\n\n' +
-			'Understand the task, implement the solution, verify it works, and commit your changes.',
-	},
-	{
-		name: 'Planner',
-		description:
-			'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
-		tools: PLANNER_TOOLS,
-		customPrompt:
-			'You are a technical project manager. You analyze goals, break them down into clear actionable ' +
-			'tasks, identify dependencies, and produce structured implementation plans.\n\n' +
-			'Produce a concrete plan with clear steps. Write the plan to a file and commit it.',
-	},
-	{
-		name: 'Research',
-		description:
-			'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
-		tools: RESEARCH_TOOLS,
-		customPrompt:
-			'You are a research specialist. You investigate topics thoroughly using web search and code ' +
-			'exploration, synthesize findings clearly, and document results in well-structured markdown files.\n\n' +
-			'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.',
-	},
-	{
-		name: 'Coordinator',
-		description:
-			'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
-		tools: GENERAL_TOOLS,
-		customPrompt:
-			'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
-			'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
-			'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
-	},
-	{
-		name: 'Reviewer',
-		description:
-			'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
-		tools: REVIEWER_TOOLS,
-		customPrompt: REVIEWER_CUSTOM_PROMPT,
-	},
-	{
-		name: 'QA',
-		description:
-			'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
-		tools: QA_TOOLS,
-		customPrompt:
-			'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
-			'and ensure the codebase meets quality standards before release.\n\n' +
-			'Run the full test suite and report results with specific details on any failures.',
-	},
+  {
+    name: 'Coder',
+    description:
+      'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
+    tools: CODER_TOOLS,
+    customPrompt:
+      'You are an expert software engineer. You write clean, well-tested code following the ' +
+      "project's existing conventions. You always commit your work, keep the working tree clean, " +
+      'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
+      'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
+      'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.',
+  },
+  {
+    name: 'General',
+    description:
+      'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
+      'debugging, and analysis.',
+    tools: GENERAL_TOOLS,
+    customPrompt:
+      'You are a versatile software development assistant. You can write code, fix bugs, write documentation, ' +
+      'analyze problems, and handle any general development task. You adapt to what is needed.\n\n' +
+      'Understand the task, implement the solution, verify it works, and commit your changes.',
+  },
+  {
+    name: 'Planner',
+    description:
+      'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
+    tools: PLANNER_TOOLS,
+    customPrompt:
+      'You are a technical project manager. You analyze goals, break them down into clear actionable ' +
+      'tasks, identify dependencies, and produce structured implementation plans.\n\n' +
+      'Produce a concrete plan with clear steps. Write the plan to a file and commit it.',
+  },
+  {
+    name: 'Research',
+    description:
+      'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
+    tools: RESEARCH_TOOLS,
+    customPrompt:
+      'You are a research specialist. You investigate topics thoroughly using web search and code ' +
+      'exploration, synthesize findings clearly, and document results in well-structured markdown files.\n\n' +
+      'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.',
+  },
+  {
+    name: 'Coordinator',
+    description:
+      'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
+    tools: GENERAL_TOOLS,
+    customPrompt:
+      'You are the Coordinator for this Space. Maintain long-horizon context across goals, Forge evidence, reminders, and external events. ' +
+      'Use available Space tools to inspect current work, create or update tasks, and route work to specialist agents when useful.\n\n' +
+      'Keep managed goals, Forge scopes, reminders, and event subscriptions visible to the operator. Ask for confirmation before destructive changes.',
+  },
+  {
+    name: 'Reviewer',
+    description:
+      'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
+    tools: REVIEWER_TOOLS,
+    customPrompt: REVIEWER_CUSTOM_PROMPT,
+  },
+  {
+    name: 'QA',
+    description:
+      'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
+    tools: QA_TOOLS,
+    customPrompt:
+      'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
+      'and ensure the codebase meets quality standards before release.\n\n' +
+      'Run the full test suite and report results with specific details on any failures.',
+  },
 ];
 
 export type PresetAgentTemplate = PresetDefinition;
@@ -349,10 +349,10 @@ export type PresetAgentTemplate = PresetDefinition;
  * The result is cloned so callers can safely mutate without affecting globals.
  */
 export function getPresetAgentTemplates(): PresetAgentTemplate[] {
-	return PRESET_AGENTS.map((preset) => ({
-		...preset,
-		tools: [...preset.tools],
-	}));
+  return PRESET_AGENTS.map((preset) => ({
+    ...preset,
+    tools: [...preset.tools],
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -360,10 +360,10 @@ export function getPresetAgentTemplates(): PresetAgentTemplate[] {
 // ---------------------------------------------------------------------------
 
 export interface SeedPresetAgentsResult {
-	/** Agents that were successfully created */
-	seeded: SpaceAgent[];
-	/** Errors for agents that failed to seed (e.g. name already taken) */
-	errors: Array<{ name: string; error: string }>;
+  /** Agents that were successfully created */
+  seeded: SpaceAgent[];
+  /** Errors for agents that failed to seed (e.g. name already taken) */
+  errors: Array<{ name: string; error: string }>;
 }
 
 /**
@@ -378,34 +378,34 @@ export interface SeedPresetAgentsResult {
  * @returns Summary of seeded agents and any errors
  */
 export async function seedPresetAgents(
-	spaceId: string,
-	agentManager: SpaceAgentManager
+  spaceId: string,
+  agentManager: SpaceAgentManager
 ): Promise<SeedPresetAgentsResult> {
-	const seeded: SpaceAgent[] = [];
-	const errors: Array<{ name: string; error: string }> = [];
+  const seeded: SpaceAgent[] = [];
+  const errors: Array<{ name: string; error: string }> = [];
 
-	for (const preset of PRESET_AGENTS) {
-		// Stamp template tracking so the row participates in drift detection /
-		// sync from day one. Hash is computed from the same canonical
-		// fingerprint that drift detection re-derives later.
-		const templateHash = computeAgentTemplateHash(preset);
-		const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
-			spaceId,
-			name: preset.name,
-			description: preset.description,
-			tools: preset.tools,
-			thinkingLevel: preset.thinkingLevel,
-			customPrompt: preset.customPrompt,
-			templateName: preset.name,
-			templateHash,
-		});
+  for (const preset of PRESET_AGENTS) {
+    // Stamp template tracking so the row participates in drift detection /
+    // sync from day one. Hash is computed from the same canonical
+    // fingerprint that drift detection re-derives later.
+    const templateHash = computeAgentTemplateHash(preset);
+    const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
+      spaceId,
+      name: preset.name,
+      description: preset.description,
+      tools: preset.tools,
+      thinkingLevel: preset.thinkingLevel,
+      customPrompt: preset.customPrompt,
+      templateName: preset.name,
+      templateHash,
+    });
 
-		if (result.ok) {
-			seeded.push(result.value);
-		} else {
-			errors.push({ name: preset.name, error: result.error });
-		}
-	}
+    if (result.ok) {
+      seeded.push(result.value);
+    } else {
+      errors.push({ name: preset.name, error: result.error });
+    }
+  }
 
-	return { seeded, errors };
+  return { seeded, errors };
 }

@@ -16,16 +16,16 @@
  * as raw developer-facing error strings.
  */
 export const TRANSIENT_CONNECTION_ERROR_SUBSTRINGS: readonly string[] = [
-	'socket connection was closed',
-	'verbose: true in the second argument to fetch()',
-	'TypeError: fetch failed',
-	'connection reset',
-	'stream closed',
-	'SocketError',
-	'ReadableStream is locked',
-	'network down',
-	'Unable to connect',
-	'backend connection error',
+  'socket connection was closed',
+  'verbose: true in the second argument to fetch()',
+  'TypeError: fetch failed',
+  'connection reset',
+  'stream closed',
+  'SocketError',
+  'ReadableStream is locked',
+  'network down',
+  'Unable to connect',
+  'backend connection error',
 ];
 
 /**
@@ -34,14 +34,14 @@ export const TRANSIENT_CONNECTION_ERROR_SUBSTRINGS: readonly string[] = [
  * TRANSIENT_CONNECTION_ERROR_SUBSTRINGS above.
  */
 export const TRANSIENT_CONNECTION_ERROR_REGEXES: readonly RegExp[] = [
-	/socket connection was closed/i,
-	/verbose:\s*true\s+in the second argument to fetch/i,
-	/TypeError:\s*fetch\s+failed/i,
-	/connection reset/i,
-	/stream closed/i,
-	/SocketError/i,
-	/ReadableStream is locked/i,
-	/network down/i,
-	/Unable to connect/i,
-	/backend connection error/i,
+  /socket connection was closed/i,
+  /verbose:\s*true\s+in the second argument to fetch/i,
+  /TypeError:\s*fetch\s+failed/i,
+  /connection reset/i,
+  /stream closed/i,
+  /SocketError/i,
+  /ReadableStream is locked/i,
+  /network down/i,
+  /Unable to connect/i,
+  /backend connection error/i,
 ];

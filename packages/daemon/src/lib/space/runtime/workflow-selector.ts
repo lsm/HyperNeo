@@ -23,21 +23,21 @@ import type { SpaceWorkflow } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 
 export interface WorkflowSelectionContext {
-	/** The space this selection is scoped to. */
-	spaceId: string;
-	/**
-	 * Available workflows to select from.
-	 * Must all belong to the given spaceId — callers are responsible for pre-filtering.
-	 */
-	availableWorkflows: SpaceWorkflow[];
-	/**
-	 * Optional explicit workflow ID. When provided, the function returns that
-	 * workflow if found in availableWorkflows, otherwise null.
-	 *
-	 * When omitted, returns null — the caller (LLM agent) must call list_workflows
-	 * and then provide an explicit workflowId.
-	 */
-	workflowId?: string;
+  /** The space this selection is scoped to. */
+  spaceId: string;
+  /**
+   * Available workflows to select from.
+   * Must all belong to the given spaceId — callers are responsible for pre-filtering.
+   */
+  availableWorkflows: SpaceWorkflow[];
+  /**
+   * Optional explicit workflow ID. When provided, the function returns that
+   * workflow if found in availableWorkflows, otherwise null.
+   *
+   * When omitted, returns null — the caller (LLM agent) must call list_workflows
+   * and then provide an explicit workflowId.
+   */
+  workflowId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,13 +55,13 @@ export interface WorkflowSelectionContext {
  * returns the same output.
  */
 export function selectWorkflow(context: WorkflowSelectionContext): SpaceWorkflow | null {
-	const { availableWorkflows, workflowId } = context;
+  const { availableWorkflows, workflowId } = context;
 
-	if (!workflowId) {
-		// No explicit ID: return null — LLM agent must call list_workflows and pick.
-		return null;
-	}
+  if (!workflowId) {
+    // No explicit ID: return null — LLM agent must call list_workflows and pick.
+    return null;
+  }
 
-	// Explicit ID provided: find it in the available set (or null if not found).
-	return availableWorkflows.find((w) => w.id === workflowId) ?? null;
+  // Explicit ID provided: find it in the available set (or null if not found).
+  return availableWorkflows.find((w) => w.id === workflowId) ?? null;
 }

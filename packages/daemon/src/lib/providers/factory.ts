@@ -16,9 +16,9 @@ import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
 import {
-	CustomEndpointProvider,
-	customProviderIdFor,
-	isCustomEndpointProviderId,
+  CustomEndpointProvider,
+  customProviderIdFor,
+  isCustomEndpointProviderId,
 } from './custom-endpoint-provider.js';
 import type { CustomEndpointConfig } from '@neokai/shared';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
@@ -42,56 +42,56 @@ let initialized = false;
  * @returns The global provider registry
  */
 export function initializeProviders(): ProviderRegistry {
-	// If already initialized, return the existing registry
-	// This handles the case where getProviderRegistry() was called but no providers were registered
-	if (initialized) {
-		const registry = getProviderRegistry();
-		// Check if registry has any providers - if not, we need to reinitialize
-		if (registry.size > 0) {
-			return registry;
-		}
-		// Registry was reset but initialized flag wasn't - need to reinitialize
-	}
+  // If already initialized, return the existing registry
+  // This handles the case where getProviderRegistry() was called but no providers were registered
+  if (initialized) {
+    const registry = getProviderRegistry();
+    // Check if registry has any providers - if not, we need to reinitialize
+    if (registry.size > 0) {
+      return registry;
+    }
+    // Registry was reset but initialized flag wasn't - need to reinitialize
+  }
 
-	const registry = getProviderRegistry();
+  const registry = getProviderRegistry();
 
-	// Register Anthropic provider (always available)
-	registry.register(new AnthropicProvider());
+  // Register Anthropic provider (always available)
+  registry.register(new AnthropicProvider());
 
-	// Register GLM provider (will be available if API key is set)
-	registry.register(new GlmProvider());
+  // Register GLM provider (will be available if API key is set)
+  registry.register(new GlmProvider());
 
-	// Register Kimi provider (will be available if KIMI_API_KEY or MOONSHOT_API_KEY is set)
-	registry.register(new KimiProvider());
+  // Register Kimi provider (will be available if KIMI_API_KEY or MOONSHOT_API_KEY is set)
+  registry.register(new KimiProvider());
 
-	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
-	registry.register(new MinimaxProvider());
+  // Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
+  registry.register(new MinimaxProvider());
 
-	// Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
-	registry.register(new OpenRouterProvider());
+  // Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
+  registry.register(new OpenRouterProvider());
 
-	// Register Ollama providers. Local Ollama is available by default at localhost:11434;
-	// Ollama Cloud requires OLLAMA_CLOUD_API_KEY.
-	registry.register(new OllamaProvider({ kind: 'local' }));
-	registry.register(new OllamaProvider({ kind: 'cloud' }));
+  // Register Ollama providers. Local Ollama is available by default at localhost:11434;
+  // Ollama Cloud requires OLLAMA_CLOUD_API_KEY.
+  registry.register(new OllamaProvider({ kind: 'local' }));
+  registry.register(new OllamaProvider({ kind: 'cloud' }));
 
-	// Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
-	// Discovers credentials from env (OPENAI_API_KEY), ~/.neokai/auth.json,
-	// and one-time import from ~/.codex/auth.json.
-	registry.register(new AnthropicToCodexBridgeProvider());
+  // Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
+  // Discovers credentials from env (OPENAI_API_KEY), ~/.neokai/auth.json,
+  // and one-time import from ~/.codex/auth.json.
+  registry.register(new AnthropicToCodexBridgeProvider());
 
-	// Register Anthropic Copilot provider (embedded Anthropic-compatible server).
-	// process.cwd() is the fallback cwd; per-session workspace is threaded via
-	// ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
-	registry.register(new AnthropicToCopilotBridgeProvider(process.cwd()));
+  // Register Anthropic Copilot provider (embedded Anthropic-compatible server).
+  // process.cwd() is the fallback cwd; per-session workspace is threaded via
+  // ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
+  registry.register(new AnthropicToCopilotBridgeProvider(process.cwd()));
 
-	// Additional built-in providers can be registered here
-	// Example:
-	// registry.register(new DeepSeekProvider());
+  // Additional built-in providers can be registered here
+  // Example:
+  // registry.register(new DeepSeekProvider());
 
-	initialized = true;
+  initialized = true;
 
-	return registry;
+  return registry;
 }
 
 /**
@@ -109,58 +109,58 @@ export function initializeProviders(): ProviderRegistry {
  * unrelated endpoints whenever any one endpoint is edited.
  */
 export async function syncCustomEndpointProviders(
-	configs: CustomEndpointConfig[] | undefined
+  configs: CustomEndpointConfig[] | undefined
 ): Promise<void> {
-	const registry = initializeProviders();
-	const wanted = new Map<string, CustomEndpointConfig>();
-	for (const config of configs ?? []) {
-		if (!config?.id || !config.baseUrl || !config.models?.length) continue;
-		wanted.set(customProviderIdFor(config.id), config);
-	}
+  const registry = initializeProviders();
+  const wanted = new Map<string, CustomEndpointConfig>();
+  for (const config of configs ?? []) {
+    if (!config?.id || !config.baseUrl || !config.models?.length) continue;
+    wanted.set(customProviderIdFor(config.id), config);
+  }
 
-	const toRemove: string[] = [];
-	for (const provider of registry.getAll()) {
-		if (!isCustomEndpointProviderId(provider.id)) continue;
-		if (!wanted.has(provider.id)) toRemove.push(provider.id);
-	}
-	for (const id of toRemove) {
-		const provider = registry.get(id);
-		if (provider?.shutdown) {
-			try {
-				await provider.shutdown();
-			} catch (err) {
-				logger.warn(`Failed to shut down custom endpoint provider ${id}: ${err}`);
-			}
-		}
-		registry.unregister(id);
-		lastSyncedConfigByProviderId.delete(id);
-	}
+  const toRemove: string[] = [];
+  for (const provider of registry.getAll()) {
+    if (!isCustomEndpointProviderId(provider.id)) continue;
+    if (!wanted.has(provider.id)) toRemove.push(provider.id);
+  }
+  for (const id of toRemove) {
+    const provider = registry.get(id);
+    if (provider?.shutdown) {
+      try {
+        await provider.shutdown();
+      } catch (err) {
+        logger.warn(`Failed to shut down custom endpoint provider ${id}: ${err}`);
+      }
+    }
+    registry.unregister(id);
+    lastSyncedConfigByProviderId.delete(id);
+  }
 
-	for (const [providerId, config] of wanted) {
-		const existing = registry.get(providerId);
-		const fingerprint = fingerprintCustomEndpointConfig(config);
-		if (existing && lastSyncedConfigByProviderId.get(providerId) === fingerprint) {
-			// Unchanged — leave the live provider (and its bridges) alone.
-			continue;
-		}
-		if (existing) {
-			if (existing.shutdown) {
-				try {
-					await existing.shutdown();
-				} catch (err) {
-					logger.warn(`Failed to shut down custom endpoint provider ${providerId}: ${err}`);
-				}
-			}
-			registry.unregister(providerId);
-		}
-		try {
-			registry.register(new CustomEndpointProvider(config));
-			lastSyncedConfigByProviderId.set(providerId, fingerprint);
-		} catch (err) {
-			logger.warn(`Skipping invalid custom endpoint '${config.id}': ${err}`);
-			lastSyncedConfigByProviderId.delete(providerId);
-		}
-	}
+  for (const [providerId, config] of wanted) {
+    const existing = registry.get(providerId);
+    const fingerprint = fingerprintCustomEndpointConfig(config);
+    if (existing && lastSyncedConfigByProviderId.get(providerId) === fingerprint) {
+      // Unchanged — leave the live provider (and its bridges) alone.
+      continue;
+    }
+    if (existing) {
+      if (existing.shutdown) {
+        try {
+          await existing.shutdown();
+        } catch (err) {
+          logger.warn(`Failed to shut down custom endpoint provider ${providerId}: ${err}`);
+        }
+      }
+      registry.unregister(providerId);
+    }
+    try {
+      registry.register(new CustomEndpointProvider(config));
+      lastSyncedConfigByProviderId.set(providerId, fingerprint);
+    } catch (err) {
+      logger.warn(`Skipping invalid custom endpoint '${config.id}': ${err}`);
+      lastSyncedConfigByProviderId.delete(providerId);
+    }
+  }
 }
 
 /**
@@ -172,18 +172,18 @@ export async function syncCustomEndpointProviders(
  * ones, which would treat semantically different configs as identical.
  */
 function fingerprintCustomEndpointConfig(config: CustomEndpointConfig): string {
-	return JSON.stringify(canonicalise(config));
+  return JSON.stringify(canonicalise(config));
 }
 
 function canonicalise(value: unknown): unknown {
-	if (value === null || typeof value !== 'object') return value;
-	if (Array.isArray(value)) return value.map(canonicalise);
-	const obj = value as Record<string, unknown>;
-	const out: Record<string, unknown> = {};
-	for (const key of Object.keys(obj).sort()) {
-		out[key] = canonicalise(obj[key]);
-	}
-	return out;
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonicalise);
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    out[key] = canonicalise(obj[key]);
+  }
+  return out;
 }
 
 /** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
@@ -197,8 +197,8 @@ const lastSyncedConfigByProviderId = new Map<string, string>();
  * @returns ProviderContextManager instance
  */
 export function getProviderContextManager(): ProviderContextManager {
-	const registry = initializeProviders();
-	return new ProviderContextManager(registry);
+  const registry = initializeProviders();
+  return new ProviderContextManager(registry);
 }
 
 /**
@@ -210,18 +210,18 @@ export function getProviderContextManager(): ProviderContextManager {
  * @public Exported for testing purposes
  */
 export function resetProviderFactory(): void {
-	initialized = false;
-	lastSyncedConfigByProviderId.clear();
+  initialized = false;
+  lastSyncedConfigByProviderId.clear();
 }
 
 // Re-export types from shared package
 export type {
-	Provider,
-	ProviderCapabilities,
-	ProviderContext,
-	ProviderId,
-	ProviderInfo,
-	ProviderSdkConfig,
-	ProviderSessionConfig,
-	ModelTier,
+  Provider,
+  ProviderCapabilities,
+  ProviderContext,
+  ProviderId,
+  ProviderInfo,
+  ProviderSdkConfig,
+  ProviderSessionConfig,
+  ModelTier,
 } from '@neokai/shared/provider';

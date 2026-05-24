@@ -29,22 +29,22 @@
 import { test, expect } from '../../fixtures';
 
 test.describe
-	.skip('Post-approval merge rejected by human at autonomy level 1 (PENDING infra)', () => {
-		test('reviewer session respects human rejection — PR is NOT merged; audit records rejection', async ({
-			page,
-		}) => {
-			// 1. Create a space with `autonomyLevel: 1`.
-			// 2. Seed a PR fixture via mock `gh`.
-			// 3. Start a Coding workflow run; drive to `approved`.
-			// 4. Reviewer post-approval session spawns, asks
-			//    `request_human_input({ question: "Approve merging PR ..." })`.
-			// 5. UI step: post a reply "no, hold off" via composer.
-			// 6. Assert: the session does NOT invoke `gh pr merge`. (Inspect
-			//    the mock `gh` call log; expect zero `merge` invocations.)
-			// 7. Assert: the session saves an artifact of type `result` with
-			//    `approval: 'rejected'` (or equivalent), then calls
-			//    `mark_complete`. Task ends at `done`.
-			// 8. Assert UI: task list row shows "done"; no merge happened.
-			expect(page).toBeTruthy();
-		});
-	});
+  .skip('Post-approval merge rejected by human at autonomy level 1 (PENDING infra)', () => {
+    test('reviewer session respects human rejection — PR is NOT merged; audit records rejection', async ({
+      page,
+    }) => {
+      // 1. Create a space with `autonomyLevel: 1`.
+      // 2. Seed a PR fixture via mock `gh`.
+      // 3. Start a Coding workflow run; drive to `approved`.
+      // 4. Reviewer post-approval session spawns, asks
+      //    `request_human_input({ question: "Approve merging PR ..." })`.
+      // 5. UI step: post a reply "no, hold off" via composer.
+      // 6. Assert: the session does NOT invoke `gh pr merge`. (Inspect
+      //    the mock `gh` call log; expect zero `merge` invocations.)
+      // 7. Assert: the session saves an artifact of type `result` with
+      //    `approval: 'rejected'` (or equivalent), then calls
+      //    `mark_complete`. Task ends at `done`.
+      // 8. Assert UI: task list row shows "done"; no merge happened.
+      expect(page).toBeTruthy();
+    });
+  });

@@ -18,9 +18,9 @@ import type { AppSkill } from '@neokai/shared';
 import { skillsStore } from '../lib/skills-store';
 
 interface UseSkillsResult {
-	skills: AppSkill[];
-	isLoading: boolean;
-	error: string | null;
+  skills: AppSkill[];
+  isLoading: boolean;
+  error: string | null;
 }
 
 /**
@@ -35,28 +35,28 @@ interface UseSkillsResult {
  * subscribe on mount, unsubscribe on unmount.
  */
 export function useSkills(): UseSkillsResult {
-	const [skills, setSkills] = useState<AppSkill[]>(skillsStore.skills.value);
-	const [isLoading, setIsLoading] = useState<boolean>(skillsStore.isLoading.value);
-	const [error, setError] = useState<string | null>(skillsStore.error.value);
+  const [skills, setSkills] = useState<AppSkill[]>(skillsStore.skills.value);
+  const [isLoading, setIsLoading] = useState<boolean>(skillsStore.isLoading.value);
+  const [error, setError] = useState<string | null>(skillsStore.error.value);
 
-	useEffect(() => {
-		// Bridge signal changes into useState. signal.subscribe() calls the
-		// callback immediately with the current value, then on every future change.
-		const unsubSkills = skillsStore.skills.subscribe(setSkills);
-		const unsubLoading = skillsStore.isLoading.subscribe(setIsLoading);
-		const unsubError = skillsStore.error.subscribe(setError);
+  useEffect(() => {
+    // Bridge signal changes into useState. signal.subscribe() calls the
+    // callback immediately with the current value, then on every future change.
+    const unsubSkills = skillsStore.skills.subscribe(setSkills);
+    const unsubLoading = skillsStore.isLoading.subscribe(setIsLoading);
+    const unsubError = skillsStore.error.subscribe(setError);
 
-		skillsStore.subscribe().catch(() => {
-			// Error is surfaced via skillsStore.error signal → setError callback above
-		});
+    skillsStore.subscribe().catch(() => {
+      // Error is surfaced via skillsStore.error signal → setError callback above
+    });
 
-		return () => {
-			unsubSkills();
-			unsubLoading();
-			unsubError();
-			skillsStore.unsubscribe();
-		};
-	}, []);
+    return () => {
+      unsubSkills();
+      unsubLoading();
+      unsubError();
+      skillsStore.unsubscribe();
+    };
+  }, []);
 
-	return { skills, isLoading, error };
+  return { skills, isLoading, error };
 }

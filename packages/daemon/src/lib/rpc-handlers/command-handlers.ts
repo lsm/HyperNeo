@@ -6,15 +6,15 @@ import type { MessageHub } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 
 export function setupCommandHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
-	messageHub.onRequest('commands.list', async (data) => {
-		const { sessionId: targetSessionId } = data as { sessionId: string };
-		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+  messageHub.onRequest('commands.list', async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
-		if (!agentSession) {
-			throw new Error('Session not found');
-		}
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
 
-		const commands = await agentSession.getSlashCommands();
-		return { commands };
-	});
+    const commands = await agentSession.getSlashCommands();
+    return { commands };
+  });
 }

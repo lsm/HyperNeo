@@ -24,199 +24,199 @@ const TIMEOUT = 15000;
 const IS_DEV_PROXY = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 describe('Message RPC Handlers', () => {
-	let daemon: DaemonServerContext;
+  let daemon: DaemonServerContext;
 
-	beforeEach(async () => {
-		daemon = await createDaemonServer();
-	}, 30_000);
+  beforeEach(async () => {
+    daemon = await createDaemonServer();
+  }, 30_000);
 
-	afterEach(async () => {
-		if (!daemon) return;
-		await daemon.waitForExit();
-	}, 15_000);
+  afterEach(async () => {
+    if (!daemon) return;
+    await daemon.waitForExit();
+  }, 15_000);
 
-	async function createSession(workspacePath: string): Promise<string> {
-		const { sessionId } = (await daemon.messageHub.request('session.create', {
-			workspacePath,
-		})) as { sessionId: string };
-		daemon.trackSession(sessionId);
-		return sessionId;
-	}
+  async function createSession(workspacePath: string): Promise<string> {
+    const { sessionId } = (await daemon.messageHub.request('session.create', {
+      workspacePath,
+    })) as { sessionId: string };
+    daemon.trackSession(sessionId);
+    return sessionId;
+  }
 
-	async function createSessionWithMessages(): Promise<string> {
-		const workspacePath = mkdtempSync(join(tmpdir(), 'neokai-rpc-message-'));
-		const sessionId = await createSession(workspacePath);
+  async function createSessionWithMessages(): Promise<string> {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'neokai-rpc-message-'));
+    const sessionId = await createSession(workspacePath);
 
-		// Send a message — mock SDK will respond with assistant text + result
-		await sendMessage(daemon, sessionId, 'Hello, world!');
-		await waitForIdle(daemon, sessionId);
+    // Send a message — mock SDK will respond with assistant text + result
+    await sendMessage(daemon, sessionId, 'Hello, world!');
+    await waitForIdle(daemon, sessionId);
 
-		// Wait for SDK messages to be persisted (handles race on slow CI)
-		await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
+    // Wait for SDK messages to be persisted (handles race on slow CI)
+    await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
-		return sessionId;
-	}
+    return sessionId;
+  }
 
-	describe('message.sdkMessages', () => {
-		test(
-			'should get SDK messages for a session',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+  describe('message.sdkMessages', () => {
+    test(
+      'should get SDK messages for a session',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-				})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+        const result = (await daemon.messageHub.request('message.sdkMessages', {
+          sessionId,
+        })) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
 
-				expect(result.sdkMessages).toBeDefined();
-				expect(Array.isArray(result.sdkMessages)).toBe(true);
-				expect(result.sdkMessages.length).toBeGreaterThan(0);
-			},
-			TIMEOUT
-		);
+        expect(result.sdkMessages).toBeDefined();
+        expect(Array.isArray(result.sdkMessages)).toBe(true);
+        expect(result.sdkMessages.length).toBeGreaterThan(0);
+      },
+      TIMEOUT
+    );
 
-		test(
-			'should support limit parameter',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+    test(
+      'should support limit parameter',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-					limit: 1,
-				})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+        const result = (await daemon.messageHub.request('message.sdkMessages', {
+          sessionId,
+          limit: 1,
+        })) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
 
-				expect(result.sdkMessages).toBeDefined();
-				expect(result.sdkMessages.length).toBeLessThanOrEqual(1);
-			},
-			TIMEOUT
-		);
+        expect(result.sdkMessages).toBeDefined();
+        expect(result.sdkMessages.length).toBeLessThanOrEqual(1);
+      },
+      TIMEOUT
+    );
 
-		test('should throw for invalid session', async () => {
-			await expect(
-				daemon.messageHub.request('message.sdkMessages', {
-					sessionId: 'invalid-session',
-				})
-			).rejects.toThrow('Session not found');
-		});
-	});
+    test('should throw for invalid session', async () => {
+      await expect(
+        daemon.messageHub.request('message.sdkMessages', {
+          sessionId: 'invalid-session',
+        })
+      ).rejects.toThrow('Session not found');
+    });
+  });
 
-	describe('message.count', () => {
-		test(
-			'should get message count',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+  describe('message.count', () => {
+    test(
+      'should get message count',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				const result = (await daemon.messageHub.request('message.count', {
-					sessionId,
-				})) as { count: number };
+        const result = (await daemon.messageHub.request('message.count', {
+          sessionId,
+        })) as { count: number };
 
-				expect(result.count).toBeDefined();
-				expect(result.count).toBeGreaterThan(0);
-			},
-			TIMEOUT
-		);
+        expect(result.count).toBeDefined();
+        expect(result.count).toBeGreaterThan(0);
+      },
+      TIMEOUT
+    );
 
-		test('should throw for invalid session', async () => {
-			await expect(
-				daemon.messageHub.request('message.count', {
-					sessionId: 'invalid-session',
-				})
-			).rejects.toThrow('Session not found');
-		});
-	});
+    test('should throw for invalid session', async () => {
+      await expect(
+        daemon.messageHub.request('message.count', {
+          sessionId: 'invalid-session',
+        })
+      ).rejects.toThrow('Session not found');
+    });
+  });
 
-	describe('session.export', () => {
-		test(
-			'should export session as markdown by default',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+  describe('session.export', () => {
+    test(
+      'should export session as markdown by default',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				// Set a title first for the export
-				await daemon.messageHub.request('session.update', {
-					sessionId,
-					title: 'Test Export Session',
-				});
+        // Set a title first for the export
+        await daemon.messageHub.request('session.update', {
+          sessionId,
+          title: 'Test Export Session',
+        });
 
-				const result = (await daemon.messageHub.request('session.export', {
-					sessionId,
-				})) as { markdown: string };
+        const result = (await daemon.messageHub.request('session.export', {
+          sessionId,
+        })) as { markdown: string };
 
-				expect(result.markdown).toBeDefined();
-				expect(typeof result.markdown).toBe('string');
-				expect(result.markdown).toContain('# Test Export Session');
-				expect(result.markdown).toContain('**Session ID:**');
-			},
-			TIMEOUT
-		);
+        expect(result.markdown).toBeDefined();
+        expect(typeof result.markdown).toBe('string');
+        expect(result.markdown).toContain('# Test Export Session');
+        expect(result.markdown).toContain('**Session ID:**');
+      },
+      TIMEOUT
+    );
 
-		test(
-			'should export session as markdown explicitly',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+    test(
+      'should export session as markdown explicitly',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				const result = (await daemon.messageHub.request('session.export', {
-					sessionId,
-					format: 'markdown',
-				})) as { markdown: string };
+        const result = (await daemon.messageHub.request('session.export', {
+          sessionId,
+          format: 'markdown',
+        })) as { markdown: string };
 
-				expect(result.markdown).toBeDefined();
-				expect(typeof result.markdown).toBe('string');
-			},
-			TIMEOUT
-		);
+        expect(result.markdown).toBeDefined();
+        expect(typeof result.markdown).toBe('string');
+      },
+      TIMEOUT
+    );
 
-		test(
-			'should export session as JSON',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+    test(
+      'should export session as JSON',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				const result = (await daemon.messageHub.request('session.export', {
-					sessionId,
-					format: 'json',
-				})) as {
-					session: Record<string, unknown>;
-					messages: Array<Record<string, unknown>>;
-				};
+        const result = (await daemon.messageHub.request('session.export', {
+          sessionId,
+          format: 'json',
+        })) as {
+          session: Record<string, unknown>;
+          messages: Array<Record<string, unknown>>;
+        };
 
-				expect(result.session).toBeDefined();
-				expect(result.messages).toBeDefined();
-				expect(Array.isArray(result.messages)).toBe(true);
-			},
-			TIMEOUT
-		);
+        expect(result.session).toBeDefined();
+        expect(result.messages).toBeDefined();
+        expect(Array.isArray(result.messages)).toBe(true);
+      },
+      TIMEOUT
+    );
 
-		(IS_DEV_PROXY ? test.skip : test)(
-			'should include assistant response in markdown export',
-			async () => {
-				const sessionId = await createSessionWithMessages();
+    (IS_DEV_PROXY ? test.skip : test)(
+      'should include assistant response in markdown export',
+      async () => {
+        const sessionId = await createSessionWithMessages();
 
-				const result = (await daemon.messageHub.request('session.export', {
-					sessionId,
-					format: 'markdown',
-				})) as { markdown: string };
+        const result = (await daemon.messageHub.request('session.export', {
+          sessionId,
+          format: 'markdown',
+        })) as { markdown: string };
 
-				// Should have assistant section with content
-				expect(result.markdown).toContain('## Assistant');
-			},
-			TIMEOUT
-		);
+        // Should have assistant section with content
+        expect(result.markdown).toContain('## Assistant');
+      },
+      TIMEOUT
+    );
 
-		test('should throw for invalid session', async () => {
-			await expect(
-				daemon.messageHub.request('session.export', {
-					sessionId: 'invalid-session',
-				})
-			).rejects.toThrow('Session not found');
-		});
-	});
+    test('should throw for invalid session', async () => {
+      await expect(
+        daemon.messageHub.request('session.export', {
+          sessionId: 'invalid-session',
+        })
+      ).rejects.toThrow('Session not found');
+    });
+  });
 
-	describe('message.send error handling', () => {
-		test('should return error for non-existent session', async () => {
-			await expect(
-				daemon.messageHub.request('message.send', {
-					sessionId: 'non-existent',
-					content: 'Hello',
-				})
-			).rejects.toThrow();
-		});
-	});
+  describe('message.send error handling', () => {
+    test('should return error for non-existent session', async () => {
+      await expect(
+        daemon.messageHub.request('message.send', {
+          sessionId: 'non-existent',
+          content: 'Hello',
+        })
+      ).rejects.toThrow();
+    });
+  });
 });

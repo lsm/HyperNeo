@@ -11,12 +11,12 @@
  */
 
 import type {
-	SpaceAgent,
-	SpaceTaskStatus,
-	SpaceWorkflow,
-	WorkflowChannel,
-	WorkflowNode,
-	WorkflowNodeAgent,
+  SpaceAgent,
+  SpaceTaskStatus,
+  SpaceWorkflow,
+  WorkflowChannel,
+  WorkflowNode,
+  WorkflowNodeAgent,
 } from './space.ts';
 
 // ============================================================================
@@ -33,22 +33,22 @@ import type {
  * @throws {Error} When `agents` is empty or not provided.
  */
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
-	if (node.agents && node.agents.length > 0) {
-		return node.agents;
-	}
+  if (node.agents && node.agents.length > 0) {
+    return node.agents;
+  }
 
-	// Backward compatibility: if `agentId` shorthand is present on the node object
-	// (legacy test code and call-sites), synthesize a single-agent array.
-	const legacyRecord = node as unknown as Record<string, unknown>;
-	const legacyAgentId = legacyRecord['agentId'] as string | undefined;
-	if (legacyAgentId) {
-		return [{ agentId: legacyAgentId, name: node.name }];
-	}
+  // Backward compatibility: if `agentId` shorthand is present on the node object
+  // (legacy test code and call-sites), synthesize a single-agent array.
+  const legacyRecord = node as unknown as Record<string, unknown>;
+  const legacyAgentId = legacyRecord['agentId'] as string | undefined;
+  if (legacyAgentId) {
+    return [{ agentId: legacyAgentId, name: node.name }];
+  }
 
-	throw new Error(
-		`WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
-			'At least one agent must be provided.'
-	);
+  throw new Error(
+    `WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
+      'At least one agent must be provided.'
+  );
 }
 
 // ============================================================================
@@ -60,14 +60,14 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
  * instead of updating only the task row.
  */
 export function isWorkflowRecoveryTransition(
-	from: SpaceTaskStatus,
-	to: SpaceTaskStatus
+  from: SpaceTaskStatus,
+  to: SpaceTaskStatus
 ): to is 'open' | 'in_progress' {
-	return (
-		(from === 'done' && to === 'in_progress') ||
-		(from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
-		(from === 'cancelled' && (to === 'open' || to === 'in_progress'))
-	);
+  return (
+    (from === 'done' && to === 'in_progress') ||
+    (from === 'blocked' && (to === 'open' || to === 'in_progress')) ||
+    (from === 'cancelled' && (to === 'open' || to === 'in_progress'))
+  );
 }
 
 // ============================================================================
@@ -78,7 +78,7 @@ export function isWorkflowRecoveryTransition(
  * Finds a workflow node by its name. Returns undefined when not found.
  */
 export function findNodeByName(nodes: WorkflowNode[], name: string): WorkflowNode | undefined {
-	return nodes.find((n) => n.name === name);
+  return nodes.find((n) => n.name === name);
 }
 
 // ============================================================================
@@ -89,39 +89,39 @@ export function findNodeByName(nodes: WorkflowNode[], name: string): WorkflowNod
  * Returns all channels whose FROM side matches the given node name.
  */
 export function getChannelsFromNode(
-	channels: WorkflowChannel[],
-	nodeName: string
+  channels: WorkflowChannel[],
+  nodeName: string
 ): WorkflowChannel[] {
-	return channels.filter((ch) => ch.from === nodeName || ch.from === '*');
+  return channels.filter((ch) => ch.from === nodeName || ch.from === '*');
 }
 
 /**
  * Returns all channels that go TO the given node name.
  */
 export function getChannelsToNode(
-	channels: WorkflowChannel[],
-	nodeName: string
+  channels: WorkflowChannel[],
+  nodeName: string
 ): WorkflowChannel[] {
-	return channels.filter((ch) => {
-		const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-		return toList.includes(nodeName) || toList.includes('*');
-	});
+  return channels.filter((ch) => {
+    const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+    return toList.includes(nodeName) || toList.includes('*');
+  });
 }
 
 /**
  * Returns the first channel connecting fromNode → toNode (or toNode as an array target).
  */
 export function findChannel(
-	channels: WorkflowChannel[],
-	fromNode: string,
-	toNode: string
+  channels: WorkflowChannel[],
+  fromNode: string,
+  toNode: string
 ): WorkflowChannel | undefined {
-	return channels.find((ch) => {
-		if (ch.from !== fromNode && ch.from !== '*') return false;
-		if (ch.to === toNode || ch.to === '*') return true;
-		if (Array.isArray(ch.to)) return ch.to.includes(toNode) || ch.to.includes('*');
-		return false;
-	});
+  return channels.find((ch) => {
+    if (ch.from !== fromNode && ch.from !== '*') return false;
+    if (ch.to === toNode || ch.to === '*') return true;
+    if (Array.isArray(ch.to)) return ch.to.includes(toNode) || ch.to.includes('*');
+    return false;
+  });
 }
 
 // ============================================================================
@@ -144,97 +144,97 @@ export function findChannel(
  * @returns Array of human-readable error strings. Empty array means no errors.
  */
 export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]): string[] {
-	const errors: string[] = [];
+  const errors: string[] = [];
 
-	const agentIdSet = new Set(agents.map((a) => a.id));
-	const knownNodeNames = new Set<string>();
-	const seenNodeNames = new Set<string>();
+  const agentIdSet = new Set(agents.map((a) => a.id));
+  const knownNodeNames = new Set<string>();
+  const seenNodeNames = new Set<string>();
 
-	for (const node of workflow.nodes) {
-		// Unique node name check
-		if (seenNodeNames.has(node.name)) {
-			errors.push(
-				`Node name "${node.name}" appears more than once in this workflow. ` +
-					'Node names must be unique within a workflow (they are used as channel addressing keys).'
-			);
-		} else {
-			seenNodeNames.add(node.name);
-			knownNodeNames.add(node.name);
-		}
+  for (const node of workflow.nodes) {
+    // Unique node name check
+    if (seenNodeNames.has(node.name)) {
+      errors.push(
+        `Node name "${node.name}" appears more than once in this workflow. ` +
+          'Node names must be unique within a workflow (they are used as channel addressing keys).'
+      );
+    } else {
+      seenNodeNames.add(node.name);
+      knownNodeNames.add(node.name);
+    }
 
-		let nodeAgents: WorkflowNodeAgent[];
-		try {
-			nodeAgents = resolveNodeAgents(node);
-		} catch (err) {
-			errors.push((err as Error).message);
-			continue;
-		}
+    let nodeAgents: WorkflowNodeAgent[];
+    try {
+      nodeAgents = resolveNodeAgents(node);
+    } catch (err) {
+      errors.push((err as Error).message);
+      continue;
+    }
 
-		for (const na of nodeAgents) {
-			if (!agentIdSet.has(na.agentId)) {
-				errors.push(
-					`Agent with id "${na.agentId}" in node "${node.name}" not found in space agents.`
-				);
-			}
-		}
-	}
+    for (const na of nodeAgents) {
+      if (!agentIdSet.has(na.agentId)) {
+        errors.push(
+          `Agent with id "${na.agentId}" in node "${node.name}" not found in space agents.`
+        );
+      }
+    }
+  }
 
-	const channels = workflow.channels ?? [];
+  const channels = workflow.channels ?? [];
 
-	// Check each gate is referenced by at most one channel
-	const gateChannelCount = new Map<string, number>();
-	for (const ch of channels) {
-		if (ch.gateId) {
-			gateChannelCount.set(ch.gateId, (gateChannelCount.get(ch.gateId) ?? 0) + 1);
-		}
-	}
-	for (const [gateId, count] of gateChannelCount) {
-		if (count > 1) {
-			errors.push(
-				`Gate "${gateId}" is referenced by ${count} channels. Each gate must belong to exactly one channel.`
-			);
-		}
-	}
+  // Check each gate is referenced by at most one channel
+  const gateChannelCount = new Map<string, number>();
+  for (const ch of channels) {
+    if (ch.gateId) {
+      gateChannelCount.set(ch.gateId, (gateChannelCount.get(ch.gateId) ?? 0) + 1);
+    }
+  }
+  for (const [gateId, count] of gateChannelCount) {
+    if (count > 1) {
+      errors.push(
+        `Gate "${gateId}" is referenced by ${count} channels. Each gate must belong to exactly one channel.`
+      );
+    }
+  }
 
-	for (let i = 0; i < channels.length; i++) {
-		const ch = channels[i];
-		const loc = `workflow.channels[${i}]`;
+  for (let i = 0; i < channels.length; i++) {
+    const ch = channels[i];
+    const loc = `workflow.channels[${i}]`;
 
-		// id is required
-		if (!ch.id?.trim()) {
-			errors.push(`${loc}: channel is missing a required id.`);
-		}
+    // id is required
+    if (!ch.id?.trim()) {
+      errors.push(`${loc}: channel is missing a required id.`);
+    }
 
-		// from must be a known node name or '*'
-		if (ch.from !== '*' && !knownNodeNames.has(ch.from)) {
-			errors.push(
-				`${loc}.from "${ch.from}" does not match any node name in this workflow. ` +
-					`Known nodes: [${[...knownNodeNames].join(', ')}].`
-			);
-		}
+    // from must be a known node name or '*'
+    if (ch.from !== '*' && !knownNodeNames.has(ch.from)) {
+      errors.push(
+        `${loc}.from "${ch.from}" does not match any node name in this workflow. ` +
+          `Known nodes: [${[...knownNodeNames].join(', ')}].`
+      );
+    }
 
-		const toList: string[] = Array.isArray(ch.to) ? ch.to : [ch.to];
+    const toList: string[] = Array.isArray(ch.to) ? ch.to : [ch.to];
 
-		// '*' must not be mixed with explicit names in an array
-		if (toList.length > 1 && toList.includes('*')) {
-			errors.push(
-				`${loc}.to mixes wildcard '*' with explicit names. ` +
-					"Use a plain '*' string (not an array) to target all nodes."
-			);
-		}
+    // '*' must not be mixed with explicit names in an array
+    if (toList.length > 1 && toList.includes('*')) {
+      errors.push(
+        `${loc}.to mixes wildcard '*' with explicit names. ` +
+          "Use a plain '*' string (not an array) to target all nodes."
+      );
+    }
 
-		for (const toRef of toList) {
-			if (toRef === '*') continue;
-			if (!knownNodeNames.has(toRef)) {
-				errors.push(
-					`${loc}.to "${toRef}" does not match any node name in this workflow. ` +
-						`Known nodes: [${[...knownNodeNames].join(', ')}].`
-				);
-			}
-		}
-	}
+    for (const toRef of toList) {
+      if (toRef === '*') continue;
+      if (!knownNodeNames.has(toRef)) {
+        errors.push(
+          `${loc}.to "${toRef}" does not match any node name in this workflow. ` +
+            `Known nodes: [${[...knownNodeNames].join(', ')}].`
+        );
+      }
+    }
+  }
 
-	return errors;
+  return errors;
 }
 
 // ============================================================================
@@ -256,15 +256,15 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]):
  * @param writers       - The `writers` array from the gate field definition.
  */
 export function isGateWriterAuthorized(
-	agentNodeName: string,
-	channel: WorkflowChannel,
-	writers: string[]
+  agentNodeName: string,
+  channel: WorkflowChannel,
+  writers: string[]
 ): boolean {
-	if (!writers) {
-		// Inferred: FROM node agents can write
-		return agentNodeName === channel.from;
-	}
-	if (writers.length === 0) return false; // external-only gate
-	if (writers.includes('*')) return true;
-	return writers.includes(agentNodeName);
+  if (!writers) {
+    // Inferred: FROM node agents can write
+    return agentNodeName === channel.from;
+  }
+  if (writers.length === 0) return false; // external-only gate
+  if (writers.includes('*')) return true;
+  return writers.includes(agentNodeName);
 }

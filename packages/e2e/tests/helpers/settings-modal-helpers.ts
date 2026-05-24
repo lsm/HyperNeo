@@ -10,15 +10,15 @@ import type { Page } from '@playwright/test';
  * Open the Settings modal from the sidebar footer
  */
 export async function openSettingsModal(page: Page): Promise<void> {
-	// Find the settings button in the NavRail (sidebar)
-	// It's a button with aria-label "Settings"
-	const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
+  // Find the settings button in the NavRail (sidebar)
+  // It's a button with aria-label "Settings"
+  const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
 
-	await settingsButton.waitFor({ state: 'visible', timeout: 5000 });
-	await settingsButton.click();
+  await settingsButton.waitFor({ state: 'visible', timeout: 5000 });
+  await settingsButton.click();
 
-	// Wait for Settings section to appear in ContextPanel
-	await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'visible', timeout: 5000 });
+  // Wait for Settings section to appear in ContextPanel
+  await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
@@ -28,10 +28,10 @@ export async function openSettingsModal(page: Page): Promise<void> {
  * navigating to a different section via the NavRail.
  */
 export async function closeSettingsModal(page: Page): Promise<void> {
-	// Navigate away from settings by clicking the Spaces button in the NavRail
-	const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
-	await spacesButton.click();
+  // Navigate away from settings by clicking the Spaces button in the NavRail
+  const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
+  await spacesButton.click();
 
-	// Wait for settings view to close
-	await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'hidden', timeout: 5000 });
+  // Wait for settings view to close
+  await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'hidden', timeout: 5000 });
 }

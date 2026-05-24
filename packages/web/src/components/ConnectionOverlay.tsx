@@ -22,103 +22,103 @@ import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 export type BannerLevel = 'hidden' | 'reconnecting' | 'lost' | 'failed';
 
 export function getBannerLevel(state: typeof connectionState.value, attempts: number): BannerLevel {
-	if (state === 'connected') return 'hidden';
-	// Only hide 'connecting' on initial load (attempts === 0).
-	// During reconnect cycles the transport transitions through 'connecting' with
-	// non-zero attempt counts — the banner should stay visible to avoid flicker.
-	if (state === 'connecting' && attempts === 0) return 'hidden';
-	if (state === 'reconnecting' || state === 'connecting')
-		return attempts <= 2 ? 'reconnecting' : 'lost';
-	if (state === 'disconnected' || state === 'error') return 'lost';
-	if (state === 'failed') return 'failed';
-	return 'hidden';
+  if (state === 'connected') return 'hidden';
+  // Only hide 'connecting' on initial load (attempts === 0).
+  // During reconnect cycles the transport transitions through 'connecting' with
+  // non-zero attempt counts — the banner should stay visible to avoid flicker.
+  if (state === 'connecting' && attempts === 0) return 'hidden';
+  if (state === 'reconnecting' || state === 'connecting')
+    return attempts <= 2 ? 'reconnecting' : 'lost';
+  if (state === 'disconnected' || state === 'error') return 'lost';
+  if (state === 'failed') return 'failed';
+  return 'hidden';
 }
 
 export function ConnectionOverlay() {
-	const state = connectionState.value;
-	const attempts = reconnectAttemptCount.value;
-	const [retrying, setRetrying] = useState(false);
+  const state = connectionState.value;
+  const attempts = reconnectAttemptCount.value;
+  const [retrying, setRetrying] = useState(false);
 
-	const level = getBannerLevel(state, attempts);
+  const level = getBannerLevel(state, attempts);
 
-	const handleReconnect = useCallback(async () => {
-		setRetrying(true);
-		try {
-			await connectionManager.reconnect();
-		} catch {
-			// Reconnect failed — banner will remain visible
-		} finally {
-			setRetrying(false);
-		}
-	}, []);
+  const handleReconnect = useCallback(async () => {
+    setRetrying(true);
+    try {
+      await connectionManager.reconnect();
+    } catch {
+      // Reconnect failed — banner will remain visible
+    } finally {
+      setRetrying(false);
+    }
+  }, []);
 
-	if (level === 'hidden') return null;
+  if (level === 'hidden') return null;
 
-	// --- Reconnecting (first attempts, amber) ---
-	if (level === 'reconnecting') {
-		return (
-			<div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
-				<div class="mt-2 px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
-					<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-						<circle
-							class="opacity-25"
-							cx="12"
-							cy="12"
-							r="10"
-							stroke="currentColor"
-							stroke-width="4"
-						/>
-						<path
-							class="opacity-75"
-							fill="currentColor"
-							d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-						/>
-					</svg>
-					Reconnecting…
-				</div>
-			</div>
-		);
-	}
+  // --- Reconnecting (first attempts, amber) ---
+  if (level === 'reconnecting') {
+    return (
+      <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
+        <div class="mt-2 px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
+          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            />
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          Reconnecting…
+        </div>
+      </div>
+    );
+  }
 
-	// --- Connection lost (repeated failures, amber) ---
-	if (level === 'lost') {
-		return (
-			<div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
-				<div class="mt-2 px-4 py-2 rounded-lg bg-amber-600/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
-					<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-						<circle
-							class="opacity-25"
-							cx="12"
-							cy="12"
-							r="10"
-							stroke="currentColor"
-							stroke-width="4"
-						/>
-						<path
-							class="opacity-75"
-							fill="currentColor"
-							d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-						/>
-					</svg>
-					Connection lost. Retrying…
-				</div>
-			</div>
-		);
-	}
+  // --- Connection lost (repeated failures, amber) ---
+  if (level === 'lost') {
+    return (
+      <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
+        <div class="mt-2 px-4 py-2 rounded-lg bg-amber-600/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
+          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            />
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          Connection lost. Retrying…
+        </div>
+      </div>
+    );
+  }
 
-	// --- Failed (all retries exhausted, red + retry button) ---
-	return (
-		<div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-auto">
-			<div class="mt-2 px-4 py-2 rounded-lg bg-red-600/90 text-white text-sm font-medium flex items-center gap-3 shadow-lg">
-				<span>Unable to reconnect.</span>
-				<button
-					onClick={handleReconnect}
-					disabled={retrying}
-					class="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-white text-xs font-semibold transition-colors disabled:opacity-50"
-				>
-					{retrying ? 'Retrying…' : 'Retry'}
-				</button>
-			</div>
-		</div>
-	);
+  // --- Failed (all retries exhausted, red + retry button) ---
+  return (
+    <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-auto">
+      <div class="mt-2 px-4 py-2 rounded-lg bg-red-600/90 text-white text-sm font-medium flex items-center gap-3 shadow-lg">
+        <span>Unable to reconnect.</span>
+        <button
+          onClick={handleReconnect}
+          disabled={retrying}
+          class="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+        >
+          {retrying ? 'Retrying…' : 'Retry'}
+        </button>
+      </div>
+    </div>
+  );
 }

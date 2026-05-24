@@ -29,9 +29,9 @@ import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceGoalService } from '../goals/goal-service';
 import type {
-	ApproveTaskInput,
-	MarkCompleteInput,
-	SubmitForApprovalInput,
+  ApproveTaskInput,
+  MarkCompleteInput,
+  SubmitForApprovalInput,
 } from './task-agent-tool-schemas';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
@@ -44,34 +44,34 @@ const log = new Logger('end-node-handlers');
  * lifecycle events (used in unit tests).
  */
 export interface EndNodeHandlerDeps {
-	/** Task being finalized. */
-	taskId: string;
-	/** Space the task belongs to. Needed for autonomy lookup + event payloads. */
-	spaceId: string;
-	/** Workflow the task was executed under. Needed for completionAutonomyLevel. */
-	workflow: SpaceWorkflow | null;
-	/** Workflow node ID of the calling agent — stored for pending fields. */
-	workflowNodeId: string;
-	/** Agent name calling the tool — for logging. */
-	agentName: string;
-	/** Task repository. */
-	taskRepo: SpaceTaskRepository;
-	/**
-	 * Task manager bound to `spaceId`. Used by `submit_for_approval` so the
-	 * agent path and the UI "Submit for Review" RPC share `submitTaskForReview`,
-	 * which runs the centralised transition validator before stamping the
-	 * pending-completion fields.
-	 */
-	taskManager: Pick<SpaceTaskManager, 'submitTaskForReview'>;
-	/** Space manager — used to look up current autonomy level for approve_task. */
-	spaceManager: Pick<SpaceManager, 'getSpace'>;
-	/** Optional hub for emitting `space.task.updated` events after state changes. */
-	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
+  /** Task being finalized. */
+  taskId: string;
+  /** Space the task belongs to. Needed for autonomy lookup + event payloads. */
+  spaceId: string;
+  /** Workflow the task was executed under. Needed for completionAutonomyLevel. */
+  workflow: SpaceWorkflow | null;
+  /** Workflow node ID of the calling agent — stored for pending fields. */
+  workflowNodeId: string;
+  /** Agent name calling the tool — for logging. */
+  agentName: string;
+  /** Task repository. */
+  taskRepo: SpaceTaskRepository;
+  /**
+   * Task manager bound to `spaceId`. Used by `submit_for_approval` so the
+   * agent path and the UI "Submit for Review" RPC share `submitTaskForReview`,
+   * which runs the centralised transition validator before stamping the
+   * pending-completion fields.
+   */
+  taskManager: Pick<SpaceTaskManager, 'submitTaskForReview'>;
+  /** Space manager — used to look up current autonomy level for approve_task. */
+  spaceManager: Pick<SpaceManager, 'getSpace'>;
+  /** Optional hub for emitting `space.task.updated` events after state changes. */
+  internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
 }
 
 export interface EndNodeHandlers {
-	onApproveTask: (args: ApproveTaskInput) => Promise<ToolResult>;
-	onSubmitForApproval: (args: SubmitForApprovalInput) => Promise<ToolResult>;
+  onApproveTask: (args: ApproveTaskInput) => Promise<ToolResult>;
+  onSubmitForApproval: (args: SubmitForApprovalInput) => Promise<ToolResult>;
 }
 
 /**
@@ -85,16 +85,16 @@ export interface EndNodeHandlers {
  * tracking fields, and emits a `space.task.updated` InternalEventBus<DaemonInternalEventMap> event.
  */
 export interface MarkCompleteHandlerDeps {
-	taskId: string;
-	spaceId: string;
-	/** Task repository — used to read the current status before transitioning. */
-	taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
-	/** Task manager — used to transition and update the task atomically. */
-	taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
-	/** Optional hub for emitting `space.task.updated` events. */
-	internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
-	/** Optional goal service for processing terminal goal-task side effects. */
-	goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
+  taskId: string;
+  spaceId: string;
+  /** Task repository — used to read the current status before transitioning. */
+  taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
+  /** Task manager — used to transition and update the task atomically. */
+  taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
+  /** Optional hub for emitting `space.task.updated` events. */
+  internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
+  /** Optional goal service for processing terminal goal-task side effects. */
+  goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
 }
 
 /**
@@ -103,109 +103,109 @@ export interface MarkCompleteHandlerDeps {
  * `node-agent-tools.ts` for the wider contract.
  */
 export function createMarkCompleteHandler(
-	deps: MarkCompleteHandlerDeps
+  deps: MarkCompleteHandlerDeps
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
-	const { taskId, spaceId, taskRepo, taskManager, internalEventBus, goalService } = deps;
+  const { taskId, spaceId, taskRepo, taskManager, internalEventBus, goalService } = deps;
 
-	const handleGoalTerminal = (task: SpaceTask): void => {
-		if (!goalService) return;
-		try {
-			goalService.handleTaskTerminal(task.id);
-		} catch (err) {
-			log.warn(
-				`Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
-			);
-		}
-	};
+  const handleGoalTerminal = (task: SpaceTask): void => {
+    if (!goalService) return;
+    try {
+      goalService.handleTaskTerminal(task.id);
+    } catch (err) {
+      log.warn(
+        `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
 
-	const emitTaskUpdated = (task: SpaceTask): void => {
-		if (!internalEventBus) return;
-		void internalEventBus
-			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
-			.catch((err: unknown) => {
-				log.warn(
-					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
-				);
-			});
-	};
+  const emitTaskUpdated = (task: SpaceTask): void => {
+    if (!internalEventBus) return;
+    void internalEventBus
+      .publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
+      .catch((err: unknown) => {
+        log.warn(
+          `Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+  };
 
-	return async (args: MarkCompleteInput): Promise<ToolResult> => {
-		const task = taskRepo.getTask(taskId);
-		if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+  return async (args: MarkCompleteInput): Promise<ToolResult> => {
+    const task = taskRepo.getTask(taskId);
+    if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
-		if (task.status !== 'approved') {
-			return jsonResult({
-				success: false,
-				error:
-					`task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
-					`mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
-			});
-		}
+    if (task.status !== 'approved') {
+      return jsonResult({
+        success: false,
+        error:
+          `task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
+          `mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
+      });
+    }
 
-		let goalUpdate: {
-			goalId: string;
-			updates: NonNullable<MarkCompleteInput['goal_update']>;
-		} | null = null;
-		if (args.goal_update) {
-			if (!goalService) {
-				return jsonResult({
-					success: false,
-					error: 'Goal update is not available in this context.',
-				});
-			}
-			if (!task.goalId) {
-				return jsonResult({
-					success: false,
-					error: 'Cannot apply goal_update: this task is not linked to a goal.',
-				});
-			}
-			const goal = goalService.getGoal(task.goalId);
-			if (!goal || goal.spaceId !== task.spaceId) {
-				return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
-			}
-			goalUpdate = { goalId: goal.id, updates: args.goal_update };
-		}
+    let goalUpdate: {
+      goalId: string;
+      updates: NonNullable<MarkCompleteInput['goal_update']>;
+    } | null = null;
+    if (args.goal_update) {
+      if (!goalService) {
+        return jsonResult({
+          success: false,
+          error: 'Goal update is not available in this context.',
+        });
+      }
+      if (!task.goalId) {
+        return jsonResult({
+          success: false,
+          error: 'Cannot apply goal_update: this task is not linked to a goal.',
+        });
+      }
+      const goal = goalService.getGoal(task.goalId);
+      if (!goal || goal.spaceId !== task.spaceId) {
+        return jsonResult({ success: false, error: `Goal not found: ${task.goalId}` });
+      }
+      goalUpdate = { goalId: goal.id, updates: args.goal_update };
+    }
 
-		try {
-			// Single atomic write: status flip + post-approval-* cleanup. The
-			// "exit approved" branch in `SpaceTaskManager.setTaskStatus` nulls
-			// `postApprovalSessionId`, `postApprovalStartedAt`, and
-			// `postApprovalBlockedReason` in the same UPDATE.
-			const updated = await taskManager.setTaskStatus(taskId, 'done', {
-				approvalSource: task.approvalSource ?? 'agent',
-				onCascadedTasks: async (cascadedTasks) => {
-					for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-				},
-			});
-			if (goalUpdate) {
-				goalService?.updateGoal(
-					goalUpdate.goalId,
-					{
-						summary: goalUpdate.updates.summary,
-						progress: goalUpdate.updates.progress,
-						metrics: goalUpdate.updates.metrics,
-						nextSteps: goalUpdate.updates.nextSteps,
-					},
-					{ source: 'workflow_node_agent', sourceTaskId: taskId }
-				);
-			}
-			handleGoalTerminal(updated);
-			emitTaskUpdated(updated);
-			log.info(
-				`post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`
-			);
-			return jsonResult({
-				success: true,
-				taskId,
-				message: 'Post-approval work finished. Task transitioned to done.',
-			});
-		} catch (err) {
-			return jsonResult({
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-		}
-	};
+    try {
+      // Single atomic write: status flip + post-approval-* cleanup. The
+      // "exit approved" branch in `SpaceTaskManager.setTaskStatus` nulls
+      // `postApprovalSessionId`, `postApprovalStartedAt`, and
+      // `postApprovalBlockedReason` in the same UPDATE.
+      const updated = await taskManager.setTaskStatus(taskId, 'done', {
+        approvalSource: task.approvalSource ?? 'agent',
+        onCascadedTasks: async (cascadedTasks) => {
+          for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+        },
+      });
+      if (goalUpdate) {
+        goalService?.updateGoal(
+          goalUpdate.goalId,
+          {
+            summary: goalUpdate.updates.summary,
+            progress: goalUpdate.updates.progress,
+            metrics: goalUpdate.updates.metrics,
+            nextSteps: goalUpdate.updates.nextSteps,
+          },
+          { source: 'workflow_node_agent', sourceTaskId: taskId }
+        );
+      }
+      handleGoalTerminal(updated);
+      emitTaskUpdated(updated);
+      log.info(
+        `post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`
+      );
+      return jsonResult({
+        success: true,
+        taskId,
+        message: 'Post-approval work finished. Task transitioned to done.',
+      });
+    } catch (err) {
+      return jsonResult({
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
 }
 
 /**
@@ -214,100 +214,100 @@ export function createMarkCompleteHandler(
  * with the same `deps` return independent instances.
  */
 export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers {
-	const {
-		taskId,
-		spaceId,
-		workflow,
-		workflowNodeId,
-		taskRepo,
-		taskManager,
-		spaceManager,
-		internalEventBus,
-	} = deps;
+  const {
+    taskId,
+    spaceId,
+    workflow,
+    workflowNodeId,
+    taskRepo,
+    taskManager,
+    spaceManager,
+    internalEventBus,
+  } = deps;
 
-	const emitTaskUpdated = (task: SpaceTask): void => {
-		if (!internalEventBus) return;
-		void internalEventBus
-			.publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
-			.catch((err: unknown) => {
-				log.warn(
-					`Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
-				);
-			});
-	};
+  const emitTaskUpdated = (task: SpaceTask): void => {
+    if (!internalEventBus) return;
+    void internalEventBus
+      .publish('space.task.updated', { sessionId: 'global', spaceId, taskId: task.id, task })
+      .catch((err: unknown) => {
+        log.warn(
+          `Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+  };
 
-	return {
-		// -------------------------------------------------------------------
-		// approve_task — self-close. Re-checks autonomy at call time.
-		// -------------------------------------------------------------------
-		onApproveTask: async (_args: ApproveTaskInput) => {
-			const space = await spaceManager.getSpace(spaceId);
-			const currentLevel = space?.autonomyLevel ?? 1;
-			const required = workflow?.completionAutonomyLevel ?? 5;
-			if (currentLevel < required) {
-				return jsonResult({
-					success: false,
-					error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${required}. Use submit_for_approval to request human review.`,
-				});
-			}
+  return {
+    // -------------------------------------------------------------------
+    // approve_task — self-close. Re-checks autonomy at call time.
+    // -------------------------------------------------------------------
+    onApproveTask: async (_args: ApproveTaskInput) => {
+      const space = await spaceManager.getSpace(spaceId);
+      const currentLevel = space?.autonomyLevel ?? 1;
+      const required = workflow?.completionAutonomyLevel ?? 5;
+      if (currentLevel < required) {
+        return jsonResult({
+          success: false,
+          error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${required}. Use submit_for_approval to request human review.`,
+        });
+      }
 
-			const task = taskRepo.getTask(taskId);
-			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+      const task = taskRepo.getTask(taskId);
+      if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
-			try {
-				const updated = taskRepo.updateTask(taskId, {
-					reportedStatus: 'done',
-					// Clear any pending-completion state in case a prior submit_for_approval
-					// set it; approval supersedes the pending request.
-					pendingCheckpointType: null,
-					pendingCompletionSubmittedByNodeId: null,
-					pendingCompletionSubmittedAt: null,
-					pendingCompletionReason: null,
-				});
-				if (updated) emitTaskUpdated(updated);
-				return jsonResult({
-					success: true,
-					taskId,
-					message:
-						'Task approved for completion. The completion-action pipeline will now resolve terminal status.',
-				});
-			} catch (err) {
-				return jsonResult({
-					success: false,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			}
-		},
+      try {
+        const updated = taskRepo.updateTask(taskId, {
+          reportedStatus: 'done',
+          // Clear any pending-completion state in case a prior submit_for_approval
+          // set it; approval supersedes the pending request.
+          pendingCheckpointType: null,
+          pendingCompletionSubmittedByNodeId: null,
+          pendingCompletionSubmittedAt: null,
+          pendingCompletionReason: null,
+        });
+        if (updated) emitTaskUpdated(updated);
+        return jsonResult({
+          success: true,
+          taskId,
+          message:
+            'Task approved for completion. The completion-action pipeline will now resolve terminal status.',
+        });
+      } catch (err) {
+        return jsonResult({
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
 
-		// -------------------------------------------------------------------
-		// submit_for_approval — human sign-off. Always available to end nodes.
-		//
-		// Delegates to `SpaceTaskManager.submitTaskForReview` — the same helper
-		// used by the UI "Submit for Review" RPC and the Task Agent's
-		// `submit_for_approval` tool — so all three callers write identical
-		// fields and the resulting `review` task is always banner-eligible.
-		// -------------------------------------------------------------------
-		onSubmitForApproval: async (args: SubmitForApprovalInput) => {
-			const task = taskRepo.getTask(taskId);
-			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+    // -------------------------------------------------------------------
+    // submit_for_approval — human sign-off. Always available to end nodes.
+    //
+    // Delegates to `SpaceTaskManager.submitTaskForReview` — the same helper
+    // used by the UI "Submit for Review" RPC and the Task Agent's
+    // `submit_for_approval` tool — so all three callers write identical
+    // fields and the resulting `review` task is always banner-eligible.
+    // -------------------------------------------------------------------
+    onSubmitForApproval: async (args: SubmitForApprovalInput) => {
+      const task = taskRepo.getTask(taskId);
+      if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 
-			try {
-				const updated = await taskManager.submitTaskForReview(taskId, {
-					submittedByNodeId: workflowNodeId,
-					reason: args.reason ?? null,
-				});
-				emitTaskUpdated(updated);
-				return jsonResult({
-					success: true,
-					taskId,
-					message: `Task submitted for human review${args.reason ? ` (reason: ${args.reason})` : ''}. A human must approve or reject via the UI before the workflow continues.`,
-				});
-			} catch (err) {
-				return jsonResult({
-					success: false,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			}
-		},
-	};
+      try {
+        const updated = await taskManager.submitTaskForReview(taskId, {
+          submittedByNodeId: workflowNodeId,
+          reason: args.reason ?? null,
+        });
+        emitTaskUpdated(updated);
+        return jsonResult({
+          success: true,
+          taskId,
+          message: `Task submitted for human review${args.reason ? ` (reason: ${args.reason})` : ''}. A human must approve or reject via the UI before the workflow continues.`,
+        });
+      } catch (err) {
+        return jsonResult({
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  };
 }

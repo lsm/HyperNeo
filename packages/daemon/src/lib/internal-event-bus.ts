@@ -29,22 +29,22 @@ import type { GlobalSettings } from '@neokai/shared';
 import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
 
 export interface HandlerFailure {
-	/** Subscriber name that registered the failing handler. */
-	subscriberName: string;
+  /** Subscriber name that registered the failing handler. */
+  subscriberName: string;
 
-	/** Event name being handled when the failure occurred. */
-	event: string;
+  /** Event name being handled when the failure occurred. */
+  event: string;
 
-	/** The raw Error (or Error-like) thrown by the handler. */
-	error: Error;
+  /** The raw Error (or Error-like) thrown by the handler. */
+  error: Error;
 }
 
 export interface PublishResult {
-	/** Number of handlers that completed successfully. */
-	delivered: number;
+  /** Number of handlers that completed successfully. */
+  delivered: number;
 
-	/** Structured failures from handlers that threw or rejected. */
-	failures: HandlerFailure[];
+  /** Structured failures from handlers that threw or rejected. */
+  failures: HandlerFailure[];
 }
 
 /**
@@ -53,16 +53,16 @@ export interface PublishResult {
  * whether to abort, partially retry, or continue.
  */
 export class InternalEventBusPublishError extends Error {
-	constructor(
-		public readonly event: string,
-		public readonly result: PublishResult
-	) {
-		super(
-			`Publish of '${event}' failed with ${result.failures.length} handler failure(s) ` +
-				`(${result.delivered} succeeded)`
-		);
-		this.name = 'InternalEventBusPublishError';
-	}
+  constructor(
+    public readonly event: string,
+    public readonly result: PublishResult
+  ) {
+    super(
+      `Publish of '${event}' failed with ${result.failures.length} handler failure(s) ` +
+        `(${result.delivered} succeeded)`
+    );
+    this.name = 'InternalEventBusPublishError';
+  }
 }
 
 /**
@@ -71,37 +71,37 @@ export class InternalEventBusPublishError extends Error {
  * scoped routing.
  */
 export interface InternalEventPayload {
-	/** Session-scoped routing key. Use `'global'` for app-wide events. */
-	sessionId?: string;
-	/** Namespace-scoped routing key used by newer space/runtime events. */
-	namespaceId?: string;
+  /** Session-scoped routing key. Use `'global'` for app-wide events. */
+  sessionId?: string;
+  /** Namespace-scoped routing key used by newer space/runtime events. */
+  namespaceId?: string;
 
-	[key: string]: unknown;
+  [key: string]: unknown;
 }
 
 /**
  * Subscription options.
  */
 export interface SubscribeOptions {
-	/**
-	 * Human-readable subscriber identifier used in diagnostics and
-	 * `HandlerFailure.subscriberName`.  Required.
-	 */
-	subscriberName: string;
+  /**
+   * Human-readable subscriber identifier used in diagnostics and
+   * `HandlerFailure.subscriberName`.  Required.
+   */
+  subscriberName: string;
 
-	/**
-	 * When provided, the handler only receives events whose payload carries
-	 * the matching `sessionId`/`namespaceId`.  Omit for a global subscription.
-	 */
-	sessionId?: string;
-	namespaceId?: string;
+  /**
+   * When provided, the handler only receives events whose payload carries
+   * the matching `sessionId`/`namespaceId`.  Omit for a global subscription.
+   */
+  sessionId?: string;
+  namespaceId?: string;
 }
 
 export type InternalEventHandler<TPayload> = (data: TPayload) => void | Promise<void>;
 
 interface RegisteredHandler {
-	subscriberName: string;
-	handler: (data: unknown) => void | Promise<void>;
+  subscriberName: string;
+  handler: (data: unknown) => void | Promise<void>;
 }
 
 const GLOBAL_SESSION_KEY = '__global__';
@@ -112,208 +112,208 @@ const GLOBAL_SESSION_KEY = '__global__';
  * @template TEventMap — map of dot-separated event names to payload shapes.
  */
 export class InternalEventBus<TEventMap extends object = Record<string, InternalEventPayload>> {
-	// event → sessionId → handlers
-	private handlers = new Map<string, Map<string, Set<RegisteredHandler>>>();
+  // event → sessionId → handlers
+  private handlers = new Map<string, Map<string, Set<RegisteredHandler>>>();
 
-	/**
-	 * Subscribe to an event.
-	 *
-	 * @param event     — typed event name
-	 * @param handler   — callback invoked when the event is published
-	 * @param options   — must include `subscriberName`; optional `sessionId` filter
-	 * @returns unsubscribe function
-	 */
-	subscribe<K extends keyof TEventMap & string>(
-		event: K,
-		handler: InternalEventHandler<TEventMap[K] & InternalEventPayload>,
-		options: SubscribeOptions
-	): () => void {
-		const eventKey = event;
-		const sessionKey = options.sessionId ?? options.namespaceId ?? GLOBAL_SESSION_KEY;
+  /**
+   * Subscribe to an event.
+   *
+   * @param event     — typed event name
+   * @param handler   — callback invoked when the event is published
+   * @param options   — must include `subscriberName`; optional `sessionId` filter
+   * @returns unsubscribe function
+   */
+  subscribe<K extends keyof TEventMap & string>(
+    event: K,
+    handler: InternalEventHandler<TEventMap[K] & InternalEventPayload>,
+    options: SubscribeOptions
+  ): () => void {
+    const eventKey = event;
+    const sessionKey = options.sessionId ?? options.namespaceId ?? GLOBAL_SESSION_KEY;
 
-		if ((options.sessionId ?? options.namespaceId) === GLOBAL_SESSION_KEY) {
-			throw new Error(
-				`'${GLOBAL_SESSION_KEY}' is a reserved session key and cannot be used as an explicit sessionId`
-			);
-		}
+    if ((options.sessionId ?? options.namespaceId) === GLOBAL_SESSION_KEY) {
+      throw new Error(
+        `'${GLOBAL_SESSION_KEY}' is a reserved session key and cannot be used as an explicit sessionId`
+      );
+    }
 
-		if (!options.subscriberName || options.subscriberName.trim().length === 0) {
-			throw new Error('InternalEventBus.subscribe requires a non-empty subscriberName');
-		}
+    if (!options.subscriberName || options.subscriberName.trim().length === 0) {
+      throw new Error('InternalEventBus.subscribe requires a non-empty subscriberName');
+    }
 
-		let sessionMap = this.handlers.get(eventKey);
-		if (!sessionMap) {
-			sessionMap = new Map();
-			this.handlers.set(eventKey, sessionMap);
-		}
+    let sessionMap = this.handlers.get(eventKey);
+    if (!sessionMap) {
+      sessionMap = new Map();
+      this.handlers.set(eventKey, sessionMap);
+    }
 
-		let handlerSet = sessionMap.get(sessionKey);
-		if (!handlerSet) {
-			handlerSet = new Set();
-			sessionMap.set(sessionKey, handlerSet);
-		}
+    let handlerSet = sessionMap.get(sessionKey);
+    if (!handlerSet) {
+      handlerSet = new Set();
+      sessionMap.set(sessionKey, handlerSet);
+    }
 
-		const registered: RegisteredHandler = {
-			subscriberName: options.subscriberName,
-			handler: handler as (data: unknown) => void | Promise<void>,
-		};
+    const registered: RegisteredHandler = {
+      subscriberName: options.subscriberName,
+      handler: handler as (data: unknown) => void | Promise<void>,
+    };
 
-		handlerSet.add(registered);
+    handlerSet.add(registered);
 
-		return () => {
-			const map = this.handlers.get(eventKey);
-			if (!map) return;
-			const set = map.get(sessionKey);
-			if (!set) return;
-			set.delete(registered);
-			if (set.size === 0) map.delete(sessionKey);
-			if (map.size === 0) this.handlers.delete(eventKey);
-		};
-	}
+    return () => {
+      const map = this.handlers.get(eventKey);
+      if (!map) return;
+      const set = map.get(sessionKey);
+      if (!set) return;
+      set.delete(registered);
+      if (set.size === 0) map.delete(sessionKey);
+      if (map.size === 0) this.handlers.delete(eventKey);
+    };
+  }
 
-	/**
-	 * Publish an event and **await** every local internal handler.
-	 *
-	 * All matching handlers are executed concurrently.  If any handler throws,
-	 * the error is captured in a structured `HandlerFailure`, every other
-	 * handler still runs, and the method finally throws
-	 * `InternalEventBusPublishError` containing the full `PublishResult`.
-	 *
-	 * When **all** handlers succeed the returned `PublishResult` contains
-	 * `failures: []` and is never thrown.
-	 */
-	async publish<K extends keyof TEventMap & string>(
-		event: K,
-		data: TEventMap[K] & InternalEventPayload
-	): Promise<PublishResult> {
-		const eventKey = event;
-		const sessionMap = this.handlers.get(eventKey);
+  /**
+   * Publish an event and **await** every local internal handler.
+   *
+   * All matching handlers are executed concurrently.  If any handler throws,
+   * the error is captured in a structured `HandlerFailure`, every other
+   * handler still runs, and the method finally throws
+   * `InternalEventBusPublishError` containing the full `PublishResult`.
+   *
+   * When **all** handlers succeed the returned `PublishResult` contains
+   * `failures: []` and is never thrown.
+   */
+  async publish<K extends keyof TEventMap & string>(
+    event: K,
+    data: TEventMap[K] & InternalEventPayload
+  ): Promise<PublishResult> {
+    const eventKey = event;
+    const sessionMap = this.handlers.get(eventKey);
 
-		if (!sessionMap || sessionMap.size === 0) {
-			return { delivered: 0, failures: [] };
-		}
+    if (!sessionMap || sessionMap.size === 0) {
+      return { delivered: 0, failures: [] };
+    }
 
-		const sessionId = data.sessionId ?? data.namespaceId ?? GLOBAL_SESSION_KEY;
-		const failures: HandlerFailure[] = [];
-		let delivered = 0;
+    const sessionId = data.sessionId ?? data.namespaceId ?? GLOBAL_SESSION_KEY;
+    const failures: HandlerFailure[] = [];
+    let delivered = 0;
 
-		const targets: RegisteredHandler[] = [];
+    const targets: RegisteredHandler[] = [];
 
-		// Session-scoped handlers
-		const scoped = sessionMap.get(sessionId);
-		if (scoped) {
-			for (const h of scoped) targets.push(h);
-		}
+    // Session-scoped handlers
+    const scoped = sessionMap.get(sessionId);
+    if (scoped) {
+      for (const h of scoped) targets.push(h);
+    }
 
-		// Global handlers — only add when sessionId is not the global sentinel
-		// to prevent double-delivery of the same handler set.
-		if (sessionId !== GLOBAL_SESSION_KEY) {
-			const global = sessionMap.get(GLOBAL_SESSION_KEY);
-			if (global) {
-				for (const h of global) targets.push(h);
-			}
-		}
+    // Global handlers — only add when sessionId is not the global sentinel
+    // to prevent double-delivery of the same handler set.
+    if (sessionId !== GLOBAL_SESSION_KEY) {
+      const global = sessionMap.get(GLOBAL_SESSION_KEY);
+      if (global) {
+        for (const h of global) targets.push(h);
+      }
+    }
 
-		if (targets.length === 0) {
-			return { delivered: 0, failures: [] };
-		}
+    if (targets.length === 0) {
+      return { delivered: 0, failures: [] };
+    }
 
-		// Run every handler concurrently; collect failures individually.
-		await Promise.all(
-			targets.map(async (registered) => {
-				try {
-					await registered.handler(data);
-					delivered++;
-				} catch (raw) {
-					const error = raw instanceof Error ? raw : new Error(String(raw));
-					failures.push({
-						subscriberName: registered.subscriberName,
-						event: eventKey,
-						error,
-					});
-				}
-			})
-		);
+    // Run every handler concurrently; collect failures individually.
+    await Promise.all(
+      targets.map(async (registered) => {
+        try {
+          await registered.handler(data);
+          delivered++;
+        } catch (raw) {
+          const error = raw instanceof Error ? raw : new Error(String(raw));
+          failures.push({
+            subscriberName: registered.subscriberName,
+            event: eventKey,
+            error,
+          });
+        }
+      })
+    );
 
-		const result: PublishResult = { delivered, failures };
+    const result: PublishResult = { delivered, failures };
 
-		if (failures.length > 0) {
-			throw new InternalEventBusPublishError(eventKey, result);
-		}
+    if (failures.length > 0) {
+      throw new InternalEventBusPublishError(eventKey, result);
+    }
 
-		return result;
-	}
+    return result;
+  }
 
-	/**
-	 * Fire-and-forget publish.
-	 *
-	 * Schedules handlers asynchronously but returns immediately.
-	 * Handler failures are silently swallowed; they are never thrown
-	 * and the caller cannot await them.
-	 */
-	publishAsync<K extends keyof TEventMap & string>(
-		event: K,
-		data: TEventMap[K] & InternalEventPayload
-	): void {
-		// Defer to the next microtask so that synchronous handlers do not
-		// run on the caller's stack and `publishAsync` truly returns
-		// immediately.
-		queueMicrotask(() => {
-			this.publish(event, data).catch(() => {
-				// Swallow — publishAsync is explicit fire-and-forget.
-			});
-		});
-	}
+  /**
+   * Fire-and-forget publish.
+   *
+   * Schedules handlers asynchronously but returns immediately.
+   * Handler failures are silently swallowed; they are never thrown
+   * and the caller cannot await them.
+   */
+  publishAsync<K extends keyof TEventMap & string>(
+    event: K,
+    data: TEventMap[K] & InternalEventPayload
+  ): void {
+    // Defer to the next microtask so that synchronous handlers do not
+    // run on the caller's stack and `publishAsync` truly returns
+    // immediately.
+    queueMicrotask(() => {
+      this.publish(event, data).catch(() => {
+        // Swallow — publishAsync is explicit fire-and-forget.
+      });
+    });
+  }
 
-	/**
-	 * Remove every handler for the given event (all sessions).
-	 */
-	off<K extends keyof TEventMap & string>(event: K): void {
-		this.handlers.delete(event);
-	}
+  /**
+   * Remove every handler for the given event (all sessions).
+   */
+  off<K extends keyof TEventMap & string>(event: K): void {
+    this.handlers.delete(event);
+  }
 
-	/**
-	 * Remove all handlers for every event.
-	 */
-	clear(): void {
-		this.handlers.clear();
-	}
+  /**
+   * Remove all handlers for every event.
+   */
+  clear(): void {
+    this.handlers.clear();
+  }
 
-	/**
-	 * Return the total number of registered handlers for an event
-	 * across all session scopes.
-	 */
-	getHandlerCount<K extends keyof TEventMap & string>(event: K): number {
-		const sessionMap = this.handlers.get(event);
-		if (!sessionMap) return 0;
-		let total = 0;
-		for (const set of sessionMap.values()) {
-			total += set.size;
-		}
-		return total;
-	}
+  /**
+   * Return the total number of registered handlers for an event
+   * across all session scopes.
+   */
+  getHandlerCount<K extends keyof TEventMap & string>(event: K): number {
+    const sessionMap = this.handlers.get(event);
+    if (!sessionMap) return 0;
+    let total = 0;
+    for (const set of sessionMap.values()) {
+      total += set.size;
+    }
+    return total;
+  }
 
-	/**
-	 * Return the number of registered handlers for a specific session scope.
-	 */
-	getHandlerCountForSession<K extends keyof TEventMap & string>(
-		event: K,
-		sessionId: string
-	): number {
-		const sessionMap = this.handlers.get(event);
-		if (!sessionMap) return 0;
-		return sessionMap.get(sessionId)?.size ?? 0;
-	}
+  /**
+   * Return the number of registered handlers for a specific session scope.
+   */
+  getHandlerCountForSession<K extends keyof TEventMap & string>(
+    event: K,
+    sessionId: string
+  ): number {
+    const sessionMap = this.handlers.get(event);
+    if (!sessionMap) return 0;
+    return sessionMap.get(sessionId)?.size ?? 0;
+  }
 
-	/**
-	 * Return the number of registered handlers for a specific namespace scope.
-	 */
-	getHandlerCountForNamespace<K extends keyof TEventMap & string>(
-		event: K,
-		namespaceId: string
-	): number {
-		return this.getHandlerCountForSession(event, namespaceId);
-	}
+  /**
+   * Return the number of registered handlers for a specific namespace scope.
+   */
+  getHandlerCountForNamespace<K extends keyof TEventMap & string>(
+    event: K,
+    namespaceId: string
+  ): number {
+    return this.getHandlerCountForSession(event, namespaceId);
+  }
 }
 
 /**
@@ -326,9 +326,9 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
  *   const bus = createInternalEventBus<MyEventMap>();
  */
 export function createInternalEventBus<
-	TEventMap extends object = Record<string, InternalEventPayload>,
+  TEventMap extends object = Record<string, InternalEventPayload>,
 >(): InternalEventBus<TEventMap> {
-	return new InternalEventBus<TEventMap>();
+  return new InternalEventBus<TEventMap>();
 }
 
 // ---------------------------------------------------------------------------
@@ -348,23 +348,23 @@ export function createInternalEventBus<
  * Always carries `sessionId: 'global'` — settings are application-wide.
  */
 export interface SettingsUpdatedEvent {
-	sessionId?: string;
-	namespaceId?: string;
-	settings: GlobalSettings;
+  sessionId?: string;
+  namespaceId?: string;
+  settings: GlobalSettings;
 }
 
 /**
  * Settings domain events.
  */
 export interface SettingsEvents {
-	'settings.updated': SettingsUpdatedEvent;
+  'settings.updated': SettingsUpdatedEvent;
 }
 
 /**
  * External event domain events.
  */
 export interface ExternalEventEvents {
-	'externalEvent.published': ExternalEventPublishedPayload;
+  'externalEvent.published': ExternalEventPublishedPayload;
 }
 
 /**
@@ -372,35 +372,35 @@ export interface ExternalEventEvents {
  * These events drive StateProjectionService cache updates.
  */
 export interface SessionEvents {
-	'sdk.toolUse.created': {
-		sessionId: string;
-		toolUseId: string;
-		toolName: string;
-		timestamp: number;
-	};
-	'sdk.toolUse.consumed': {
-		sessionId: string;
-		toolUseId: string;
-		timestamp: number;
-	};
-	'session.created': { sessionId: string; session: import('@neokai/shared').Session };
-	'session.updated': {
-		sessionId: string;
-		source?: string;
-		session?: Partial<import('@neokai/shared').Session>;
-		processingState?: import('@neokai/shared').AgentProcessingState;
-	};
-	'session.deleted': { sessionId: string };
-	'commands.updated': { sessionId: string; commands: string[] };
-	'session.error': { sessionId: string; error: string; details?: unknown };
-	'session.errorClear': { sessionId: string };
+  'sdk.toolUse.created': {
+    sessionId: string;
+    toolUseId: string;
+    toolName: string;
+    timestamp: number;
+  };
+  'sdk.toolUse.consumed': {
+    sessionId: string;
+    toolUseId: string;
+    timestamp: number;
+  };
+  'session.created': { sessionId: string; session: import('@neokai/shared').Session };
+  'session.updated': {
+    sessionId: string;
+    source?: string;
+    session?: Partial<import('@neokai/shared').Session>;
+    processingState?: import('@neokai/shared').AgentProcessingState;
+  };
+  'session.deleted': { sessionId: string };
+  'commands.updated': { sessionId: string; commands: string[] };
+  'session.error': { sessionId: string; error: string; details?: unknown };
+  'session.errorClear': { sessionId: string };
 }
 
 /**
  * API connection events.
  */
 export interface ApiConnectionEvents {
-	'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
+  'api.connection': { sessionId: string } & import('@neokai/shared').ApiConnectionState;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,11 +410,11 @@ export interface ApiConnectionEvents {
 
 /** A task has transitioned to `blocked` and requires judgment. */
 export interface SpaceTaskBlockedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	reason: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  reason: string;
+  timestamp: string;
 }
 
 /**
@@ -424,11 +424,11 @@ export interface SpaceTaskBlockedEvent {
  * emitted by any publisher. Will be wired when the runtime adds an unblock path.
  */
 export interface SpaceTaskUnblockedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	reason: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  reason: string;
+  timestamp: string;
 }
 
 /**
@@ -439,11 +439,11 @@ export interface SpaceTaskUnblockedEvent {
  * for terminal runs rather than per-task completion events.
  */
 export interface SpaceTaskCompletedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	status: 'done' | 'cancelled' | 'blocked';
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  status: 'done' | 'cancelled' | 'blocked';
+  timestamp: string;
 }
 
 /**
@@ -454,19 +454,19 @@ export interface SpaceTaskCompletedEvent {
  * `space.task.blocked` with the failure reason.
  */
 export interface SpaceTaskFailedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	reason: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  reason: string;
+  timestamp: string;
 }
 
 /** A Task Agent session crashed unexpectedly. */
 export interface SpaceAgentCrashedEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  timestamp: string;
 }
 
 /**
@@ -477,117 +477,117 @@ export interface SpaceAgentCrashedEvent {
  * without emitting a dedicated recovery event.
  */
 export interface SpaceAgentRecoveredEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  timestamp: string;
 }
 
 /** A workflow run has reached a terminal state. */
 export interface SpaceWorkflowRunCompletedEvent {
-	sessionId: string;
-	spaceId: string;
-	runId: string;
-	status: 'done' | 'cancelled' | 'blocked';
-	summary?: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  runId: string;
+  status: 'done' | 'cancelled' | 'blocked';
+  summary?: string;
+  timestamp: string;
 }
 
 /** A workflow run has failed with an unrecoverable error. */
 export interface SpaceWorkflowRunFailedEvent {
-	sessionId: string;
-	spaceId: string;
-	runId: string;
-	reason: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  runId: string;
+  reason: string;
+  timestamp: string;
 }
 
 /** A workflow run has transitioned to `blocked`. */
 export interface SpaceWorkflowRunBlockedEvent {
-	sessionId: string;
-	spaceId: string;
-	runId: string;
-	reason: string;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  runId: string;
+  reason: string;
+  timestamp: string;
 }
 
 /** A previously-terminal workflow run has been reopened back to `in_progress`. */
 export interface SpaceWorkflowRunReopenedEvent {
-	sessionId?: string;
-	namespaceId?: string;
-	spaceId: string;
-	runId: string;
-	fromStatus: 'done' | 'cancelled' | 'blocked';
-	reason: string;
-	by: string;
-	timestamp: string;
+  sessionId?: string;
+  namespaceId?: string;
+  spaceId: string;
+  runId: string;
+  fromStatus: 'done' | 'cancelled' | 'blocked';
+  reason: string;
+  by: string;
+  timestamp: string;
 }
 
 /** A blocked execution is being automatically retried by the runtime. */
 export interface SpaceWorkflowRunRetryEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	runId: string;
-	originalReason: string;
-	attemptNumber: number;
-	maxAttempts: number;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  runId: string;
+  originalReason: string;
+  attemptNumber: number;
+  maxAttempts: number;
+  timestamp: string;
 }
 
 /** A blocked workflow run has exhausted automatic retries and needs attention. */
 export interface SpaceWorkflowRunNeedsAttentionEvent {
-	sessionId: string;
-	spaceId: string;
-	runId: string;
-	taskId: string;
-	reason: string;
-	retriesExhausted: number;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  runId: string;
+  taskId: string;
+  reason: string;
+  retriesExhausted: number;
+  timestamp: string;
 }
 
 /** A task has paused at a completion action that requires approval. */
 export interface SpaceTaskAwaitingApprovalEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	actionId: string;
-	actionName: string;
-	actionDescription?: string;
-	actionType: 'script' | 'instruction' | 'mcp_call';
-	requiredLevel: number;
-	spaceLevel: number;
-	autonomyLevel: number;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  actionId: string;
+  actionName: string;
+  actionDescription?: string;
+  actionType: 'script' | 'instruction' | 'mcp_call';
+  requiredLevel: number;
+  spaceLevel: number;
+  autonomyLevel: number;
+  timestamp: string;
 }
 
 /** A task has been running longer than the configured timeout threshold. */
 export interface SpaceTaskTimeoutEvent {
-	sessionId: string;
-	spaceId: string;
-	taskId: string;
-	elapsedMs: number;
-	timestamp: string;
+  sessionId: string;
+  spaceId: string;
+  taskId: string;
+  elapsedMs: number;
+  timestamp: string;
 }
 
 /**
  * Space domain events — migrated from NotificationSink to InternalEventBus in M6.
  */
 export interface SpaceEvents {
-	'space.task.blocked': SpaceTaskBlockedEvent;
-	'space.task.unblocked': SpaceTaskUnblockedEvent;
-	'space.task.completed': SpaceTaskCompletedEvent;
-	'space.task.failed': SpaceTaskFailedEvent;
-	'space.agent.crashed': SpaceAgentCrashedEvent;
-	'space.agent.recovered': SpaceAgentRecoveredEvent;
-	'space.workflowRun.completed': SpaceWorkflowRunCompletedEvent;
-	'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;
-	'space.workflowRun.blocked': SpaceWorkflowRunBlockedEvent;
-	'space.workflowRun.reopened': SpaceWorkflowRunReopenedEvent;
-	'space.workflowRun.retry': SpaceWorkflowRunRetryEvent;
-	'space.workflowRun.needsAttention': SpaceWorkflowRunNeedsAttentionEvent;
-	'space.task.awaitingApproval': SpaceTaskAwaitingApprovalEvent;
-	'space.task.timeout': SpaceTaskTimeoutEvent;
+  'space.task.blocked': SpaceTaskBlockedEvent;
+  'space.task.unblocked': SpaceTaskUnblockedEvent;
+  'space.task.completed': SpaceTaskCompletedEvent;
+  'space.task.failed': SpaceTaskFailedEvent;
+  'space.agent.crashed': SpaceAgentCrashedEvent;
+  'space.agent.recovered': SpaceAgentRecoveredEvent;
+  'space.workflowRun.completed': SpaceWorkflowRunCompletedEvent;
+  'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;
+  'space.workflowRun.blocked': SpaceWorkflowRunBlockedEvent;
+  'space.workflowRun.reopened': SpaceWorkflowRunReopenedEvent;
+  'space.workflowRun.retry': SpaceWorkflowRunRetryEvent;
+  'space.workflowRun.needsAttention': SpaceWorkflowRunNeedsAttentionEvent;
+  'space.task.awaitingApproval': SpaceTaskAwaitingApprovalEvent;
+  'space.task.timeout': SpaceTaskTimeoutEvent;
 }
 
 /**
@@ -602,107 +602,107 @@ export interface SpaceEvents {
  * active subscribers.
  */
 type InternalEventBusPayload = { sessionId?: string; namespaceId?: string } & Record<
-	string,
-	unknown
+  string,
+  unknown
 >;
 
 interface AgentControlEvents {
-	'model.switchRequest': { sessionId: string; model: string; provider: string };
-	'model.switched': { sessionId: string; success: boolean; model: string; error?: string };
-	'agent.interruptRequest': { sessionId: string };
-	'agent.interrupted': { sessionId: string };
-	'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
-	'agent.reset': { sessionId: string; success: boolean; error?: string };
-	'message.persisted': {
-		sessionId: string;
-		messageId: string;
-		messageContent: string | import('@neokai/shared').MessageContent[];
-		userMessageText: string;
-		needsWorkspaceInit: boolean;
-		hasDraftToClear: boolean;
-		sendStatus: 'deferred' | 'enqueued' | 'consumed';
-		deliveryMode: import('@neokai/shared').MessageDeliveryMode;
-		skipQueryStart?: boolean;
-	};
-	'query.trigger': { sessionId: string };
-	'query.sendEnqueuedOnTurnEnd': { sessionId: string };
-	'context.updated': { sessionId: string; contextInfo: import('@neokai/shared').ContextInfo };
+  'model.switchRequest': { sessionId: string; model: string; provider: string };
+  'model.switched': { sessionId: string; success: boolean; model: string; error?: string };
+  'agent.interruptRequest': { sessionId: string };
+  'agent.interrupted': { sessionId: string };
+  'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
+  'agent.reset': { sessionId: string; success: boolean; error?: string };
+  'message.persisted': {
+    sessionId: string;
+    messageId: string;
+    messageContent: string | import('@neokai/shared').MessageContent[];
+    userMessageText: string;
+    needsWorkspaceInit: boolean;
+    hasDraftToClear: boolean;
+    sendStatus: 'deferred' | 'enqueued' | 'consumed';
+    deliveryMode: import('@neokai/shared').MessageDeliveryMode;
+    skipQueryStart?: boolean;
+  };
+  'query.trigger': { sessionId: string };
+  'query.sendEnqueuedOnTurnEnd': { sessionId: string };
+  'context.updated': { sessionId: string; contextInfo: import('@neokai/shared').ContextInfo };
 }
 
 interface ClientForwardingEvents {
-	'auth.changed': {
-		sessionId: string;
-		method: import('@neokai/shared').AuthMethod;
-		isAuthenticated: boolean;
-	};
-	'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
-	'space.updated': {
-		sessionId: string;
-		spaceId: string;
-		space?: Partial<import('@neokai/shared').Space>;
-	};
-	'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
-	'space.deleted': { sessionId: string; spaceId: string };
-	'space.task.created': {
-		sessionId: string;
-		spaceId: string;
-		taskId: string;
-		task: import('@neokai/shared').SpaceTask;
-	};
-	'space.task.updated': {
-		sessionId: string;
-		spaceId: string;
-		taskId: string;
-		task: import('@neokai/shared').SpaceTask;
-		archiveSource?: 'user' | 'system_reconcile';
-	};
-	'space.schedule.updated': {
-		sessionId: string;
-		spaceId: string;
-		scheduleId: string;
-		schedule: import('@neokai/shared').TaskSchedule;
-	};
-	'space.workflowRun.created': {
-		sessionId: string;
-		spaceId: string;
-		runId: string;
-		run: import('@neokai/shared').SpaceWorkflowRun;
-	};
-	'space.workflowRun.updated': {
-		sessionId: string;
-		spaceId: string;
-		runId: string;
-		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
-	};
-	'space.gateData.updated': {
-		sessionId: string;
-		spaceId: string;
-		runId: string;
-		gateId: string;
-		data: Record<string, unknown>;
-	};
-	'spaceAgent.created': {
-		sessionId: string;
-		spaceId: string;
-		agent: import('@neokai/shared').SpaceAgent;
-	};
-	'spaceAgent.updated': {
-		sessionId: string;
-		spaceId: string;
-		agent: import('@neokai/shared').SpaceAgent;
-	};
-	'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
-	'spaceWorkflow.created': {
-		sessionId: string;
-		spaceId: string;
-		workflow: import('@neokai/shared').SpaceWorkflow;
-	};
-	'spaceWorkflow.updated': {
-		sessionId: string;
-		spaceId: string;
-		workflow: import('@neokai/shared').SpaceWorkflow;
-	};
-	'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
+  'auth.changed': {
+    sessionId: string;
+    method: import('@neokai/shared').AuthMethod;
+    isAuthenticated: boolean;
+  };
+  'space.created': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+  'space.updated': {
+    sessionId: string;
+    spaceId: string;
+    space?: Partial<import('@neokai/shared').Space>;
+  };
+  'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
+  'space.deleted': { sessionId: string; spaceId: string };
+  'space.task.created': {
+    sessionId: string;
+    spaceId: string;
+    taskId: string;
+    task: import('@neokai/shared').SpaceTask;
+  };
+  'space.task.updated': {
+    sessionId: string;
+    spaceId: string;
+    taskId: string;
+    task: import('@neokai/shared').SpaceTask;
+    archiveSource?: 'user' | 'system_reconcile';
+  };
+  'space.schedule.updated': {
+    sessionId: string;
+    spaceId: string;
+    scheduleId: string;
+    schedule: import('@neokai/shared').TaskSchedule;
+  };
+  'space.workflowRun.created': {
+    sessionId: string;
+    spaceId: string;
+    runId: string;
+    run: import('@neokai/shared').SpaceWorkflowRun;
+  };
+  'space.workflowRun.updated': {
+    sessionId: string;
+    spaceId: string;
+    runId: string;
+    run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
+  };
+  'space.gateData.updated': {
+    sessionId: string;
+    spaceId: string;
+    runId: string;
+    gateId: string;
+    data: Record<string, unknown>;
+  };
+  'spaceAgent.created': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@neokai/shared').SpaceAgent;
+  };
+  'spaceAgent.updated': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@neokai/shared').SpaceAgent;
+  };
+  'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
+  'spaceWorkflow.created': {
+    sessionId: string;
+    spaceId: string;
+    workflow: import('@neokai/shared').SpaceWorkflow;
+  };
+  'spaceWorkflow.updated': {
+    sessionId: string;
+    spaceId: string;
+    workflow: import('@neokai/shared').SpaceWorkflow;
+  };
+  'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
 }
 
 /**
@@ -713,13 +713,13 @@ interface ClientForwardingEvents {
  * subscribers.
  */
 export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
-	AgentControlEvents &
-	ClientForwardingEvents &
-	SettingsEvents &
-	ExternalEventEvents &
-	SessionEvents &
-	ApiConnectionEvents &
-	SpaceEvents;
+  AgentControlEvents &
+  ClientForwardingEvents &
+  SettingsEvents &
+  ExternalEventEvents &
+  SessionEvents &
+  ApiConnectionEvents &
+  SpaceEvents;
 
 /**
  * Convenience factory typed with the canonical daemon internal event map.
@@ -727,5 +727,5 @@ export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
  * application/domain code so all migrated events share one typed surface.
  */
 export function createDaemonInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
-	return new InternalEventBus<DaemonInternalEventMap>();
+  return new InternalEventBus<DaemonInternalEventMap>();
 }

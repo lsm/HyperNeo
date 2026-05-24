@@ -16,201 +16,201 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 
 interface Props {
-	result: ResultMessage;
+  result: ResultMessage;
 }
 
 function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const sec = ms / 1000;
-	if (sec < 60) return `${sec.toFixed(1)}s`;
-	const min = Math.floor(sec / 60);
-	const rem = Math.round(sec - min * 60);
-	return rem === 0 ? `${min}m` : `${min}m ${rem}s`;
+  if (ms < 1000) return `${ms}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const min = Math.floor(sec / 60);
+  const rem = Math.round(sec - min * 60);
+  return rem === 0 ? `${min}m` : `${min}m ${rem}s`;
 }
 
 function formatTokens(n: number | undefined | null): string {
-	if (n === undefined || n === null) return '0';
-	if (n < 1000) return String(n);
-	if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-	return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n === undefined || n === null) return '0';
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
 function formatCost(usd: number | undefined | null): string {
-	if (usd === undefined || usd === null) return '$0.0000';
-	return `$${usd.toFixed(4)}`;
+  if (usd === undefined || usd === null) return '$0.0000';
+  return `$${usd.toFixed(4)}`;
 }
 
 export function ResultInfoDropdown({ result }: Props) {
-	const isError = result.subtype !== 'success';
-	const usage = (result as { usage?: Record<string, number | undefined> }).usage ?? {};
-	const inputTokens = usage.input_tokens ?? 0;
-	const outputTokens = usage.output_tokens ?? 0;
-	const cacheRead = usage.cache_read_input_tokens ?? 0;
-	const cacheCreate = usage.cache_creation_input_tokens ?? 0;
-	const totalCost = (result as { total_cost_usd?: number }).total_cost_usd;
-	const durationMs = (result as { duration_ms?: number }).duration_ms;
-	const apiDurationMs = (result as { duration_api_ms?: number }).duration_api_ms;
-	const numTurns = (result as { num_turns?: number }).num_turns;
-	const stopReason = (result as { stop_reason?: string | null }).stop_reason;
-	const errors = (result as { errors?: string[] }).errors;
-	const modelUsage = (result as { modelUsage?: Record<string, unknown> }).modelUsage;
+  const isError = result.subtype !== 'success';
+  const usage = (result as { usage?: Record<string, number | undefined> }).usage ?? {};
+  const inputTokens = usage.input_tokens ?? 0;
+  const outputTokens = usage.output_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
+  const cacheCreate = usage.cache_creation_input_tokens ?? 0;
+  const totalCost = (result as { total_cost_usd?: number }).total_cost_usd;
+  const durationMs = (result as { duration_ms?: number }).duration_ms;
+  const apiDurationMs = (result as { duration_api_ms?: number }).duration_api_ms;
+  const numTurns = (result as { num_turns?: number }).num_turns;
+  const stopReason = (result as { stop_reason?: string | null }).stop_reason;
+  const errors = (result as { errors?: string[] }).errors;
+  const modelUsage = (result as { modelUsage?: Record<string, unknown> }).modelUsage;
 
-	// Theme tokens — emerald for success, amber for error subtypes. Single
-	// place to keep the "success/error" branch so the rest of the body just
-	// uses these consts and the two paths look identical to the eye.
-	const t = isError
-		? {
-				bg: 'bg-amber-50 dark:bg-amber-900/70',
-				border: 'border-amber-200 dark:border-amber-800',
-				headText: 'text-amber-900 dark:text-amber-100',
-				subText: 'text-amber-600 dark:text-amber-400',
-				body: 'text-amber-700 dark:text-amber-300',
-				bodyBg: 'bg-amber-100 dark:bg-amber-900/30',
-				icon: 'text-amber-600 dark:text-amber-400',
-			}
-		: {
-				bg: 'bg-emerald-50 dark:bg-emerald-900/70',
-				border: 'border-emerald-200 dark:border-emerald-800',
-				headText: 'text-emerald-900 dark:text-emerald-100',
-				subText: 'text-emerald-600 dark:text-emerald-400',
-				body: 'text-emerald-700 dark:text-emerald-300',
-				bodyBg: 'bg-emerald-100 dark:bg-emerald-900/30',
-				icon: 'text-emerald-600 dark:text-emerald-400',
-			};
+  // Theme tokens — emerald for success, amber for error subtypes. Single
+  // place to keep the "success/error" branch so the rest of the body just
+  // uses these consts and the two paths look identical to the eye.
+  const t = isError
+    ? {
+        bg: 'bg-amber-50 dark:bg-amber-900/70',
+        border: 'border-amber-200 dark:border-amber-800',
+        headText: 'text-amber-900 dark:text-amber-100',
+        subText: 'text-amber-600 dark:text-amber-400',
+        body: 'text-amber-700 dark:text-amber-300',
+        bodyBg: 'bg-amber-100 dark:bg-amber-900/30',
+        icon: 'text-amber-600 dark:text-amber-400',
+      }
+    : {
+        bg: 'bg-emerald-50 dark:bg-emerald-900/70',
+        border: 'border-emerald-200 dark:border-emerald-800',
+        headText: 'text-emerald-900 dark:text-emerald-100',
+        subText: 'text-emerald-600 dark:text-emerald-400',
+        body: 'text-emerald-700 dark:text-emerald-300',
+        bodyBg: 'bg-emerald-100 dark:bg-emerald-900/30',
+        icon: 'text-emerald-600 dark:text-emerald-400',
+      };
 
-	return (
-		<div
-			class={`w-80 max-h-[60vh] overflow-y-scroll ${t.bg} rounded-lg border ${t.border} p-3 space-y-3 shadow-2xl backdrop-blur-sm`}
-			data-testid="result-info-dropdown"
-		>
-			{/* Header */}
-			<div class={`flex items-center gap-2 pb-2 border-b ${t.border}`}>
-				<svg class={`w-4 h-4 ${t.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					{isError ? (
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.33 16a2 2 0 001.74 3z"
-						/>
-					) : (
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					)}
-				</svg>
-				<div class="text-sm">
-					<span class={`font-medium ${t.headText}`}>{isError ? 'Run Error' : 'Run Complete'}</span>
-					<span class={`${t.subText} ml-2`}>{result.subtype}</span>
-				</div>
-			</div>
+  return (
+    <div
+      class={`w-80 max-h-[60vh] overflow-y-scroll ${t.bg} rounded-lg border ${t.border} p-3 space-y-3 shadow-2xl backdrop-blur-sm`}
+      data-testid="result-info-dropdown"
+    >
+      {/* Header */}
+      <div class={`flex items-center gap-2 pb-2 border-b ${t.border}`}>
+        <svg class={`w-4 h-4 ${t.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          {isError ? (
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01M5.07 19h13.86a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.33 16a2 2 0 001.74 3z"
+            />
+          ) : (
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          )}
+        </svg>
+        <div class="text-sm">
+          <span class={`font-medium ${t.headText}`}>{isError ? 'Run Error' : 'Run Complete'}</span>
+          <span class={`${t.subText} ml-2`}>{result.subtype}</span>
+        </div>
+      </div>
 
-			{/* Usage tokens */}
-			<div>
-				<div class={`text-xs font-medium ${t.headText} mb-1`}>Usage</div>
-				<div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-					<div class="flex justify-between">
-						<span class={t.subText}>Input</span>
-						<span class={`font-mono ${t.body}`}>{formatTokens(inputTokens)}</span>
-					</div>
-					<div class="flex justify-between">
-						<span class={t.subText}>Output</span>
-						<span class={`font-mono ${t.body}`}>{formatTokens(outputTokens)}</span>
-					</div>
-					{cacheRead > 0 && (
-						<div class="flex justify-between">
-							<span class={t.subText}>Cache read</span>
-							<span class={`font-mono ${t.body}`}>{formatTokens(cacheRead)}</span>
-						</div>
-					)}
-					{cacheCreate > 0 && (
-						<div class="flex justify-between">
-							<span class={t.subText}>Cache write</span>
-							<span class={`font-mono ${t.body}`}>{formatTokens(cacheCreate)}</span>
-						</div>
-					)}
-				</div>
-			</div>
+      {/* Usage tokens */}
+      <div>
+        <div class={`text-xs font-medium ${t.headText} mb-1`}>Usage</div>
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <div class="flex justify-between">
+            <span class={t.subText}>Input</span>
+            <span class={`font-mono ${t.body}`}>{formatTokens(inputTokens)}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class={t.subText}>Output</span>
+            <span class={`font-mono ${t.body}`}>{formatTokens(outputTokens)}</span>
+          </div>
+          {cacheRead > 0 && (
+            <div class="flex justify-between">
+              <span class={t.subText}>Cache read</span>
+              <span class={`font-mono ${t.body}`}>{formatTokens(cacheRead)}</span>
+            </div>
+          )}
+          {cacheCreate > 0 && (
+            <div class="flex justify-between">
+              <span class={t.subText}>Cache write</span>
+              <span class={`font-mono ${t.body}`}>{formatTokens(cacheCreate)}</span>
+            </div>
+          )}
+        </div>
+      </div>
 
-			{/* Duration / turns / cost */}
-			<div>
-				<div class={`text-xs font-medium ${t.headText} mb-1`}>Run</div>
-				<div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-					{durationMs !== undefined && (
-						<div class="flex justify-between">
-							<span class={t.subText}>Duration</span>
-							<span class={`font-mono ${t.body}`}>{formatDuration(durationMs)}</span>
-						</div>
-					)}
-					{apiDurationMs !== undefined && (
-						<div class="flex justify-between">
-							<span class={t.subText}>API time</span>
-							<span class={`font-mono ${t.body}`}>{formatDuration(apiDurationMs)}</span>
-						</div>
-					)}
-					{numTurns !== undefined && (
-						<div class="flex justify-between">
-							<span class={t.subText}>Turns</span>
-							<span class={`font-mono ${t.body}`}>{numTurns}</span>
-						</div>
-					)}
-					{totalCost !== undefined && (
-						<div class="flex justify-between">
-							<span class={t.subText}>Cost</span>
-							<span class={`font-mono ${t.body}`}>{formatCost(totalCost)}</span>
-						</div>
-					)}
-				</div>
-			</div>
+      {/* Duration / turns / cost */}
+      <div>
+        <div class={`text-xs font-medium ${t.headText} mb-1`}>Run</div>
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          {durationMs !== undefined && (
+            <div class="flex justify-between">
+              <span class={t.subText}>Duration</span>
+              <span class={`font-mono ${t.body}`}>{formatDuration(durationMs)}</span>
+            </div>
+          )}
+          {apiDurationMs !== undefined && (
+            <div class="flex justify-between">
+              <span class={t.subText}>API time</span>
+              <span class={`font-mono ${t.body}`}>{formatDuration(apiDurationMs)}</span>
+            </div>
+          )}
+          {numTurns !== undefined && (
+            <div class="flex justify-between">
+              <span class={t.subText}>Turns</span>
+              <span class={`font-mono ${t.body}`}>{numTurns}</span>
+            </div>
+          )}
+          {totalCost !== undefined && (
+            <div class="flex justify-between">
+              <span class={t.subText}>Cost</span>
+              <span class={`font-mono ${t.body}`}>{formatCost(totalCost)}</span>
+            </div>
+          )}
+        </div>
+      </div>
 
-			{/* Errors (only for error subtypes that carry an `errors` array) */}
-			{isError && errors && errors.length > 0 && (
-				<div>
-					<div class={`text-xs font-medium ${t.headText} mb-1`}>Errors ({errors.length})</div>
-					<div class="space-y-1">
-						{errors.map((err, idx) => (
-							<div
-								key={idx}
-								class={`font-mono text-[11px] ${t.body} ${t.bodyBg} rounded px-2 py-1 break-all`}
-							>
-								{err}
-							</div>
-						))}
-					</div>
-				</div>
-			)}
+      {/* Errors (only for error subtypes that carry an `errors` array) */}
+      {isError && errors && errors.length > 0 && (
+        <div>
+          <div class={`text-xs font-medium ${t.headText} mb-1`}>Errors ({errors.length})</div>
+          <div class="space-y-1">
+            {errors.map((err, idx) => (
+              <div
+                key={idx}
+                class={`font-mono text-[11px] ${t.body} ${t.bodyBg} rounded px-2 py-1 break-all`}
+              >
+                {err}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-			{/* modelUsage breakdown — collapsed key list. We don't deeply parse
+      {/* modelUsage breakdown — collapsed key list. We don't deeply parse
 			    the per-model shape here because it varies; just surface the
 			    model names so the user knows which models contributed. */}
-			{modelUsage && Object.keys(modelUsage).length > 0 && (
-				<div>
-					<div class={`text-xs font-medium ${t.headText} mb-1`}>
-						Models ({Object.keys(modelUsage).length})
-					</div>
-					<div class="flex flex-wrap gap-1">
-						{Object.keys(modelUsage).map((m) => (
-							<span key={m} class={`px-2 py-0.5 ${t.bodyBg} ${t.body} rounded text-xs font-mono`}>
-								{m}
-							</span>
-						))}
-					</div>
-				</div>
-			)}
+      {modelUsage && Object.keys(modelUsage).length > 0 && (
+        <div>
+          <div class={`text-xs font-medium ${t.headText} mb-1`}>
+            Models ({Object.keys(modelUsage).length})
+          </div>
+          <div class="flex flex-wrap gap-1">
+            {Object.keys(modelUsage).map((m) => (
+              <span key={m} class={`px-2 py-0.5 ${t.bodyBg} ${t.body} rounded text-xs font-mono`}>
+                {m}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
-			{/* Footnote — stop reason. */}
-			{stopReason && (
-				<div
-					class={`flex flex-wrap gap-x-3 gap-y-1 text-xs ${t.subText} pt-2 border-t ${t.border}`}
-				>
-					<div>
-						<span class="font-medium">Stop reason:</span> {stopReason}
-					</div>
-				</div>
-			)}
-		</div>
-	);
+      {/* Footnote — stop reason. */}
+      {stopReason && (
+        <div
+          class={`flex flex-wrap gap-x-3 gap-y-1 text-xs ${t.subText} pt-2 border-t ${t.border}`}
+        >
+          <div>
+            <span class="font-medium">Stop reason:</span> {stopReason}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

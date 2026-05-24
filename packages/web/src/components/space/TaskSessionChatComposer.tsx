@@ -9,265 +9,265 @@ import { agentInitial } from './thread/minimal/minimal-mock-data';
 import { TaskToolsModal } from './TaskToolsModal.tsx';
 
 interface TaskSessionChatComposerProps {
-	mentionCandidates: Array<{ id: string; name: string }>;
-	targets: TaskComposerTarget[];
-	selectedTargetId: string | null;
-	canSend: boolean;
-	isSending: boolean;
-	/** @deprecated isProcessing is now computed from the targeted agent's activity */
-	isProcessing?: boolean;
-	autoScroll: boolean;
-	errorMessage?: string | null;
-	activityMembers: SpaceTaskActivityMember[];
-	/** Workflow-defined default model per agent name (agentName -> modelId) */
-	defaultAgentModels?: Map<string, string>;
-	taskId: string;
-	onAutoScrollChange: (enabled: boolean) => void;
-	onTargetSelect: (targetId: string) => void;
-	onDraftActiveChange?: (hasDraft: boolean) => void;
-	onComposerRef?: Ref<HTMLDivElement>;
-	onSend: (
-		message: string,
-		target: TaskComposerTarget | null,
-		images?: MessageImage[]
-	) => Promise<boolean>;
+  mentionCandidates: Array<{ id: string; name: string }>;
+  targets: TaskComposerTarget[];
+  selectedTargetId: string | null;
+  canSend: boolean;
+  isSending: boolean;
+  /** @deprecated isProcessing is now computed from the targeted agent's activity */
+  isProcessing?: boolean;
+  autoScroll: boolean;
+  errorMessage?: string | null;
+  activityMembers: SpaceTaskActivityMember[];
+  /** Workflow-defined default model per agent name (agentName -> modelId) */
+  defaultAgentModels?: Map<string, string>;
+  taskId: string;
+  onAutoScrollChange: (enabled: boolean) => void;
+  onTargetSelect: (targetId: string) => void;
+  onDraftActiveChange?: (hasDraft: boolean) => void;
+  onComposerRef?: Ref<HTMLDivElement>;
+  onSend: (
+    message: string,
+    target: TaskComposerTarget | null,
+    images?: MessageImage[]
+  ) => Promise<boolean>;
 }
 
 export function TaskCanvasToggleButton({
-	active,
-	onClick,
-	class: className,
+  active,
+  onClick,
+  class: className,
 }: {
-	active: boolean;
-	onClick: () => void;
-	class?: string;
+  active: boolean;
+  onClick: () => void;
+  class?: string;
 }) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			class={cn(
-				'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-95',
-				active
-					? 'border-sky-400/40 bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/30'
-					: 'border-dark-600 bg-dark-850/90 text-gray-400 hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-sky-200',
-				className
-			)}
-			data-testid="canvas-toggle"
-			aria-label={active ? 'Hide canvas' : 'Show canvas'}
-			aria-pressed={active}
-			title={active ? 'Hide canvas' : 'Show canvas'}
-		>
-			<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width={2}
-					d="M5.5 5.5h13v13h-13z"
-				/>
-			</svg>
-		</button>
-	);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      class={cn(
+        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-95',
+        active
+          ? 'border-sky-400/40 bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/30'
+          : 'border-dark-600 bg-dark-850/90 text-gray-400 hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-sky-200',
+        className
+      )}
+      data-testid="canvas-toggle"
+      aria-label={active ? 'Hide canvas' : 'Show canvas'}
+      aria-pressed={active}
+      title={active ? 'Hide canvas' : 'Show canvas'}
+    >
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width={2}
+          d="M5.5 5.5h13v13h-13z"
+        />
+      </svg>
+    </button>
+  );
 }
 
 export function TaskSessionChatComposer({
-	mentionCandidates,
-	targets,
-	selectedTargetId,
-	canSend,
-	isSending,
-	isProcessing: _isProcessingProp,
-	autoScroll,
-	errorMessage,
-	activityMembers,
-	defaultAgentModels,
-	taskId,
-	onAutoScrollChange,
-	onTargetSelect,
-	onDraftActiveChange,
-	onComposerRef,
-	onSend,
+  mentionCandidates,
+  targets,
+  selectedTargetId,
+  canSend,
+  isSending,
+  isProcessing: _isProcessingProp,
+  autoScroll,
+  errorMessage,
+  activityMembers,
+  defaultAgentModels,
+  taskId,
+  onAutoScrollChange,
+  onTargetSelect,
+  onDraftActiveChange,
+  onComposerRef,
+  onSend,
 }: TaskSessionChatComposerProps) {
-	const [targetMenuOpen, setTargetMenuOpen] = useState(false);
-	const [toolsModalOpen, setToolsModalOpen] = useState(false);
+  const [targetMenuOpen, setTargetMenuOpen] = useState(false);
+  const [toolsModalOpen, setToolsModalOpen] = useState(false);
 
-	const selectedTarget = useMemo(
-		() => targets.find((target) => target.id === selectedTargetId) ?? targets[0] ?? null,
-		[targets, selectedTargetId]
-	);
-	const selectedTargetColor = selectedTarget ? getAgentColor(selectedTarget.label) : '#66A7FF';
-	const selectedTargetInitial = selectedTarget ? agentInitial(selectedTarget.label) : 'A';
+  const selectedTarget = useMemo(
+    () => targets.find((target) => target.id === selectedTargetId) ?? targets[0] ?? null,
+    [targets, selectedTargetId]
+  );
+  const selectedTargetColor = selectedTarget ? getAgentColor(selectedTarget.label) : '#66A7FF';
+  const selectedTargetInitial = selectedTarget ? agentInitial(selectedTarget.label) : 'A';
 
-	const {
-		targetSessionId,
-		currentModel,
-		currentModelInfo,
-		availableModels,
-		modelSwitching,
-		modelLoading,
-		thinkingLevel,
-		contextInfo,
-		isProcessing: targetIsProcessing,
-		isStarted,
-		switchModel,
-		setThinkingLevel,
-	} = useTargetSessionContext({
-		taskId,
-		targets,
-		selectedTarget,
-		activityMembers,
-		defaultAgentModels,
-	});
+  const {
+    targetSessionId,
+    currentModel,
+    currentModelInfo,
+    availableModels,
+    modelSwitching,
+    modelLoading,
+    thinkingLevel,
+    contextInfo,
+    isProcessing: targetIsProcessing,
+    isStarted,
+    switchModel,
+    setThinkingLevel,
+  } = useTargetSessionContext({
+    taskId,
+    targets,
+    selectedTarget,
+    activityMembers,
+    defaultAgentModels,
+  });
 
-	// Return the boolean so MessageInput can restore the draft when sending fails
-	const handleSend = async (
-		content: string,
-		images?: MessageImage[],
-		_deliveryMode?: MessageDeliveryMode
-	): Promise<boolean> => {
-		return onSend(content, selectedTarget, images);
-	};
+  // Return the boolean so MessageInput can restore the draft when sending fails
+  const handleSend = async (
+    content: string,
+    images?: MessageImage[],
+    _deliveryMode?: MessageDeliveryMode
+  ): Promise<boolean> => {
+    return onSend(content, selectedTarget, images);
+  };
 
-	const handleOpenTools = () => {
-		setToolsModalOpen(true);
-	};
+  const handleOpenTools = () => {
+    setToolsModalOpen(true);
+  };
 
-	const isNotStarted = selectedTarget?.kind === 'node_agent' && !isStarted;
+  const isNotStarted = selectedTarget?.kind === 'node_agent' && !isStarted;
 
-	const targetPicker =
-		targets.length > 0 ? (
-			<div class="relative">
-				<button
-					type="button"
-					class={cn(
-						'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-dark-900/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-white/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400/70 active:scale-95',
-						isNotStarted && 'ring-amber-400/40'
-					)}
-					style={{ backgroundColor: selectedTargetColor }}
-					onClick={() => setTargetMenuOpen((open) => !open)}
-					data-testid="task-composer-target-trigger"
-					aria-label="Select message recipient"
-					aria-haspopup="menu"
-					aria-expanded={targetMenuOpen}
-					title={selectedTarget ? `Send to ${selectedTarget.label}` : 'Select recipient'}
-				>
-					<span>{selectedTargetInitial}</span>
-				</button>
-				{targetMenuOpen && (
-					<div
-						class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-dark-700 bg-dark-850 shadow-xl shadow-black/30"
-						data-testid="task-composer-target-menu"
-					>
-						<div class="border-b border-dark-700 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-gray-500">
-							Send Message To
-						</div>
-						<div class="max-h-72 overflow-y-auto py-1">
-							{targets.map((target) => (
-								<button
-									key={target.id}
-									type="button"
-									class={cn(
-										'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-dark-700/70',
-										target.id === selectedTarget?.id && 'bg-blue-500/15 text-blue-100'
-									)}
-									onClick={() => {
-										onTargetSelect(target.id);
-										setTargetMenuOpen(false);
-									}}
-									data-testid="task-composer-target-option"
-								>
-									<span class="min-w-0">
-										<span class="block truncate text-gray-100">{target.label}</span>
-										<span class="block truncate text-xs text-gray-500">
-											{`${target.nodeName ?? 'Workflow'}${target.state ? ` · ${target.state}` : ''}`}
-										</span>
-									</span>
-									{target.id === selectedTarget?.id && (
-										<span class="text-xs font-medium text-blue-300">Selected</span>
-									)}
-								</button>
-							))}
-						</div>
-					</div>
-				)}
-			</div>
-		) : null;
+  const targetPicker =
+    targets.length > 0 ? (
+      <div class="relative">
+        <button
+          type="button"
+          class={cn(
+            'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-dark-900/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-white/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400/70 active:scale-95',
+            isNotStarted && 'ring-amber-400/40'
+          )}
+          style={{ backgroundColor: selectedTargetColor }}
+          onClick={() => setTargetMenuOpen((open) => !open)}
+          data-testid="task-composer-target-trigger"
+          aria-label="Select message recipient"
+          aria-haspopup="menu"
+          aria-expanded={targetMenuOpen}
+          title={selectedTarget ? `Send to ${selectedTarget.label}` : 'Select recipient'}
+        >
+          <span>{selectedTargetInitial}</span>
+        </button>
+        {targetMenuOpen && (
+          <div
+            class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-dark-700 bg-dark-850 shadow-xl shadow-black/30"
+            data-testid="task-composer-target-menu"
+          >
+            <div class="border-b border-dark-700 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-gray-500">
+              Send Message To
+            </div>
+            <div class="max-h-72 overflow-y-auto py-1">
+              {targets.map((target) => (
+                <button
+                  key={target.id}
+                  type="button"
+                  class={cn(
+                    'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-dark-700/70',
+                    target.id === selectedTarget?.id && 'bg-blue-500/15 text-blue-100'
+                  )}
+                  onClick={() => {
+                    onTargetSelect(target.id);
+                    setTargetMenuOpen(false);
+                  }}
+                  data-testid="task-composer-target-option"
+                >
+                  <span class="min-w-0">
+                    <span class="block truncate text-gray-100">{target.label}</span>
+                    <span class="block truncate text-xs text-gray-500">
+                      {`${target.nodeName ?? 'Workflow'}${target.state ? ` · ${target.state}` : ''}`}
+                    </span>
+                  </span>
+                  {target.id === selectedTarget?.id && (
+                    <span class="text-xs font-medium text-blue-300">Selected</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    ) : null;
 
-	return (
-		<div ref={onComposerRef} class="relative z-10" data-testid="task-session-chat-composer">
-			{isNotStarted && (
-				<div class="px-3 pb-1">
-					<div class="flex items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1">
-						<svg
-							class="w-3 h-3 text-amber-400 flex-shrink-0"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-							/>
-						</svg>
-						<span class="text-[11px] text-amber-300">
-							{selectedTarget?.label} hasn't started yet — model and thinking pre-configuration will
-							apply when the session spawns.
-						</span>
-					</div>
-				</div>
-			)}
-			<ChatComposer
-				sessionId={targetSessionId ?? ''}
-				readonly={false}
-				isProcessing={targetIsProcessing}
-				thinkingLevel={thinkingLevel}
-				features={{
-					coordinator: false,
-					worktree: false,
-					rewind: false,
-					archive: false,
-					sessionInfo: false,
-				}}
-				currentModel={currentModel}
-				currentModelInfo={currentModelInfo}
-				availableModels={availableModels}
-				modelSwitching={modelSwitching}
-				modelLoading={modelLoading}
-				contextUsage={contextInfo ?? undefined}
-				autoScroll={autoScroll}
-				coordinatorMode={false}
-				coordinatorSwitching={false}
-				sandboxEnabled={false}
-				sandboxSwitching={false}
-				isWaitingForInput={!canSend || isSending}
-				isConnected={true}
-				rewindMode={false}
-				onModelSwitch={switchModel}
-				onAutoScrollChange={onAutoScrollChange}
-				onCoordinatorModeChange={() => {}}
-				onSandboxModeChange={() => {}}
-				onSend={handleSend}
-				onOpenTools={handleOpenTools}
-				onThinkingLevelChange={setThinkingLevel}
-				onEnterRewindMode={() => {}}
-				onExitRewindMode={() => {}}
-				agentMentionCandidates={mentionCandidates}
-				inputPlaceholder={
-					selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'
-				}
-				inputLeadingElement={targetPicker}
-				inputLeadingPaddingClass={targetPicker ? 'pl-12' : undefined}
-				onDraftActiveChange={onDraftActiveChange}
-				errorMessage={errorMessage}
-			/>
-			<TaskToolsModal
-				isOpen={toolsModalOpen}
-				onClose={() => setToolsModalOpen(false)}
-				sessionId={targetSessionId}
-				agentLabel={selectedTarget?.label ?? 'Agent'}
-			/>
-		</div>
-	);
+  return (
+    <div ref={onComposerRef} class="relative z-10" data-testid="task-session-chat-composer">
+      {isNotStarted && (
+        <div class="px-3 pb-1">
+          <div class="flex items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1">
+            <svg
+              class="w-3 h-3 text-amber-400 flex-shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <span class="text-[11px] text-amber-300">
+              {selectedTarget?.label} hasn't started yet — model and thinking pre-configuration will
+              apply when the session spawns.
+            </span>
+          </div>
+        </div>
+      )}
+      <ChatComposer
+        sessionId={targetSessionId ?? ''}
+        readonly={false}
+        isProcessing={targetIsProcessing}
+        thinkingLevel={thinkingLevel}
+        features={{
+          coordinator: false,
+          worktree: false,
+          rewind: false,
+          archive: false,
+          sessionInfo: false,
+        }}
+        currentModel={currentModel}
+        currentModelInfo={currentModelInfo}
+        availableModels={availableModels}
+        modelSwitching={modelSwitching}
+        modelLoading={modelLoading}
+        contextUsage={contextInfo ?? undefined}
+        autoScroll={autoScroll}
+        coordinatorMode={false}
+        coordinatorSwitching={false}
+        sandboxEnabled={false}
+        sandboxSwitching={false}
+        isWaitingForInput={!canSend || isSending}
+        isConnected={true}
+        rewindMode={false}
+        onModelSwitch={switchModel}
+        onAutoScrollChange={onAutoScrollChange}
+        onCoordinatorModeChange={() => {}}
+        onSandboxModeChange={() => {}}
+        onSend={handleSend}
+        onOpenTools={handleOpenTools}
+        onThinkingLevelChange={setThinkingLevel}
+        onEnterRewindMode={() => {}}
+        onExitRewindMode={() => {}}
+        agentMentionCandidates={mentionCandidates}
+        inputPlaceholder={
+          selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'
+        }
+        inputLeadingElement={targetPicker}
+        inputLeadingPaddingClass={targetPicker ? 'pl-12' : undefined}
+        onDraftActiveChange={onDraftActiveChange}
+        errorMessage={errorMessage}
+      />
+      <TaskToolsModal
+        isOpen={toolsModalOpen}
+        onClose={() => setToolsModalOpen(false)}
+        sessionId={targetSessionId}
+        agentLabel={selectedTarget?.label ?? 'Agent'}
+      />
+    </div>
+  );
 }

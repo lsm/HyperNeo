@@ -1,19 +1,19 @@
 {
-	"compilerOptions": {
-		"lib": ["ESNext"],
-		"module": "ESNext",
-		"target": "ESNext",
-		"moduleResolution": "bundler",
-		"strict": true,
-		"skipLibCheck": true,
-		"allowImportingTsExtensions": true,
-		"noEmit": true,
-		"paths": {
-			"@/*": ["./src/*"],
-			"@neokai/shared": ["../shared/src/mod.ts"],
-			"@neokai/shared/*": ["../shared/src/*"]
-		}
-	},
-	"include": ["src/**/*", "main.ts", "../shared/src/**/*", "research-context-info.ts"],
-	"exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts"]
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@neokai/shared": ["../shared/src/mod.ts"],
+      "@neokai/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "main.ts", "../shared/src/**/*", "research-context-info.ts"],
+  "exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts"]
 }

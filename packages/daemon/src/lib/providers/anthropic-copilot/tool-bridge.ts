@@ -47,210 +47,210 @@ const TOOL_RESULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
  * 5. `rejectAll()` is called on error or session release to clean up.
  */
 export class ToolBridgeRegistry {
-	private pending = new Map<
-		string,
-		{
-			resolve: (result: { text: string; isError: boolean }) => void;
-			reject: (err: Error) => void;
-			timer: ReturnType<typeof setTimeout>;
-		}
-	>();
+  private pending = new Map<
+    string,
+    {
+      resolve: (result: { text: string; isError: boolean }) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
 
-	private activeWriter: AnthropicStreamWriter | null = null;
-	private activeRes: ServerResponse | null = null;
+  private activeWriter: AnthropicStreamWriter | null = null;
+  private activeRes: ServerResponse | null = null;
 
-	/** Callback invoked when all tool_use blocks for one turn have been emitted. */
-	private onToolUseEmitted: ((toolCallIds: string[]) => void) | null = null;
+  /** Callback invoked when all tool_use blocks for one turn have been emitted. */
+  private onToolUseEmitted: ((toolCallIds: string[]) => void) | null = null;
 
-	/** Callback invoked when a pending tool call ID is registered. */
-	private onPendingToolCall: ((toolCallId: string) => void) | null = null;
+  /** Callback invoked when a pending tool call ID is registered. */
+  private onPendingToolCall: ((toolCallId: string) => void) | null = null;
 
-	/**
-	 * Buffer for tool calls waiting to be flushed to the SSE response.
-	 *
-	 * When the Copilot model emits parallel tool calls, all tool handlers fire
-	 * concurrently.  Each call to `emitToolUseAndWait` pushes an entry here
-	 * and schedules a single microtask flush via `queueMicrotask`.  The flush
-	 * writes all buffered `tool_use` blocks to the same HTTP response and ends
-	 * it once — correctly supporting N parallel tool calls in one turn.
-	 */
-	private pendingEmissions: Array<{
-		toolCallId: string;
-		toolName: string;
-		toolInput: unknown;
-	}> = [];
-	private flushScheduled = false;
+  /**
+   * Buffer for tool calls waiting to be flushed to the SSE response.
+   *
+   * When the Copilot model emits parallel tool calls, all tool handlers fire
+   * concurrently.  Each call to `emitToolUseAndWait` pushes an entry here
+   * and schedules a single microtask flush via `queueMicrotask`.  The flush
+   * writes all buffered `tool_use` blocks to the same HTTP response and ends
+   * it once — correctly supporting N parallel tool calls in one turn.
+   */
+  private pendingEmissions: Array<{
+    toolCallId: string;
+    toolName: string;
+    toolInput: unknown;
+  }> = [];
+  private flushScheduled = false;
 
-	// ---------------------------------------------------------------------------
-	// Response management
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Response management
+  // ---------------------------------------------------------------------------
 
-	/** Set the active SSE writer + response for the current HTTP request. */
-	setActiveResponse(writer: AnthropicStreamWriter, res: ServerResponse): void {
-		this.activeWriter = writer;
-		this.activeRes = res;
-	}
+  /** Set the active SSE writer + response for the current HTTP request. */
+  setActiveResponse(writer: AnthropicStreamWriter, res: ServerResponse): void {
+    this.activeWriter = writer;
+    this.activeRes = res;
+  }
 
-	/** Clear the active response (called after tool_use SSE is emitted). */
-	clearActiveResponse(): void {
-		this.activeWriter = null;
-		this.activeRes = null;
-	}
+  /** Clear the active response (called after tool_use SSE is emitted). */
+  clearActiveResponse(): void {
+    this.activeWriter = null;
+    this.activeRes = null;
+  }
 
-	// ---------------------------------------------------------------------------
-	// Callbacks used by the streaming loop
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Callbacks used by the streaming loop
+  // ---------------------------------------------------------------------------
 
-	/** Register a callback to be notified when all tool_use blocks for one turn have been emitted. */
-	setOnToolUseEmitted(cb: (toolCallIds: string[]) => void): void {
-		this.onToolUseEmitted = cb;
-	}
+  /** Register a callback to be notified when all tool_use blocks for one turn have been emitted. */
+  setOnToolUseEmitted(cb: (toolCallIds: string[]) => void): void {
+    this.onToolUseEmitted = cb;
+  }
 
-	/** Register a callback to be notified when a pending tool call ID is stored. */
-	setOnPendingToolCall(cb: (toolCallId: string) => void): void {
-		this.onPendingToolCall = cb;
-	}
+  /** Register a callback to be notified when a pending tool call ID is stored. */
+  setOnPendingToolCall(cb: (toolCallId: string) => void): void {
+    this.onPendingToolCall = cb;
+  }
 
-	// ---------------------------------------------------------------------------
-	// Tool handler core
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Tool handler core
+  // ---------------------------------------------------------------------------
 
-	/**
-	 * Called from a Copilot SDK tool handler.
-	 *
-	 * Buffers the tool call and schedules a microtask flush.  If the Copilot
-	 * model emits parallel tool calls, all handlers call this method
-	 * concurrently before any microtask runs, so the flush will collect all
-	 * of them and emit every `tool_use` block in a single HTTP response.
-	 *
-	 * After the flush, this method suspends until `resolveToolResult()` is
-	 * called with the matching ID by the next HTTP request.
-	 */
-	async emitToolUseAndWait(
-		toolCallId: string,
-		toolName: string,
-		toolInput: unknown
-	): Promise<{ text: string; isError: boolean }> {
-		// Buffer this tool call — parallel tool handlers all push here before
-		// the microtask flush runs.
-		this.pendingEmissions.push({ toolCallId, toolName, toolInput });
+  /**
+   * Called from a Copilot SDK tool handler.
+   *
+   * Buffers the tool call and schedules a microtask flush.  If the Copilot
+   * model emits parallel tool calls, all handlers call this method
+   * concurrently before any microtask runs, so the flush will collect all
+   * of them and emit every `tool_use` block in a single HTTP response.
+   *
+   * After the flush, this method suspends until `resolveToolResult()` is
+   * called with the matching ID by the next HTTP request.
+   */
+  async emitToolUseAndWait(
+    toolCallId: string,
+    toolName: string,
+    toolInput: unknown
+  ): Promise<{ text: string; isError: boolean }> {
+    // Buffer this tool call — parallel tool handlers all push here before
+    // the microtask flush runs.
+    this.pendingEmissions.push({ toolCallId, toolName, toolInput });
 
-		// Schedule a single microtask to flush all buffered emissions.
-		if (!this.flushScheduled) {
-			this.flushScheduled = true;
-			queueMicrotask(() => {
-				this.flushEmissions();
-			});
-		}
+    // Schedule a single microtask to flush all buffered emissions.
+    if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      queueMicrotask(() => {
+        this.flushEmissions();
+      });
+    }
 
-		// Suspend until the tool_result arrives from the next HTTP request.
-		return new Promise<{ text: string; isError: boolean }>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pending.delete(toolCallId);
-				reject(new Error(`Tool call "${toolName}" (${toolCallId}) timed out waiting for result`));
-			}, TOOL_RESULT_TIMEOUT_MS);
-			// Allow the process to exit naturally if nothing else is pending.
-			timer.unref();
+    // Suspend until the tool_result arrives from the next HTTP request.
+    return new Promise<{ text: string; isError: boolean }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(toolCallId);
+        reject(new Error(`Tool call "${toolName}" (${toolCallId}) timed out waiting for result`));
+      }, TOOL_RESULT_TIMEOUT_MS);
+      // Allow the process to exit naturally if nothing else is pending.
+      timer.unref();
 
-			this.pending.set(toolCallId, { resolve, reject, timer });
-			// Notify ConversationManager so it can route the next request here.
-			this.onPendingToolCall?.(toolCallId);
-		});
-	}
+      this.pending.set(toolCallId, { resolve, reject, timer });
+      // Notify ConversationManager so it can route the next request here.
+      this.onPendingToolCall?.(toolCallId);
+    });
+  }
 
-	/**
-	 * Flush all buffered tool-use emissions to the active SSE response.
-	 *
-	 * Writes every buffered `tool_use` block to the response and ends it once.
-	 * Called via `queueMicrotask` so all concurrent `emitToolUseAndWait` calls
-	 * in the same turn have had a chance to push their data before this runs.
-	 */
-	private flushEmissions(): void {
-		this.flushScheduled = false;
-		const emissions = this.pendingEmissions.splice(0);
-		if (emissions.length === 0) return;
+  /**
+   * Flush all buffered tool-use emissions to the active SSE response.
+   *
+   * Writes every buffered `tool_use` block to the response and ends it once.
+   * Called via `queueMicrotask` so all concurrent `emitToolUseAndWait` calls
+   * in the same turn have had a chance to push their data before this runs.
+   */
+  private flushEmissions(): void {
+    this.flushScheduled = false;
+    const emissions = this.pendingEmissions.splice(0);
+    if (emissions.length === 0) return;
 
-		const writer = this.activeWriter;
-		const res = this.activeRes;
+    const writer = this.activeWriter;
+    const res = this.activeRes;
 
-		if (!writer || !res) {
-			// The response was already closed (e.g. client disconnected, session
-			// aborted, or setActiveResponse was never called) before the flush ran.
-			// Reject each buffered tool handler immediately so it does not silently
-			// hang for the full TTL.
-			for (const { toolCallId, toolName } of emissions) {
-				const pending = this.pending.get(toolCallId);
-				if (pending) {
-					clearTimeout(pending.timer);
-					this.pending.delete(toolCallId);
-					pending.reject(
-						new Error(
-							`ToolBridgeRegistry: no active SSE response when tool "${toolName}" was called. ` +
-								'This is a bug — setActiveResponse() must be called before session.send().'
-						)
-					);
-				}
-			}
-			return;
-		}
+    if (!writer || !res) {
+      // The response was already closed (e.g. client disconnected, session
+      // aborted, or setActiveResponse was never called) before the flush ran.
+      // Reject each buffered tool handler immediately so it does not silently
+      // hang for the full TTL.
+      for (const { toolCallId, toolName } of emissions) {
+        const pending = this.pending.get(toolCallId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pending.delete(toolCallId);
+          pending.reject(
+            new Error(
+              `ToolBridgeRegistry: no active SSE response when tool "${toolName}" was called. ` +
+                'This is a bug — setActiveResponse() must be called before session.send().'
+            )
+          );
+        }
+      }
+      return;
+    }
 
-		// Clear first so any further activity (e.g. req 'close') cannot double-write.
-		this.clearActiveResponse();
+    // Clear first so any further activity (e.g. req 'close') cannot double-write.
+    this.clearActiveResponse();
 
-		// Write all tool_use blocks to the same response, then end it once.
-		for (const { toolCallId, toolName, toolInput } of emissions) {
-			writer.writeToolUseBlock(res, toolCallId, toolName, toolInput);
-		}
-		writer.sendToolUseEpilogue(res);
+    // Write all tool_use blocks to the same response, then end it once.
+    for (const { toolCallId, toolName, toolInput } of emissions) {
+      writer.writeToolUseBlock(res, toolCallId, toolName, toolInput);
+    }
+    writer.sendToolUseEpilogue(res);
 
-		// Notify the streaming loop with ALL emitted tool call IDs for this turn.
-		this.onToolUseEmitted?.(emissions.map((e) => e.toolCallId));
-	}
+    // Notify the streaming loop with ALL emitted tool call IDs for this turn.
+    this.onToolUseEmitted?.(emissions.map((e) => e.toolCallId));
+  }
 
-	// ---------------------------------------------------------------------------
-	// Tool result routing
-	// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Tool result routing
+  // ---------------------------------------------------------------------------
 
-	/**
-	 * Route a tool_result from the client to the suspended tool handler.
-	 *
-	 * @returns `true` if there was a matching pending handler, `false` otherwise.
-	 */
-	resolveToolResult(toolCallId: string, result: string, isError = false): boolean {
-		const pending = this.pending.get(toolCallId);
-		if (!pending) return false;
-		clearTimeout(pending.timer);
-		this.pending.delete(toolCallId);
-		pending.resolve({ text: result, isError });
-		return true;
-	}
+  /**
+   * Route a tool_result from the client to the suspended tool handler.
+   *
+   * @returns `true` if there was a matching pending handler, `false` otherwise.
+   */
+  resolveToolResult(toolCallId: string, result: string, isError = false): boolean {
+    const pending = this.pending.get(toolCallId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    this.pending.delete(toolCallId);
+    pending.resolve({ text: result, isError });
+    return true;
+  }
 
-	/**
-	 * Reject all pending tool handlers (called on session error or release).
-	 *
-	 * Also clears the pending emissions buffer and cancels the scheduled
-	 * microtask flush, preventing stale SSE writes to a closed response.
-	 */
-	rejectAll(err: Error): void {
-		this.pendingEmissions = [];
-		this.flushScheduled = false;
-		this.clearActiveResponse();
-		for (const [, p] of this.pending) {
-			clearTimeout(p.timer);
-			p.reject(err);
-		}
-		this.pending.clear();
-	}
+  /**
+   * Reject all pending tool handlers (called on session error or release).
+   *
+   * Also clears the pending emissions buffer and cancels the scheduled
+   * microtask flush, preventing stale SSE writes to a closed response.
+   */
+  rejectAll(err: Error): void {
+    this.pendingEmissions = [];
+    this.flushScheduled = false;
+    this.clearActiveResponse();
+    for (const [, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(err);
+    }
+    this.pending.clear();
+  }
 
-	/** `true` when there are tool handlers suspended waiting for results. */
-	hasPending(): boolean {
-		return this.pending.size > 0;
-	}
+  /** `true` when there are tool handlers suspended waiting for results. */
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
 
-	/** IDs of all currently pending tool calls. */
-	pendingIds(): string[] {
-		return [...this.pending.keys()];
-	}
+  /** IDs of all currently pending tool calls. */
+  pendingIds(): string[] {
+    return [...this.pending.keys()];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,24 +269,24 @@ export class ToolBridgeRegistry {
  * built-in the flag is harmless.
  */
 export function mapAnthropicToolsToSdkTools(
-	tools: AnthropicTool[],
-	registry: ToolBridgeRegistry
+  tools: AnthropicTool[],
+  registry: ToolBridgeRegistry
 ): Tool[] {
-	return tools.map((tool) => ({
-		name: tool.name,
-		description: tool.description ?? `Tool: ${tool.name}`,
-		parameters: tool.input_schema,
-		overridesBuiltInTool: true,
-		handler: async (args: unknown, invocation: ToolInvocation) => {
-			const { text, isError } = await registry.emitToolUseAndWait(
-				invocation.toolCallId,
-				tool.name,
-				args
-			);
-			return {
-				textResultForLlm: text,
-				resultType: isError ? ('failure' as const) : ('success' as const),
-			};
-		},
-	}));
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description ?? `Tool: ${tool.name}`,
+    parameters: tool.input_schema,
+    overridesBuiltInTool: true,
+    handler: async (args: unknown, invocation: ToolInvocation) => {
+      const { text, isError } = await registry.emitToolUseAndWait(
+        invocation.toolCallId,
+        tool.name,
+        args
+      );
+      return {
+        textResultForLlm: text,
+        resultType: isError ? ('failure' as const) : ('success' as const),
+      };
+    },
+  }));
 }

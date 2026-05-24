@@ -16,73 +16,73 @@ import { signal } from '@preact/signals';
  *   store.clear();                                  // reset on room switch
  */
 export class EntityStore<T extends { id: string }> {
-	/** All entities keyed by id */
-	readonly items = signal<Map<string, T>>(new Map());
+  /** All entities keyed by id */
+  readonly items = signal<Map<string, T>>(new Map());
 
-	/** True while the initial snapshot is in flight */
-	readonly loading = signal(false);
+  /** True while the initial snapshot is in flight */
+  readonly loading = signal(false);
 
-	/** Set when a subscribe/fetch operation fails */
-	readonly error = signal<string | null>(null);
+  /** Set when a subscribe/fetch operation fails */
+  readonly error = signal<string | null>(null);
 
-	/**
-	 * Replace the entire collection with `rows`.
-	 * Sets `loading` to false — call after receiving a LiveQuery snapshot.
-	 */
-	applySnapshot(rows: T[]): void {
-		const map = new Map<string, T>();
-		for (const row of rows) {
-			map.set(row.id, row);
-		}
-		this.items.value = map;
-		this.loading.value = false;
-	}
+  /**
+   * Replace the entire collection with `rows`.
+   * Sets `loading` to false — call after receiving a LiveQuery snapshot.
+   */
+  applySnapshot(rows: T[]): void {
+    const map = new Map<string, T>();
+    for (const row of rows) {
+      map.set(row.id, row);
+    }
+    this.items.value = map;
+    this.loading.value = false;
+  }
 
-	/**
-	 * Apply an incremental delta from a LiveQuery delta event.
-	 *
-	 * Order of application: removed → updated → added
-	 * This matches the semantics of a database change-set where an entity can be
-	 * removed and re-added (with a new id) in the same batch.
-	 */
-	applyDelta(delta: { added?: T[]; removed?: T[]; updated?: T[] }): void {
-		const map = new Map(this.items.value);
+  /**
+   * Apply an incremental delta from a LiveQuery delta event.
+   *
+   * Order of application: removed → updated → added
+   * This matches the semantics of a database change-set where an entity can be
+   * removed and re-added (with a new id) in the same batch.
+   */
+  applyDelta(delta: { added?: T[]; removed?: T[]; updated?: T[] }): void {
+    const map = new Map(this.items.value);
 
-		if (delta.removed?.length) {
-			for (const item of delta.removed) {
-				map.delete(item.id);
-			}
-		}
+    if (delta.removed?.length) {
+      for (const item of delta.removed) {
+        map.delete(item.id);
+      }
+    }
 
-		if (delta.updated?.length) {
-			for (const item of delta.updated) {
-				map.set(item.id, item);
-			}
-		}
+    if (delta.updated?.length) {
+      for (const item of delta.updated) {
+        map.set(item.id, item);
+      }
+    }
 
-		if (delta.added?.length) {
-			for (const item of delta.added) {
-				map.set(item.id, item);
-			}
-		}
+    if (delta.added?.length) {
+      for (const item of delta.added) {
+        map.set(item.id, item);
+      }
+    }
 
-		this.items.value = map;
-	}
+    this.items.value = map;
+  }
 
-	/** O(1) lookup by entity id. Returns undefined if not found. */
-	getById(id: string): T | undefined {
-		return this.items.value.get(id);
-	}
+  /** O(1) lookup by entity id. Returns undefined if not found. */
+  getById(id: string): T | undefined {
+    return this.items.value.get(id);
+  }
 
-	/** Returns all entities as an array (insertion/update order). */
-	toArray(): T[] {
-		return Array.from(this.items.value.values());
-	}
+  /** Returns all entities as an array (insertion/update order). */
+  toArray(): T[] {
+    return Array.from(this.items.value.values());
+  }
 
-	/** Empties the store — call on room switch or teardown. */
-	clear(): void {
-		this.items.value = new Map();
-		this.loading.value = false;
-		this.error.value = null;
-	}
+  /** Empties the store — call on room switch or teardown. */
+  clear(): void {
+    this.items.value = new Map();
+    this.loading.value = false;
+    this.error.value = null;
+  }
 }

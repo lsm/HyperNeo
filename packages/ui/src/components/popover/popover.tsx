@@ -3,10 +3,10 @@ import { createContext, createElement, Fragment } from 'preact';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { CloseContext } from '../../hooks/use-close.ts';
 import {
-	FloatingProvider,
-	useFloatingPanel,
-	useFloatingPanelProps,
-	useFloatingReference,
+  FloatingProvider,
+  useFloatingPanel,
+  useFloatingPanelProps,
+  useFloatingReference,
 } from '../../internal/floating-provider.tsx';
 import { OpenClosedContext, State } from '../../internal/open-closed.ts';
 import { Portal } from '../../internal/portal.ts';
@@ -22,8 +22,8 @@ import { useInert } from '../../internal/use-inert.ts';
 import { useIsoMorphicEffect } from '../../internal/use-iso-morphic-effect.ts';
 import { useOutsideClick } from '../../internal/use-outside-click.ts';
 import {
-	useResolvedAnchor,
-	type AnchorPropsWithSelection,
+  useResolvedAnchor,
+  type AnchorPropsWithSelection,
 } from '../../internal/use-anchor-props.ts';
 import { useResolveButtonType } from '../../internal/use-resolve-button-type.ts';
 import { useScrollLock } from '../../internal/use-scroll-lock.ts';
@@ -32,20 +32,20 @@ import { optionalRef, useSyncRefs } from '../../internal/use-sync-refs.ts';
 // --- Types ---
 
 interface PopoverState {
-	id: string;
-	open: boolean;
-	toggle: () => void;
-	close: (focusRef?: { current: HTMLElement | null }) => void;
-	buttonRef: RefObject<HTMLElement | null>;
-	panelRef: RefObject<HTMLElement | null>;
-	buttonId: string;
-	panelId: string;
+  id: string;
+  open: boolean;
+  toggle: () => void;
+  close: (focusRef?: { current: HTMLElement | null }) => void;
+  buttonRef: RefObject<HTMLElement | null>;
+  panelRef: RefObject<HTMLElement | null>;
+  buttonId: string;
+  panelId: string;
 }
 
 interface PopoverRegisterBag {
-	buttonId: RefObject<string | null>;
-	panelId: RefObject<string | null>;
-	close: () => void;
+  buttonId: RefObject<string | null>;
+  panelId: RefObject<string | null>;
+  close: () => void;
 }
 
 // --- Context ---
@@ -54,11 +54,11 @@ const PopoverContext = createContext<PopoverState | null>(null);
 PopoverContext.displayName = 'PopoverContext';
 
 function usePopoverContext(component: string): PopoverState {
-	const ctx = useContext(PopoverContext);
-	if (ctx === null) {
-		throw new Error(`<${component}> must be used within a <Popover>`);
-	}
-	return ctx;
+  const ctx = useContext(PopoverContext);
+  if (ctx === null) {
+    throw new Error(`<${component}> must be used within a <Popover>`);
+  }
+  return ctx;
 }
 
 // Context to track if a button is inside a panel
@@ -67,183 +67,183 @@ PopoverPanelContext.displayName = 'PopoverPanelContext';
 
 // Context for grouping popovers
 const PopoverGroupContext = createContext<{
-	registerPopover: (registerBag: PopoverRegisterBag) => void;
-	unregisterPopover: (registerBag: PopoverRegisterBag) => void;
-	isFocusWithinPopoverGroup: () => boolean;
-	closeOthers: (buttonId: string) => void;
+  registerPopover: (registerBag: PopoverRegisterBag) => void;
+  unregisterPopover: (registerBag: PopoverRegisterBag) => void;
+  isFocusWithinPopoverGroup: () => boolean;
+  closeOthers: (buttonId: string) => void;
 } | null>(null);
 PopoverGroupContext.displayName = 'PopoverGroupContext';
 
 function usePopoverGroupContext() {
-	return useContext(PopoverGroupContext);
+  return useContext(PopoverGroupContext);
 }
 
 // --- Transition attributes helper ---
 
 function useTransitionAttrs(open: boolean, transition: boolean) {
-	const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
-	const prevOpenRef = useRef(open);
+  const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
+  const prevOpenRef = useRef(open);
 
-	useEffect(() => {
-		if (!transition) {
-			setTransitionAttrs({});
-			return;
-		}
+  useEffect(() => {
+    if (!transition) {
+      setTransitionAttrs({});
+      return;
+    }
 
-		const prev = prevOpenRef.current;
-		prevOpenRef.current = open;
+    const prev = prevOpenRef.current;
+    prevOpenRef.current = open;
 
-		if (open && !prev) {
-			setTransitionAttrs({ 'data-transition': '', 'data-enter': '' });
-			const raf = requestAnimationFrame(() => {
-				requestAnimationFrame(() => {
-					setTransitionAttrs({});
-				});
-			});
-			return () => cancelAnimationFrame(raf);
-		}
+    if (open && !prev) {
+      setTransitionAttrs({ 'data-transition': '', 'data-enter': '' });
+      const raf = requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTransitionAttrs({});
+        });
+      });
+      return () => cancelAnimationFrame(raf);
+    }
 
-		if (!open && prev) {
-			setTransitionAttrs({ 'data-transition': '', 'data-leave': '', 'data-closed': '' });
-			const raf = requestAnimationFrame(() => {
-				requestAnimationFrame(() => {
-					setTransitionAttrs({ 'data-closed': '' });
-				});
-			});
-			return () => cancelAnimationFrame(raf);
-		}
+    if (!open && prev) {
+      setTransitionAttrs({ 'data-transition': '', 'data-leave': '', 'data-closed': '' });
+      const raf = requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTransitionAttrs({ 'data-closed': '' });
+        });
+      });
+      return () => cancelAnimationFrame(raf);
+    }
 
-		if (!open) {
-			setTransitionAttrs({ 'data-closed': '' });
-		}
-	}, [open, transition]);
+    if (!open) {
+      setTransitionAttrs({ 'data-closed': '' });
+    }
+  }, [open, transition]);
 
-	return transitionAttrs;
+  return transitionAttrs;
 }
 
 // --- Popover (root) ---
 
 interface PopoverProps {
-	as?: ElementType;
-	open?: boolean;
-	onChange?: (open: boolean) => void;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  open?: boolean;
+  onChange?: (open: boolean) => void;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function PopoverFn({
-	as: Tag = Fragment,
-	open: controlledOpen,
-	onChange,
-	children,
-	...rest
+  as: Tag = Fragment,
+  open: controlledOpen,
+  onChange,
+  children,
+  ...rest
 }: PopoverProps) {
-	const id = useId();
-	const [internalOpen, setInternalOpen] = useState(false);
-	const isControlled = controlledOpen !== undefined;
-	const open = isControlled ? controlledOpen : internalOpen;
+  const id = useId();
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
 
-	const buttonId = useId();
-	const panelId = useId();
-	const buttonRef = useRef<HTMLElement | null>(null);
-	const panelRef = useRef<HTMLElement | null>(null);
-	const internalRef = useRef<HTMLElement | null>(null);
+  const buttonId = useId();
+  const panelId = useId();
+  const buttonRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const internalRef = useRef<HTMLElement | null>(null);
 
-	// Stable onChange handler
-	const handleChange = useEvent((newValue: boolean) => {
-		if (!isControlled) {
-			setInternalOpen(newValue);
-		}
-		onChange?.(newValue);
-	});
+  // Stable onChange handler
+  const handleChange = useEvent((newValue: boolean) => {
+    if (!isControlled) {
+      setInternalOpen(newValue);
+    }
+    onChange?.(newValue);
+  });
 
-	const toggle = useCallback(() => handleChange(!open), [open, handleChange]);
+  const toggle = useCallback(() => handleChange(!open), [open, handleChange]);
 
-	const close = useCallback(
-		(focusRef?: { current: HTMLElement | null }) => {
-			handleChange(false);
-			const target = focusRef?.current ?? buttonRef.current;
-			if (target) {
-				requestAnimationFrame(() => {
-					target.focus();
-				});
-			}
-		},
-		[handleChange]
-	);
+  const close = useCallback(
+    (focusRef?: { current: HTMLElement | null }) => {
+      handleChange(false);
+      const target = focusRef?.current ?? buttonRef.current;
+      if (target) {
+        requestAnimationFrame(() => {
+          target.focus();
+        });
+      }
+    },
+    [handleChange]
+  );
 
-	const ctx: PopoverState = useMemo(
-		() => ({
-			id,
-			open,
-			toggle,
-			close,
-			buttonRef,
-			panelRef,
-			buttonId,
-			panelId,
-		}),
-		[id, open, toggle, close, buttonId, panelId]
-	);
+  const ctx: PopoverState = useMemo(
+    () => ({
+      id,
+      open,
+      toggle,
+      close,
+      buttonRef,
+      panelRef,
+      buttonId,
+      panelId,
+    }),
+    [id, open, toggle, close, buttonId, panelId]
+  );
 
-	const slot = useMemo(() => ({ open, close }), [open, close]);
+  const slot = useMemo(() => ({ open, close }), [open, close]);
 
-	// Ref forwarding for the root Popover element
-	const popoverRef = useSyncRefs(
-		'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null,
-		optionalRef((ref) => {
-			internalRef.current = ref;
-		}, Tag === Fragment)
-	);
+  // Ref forwarding for the root Popover element
+  const popoverRef = useSyncRefs(
+    'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null,
+    optionalRef((ref) => {
+      internalRef.current = ref;
+    }, Tag === Fragment)
+  );
 
-	// Register with PopoverGroup if available
-	const groupContext = usePopoverGroupContext();
-	const buttonIdRef = useRef(buttonId);
-	const panelIdRef = useRef(panelId);
-	buttonIdRef.current = buttonId;
-	panelIdRef.current = panelId;
+  // Register with PopoverGroup if available
+  const groupContext = usePopoverGroupContext();
+  const buttonIdRef = useRef(buttonId);
+  const panelIdRef = useRef(panelId);
+  buttonIdRef.current = buttonId;
+  panelIdRef.current = panelId;
 
-	useEffect(() => {
-		if (!groupContext) return;
+  useEffect(() => {
+    if (!groupContext) return;
 
-		const registerBag: PopoverRegisterBag = {
-			buttonId: buttonIdRef,
-			panelId: panelIdRef,
-			close,
-		};
-		groupContext.registerPopover(registerBag);
-		return () => groupContext.unregisterPopover(registerBag);
-	}, [groupContext, close]);
+    const registerBag: PopoverRegisterBag = {
+      buttonId: buttonIdRef,
+      panelId: panelIdRef,
+      close,
+    };
+    groupContext.registerPopover(registerBag);
+    return () => groupContext.unregisterPopover(registerBag);
+  }, [groupContext, close]);
 
-	const ourProps = Tag === Fragment ? {} : { ref: popoverRef };
+  const ourProps = Tag === Fragment ? {} : { ref: popoverRef };
 
-	return createElement(
-		FloatingProvider,
-		null,
-		createElement(
-			PopoverPanelContext.Provider,
-			{ value: null },
-			createElement(
-				PopoverContext.Provider,
-				{ value: ctx },
-				createElement(
-					OpenClosedContext.Provider,
-					{ value: open ? State.Open : State.Closed },
-					createElement(
-						CloseContext.Provider,
-						{ value: close },
-						render({
-							ourProps,
-							theirProps: { as: Tag, children, ...rest },
-							slot,
-							defaultTag: Fragment,
-							name: 'Popover',
-						})
-					)
-				)
-			)
-		)
-	);
+  return createElement(
+    FloatingProvider,
+    null,
+    createElement(
+      PopoverPanelContext.Provider,
+      { value: null },
+      createElement(
+        PopoverContext.Provider,
+        { value: ctx },
+        createElement(
+          OpenClosedContext.Provider,
+          { value: open ? State.Open : State.Closed },
+          createElement(
+            CloseContext.Provider,
+            { value: close },
+            render({
+              ourProps,
+              theirProps: { as: Tag, children, ...rest },
+              slot,
+              defaultTag: Fragment,
+              name: 'Popover',
+            })
+          )
+        )
+      )
+    )
+  );
 }
 
 PopoverFn.displayName = 'Popover';
@@ -252,148 +252,148 @@ export const Popover = PopoverFn;
 // --- PopoverButton ---
 
 interface PopoverButtonProps {
-	as?: ElementType;
-	disabled?: boolean;
-	autoFocus?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function PopoverButtonFn({
-	as: Tag = 'button',
-	disabled = false,
-	autoFocus = false,
-	children,
-	...rest
+  as: Tag = 'button',
+  disabled = false,
+  autoFocus = false,
+  children,
+  ...rest
 }: PopoverButtonProps) {
-	const { open, toggle, close, buttonRef, buttonId, panelId } = usePopoverContext('PopoverButton');
+  const { open, toggle, close, buttonRef, buttonId, panelId } = usePopoverContext('PopoverButton');
 
-	// Check if button is inside a panel
-	const panelContext = useContext(PopoverPanelContext);
-	const isWithinPanel = panelContext !== null;
+  // Check if button is inside a panel
+  const panelContext = useContext(PopoverPanelContext);
+  const isWithinPanel = panelContext !== null;
 
-	// Group context for closing other popovers
-	const groupContext = usePopoverGroupContext();
+  // Group context for closing other popovers
+  const groupContext = usePopoverGroupContext();
 
-	// Internal ref for element access
-	const internalRef = useRef<HTMLElement | null>(null);
+  // Internal ref for element access
+  const internalRef = useRef<HTMLElement | null>(null);
 
-	// Floating UI reference (only if not within panel)
-	const setFloatingReference = useFloatingReference();
+  // Floating UI reference (only if not within panel)
+  const setFloatingReference = useFloatingReference();
 
-	// Resolve button type
-	const resolvedType = useResolveButtonType(
-		{ as: Tag, type: rest.type as string | undefined },
-		internalRef.current
-	);
+  // Resolve button type
+  const resolvedType = useResolveButtonType(
+    { as: Tag, type: rest.type as string | undefined },
+    internalRef.current
+  );
 
-	// Combined ref
-	const syncedRef = useSyncRefs(
-		internalRef,
-		isWithinPanel ? null : buttonRef,
-		isWithinPanel ? null : setFloatingReference,
-		'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null,
-		optionalRef((el: HTMLElement) => {
-			if (!isWithinPanel) {
-				buttonRef.current = el;
-			}
-		})
-	);
+  // Combined ref
+  const syncedRef = useSyncRefs(
+    internalRef,
+    isWithinPanel ? null : buttonRef,
+    isWithinPanel ? null : setFloatingReference,
+    'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null,
+    optionalRef((el: HTMLElement) => {
+      if (!isWithinPanel) {
+        buttonRef.current = el;
+      }
+    })
+  );
 
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
-	const [active, setActive] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const [active, setActive] = useState(false);
 
-	const handleClick = useCallback(
-		(e: MouseEvent) => {
-			if (disabled) return;
-			e.preventDefault();
-			if (isWithinPanel) {
-				// When inside panel, clicking closes the popover
-				close();
-				// Focus the button outside the panel
-				buttonRef.current?.focus();
-			} else {
-				// Close other popovers in the same group
-				if (groupContext && !open) {
-					groupContext.closeOthers(buttonId);
-				}
-				toggle();
-			}
-		},
-		[disabled, toggle, close, isWithinPanel, buttonRef, groupContext, open, buttonId]
-	);
+  const handleClick = useCallback(
+    (e: MouseEvent) => {
+      if (disabled) return;
+      e.preventDefault();
+      if (isWithinPanel) {
+        // When inside panel, clicking closes the popover
+        close();
+        // Focus the button outside the panel
+        buttonRef.current?.focus();
+      } else {
+        // Close other popovers in the same group
+        if (groupContext && !open) {
+          groupContext.closeOthers(buttonId);
+        }
+        toggle();
+      }
+    },
+    [disabled, toggle, close, isWithinPanel, buttonRef, groupContext, open, buttonId]
+  );
 
-	const handleKeyDown = useCallback(
-		(e: KeyboardEvent) => {
-			if (disabled) return;
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				if (isWithinPanel) {
-					close();
-					buttonRef.current?.focus();
-				} else {
-					if (groupContext && !open) {
-						groupContext.closeOthers(buttonId);
-					}
-					toggle();
-				}
-			}
-		},
-		[disabled, toggle, close, isWithinPanel, buttonRef, groupContext, open, buttonId]
-	);
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (disabled) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (isWithinPanel) {
+          close();
+          buttonRef.current?.focus();
+        } else {
+          if (groupContext && !open) {
+            groupContext.closeOthers(buttonId);
+          }
+          toggle();
+        }
+      }
+    },
+    [disabled, toggle, close, isWithinPanel, buttonRef, groupContext, open, buttonId]
+  );
 
-	// Firefox space key fix
-	const handleKeyUp = useCallback((e: KeyboardEvent) => {
-		if (e.key === ' ') {
-			e.preventDefault();
-		}
-	}, []);
+  // Firefox space key fix
+  const handleKeyUp = useCallback((e: KeyboardEvent) => {
+    if (e.key === ' ') {
+      e.preventDefault();
+    }
+  }, []);
 
-	// When button is inside panel, it acts as a close button without aria attributes
-	const ourProps: Record<string, unknown> = isWithinPanel
-		? {
-				ref: syncedRef,
-				type: resolvedType,
-				disabled: disabled || undefined,
-				autoFocus,
-				onClick: handleClick,
-				onKeyDown: handleKeyDown,
-				onMouseEnter: () => setHover(true),
-				onMouseLeave: () => setHover(false),
-				onFocus: () => setFocus(true),
-				onBlur: () => setFocus(false),
-				onMouseDown: () => setActive(true),
-				onMouseUp: () => setActive(false),
-			}
-		: {
-				id: buttonId,
-				ref: syncedRef,
-				type: resolvedType,
-				'aria-expanded': open,
-				'aria-controls': open ? panelId : undefined,
-				autoFocus,
-				disabled: disabled || undefined,
-				onClick: handleClick,
-				onKeyDown: handleKeyDown,
-				onKeyUp: handleKeyUp,
-				onMouseEnter: () => setHover(true),
-				onMouseLeave: () => setHover(false),
-				onFocus: () => setFocus(true),
-				onBlur: () => setFocus(false),
-				onMouseDown: () => setActive(true),
-				onMouseUp: () => setActive(false),
-			};
+  // When button is inside panel, it acts as a close button without aria attributes
+  const ourProps: Record<string, unknown> = isWithinPanel
+    ? {
+        ref: syncedRef,
+        type: resolvedType,
+        disabled: disabled || undefined,
+        autoFocus,
+        onClick: handleClick,
+        onKeyDown: handleKeyDown,
+        onMouseEnter: () => setHover(true),
+        onMouseLeave: () => setHover(false),
+        onFocus: () => setFocus(true),
+        onBlur: () => setFocus(false),
+        onMouseDown: () => setActive(true),
+        onMouseUp: () => setActive(false),
+      }
+    : {
+        id: buttonId,
+        ref: syncedRef,
+        type: resolvedType,
+        'aria-expanded': open,
+        'aria-controls': open ? panelId : undefined,
+        autoFocus,
+        disabled: disabled || undefined,
+        onClick: handleClick,
+        onKeyDown: handleKeyDown,
+        onKeyUp: handleKeyUp,
+        onMouseEnter: () => setHover(true),
+        onMouseLeave: () => setHover(false),
+        onFocus: () => setFocus(true),
+        onBlur: () => setFocus(false),
+        onMouseDown: () => setActive(true),
+        onMouseUp: () => setActive(false),
+      };
 
-	const slot = { open, hover, focus, active: active || open, autofocus: autoFocus, disabled };
+  const slot = { open, hover, focus, active: active || open, autofocus: autoFocus, disabled };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'button',
-		name: 'PopoverButton',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'button',
+    name: 'PopoverButton',
+  });
 }
 
 PopoverButtonFn.displayName = 'PopoverButton';
@@ -402,61 +402,61 @@ export const PopoverButton = PopoverButtonFn;
 // --- PopoverBackdrop ---
 
 interface PopoverBackdropProps {
-	as?: ElementType;
-	transition?: boolean;
-	static?: boolean;
-	unmount?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  transition?: boolean;
+  static?: boolean;
+  unmount?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function PopoverBackdropFn({
-	as: Tag = 'div',
-	transition = false,
-	static: isStatic = false,
-	unmount = true,
-	children,
-	...rest
+  as: Tag = 'div',
+  transition = false,
+  static: isStatic = false,
+  unmount = true,
+  children,
+  ...rest
 }: PopoverBackdropProps) {
-	const { open, close } = usePopoverContext('PopoverBackdrop');
+  const { open, close } = usePopoverContext('PopoverBackdrop');
 
-	// Internal ref for element access
-	const internalRef = useRef<HTMLElement | null>(null);
+  // Internal ref for element access
+  const internalRef = useRef<HTMLElement | null>(null);
 
-	// Combined ref
-	const backdropRef = useSyncRefs(
-		internalRef,
-		'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
-	);
+  // Combined ref
+  const backdropRef = useSyncRefs(
+    internalRef,
+    'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
+  );
 
-	const handleClick = useEvent((e: MouseEvent) => {
-		e.preventDefault();
-		close();
-	});
+  const handleClick = useEvent((e: MouseEvent) => {
+    e.preventDefault();
+    close();
+  });
 
-	const transitionAttrs = useTransitionAttrs(open, transition);
+  const transitionAttrs = useTransitionAttrs(open, transition);
 
-	const ourProps: Record<string, unknown> = {
-		ref: backdropRef,
-		'aria-hidden': true,
-		onClick: handleClick,
-		...transitionAttrs,
-	};
+  const ourProps: Record<string, unknown> = {
+    ref: backdropRef,
+    'aria-hidden': true,
+    onClick: handleClick,
+    ...transitionAttrs,
+  };
 
-	const visible = isStatic || open;
-	const features = Features.RenderStrategy | Features.Static;
+  const visible = isStatic || open;
+  const features = Features.RenderStrategy | Features.Static;
 
-	const slot = { open };
+  const slot = { open };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, static: isStatic, unmount, children, ...rest },
-		slot,
-		defaultTag: 'div',
-		features,
-		visible,
-		name: 'PopoverBackdrop',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, static: isStatic, unmount, children, ...rest },
+    slot,
+    defaultTag: 'div',
+    features,
+    visible,
+    name: 'PopoverBackdrop',
+  });
 }
 
 PopoverBackdropFn.displayName = 'PopoverBackdrop';
@@ -466,180 +466,180 @@ export const PopoverBackdrop = PopoverBackdropFn;
 // --- PopoverPanel ---
 
 interface PopoverPanelProps {
-	as?: ElementType;
-	transition?: boolean;
-	static?: boolean;
-	unmount?: boolean;
-	anchor?: AnchorPropsWithSelection;
-	portal?: boolean;
-	modal?: boolean;
-	focus?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  transition?: boolean;
+  static?: boolean;
+  unmount?: boolean;
+  anchor?: AnchorPropsWithSelection;
+  portal?: boolean;
+  modal?: boolean;
+  focus?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function PopoverPanelFn({
-	as: Tag = 'div',
-	transition = false,
-	static: isStatic = false,
-	unmount = true,
-	anchor: rawAnchor,
-	portal = false,
-	modal = false,
-	focus: focusContainment = false,
-	children,
-	...rest
+  as: Tag = 'div',
+  transition = false,
+  static: isStatic = false,
+  unmount = true,
+  anchor: rawAnchor,
+  portal = false,
+  modal = false,
+  focus: focusContainment = false,
+  children,
+  ...rest
 }: PopoverPanelProps) {
-	const { id, open, close, buttonRef, panelRef, panelId, buttonId } =
-		usePopoverContext('PopoverPanel');
+  const { id, open, close, buttonRef, panelRef, panelId, buttonId } =
+    usePopoverContext('PopoverPanel');
 
-	// Resolve anchor configuration
-	const anchor = useResolvedAnchor(rawAnchor);
+  // Resolve anchor configuration
+  const anchor = useResolvedAnchor(rawAnchor);
 
-	// Internal ref for element access
-	const internalRef = useRef<HTMLElement | null>(null);
+  // Internal ref for element access
+  const internalRef = useRef<HTMLElement | null>(null);
 
-	// Floating UI panel positioning
-	const [floatingRef, floatingStyles] = useFloatingPanel(anchor);
-	const getFloatingPanelProps = useFloatingPanelProps();
+  // Floating UI panel positioning
+  const [floatingRef, floatingStyles] = useFloatingPanel(anchor);
+  const getFloatingPanelProps = useFloatingPanelProps();
 
-	// Combined ref: context ref + floating ref (if anchor is set) + internal ref
-	const syncedRef = useSyncRefs(
-		panelRef,
-		anchor ? floatingRef : null,
-		internalRef,
-		'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
-	);
+  // Combined ref: context ref + floating ref (if anchor is set) + internal ref
+  const syncedRef = useSyncRefs(
+    panelRef,
+    anchor ? floatingRef : null,
+    internalRef,
+    'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
+  );
 
-	// Stack machine integration - register/unregister this popover
-	const stackMachine = stackMachines.get(null);
+  // Stack machine integration - register/unregister this popover
+  const stackMachine = stackMachines.get(null);
 
-	// Check if this popover is the top layer using ref + effect pattern
-	const isTopLayerRef = useRef(true);
+  // Check if this popover is the top layer using ref + effect pattern
+  const isTopLayerRef = useRef(true);
 
-	// Register with stack machine and update isTopLayer when open changes
-	useIsoMorphicEffect(() => {
-		if (open) {
-			stackMachine.actions.push(id);
-			// Update isTopLayer after registering
-			isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
-			return () => {
-				stackMachine.actions.pop(id);
-			};
-		}
-	}, [open, id, stackMachine]);
+  // Register with stack machine and update isTopLayer when open changes
+  useIsoMorphicEffect(() => {
+    if (open) {
+      stackMachine.actions.push(id);
+      // Update isTopLayer after registering
+      isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
+      return () => {
+        stackMachine.actions.pop(id);
+      };
+    }
+  }, [open, id, stackMachine]);
 
-	// Determine if we should handle events
-	const shouldHandleEvents =
-		open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, id));
+  // Determine if we should handle events
+  const shouldHandleEvents =
+    open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, id));
 
-	const trapFocus = modal || focusContainment;
+  const trapFocus = modal || focusContainment;
 
-	// Focus trap when modal or focus containment is requested
-	useFocusTrap(internalRef, open && trapFocus && shouldHandleEvents, { restoreFocus: false });
+  // Focus trap when modal or focus containment is requested
+  useFocusTrap(internalRef, open && trapFocus && shouldHandleEvents, { restoreFocus: false });
 
-	// Close on outside click (exclude both button and panel) - only if we should handle events
-	useOutsideClick(
-		shouldHandleEvents ? [buttonRef, internalRef] : [],
-		useCallback(() => {
-			if (shouldHandleEvents) {
-				close();
-			}
-		}, [close, shouldHandleEvents]),
-		open
-	);
+  // Close on outside click (exclude both button and panel) - only if we should handle events
+  useOutsideClick(
+    shouldHandleEvents ? [buttonRef, internalRef] : [],
+    useCallback(() => {
+      if (shouldHandleEvents) {
+        close();
+      }
+    }, [close, shouldHandleEvents]),
+    open
+  );
 
-	// Close on escape, restore focus to button - only if we should handle events
-	useEscape(
-		useCallback(
-			(e: KeyboardEvent) => {
-				if (!shouldHandleEvents) return;
-				e.preventDefault();
-				close();
-			},
-			[close, shouldHandleEvents]
-		),
-		open && shouldHandleEvents
-	);
+  // Close on escape, restore focus to button - only if we should handle events
+  useEscape(
+    useCallback(
+      (e: KeyboardEvent) => {
+        if (!shouldHandleEvents) return;
+        e.preventDefault();
+        close();
+      },
+      [close, shouldHandleEvents]
+    ),
+    open && shouldHandleEvents
+  );
 
-	// Scroll lock when modal and open
-	useScrollLock(modal && open && shouldHandleEvents);
+  // Scroll lock when modal and open
+  useScrollLock(modal && open && shouldHandleEvents);
 
-	// Mark other elements inert when modal
-	useInert(internalRef, modal && open && shouldHandleEvents);
+  // Mark other elements inert when modal
+  useInert(internalRef, modal && open && shouldHandleEvents);
 
-	// Tab key handling when focus is NOT trapped: Tab closes the popover
-	useEffect(() => {
-		if (!open || trapFocus) return;
+  // Tab key handling when focus is NOT trapped: Tab closes the popover
+  useEffect(() => {
+    if (!open || trapFocus) return;
 
-		function handleKeyDown(e: KeyboardEvent) {
-			if (e.key === 'Tab') {
-				close();
-			}
-		}
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Tab') {
+        close();
+      }
+    }
 
-		document.addEventListener('keydown', handleKeyDown, true);
-		return () => {
-			document.removeEventListener('keydown', handleKeyDown, true);
-		};
-	}, [open, trapFocus, close]);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [open, trapFocus, close]);
 
-	const transitionAttrs = useTransitionAttrs(open, transition);
+  const transitionAttrs = useTransitionAttrs(open, transition);
 
-	// Always enable portal when anchor is set
-	if (anchor) {
-		portal = true;
-	}
+  // Always enable portal when anchor is set
+  if (anchor) {
+    portal = true;
+  }
 
-	// Get floating panel props if anchor is set
-	const floatingPanelProps = anchor ? getFloatingPanelProps() : {};
+  // Get floating panel props if anchor is set
+  const floatingPanelProps = anchor ? getFloatingPanelProps() : {};
 
-	const ourProps: Record<string, unknown> = {
-		...floatingPanelProps,
-		id: panelId,
-		ref: syncedRef,
-		tabIndex: -1,
-		'aria-labelledby': buttonId,
-		style: {
-			...(rest.style as Record<string, unknown> | undefined),
-			...floatingStyles,
-		},
-		...transitionAttrs,
-	};
+  const ourProps: Record<string, unknown> = {
+    ...floatingPanelProps,
+    id: panelId,
+    ref: syncedRef,
+    tabIndex: -1,
+    'aria-labelledby': buttonId,
+    style: {
+      ...(rest.style as Record<string, unknown> | undefined),
+      ...floatingStyles,
+    },
+    ...transitionAttrs,
+  };
 
-	if (open) {
-		ourProps['data-open'] = '';
-	}
+  if (open) {
+    ourProps['data-open'] = '';
+  }
 
-	const visible = isStatic || open;
-	const features = Features.RenderStrategy | Features.Static;
+  const visible = isStatic || open;
+  const features = Features.RenderStrategy | Features.Static;
 
-	const slot = { open, close };
+  const slot = { open, close };
 
-	// Provide panel context so buttons inside can detect they're in a panel
-	const inner = createElement(
-		PopoverPanelContext.Provider,
-		{ value: panelId },
-		createElement(
-			CloseContext.Provider,
-			{ value: close },
-			render({
-				ourProps,
-				theirProps: { as: Tag, static: isStatic, unmount, children, ...rest },
-				slot,
-				defaultTag: 'div',
-				features,
-				visible,
-				name: 'PopoverPanel',
-			})
-		)
-	);
+  // Provide panel context so buttons inside can detect they're in a panel
+  const inner = createElement(
+    PopoverPanelContext.Provider,
+    { value: panelId },
+    createElement(
+      CloseContext.Provider,
+      { value: close },
+      render({
+        ourProps,
+        theirProps: { as: Tag, static: isStatic, unmount, children, ...rest },
+        slot,
+        defaultTag: 'div',
+        features,
+        visible,
+        name: 'PopoverPanel',
+      })
+    )
+  );
 
-	if (portal) {
-		return createElement(Portal, { enabled: true, children: inner });
-	}
+  if (portal) {
+    return createElement(Portal, { enabled: true, children: inner });
+  }
 
-	return inner;
+  return inner;
 }
 
 PopoverPanelFn.displayName = 'PopoverPanel';
@@ -648,84 +648,84 @@ export const PopoverPanel = PopoverPanelFn;
 // --- PopoverGroup ---
 
 interface PopoverGroupProps {
-	as?: ElementType;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function PopoverGroupFn({ as: Tag = 'div', children, ...rest }: PopoverGroupProps) {
-	const internalRef = useRef<HTMLElement | null>(null);
-	const [popovers, setPopovers] = useState<PopoverRegisterBag[]>([]);
+  const internalRef = useRef<HTMLElement | null>(null);
+  const [popovers, setPopovers] = useState<PopoverRegisterBag[]>([]);
 
-	// Combined ref
-	const groupRef = useSyncRefs(
-		internalRef,
-		'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
-	);
+  // Combined ref
+  const groupRef = useSyncRefs(
+    internalRef,
+    'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null
+  );
 
-	const unregisterPopover = useEvent((registerBag: PopoverRegisterBag) => {
-		setPopovers((existing) => {
-			const idx = existing.indexOf(registerBag);
-			if (idx !== -1) {
-				const clone = existing.slice();
-				clone.splice(idx, 1);
-				return clone;
-			}
-			return existing;
-		});
-	});
+  const unregisterPopover = useEvent((registerBag: PopoverRegisterBag) => {
+    setPopovers((existing) => {
+      const idx = existing.indexOf(registerBag);
+      if (idx !== -1) {
+        const clone = existing.slice();
+        clone.splice(idx, 1);
+        return clone;
+      }
+      return existing;
+    });
+  });
 
-	const registerPopover = useEvent((registerBag: PopoverRegisterBag) => {
-		setPopovers((existing) => [...existing, registerBag]);
-		return () => unregisterPopover(registerBag);
-	});
+  const registerPopover = useEvent((registerBag: PopoverRegisterBag) => {
+    setPopovers((existing) => [...existing, registerBag]);
+    return () => unregisterPopover(registerBag);
+  });
 
-	const isFocusWithinPopoverGroup = useEvent(() => {
-		const activeElement = document.activeElement as HTMLElement | null;
-		if (!activeElement) return false;
+  const isFocusWithinPopoverGroup = useEvent(() => {
+    const activeElement = document.activeElement as HTMLElement | null;
+    if (!activeElement) return false;
 
-		// Check if focus is within the group container
-		if (internalRef.current?.contains(activeElement)) return true;
+    // Check if focus is within the group container
+    if (internalRef.current?.contains(activeElement)) return true;
 
-		// Check if focus is within any of the popover buttons or panels
-		return popovers.some((bag) => {
-			const buttonEl = bag.buttonId.current ? document.getElementById(bag.buttonId.current) : null;
-			const panelEl = bag.panelId.current ? document.getElementById(bag.panelId.current) : null;
-			return buttonEl?.contains(activeElement) || panelEl?.contains(activeElement);
-		});
-	});
+    // Check if focus is within any of the popover buttons or panels
+    return popovers.some((bag) => {
+      const buttonEl = bag.buttonId.current ? document.getElementById(bag.buttonId.current) : null;
+      const panelEl = bag.panelId.current ? document.getElementById(bag.panelId.current) : null;
+      return buttonEl?.contains(activeElement) || panelEl?.contains(activeElement);
+    });
+  });
 
-	const closeOthers = useEvent((buttonId: string) => {
-		for (const popover of popovers) {
-			if (popover.buttonId.current !== buttonId) {
-				popover.close();
-			}
-		}
-	});
+  const closeOthers = useEvent((buttonId: string) => {
+    for (const popover of popovers) {
+      if (popover.buttonId.current !== buttonId) {
+        popover.close();
+      }
+    }
+  });
 
-	const contextBag = useMemo(
-		() => ({
-			registerPopover,
-			unregisterPopover,
-			isFocusWithinPopoverGroup,
-			closeOthers,
-		}),
-		[registerPopover, unregisterPopover, isFocusWithinPopoverGroup, closeOthers]
-	);
+  const contextBag = useMemo(
+    () => ({
+      registerPopover,
+      unregisterPopover,
+      isFocusWithinPopoverGroup,
+      closeOthers,
+    }),
+    [registerPopover, unregisterPopover, isFocusWithinPopoverGroup, closeOthers]
+  );
 
-	const slot = {};
+  const slot = {};
 
-	return createElement(
-		PopoverGroupContext.Provider,
-		{ value: contextBag },
-		render({
-			ourProps: { ref: groupRef },
-			theirProps: { as: Tag, children, ...rest },
-			slot,
-			defaultTag: 'div',
-			name: 'PopoverGroup',
-		})
-	);
+  return createElement(
+    PopoverGroupContext.Provider,
+    { value: contextBag },
+    render({
+      ourProps: { ref: groupRef },
+      theirProps: { as: Tag, children, ...rest },
+      slot,
+      defaultTag: 'div',
+      name: 'PopoverGroup',
+    })
+  );
 }
 
 PopoverGroupFn.displayName = 'PopoverGroup';

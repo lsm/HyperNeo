@@ -1,87 +1,87 @@
 {
-	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "Kai",
-	"version": "0.31.0",
-	"identifier": "io.neokai.kai",
-	"build": {
-		"frontendDist": "loading",
-		"devUrl": "http://localhost:9283",
-		"beforeDevCommand": "echo 'Make sure neokai daemon is running: cd ../.. && make dev PORT=9283'",
-		"beforeBuildCommand": "echo 'Sidecar will be bundled with the app'"
-	},
-	"app": {
-		"windows": [
-			{
-				"title": "Kai",
-				"url": "loading/index.html",
-				"width": 1200,
-				"height": 800,
-				"minWidth": 800,
-				"minHeight": 600,
-				"resizable": true,
-				"fullscreen": false,
-				"center": true,
-				"titleBarStyle": "Overlay",
-				"hiddenTitle": true,
-				"trafficLightPosition": {
-					"x": 16,
-					"y": 28
-				},
-				"visible": true
-			}
-		],
-		"security": {
-			"csp": "default-src 'self' http://localhost:9283 ws://localhost:9283; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
-		},
-		"trayIcon": {
-			"iconPath": "icons/icon.png",
-			"iconAsTemplate": true,
-			"id": "main"
-		}
-	},
-	"bundle": {
-		"active": true,
-		"targets": "all",
-		"externalBin": ["binaries/neokai"],
-		"icon": [
-			"icons/32x32.png",
-			"icons/128x128.png",
-			"icons/128x128@2x.png",
-			"icons/icon.icns",
-			"icons/icon.ico"
-		],
-		"shortDescription": "AI Assistant Desktop App",
-		"longDescription": "Kai - A powerful AI assistant for developers",
-		"category": "DeveloperTool",
-		"macOS": {
-			"minimumSystemVersion": "10.13",
-			"entitlements": null,
-			"exceptionDomain": null,
-			"frameworks": [],
-			"providerShortName": null,
-			"signingIdentity": null
-		},
-		"windows": {
-			"certificateThumbprint": null,
-			"digestAlgorithm": "sha256",
-			"timestampUrl": "",
-			"wix": {
-				"language": "en-US"
-			},
-			"nsis": {
-				"installMode": "currentUser",
-				"languages": ["English"],
-				"displayLanguageSelector": false
-			}
-		},
-		"linux": {
-			"deb": {
-				"depends": []
-			},
-			"appimage": {
-				"bundleMediaFramework": false
-			}
-		}
-	},
-	"plugins": {}
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kai",
+  "version": "0.31.0",
+  "identifier": "io.neokai.kai",
+  "build": {
+    "frontendDist": "loading",
+    "devUrl": "http://localhost:9283",
+    "beforeDevCommand": "echo 'Make sure neokai daemon is running: cd ../.. && make dev PORT=9283'",
+    "beforeBuildCommand": "echo 'Sidecar will be bundled with the app'"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Kai",
+        "url": "loading/index.html",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 28
+        },
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' http://localhost:9283 ws://localhost:9283; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "id": "main"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/neokai"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "AI Assistant Desktop App",
+    "longDescription": "Kai - A powerful AI assistant for developers",
+    "category": "DeveloperTool",
+    "macOS": {
+      "minimumSystemVersion": "10.13",
+      "entitlements": null,
+      "exceptionDomain": null,
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "displayLanguageSelector": false
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+  "plugins": {}
 }
