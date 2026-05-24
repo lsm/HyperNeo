@@ -16,6 +16,11 @@ import {
 	LogLevel,
 	configureLogger,
 	getLoggerConfig,
+	subscribeToStructuredLogs,
+	clearStructuredLogSubscribers,
+	emitStructuredLogEvent,
+	installConsoleLogCapture,
+	withConsoleLogCaptureSuppressed,
 } from '@neokai/shared';
 
 /**
@@ -59,4 +64,21 @@ export class Logger {
 }
 
 // Re-export shared logger utilities for direct usage
-export { LogLevel, configureLogger, getLoggerConfig };
+export {
+	LogLevel,
+	configureLogger,
+	getLoggerConfig,
+	subscribeToStructuredLogs,
+	clearStructuredLogSubscribers,
+	emitStructuredLogEvent,
+	installConsoleLogCapture,
+	withConsoleLogCaptureSuppressed,
+};
+export type {
+	StructuredLogContext,
+	StructuredLogEvent,
+	StructuredLogLevel,
+	StructuredLogProcessMetadata,
+	StructuredLogSource,
+	StructuredLogSubscriber,
+} from '@neokai/shared';
