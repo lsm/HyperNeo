@@ -151,6 +151,9 @@ export class SpaceGoalService {
 			updated,
 			context
 		);
+		if (params.status === 'active' && existing.status !== 'active') {
+			this.deps.onGoalResumed?.(goalId, existing.spaceId);
+		}
 		return updated;
 	}
 
