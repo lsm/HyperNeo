@@ -60,7 +60,7 @@ Don't add E2E tests for ordinary changes unless explicitly requested — prefer 
 
 ## Code style
 
-- Biome: tabs, single quotes (double in JSX), semicolons, trailing commas (ES5), width 100
+- Biome: spaces, single quotes (double in JSX), semicolons, trailing commas (ES5), width 100
 - Oxlint errors: `no-explicit-any`, `no-unused-vars`, `no-console`
 - Knip checks dead exports
 - **No `console.*` in app code.** Entry points (`main.ts`, `app.ts`, CLI) and tests are exempt via `.oxlintrc.json`. For verbose startup logs use `const logInfo = verbose ? console.log : () => {};`
