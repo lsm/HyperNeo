@@ -6,9 +6,9 @@
  *   bun scripts/benchmark/graph-tools/run-all.ts
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, unlinkSync } from 'node:fs';
 
 const SCRIPTS_DIR = import.meta.dir;
 
@@ -30,13 +30,21 @@ const OUTPUT_FILES = [
 
 console.log('=== Graph Tool Benchmark: All Arms ===\n');
 
+// Remove stale output files from previous runs
+for (const file of OUTPUT_FILES) {
+	if (existsSync(file)) {
+		unlinkSync(file);
+		console.log(`  Removed stale: ${file}`);
+	}
+}
+
 let failures = 0;
 
 for (const script of ARMS) {
 	const scriptPath = join(SCRIPTS_DIR, script);
 	console.log(`\n>>> ${script}`);
 	try {
-		execSync(`bun ${scriptPath}`, {
+		execFileSync('bun', [scriptPath], {
 			stdio: 'inherit',
 			timeout: 900_000, // 15 min per arm
 			env: { ...process.env },
