@@ -62,15 +62,21 @@ export type PromptInjectionSourceKind =
 	| 'task'
 	| 'runtime';
 
+export type PromptInjectionRecordType = 'template' | 'content' | 'suppress';
+
 export interface PromptInjection {
 	/** Unique materialized record ID for this scoped instance. */
 	id: string;
+	/** Template activation, user-authored content, or suppress-only record. */
+	recordType: PromptInjectionRecordType;
 	/** Stable built-in/template ID, e.g. `neokai.output-mode.compressed`. */
 	templateId?: string;
+	/** Suppression target for suppress-only records. */
+	suppressesTemplateId?: string;
 	channel: PromptInjectionChannel;
 	priority: number;
 	enabled: boolean;
-	content: string;
+	content?: string;
 	scope?: PromptInjectionScope;
 	source: PromptInjectionSource;
 	constraints?: PromptInjectionConstraints;
@@ -98,7 +104,6 @@ export interface PromptInjectionSource {
 
 export interface PromptInjectionConstraints {
 	requiresNormalProse?: boolean;
-	suppresses?: string[];
 	maxContentChars?: number;
 }
 ```
@@ -145,7 +150,9 @@ CREATE TABLE prompt_injections (
 		(scope_type = 'global' AND scope_id IS NULL)
 		OR (scope_type <> 'global' AND scope_id IS NOT NULL)
 	),
+	record_type TEXT NOT NULL CHECK(record_type IN ('template', 'content', 'suppress')),
 	template_id TEXT,
+	suppresses_template_id TEXT,
 	channel TEXT NOT NULL CHECK(channel IN (
 		'system.prepend', 'system.append', 'agent.prompt.append'
 	)),
@@ -153,7 +160,11 @@ CREATE TABLE prompt_injections (
 	priority INTEGER NOT NULL CHECK(priority BETWEEN 500 AND 799),
 	enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
 	content TEXT,
-	CHECK((template_id IS NOT NULL) OR (content IS NOT NULL AND length(content) > 0)),
+	CHECK(
+		(record_type = 'template' AND template_id IS NOT NULL AND suppresses_template_id IS NULL AND content IS NULL)
+		OR (record_type = 'content' AND template_id IS NULL AND suppresses_template_id IS NULL AND content IS NOT NULL AND length(content) > 0)
+		OR (record_type = 'suppress' AND template_id IS NULL AND suppresses_template_id IS NOT NULL AND content IS NULL)
+	),
 	source_kind TEXT NOT NULL CHECK(source_kind IN (
 		'settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime'
 	)),
@@ -165,13 +176,14 @@ CREATE TABLE prompt_injections (
 
 CREATE INDEX idx_prompt_injections_scope ON prompt_injections(scope_type, scope_id, enabled);
 CREATE INDEX idx_prompt_injections_template ON prompt_injections(template_id, enabled);
+CREATE INDEX idx_prompt_injections_suppresses ON prompt_injections(suppresses_template_id, enabled);
 ```
 
 Benefits:
 
 - Query/audit by scope.
 - Enforce size/validation at repository boundary.
-- Let scoped records activate built-in `template_id`s without copying built-in prompt content into SQLite.
+- Let scoped records activate or suppress built-in template IDs without copying built-in prompt content into SQLite.
 - Avoid shallow-merge issues in `global_settings.settings` JSON.
 - Easier UI inspection/debug.
 
@@ -183,9 +195,9 @@ Activation is data in the prompt injection registry. The built-in template ID is
 
 - `neokai.output-mode.compressed`
 
-Enable or suppress that ID with scoped `prompt_injections` records:
+Enable or suppress that ID with scoped `prompt_injections` records. Activation uses `record_type = 'template'` plus `template_id`; suppression uses `record_type = 'suppress'` plus `suppresses_template_id`.
 
-| Scope type | Scope ID | `template_id` | Meaning |
+| Scope type | Scope ID | Template target | Meaning |
 |---|---|---|---|
 | `global` | `NULL` | `neokai.output-mode.compressed` | User-level default for all matching new sessions. |
 | `session` | `<session-id>` | `neokai.output-mode.compressed` | One chat/worker/session override. |
@@ -195,7 +207,7 @@ Enable or suppress that ID with scoped `prompt_injections` records:
 | `workflow_node` | `<workflow-id>:<node-id>:<agent-name>` | `neokai.output-mode.compressed` | Workflow-template slot override. |
 | `task` | `<task-id>` | `neokai.output-mode.compressed` | One task/run override. |
 
-Normal/default behavior is absence of an enabled compressed-output record, or a narrower suppressing record with `constraints.suppresses: ['neokai.output-mode.compressed']`. This same model generalizes to future safety, autonomy, language-preference, and workflow-contract injections.
+Normal/default behavior is absence of an enabled compressed-output activation record, or a narrower suppressing record with `record_type = 'suppress'` and `suppresses_template_id = 'neokai.output-mode.compressed'`. This same model generalizes to future safety, autonomy, language-preference, and workflow-contract injections.
 
 Recommended defaults:
 
@@ -231,6 +243,7 @@ Space default compressed output is stored as a `prompt_injections` row:
 ```sql
 -- Conceptual row; exact insert uses repository helpers.
 id = 'space.<space-id>.neokai.output-mode.compressed'
+record_type = 'template'
 template_id = 'neokai.output-mode.compressed'
 scope_type = 'space'
 scope_id = '<space-id>'
@@ -256,7 +269,7 @@ Space UI:
 - Space settings: compressed output selector backed by scoped records (`Default`, `Compressed`, `Normal/suppress`).
 - `Default` means no Space-scoped record; broader global/app behavior applies.
 - `Compressed` enables `neokai.output-mode.compressed` at `scope_type = 'space'`.
-- `Normal/suppress` creates or enables a Space-scoped suppressing record when a broader global record would otherwise compress output.
+- `Normal/suppress` creates or enables a Space-scoped suppressing record (`record_type = 'suppress'`, `suppresses_template_id = 'neokai.output-mode.compressed'`) when a broader global record would otherwise compress output.
 - Agent editor uses same pattern at `scope_type = 'space_agent'`.
 
 ### Workflow and workflow-slot override
@@ -309,9 +322,9 @@ Provider examples:
 - `BuiltinOutputModeInjectionProvider`
 - `BuiltinWorktreeInjectionProvider` (future migration, not MVP)
 - `DatabasePromptInjectionProvider`
-- `SpacePromptInjectionProvider`
-- `WorkflowPromptInjectionProvider`
 - later: `RuntimeHookPromptInjectionProvider`
+
+`DatabasePromptInjectionProvider` is the single owner for persisted scoped records from `prompt_injections`, including global, session, Space, SpaceAgent, workflow, workflow-node, and task rows. Do not also emit those same rows from `SpacePromptInjectionProvider` or `WorkflowPromptInjectionProvider`; otherwise duplicate row IDs would suppress valid activations. Space/workflow services should write records to the table, not re-materialize them during resolution.
 
 Context:
 
@@ -338,8 +351,9 @@ Reject or disable invalid records:
 - Duplicate `id` after provider merge; duplicates are invalid and must not be precedence-resolved in MVP.
 - Unsupported `channel`.
 - `scope_id` missing for any non-global `scope_type`; global records must use `scope_id = NULL`.
-- `content` empty or above configured max size when `template_id` is absent.
-- `template_id` references an unknown built-in.
+- Record payload shape violates `record_type`: template rows must have `template_id` only; content rows must have non-empty `content` only; suppress rows must have `suppresses_template_id` only.
+- `template_id` or `suppresses_template_id` references an unknown built-in.
+- Same `scope_type` + `scope_id` contains more than one enabled row targeting the same template, whether by `template_id` or `suppresses_template_id`.
 - User-authored content record tries to use reserved built-in ID prefix `neokai.` as row `id`.
 - User/config source tries to use protected priority band.
 
@@ -365,9 +379,11 @@ Persisted user/config/workflow records are schema-limited to non-protected bands
 ### Conflict handling
 
 - If any active injection has `requiresNormalProse`, output-mode compressed injection is suppressed for that render.
-- Any injection can list `suppresses: ['neokai.output-mode.compressed']`.
+- Suppress-only records use `record_type = 'suppress'` and `suppresses_template_id`; they render no prompt content and only participate in activation conflict resolution.
 - Built-in safety/approval injections must not be suppressible by user-configured output-style injections.
-- Duplicate row IDs are never resolved by priority in MVP. Treat duplicates as invalid, suppress all records with that row ID for the render, log the conflict, and expose it in `suppressed` provenance. Multiple rows may share a `template_id`; scope precedence decides which activation/suppression for that template applies.
+- Duplicate row IDs are never resolved by priority in MVP. Treat duplicates as invalid, suppress all records with that row ID for the render, log the conflict, and expose it in `suppressed` provenance.
+- Multiple rows may target the same template across different scopes; scope precedence decides which activation/suppression applies.
+- Multiple enabled rows targeting the same template in the same scope are invalid in MVP, even if one activates and one suppresses. Suppress all same-scope conflicting rows for that template, log `same-scope-template-conflict`, and expose them in provenance. Add a repository unique constraint or transactional validation for `(scope_type, scope_id, COALESCE(template_id, suppresses_template_id))` among enabled records if SQLite expression/partial-index support is available.
 
 ### Provenance
 

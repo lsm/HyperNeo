@@ -165,7 +165,7 @@ Recommended scope order for resolving same-template enable/suppress records:
 | 7 | Global/user | User-level preference for all new matching sessions. |
 | 8 | App default | No compressed injection active. |
 
-Narrower scope wins over broader scope for activation conflicts: task wins over session, and workflow-node wins over workflow. Normal mode is represented by absence of the compressed injection or by a narrower suppressing injection record such as `constraints.suppresses: ['neokai.output-mode.compressed']`. Persist provenance in debug metadata so output-style surprises are explainable.
+Narrower scope wins over broader scope for activation conflicts: task wins over session, and workflow-node wins over workflow. Normal mode is represented by absence of the compressed injection or by a narrower suppressing injection record with `record_type = 'suppress'` and `suppresses_template_id = 'neokai.output-mode.compressed'`. Persist provenance in debug metadata so output-style surprises are explainable.
 
 Key inheritance behavior: if a Space-scoped compressed-output record exists and a new SpaceAgent has no Space-agent-scoped record, sessions for that agent inherit the Space record dynamically. If the Space record is later disabled or suppressed, that agent follows the new Space behavior until it gets its own scoped record.
 
