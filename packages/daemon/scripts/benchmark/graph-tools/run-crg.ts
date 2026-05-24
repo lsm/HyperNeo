@@ -76,6 +76,9 @@ async function main() {
           '--tools',
           CRG_TOOLS,
         ],
+        env: {
+          CRG_DATA_DIR,
+        },
       },
     },
   });
