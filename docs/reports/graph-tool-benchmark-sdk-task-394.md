@@ -9,13 +9,18 @@
 
 ## Executive Summary
 
-Four of five arms completed successfully. Baseline, CodeGraph, CRG, and ast-grep produced codebase-grounded plans with active tool use. Graphify could not be benchmarked due to lack of a working LLM backend.
+All five arms completed successfully. Every tool achieved active tool use and produced codebase-grounded plans.
+
+**Root causes of earlier failures:**
+- **CodeGraph:** Wrong MCP command (`mcp` → `serve --mcp`)
+- **CRG:** Wrong serve arg (`--data-dir` not supported by `serve`)
+- **Graphify:** Missing `[mcp]` extra — `graphify.serve` module not installed
 
 **Key findings:**
-- **CodeGraph:** Wrong MCP command (`mcp` → `serve --mcp`). Fixed, now 34 calls.
-- **CRG:** Wrong serve arg (`--data-dir` not supported). Fixed, now 52 calls.
-- **Graphify:** No working backend. No API keys available; local ollama model too small.
-- **ast-grep:** Most active tool user (75 calls), no issues.
+- **ast-grep** most active (75 calls), **Graphify** close second (73 calls)
+- **CRG** most token-expensive (86,918 tokens)
+- **CodeGraph** longest wall time (427s)
+- **Baseline** most reliable — no index build, consistent 61 calls
 
 ## Results
 
@@ -24,7 +29,7 @@ Four of five arms completed successfully. Baseline, CodeGraph, CRG, and ast-grep
 | baseline (Read/Grep/Glob) | 284.2 | 75,444 | 61 | 17,643 |
 | CodeGraph | 427.0 | 45,214 | 34 | 16,354 |
 | code-review-graph | 1097.4 | 86,918 | 52 | 17,927 |
-| Graphify | SKIP | — | — | — |
+| Graphify | 549.7 | 41,742 | 73 | 21,890 |
 | ast-grep | 379.4 | 83,064 | 75 | 16,927 |
 
 ### Tool Call Breakdown
@@ -56,6 +61,15 @@ Four of five arms completed successfully. Baseline, CodeGraph, CRG, and ast-grep
 | `mcp__code-review-graph__get_review_context_tool` | 2 |
 | `mcp__code-review-graph__get_minimal_context_tool` | 1 |
 
+**Graphify (MCP):**
+
+| Tool | Calls |
+|------|-------|
+| `mcp__graphify__get_node` | 44 |
+| `mcp__graphify__get_neighbors` | 22 |
+| `mcp__graphify__query_graph` | 6 |
+| `mcp__graphify__graph_stats` | 1 |
+
 **ast-grep (MCP):**
 
 | Tool | Calls |
@@ -70,8 +84,8 @@ Four of five arms completed successfully. Baseline, CodeGraph, CRG, and ast-grep
 |------|-----------|
 | CodeGraph | 3.6s |
 | code-review-graph | 71.3s |
+| Graphify | N/A (used pre-built graph) |
 | ast-grep (resolve) | 4.6s |
-| Graphify | N/A (no working backend) |
 
 ## Detailed Analysis
 
@@ -100,6 +114,14 @@ Four of five arms completed successfully. Baseline, CodeGraph, CRG, and ast-grep
 - **Root cause of earlier failure:** Benchmark script passed `--data-dir` to `serve` command, which does not accept it. Server failed on startup.
 - **Assessment:** Good codebase grounding once serve args are correct. Heavy use of semantic search (28 calls). Most token-expensive arm.
 
+### Graphify
+
+- **Response:** 21,890 chars — grounded in actual NeoKai files
+- **Tool calls:** 73 — get_node (44), get_neighbors (22), query_graph (6), graph_stats (1)
+- **Tokens:** 41,742
+- **Root cause of earlier failure:** `graphifyy[mcp]` extra not installed — `python -m graphify.serve` module missing. After installing `[mcp]` extra, serve works.
+- **Assessment:** Second-most active tool use. Heavy node traversal pattern (44 get_node + 22 get_neighbors). Uses pre-built graph; extraction requires capable LLM backend.
+
 ### ast-grep
 
 - **Response:** 16,927 chars
@@ -107,41 +129,36 @@ Four of five arms completed successfully. Baseline, CodeGraph, CRG, and ast-grep
 - **Tokens:** 83,064
 - **Assessment:** Most active tool user. Heavy AST-based exploration with structural patterns and YAML rule scans.
 
-### Graphify
-
-- **Status:** SKIP — no working LLM backend available
-- **Issue 1:** Extraction requires `openai` package even for ollama backend (installed, but insufficient)
-- **Issue 2:** Local ollama model (`qwen3:0.6b`) too small — returns invalid JSON, cannot extract graph
-- **Issue 3:** No API keys (Gemini/OpenAI) available for cloud backends
-- **Assessment:** Graphify cannot be benchmarked in this environment without a capable LLM backend. The tool itself does not expose a native MCP server; the benchmark script attempted to run `python -m graphify.serve` which does not exist.
-
 ## Key Findings
 
-1. **Both CodeGraph and CRG failed due to incorrect CLI arguments, not model behavior.** After fixing commands, both achieved active tool use (34 and 52 calls).
+1. **All three previously-failing arms failed due to incorrect CLI invocations, not model behavior.** CodeGraph (`mcp` → `serve --mcp`), CRG (removed `--data-dir`), Graphify (installed `[mcp]` extra).
 
-2. **CRG is the most token-expensive arm.** 86,918 tokens for 52 calls — higher per-call cost than CodeGraph or ast-grep.
+2. **ast-grep and Graphify are the most active tool users.** 75 and 73 calls respectively. Both use traversal patterns: ast-grep via structural search, Graphify via node/neighbor traversal.
 
-3. **ast-grep remains most active tool user.** 75 calls, no setup issues.
+3. **CRG is the most token-expensive arm.** 86,918 tokens for 52 calls — highest per-call cost.
 
-4. **Baseline is most reliable.** No index build, no MCP server startup issues, consistent 61 tool calls.
+4. **Baseline remains most reliable.** No index build, no MCP server startup issues, consistent 61 tool calls.
 
-5. **Graphify requires a capable LLM backend to function.** Without API keys or a sufficiently large local model, extraction fails and no graph is available for querying.
+5. **Build times vary significantly.** CodeGraph (3.6s) and ast-grep (4.6s) are fast. CRG (71s) is slow but acceptable. Graphify used a pre-built graph.
 
-6. **Build times vary significantly.** CodeGraph (3.6s) and ast-grep (4.6s) are fast. CRG (71s) is slow but acceptable.
+6. **Token reporting works with GLM-5.1.** Unlike GLM-4.7 which returned 0 tokens, GLM-5.1 returns accurate usage data through the Anthropic-compatible API.
 
 ## Recommendations
 
-1. **Verify MCP server commands before benchmarking.** Both CodeGraph (`serve --mcp`) and CRG (`serve` without `--data-dir`) had incorrect invocations. Always test the server startup independently.
+1. **Verify MCP server commands before benchmarking.** All three fixes were CLI invocation errors. Always test server startup independently.
 
-2. **Graphify needs backend setup.** To benchmark Graphify, provide either a Gemini/OpenAI API key or a capable local ollama model (≥7B parameters).
+2. **Graphify needs `pip install "graphifyy[mcp]"`** for the MCP server module. The base package does not include `graphify.serve`.
 
 3. **Consider Claude Sonnet as control.** Run the same benchmark with Claude Sonnet to establish a baseline for comparison with GLM-5.1's tool-use behavior.
 
 4. **CodeGraph tool-use optimization.** The model makes 18 `codegraph_node` calls (one per symbol). Consider whether `codegraph_explore` (batch symbol survey) could reduce call count.
+
+5. **Graphify extraction requires capable LLM backend.** The pre-built graph used here was extracted with a cloud backend. For fresh extraction, provide API keys or a capable local model.
 
 ## Raw Data
 
 - Baseline: `/tmp/graph-tool-benchmark-baseline.json`
 - CodeGraph: `/tmp/graph-tool-benchmark-codegraph.json`
 - CRG: `/tmp/graph-tool-benchmark-crg.json`
+- Graphify: `/tmp/graph-tool-benchmark-graphify.json`
 - ast-grep: `/tmp/graph-tool-benchmark-ast-grep.json`
