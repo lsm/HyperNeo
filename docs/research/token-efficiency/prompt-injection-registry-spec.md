@@ -135,6 +135,8 @@ CREATE TABLE prompt_injections (
 		'global', 'session', 'space', 'space_agent', 'workflow', 'workflow_node', 'task'
 	)),
 	scope_id TEXT,
+	-- scope_id must be NULL only for global records and NOT NULL for every scoped record.
+	-- Enforce in repository validation or with CHECK(scope_type = 'global' OR scope_id IS NOT NULL).
 	channel TEXT NOT NULL CHECK(channel IN (
 		'system.prepend', 'system.append', 'agent.prompt.append', 'user.prepend'
 	)),
@@ -172,9 +174,8 @@ Persistence surfaces:
 - `GlobalSettings.outputMode?: AgentOutputMode` — user-level default.
 - `SessionConfig.outputMode?: AgentOutputMode | null` — per-session override, stored inside session config JSON.
 - `AgentSessionInit.outputMode?: AgentOutputMode | null` — creation-time override.
-- `Space.outputMode?: AgentOutputMode | null` — optional Space default.
 - `SpaceAgent.outputMode?: AgentOutputMode | null` — Space agent override.
-- Later: workflow-slot and task-run override.
+- Later: workflow-slot, task-run override, and optional `Space.outputMode` if bulk Space policy is needed after measurement.
 
 Recommended defaults:
 
@@ -191,11 +192,12 @@ Highest non-null source wins:
 | Precedence | Source |
 |---:|---|
 | 1 | Task-run/session override |
-| 2 | Workflow-slot override |
+| 2 | Workflow-slot override (future) |
 | 3 | SpaceAgent override |
-| 4 | Space default |
-| 5 | User-level setting |
-| 6 | App default `normal` |
+| 4 | User-level setting |
+| 5 | App default `normal` |
+
+MVP active sources: session override > SpaceAgent override > user-level setting > app default. Workflow-slot is reserved for later workflow work. Space default is explicitly deferred and not part of MVP precedence; add it later only if `Space.outputMode` ships.
 
 Explicit `normal` overrides inherited `compressed`.
 
@@ -242,6 +244,7 @@ Reject or disable invalid records:
 - Missing `id`.
 - Duplicate `id` after provider merge; duplicates are invalid and must not be precedence-resolved in MVP.
 - Unsupported `channel`.
+- `scope_id` missing for any non-global `scope_type`; global records must use `scope_id = NULL`.
 - `content` empty or above configured max size.
 - User/config source tries to use reserved built-in ID prefix `neokai.`.
 - User/config source tries to use protected priority band.
@@ -277,6 +280,8 @@ Composer returns both text and metadata:
 ```ts
 interface ComposedPromptInjections {
 	byChannel: Record<PromptInjectionChannel, string>;
+	byChannelEntries: Record<PromptInjectionChannel, PromptInjection[]>;
+	agentPromptEntries: PromptInjection[];
 	applied: Array<{ id: string; source: PromptInjectionSource; priority: number }>;
 	suppressed: Array<{ id: string; reason: string }>;
 }
@@ -298,12 +303,14 @@ queryOptions.systemPrompt = promptRenderer.applyToSystemPrompt(
 );
 queryOptions.agents = promptRenderer.applyToAgentPrompts(
 	queryOptions.agents,
-	composed.byChannel['agent.prompt.append']
+	composed.agentPromptEntries
 );
-const userPrepend = composed.byChannel['user.prepend'];
+const userPrependEntries = composed.byChannelEntries['user.prepend'];
 ```
 
-`user.prepend` must not silently no-op. MVP behavior: compose and expose `user.prepend` in preview/provenance, but do not allow stored records on that channel until a concrete message-rendering path exists. If enabled later, renderer must prepend it to the first user message submitted to the SDK query stream or to task-init messages before enqueueing.
+Composer must retain per-injection metadata, not only joined strings. `agentPromptEntries` includes explicit `agent.prompt.append` records plus renderer-generated copies of records whose scope has `appliesToSubagents: true`. This lets the renderer target subagents deterministically without copying every parent `system.append` entry.
+
+`user.prepend` must not silently no-op. MVP behavior: compose and expose `user.prepend` entries in preview/provenance, but do not allow stored records on that channel until a concrete message-rendering path exists. If enabled later, renderer must prepend it to the first user message submitted to the SDK query stream or to task-init messages before enqueueing.
 
 ### System prompt rendering
 
@@ -317,9 +324,13 @@ Do not expand to SDK `string[]` in MVP unless needed.
 
 ### Subagent rendering
 
-Apply `agent.prompt.append` to `queryOptions.agents[*].prompt` when scope says `appliesToSubagents`.
+Apply `agent.prompt.append` entries to `queryOptions.agents[*].prompt`. Composer must preserve entry scope and source metadata so renderer can distinguish:
 
-Reason: SDK subagents do not inherit parent `systemPrompt.append`.
+- records explicitly authored for `agent.prompt.append`
+- generated subagent copies of `system.append` records with `scope.appliesToSubagents === true`
+- parent-only `system.append` records that must not reach subagents
+
+Reason: SDK subagents do not inherit parent `systemPrompt.append`, and joined channel strings lose the scope metadata required for deterministic subagent targeting.
 
 Avoid blindly applying all system injections to all subagents. Some layers are parent-only.
 
@@ -402,7 +413,7 @@ This is critical for support and prompt-order debugging.
 
 ### Space UI
 
-- Space default output mode.
+- Space default output mode later only if bulk Space policy is needed; not MVP.
 - Agent editor override: `Default` / `Normal` / `Compressed`.
 - Task-run advanced override later.
 
@@ -414,8 +425,8 @@ This is critical for support and prompt-order debugging.
 - Add `PromptInjectionResolver`, `PromptInjectionComposer`, `PromptInjectionRenderer` under `packages/daemon/src/lib/agent/prompt-injections/`.
 - Add built-in provider support for the compressed output template only. Keep worktree isolation on the existing code path in MVP.
 - Integrate renderer in `QueryOptionsBuilder` after session-specific query options are assembled and before cleanup.
-- Apply supported MVP channels to top-level `systemPrompt` and `agents[*].prompt`; reject stored `user.prepend` records until message-level rendering exists.
-- Add unit tests for ordering, duplicate-ID suppression, unsupported-channel rejection, rendering shapes, subagent append behavior, and `user.prepend` validation rejection.
+- Apply supported MVP channels to top-level `systemPrompt` and `agents[*].prompt`; retain per-entry scope metadata for subagent rendering; reject stored `user.prepend` records until message-level rendering exists.
+- Add unit tests for ordering, duplicate-ID suppression, scoped-ID validation, unsupported-channel rejection, rendering shapes, subagent append behavior with mixed parent-only/subagent-targeted records, and `user.prepend` validation rejection.
 
 ### Task 2 — Output mode config
 
@@ -428,10 +439,10 @@ This is critical for support and prompt-order debugging.
 
 ### Task 3 — Space overrides
 
-- Add `Space.outputMode` and `SpaceAgent.outputMode` if product wants Space-level control immediately; otherwise start with SpaceAgent only.
-- Add migrations/repository/RPC serialization.
-- Thread overrides into session creation for Space chat, long-term agents, workflow node agents, and Space task agents.
-- Tests for precedence: task/session > workflow slot > SpaceAgent > Space > user > app.
+- Add `SpaceAgent.outputMode` only for MVP; defer `Space.outputMode` until bulk Space policy is justified by measurement/user demand.
+- Add migrations/repository/RPC serialization for SpaceAgent override.
+- Thread SpaceAgent override into session creation for long-term agents, workflow node agents, and Space task agents.
+- Tests for MVP precedence: session override > SpaceAgent override > user > app. Add future tests when workflow-slot or Space default ships.
 
 ### Task 4 — UI
 
