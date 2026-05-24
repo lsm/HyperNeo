@@ -35,7 +35,7 @@ export function createEvolutionTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			scope_id TEXT NOT NULL,
 			kind TEXT NOT NULL
-				CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction')),
+				CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction')),
 			summary TEXT NOT NULL,
 			source_id TEXT,
 			metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -48,6 +48,9 @@ export function createEvolutionTables(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_evolution_evidence_source ON evolution_evidence(kind, source_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_evolution_evidence_scope_source_created ON evolution_evidence(scope_id, source_id, created_at DESC, id DESC)`
 	);
 
 	db.exec(`

@@ -30,7 +30,18 @@ export interface EvidenceQualityScoreInput {
 }
 
 const TASK_EVIDENCE_KINDS = new Set(['task', 'task_result']);
-const WORKFLOW_ARTIFACT_EVIDENCE_KINDS = new Set(['workflow_run', 'artifact', 'error']);
+const RUNTIME_ERROR_EVIDENCE_KINDS = new Set([
+	'error',
+	'daemon_error',
+	'runtime_crash',
+	'runtime_warning',
+	'uncaught_exception',
+]);
+const WORKFLOW_ARTIFACT_EVIDENCE_KINDS = new Set([
+	'workflow_run',
+	'artifact',
+	...RUNTIME_ERROR_EVIDENCE_KINDS,
+]);
 const HIGH_CONFIDENCE_SCORE = 70;
 const MEDIUM_CONFIDENCE_SCORE = 45;
 const MAX_SCORE = 100;
@@ -151,7 +162,7 @@ function countConcreteOutcomes(
 	for (const item of evidence) {
 		visit(item.summary);
 		visit(item.metadata);
-		if (item.kind === 'error') seen.add('error');
+		if (RUNTIME_ERROR_EVIDENCE_KINDS.has(item.kind)) seen.add('error');
 	}
 	for (const task of tasks) {
 		visit(task.title);
