@@ -17,7 +17,9 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import type { TaskSchedule } from '@neokai/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants';
+import { readSelfNagScheduleScopeId } from '../rpc-handlers';
 import { Logger } from '../logger';
 import { getNextRunAt } from '../space/schedule/cron-utils';
 import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
@@ -25,6 +27,8 @@ import type { JobQueueRepository, Job } from '../../storage/repositories/job-que
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceGoalService } from '../space/goals/goal-service';
+import type { GoalAutomationService } from '../space/goals/goal-automation-service';
+import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 
 const log = new Logger('task-schedule-fire-handler');
 
@@ -61,6 +65,8 @@ export interface TaskScheduleFireHandlerDeps {
 	spaceRepo: SpaceRepository;
 	taskRepo: SpaceTaskRepository;
 	goalService?: SpaceGoalService;
+	goalRepo?: SpaceGoalRepository;
+	goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
 	/**
 	 * Optional event emitter for broadcasting schedule/task changes.
 	 * When provided, the handler emits `space.task.created` and
@@ -78,7 +84,17 @@ export async function handleTaskScheduleFire(
 	deps: TaskScheduleFireHandlerDeps
 ): Promise<TaskScheduleFireResult> {
 	const { scheduleId } = job.payload as TaskScheduleFirePayload;
-	const { db, scheduleRepo, jobQueue, spaceRepo, taskRepo, goalService, eventHub } = deps;
+	const {
+		db,
+		scheduleRepo,
+		jobQueue,
+		spaceRepo,
+		taskRepo,
+		goalService,
+		goalRepo,
+		goalAutomationService,
+		eventHub,
+	} = deps;
 
 	const schedule = scheduleRepo.getById(scheduleId);
 
@@ -175,6 +191,20 @@ export async function handleTaskScheduleFire(
 	}
 
 	const now = Date.now();
+
+	if (schedule.createdByAgent === 'goal-automation-service' && schedule.goalId) {
+		return fireGoalAutomationSchedule({
+			db,
+			job,
+			schedule,
+			scheduleRepo,
+			jobQueue,
+			goalRepo,
+			goalAutomationService,
+			eventHub,
+			now,
+		});
+	}
 
 	// Atomically create the task, compute the next fire, enqueue it, and update
 	// the schedule's bookkeeping fields. SpaceTaskRepository.createTask already
@@ -343,4 +373,100 @@ export async function handleTaskScheduleFire(
 	}
 
 	return { scheduleId, taskId, skipped: false, nextRunAt };
+}
+
+function fireGoalAutomationSchedule(params: {
+	db: BunDatabase;
+	job: Job;
+	schedule: TaskSchedule;
+	scheduleRepo: TaskScheduleRepository;
+	jobQueue: JobQueueRepository;
+	goalRepo?: SpaceGoalRepository;
+	goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
+	eventHub?: TaskScheduleFireHandlerDeps['eventHub'];
+	now: number;
+}): TaskScheduleFireResult {
+	const {
+		db,
+		job,
+		schedule,
+		scheduleRepo,
+		jobQueue,
+		goalRepo,
+		goalAutomationService,
+		eventHub,
+		now,
+	} = params;
+	let computedNextRunAt: number | null = null;
+	const goal = schedule.goalId ? goalRepo?.getById(schedule.goalId) : null;
+	const automationDisabled =
+		schedule.status !== 'active' ||
+		schedule.goalId === null ||
+		(goalRepo !== undefined && (!goal || goal.status !== 'active'));
+	try {
+		computedNextRunAt = db.transaction(() => {
+			let nextRunAt: number | null = null;
+			let pendingJobId: string | null = null;
+			let nextStatus: 'active' | 'completed' | 'paused' = automationDisabled ? 'paused' : 'active';
+			if (nextStatus === 'active' && schedule.triggerType === 'cron' && schedule.cronExpression) {
+				nextRunAt = getNextRunAt(schedule.cronExpression, schedule.timezone, now);
+				if (nextRunAt !== null) {
+					const nextJob = jobQueue.enqueue({
+						queue: TASK_SCHEDULE_FIRE,
+						payload: { scheduleId: schedule.id } satisfies TaskScheduleFirePayload,
+						runAt: nextRunAt,
+					});
+					pendingJobId = nextJob.id;
+				} else {
+					nextStatus = 'completed';
+				}
+			}
+			const applied = scheduleRepo.updateAfterFireIfPending(schedule.id, job.id, {
+				lastCreatedTaskId: schedule.lastCreatedTaskId,
+				lastRunAt: now,
+				nextRunAt,
+				status: nextStatus,
+				pendingJobId,
+			});
+			if (!applied) throw new ScheduleSupersededError(schedule.id, job.id);
+			return nextRunAt;
+		})();
+	} catch (err) {
+		if (err instanceof ScheduleSupersededError) {
+			return {
+				scheduleId: schedule.id,
+				taskId: null,
+				skipped: true,
+				skipReason: 'job_superseded',
+				nextRunAt: null,
+			};
+		}
+		throw err;
+	}
+	const scopeId = readSelfNagScheduleScopeId(schedule);
+	if (!automationDisabled) {
+		try {
+			goalAutomationService?.onSelfNag(
+				schedule.goalId as string,
+				schedule.id,
+				scopeId ?? undefined
+			);
+		} catch (err) {
+			log.warn('goal automation self-nag enqueue failed after schedule advance', err);
+		}
+	}
+	const emittedSchedule = scheduleRepo.getById(schedule.id);
+	if (eventHub && emittedSchedule) {
+		eventHub
+			.publish('space.schedule.updated', {
+				sessionId: 'global',
+				spaceId: schedule.spaceId,
+				scheduleId: schedule.id,
+				schedule: emittedSchedule,
+			})
+			.catch(() => {
+				// Swallow — event emission is best-effort.
+			});
+	}
+	return { scheduleId: schedule.id, taskId: null, skipped: false, nextRunAt: computedNextRunAt };
 }
