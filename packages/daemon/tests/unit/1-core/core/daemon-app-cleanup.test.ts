@@ -12,7 +12,11 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { existsSync, unlinkSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clearStructuredLogSubscribers, installConsoleLogCapture } from '@neokai/shared';
+import {
+	clearStructuredLogSubscribers,
+	installConsoleLogCapture,
+	subscribeToStructuredLogs,
+} from '@neokai/shared';
 import { createDaemonApp } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
@@ -303,6 +307,30 @@ describe('Daemon App Cleanup', () => {
 			).rejects.toThrow('bind failed');
 
 			expect(console.error).toBe(originalError);
+		});
+
+		test('should capture logError aliases created during startup', async () => {
+			const events: unknown[] = [];
+			const unsubscribe = subscribeToStructuredLogs((event) => events.push(event));
+			try {
+				const daemonContext = await createDaemonApp({
+					config,
+					verbose: true,
+					standalone: false,
+				});
+
+				console.error('post-start error alias check');
+				await daemonContext.cleanup();
+			} finally {
+				unsubscribe();
+			}
+
+			expect(events).toContainEqual(
+				expect.objectContaining({
+					message: 'post-start error alias check',
+					source: 'console',
+				})
+			);
 		});
 
 		test('should start successfully with default config', async () => {

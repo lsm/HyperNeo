@@ -100,8 +100,9 @@ describe('EvolutionLogEvidenceService', () => {
 		const service = new EvolutionLogEvidenceService({
 			evolutionRepo,
 			spaceRepo: {
-				listSpaces: () => {
+				listSpaces: (includeArchived?: boolean) => {
 					listSpacesCalls += 1;
+					expect(includeArchived).toBe(false);
 					return [{ id: dynamicSpaceId }] as never;
 				},
 			},
@@ -117,7 +118,7 @@ describe('EvolutionLogEvidenceService', () => {
 			.find((item) => item.policy.logEvidenceProductScope === true);
 		expect(scope).toBeTruthy();
 		expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(2);
-		expect(listSpacesCalls).toBe(1);
+		expect(listSpacesCalls).toBe(2);
 	});
 
 	it('refreshes empty default subscriptions when spaces are created later', () => {
@@ -126,8 +127,9 @@ describe('EvolutionLogEvidenceService', () => {
 		const service = new EvolutionLogEvidenceService({
 			evolutionRepo,
 			spaceRepo: {
-				listSpaces: () => {
+				listSpaces: (includeArchived?: boolean) => {
 					listSpacesCalls += 1;
+					expect(includeArchived).toBe(false);
 					return spaces as never;
 				},
 			},
@@ -153,6 +155,45 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(scope).toBeTruthy();
 		expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(1);
 		expect(listSpacesCalls).toBe(2);
+	});
+
+	it('adds product scopes for spaces created after a non-empty default subscription cache', () => {
+		const firstSpaceId = new SpaceRepository(db as never).createSpace({
+			workspacePath: '/workspace/log-evidence-first',
+			slug: 'log-evidence-first',
+			name: 'Log Evidence First',
+		}).id;
+		let spaces = [{ id: firstSpaceId }];
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			spaceRepo: {
+				listSpaces: () => spaces as never,
+			},
+		});
+
+		service.capture(createEvent({ level: 'error', message: 'first space error' }));
+		service.flush();
+		const firstScope = evolutionRepo
+			.listScopes({ spaceId: firstSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(firstScope).toBeTruthy();
+		expect(evolutionRepo.listEvidence(firstScope!.id)).toHaveLength(1);
+
+		const secondSpaceId = new SpaceRepository(db as never).createSpace({
+			workspacePath: '/workspace/log-evidence-second',
+			slug: 'log-evidence-second',
+			name: 'Log Evidence Second',
+		}).id;
+		spaces = [{ id: firstSpaceId }, { id: secondSpaceId }];
+
+		service.capture(createEvent({ level: 'error', message: 'second space error' }));
+		service.flush();
+
+		const secondScope = evolutionRepo
+			.listScopes({ spaceId: secondSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(secondScope).toBeTruthy();
+		expect(evolutionRepo.listEvidence(secondScope!.id)).toHaveLength(1);
 	});
 
 	it('classifies process crash events by processEvent metadata', () => {

@@ -163,8 +163,6 @@ export interface DaemonAppContext {
  */
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
 	const { config, verbose = true, standalone = false } = options;
-	const logInfo = verbose ? console.log : () => {};
-	const logError = verbose ? console.error : () => {};
 	let startupLogCaptureCleanup: (() => void) | null = null;
 
 	try {
@@ -196,6 +194,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			unsubscribeEarlyStructuredLogs();
 			restoreEarlyConsoleCapture();
 		};
+		const logInfo = verbose ? console.log : () => {};
+		const logError = verbose ? console.error : () => {};
 
 		// Initialize job queue
 		const jobQueue = new JobQueueRepository(db.getDatabase());

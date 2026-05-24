@@ -38,7 +38,7 @@ const MAX_SAMPLES = 5;
 
 export class EvolutionLogEvidenceService {
 	private buffer: BufferedEvent[] = [];
-	private cachedSubscriptions: LogEvidenceSubscription[] | null = null;
+	private knownDefaultScopeIds = new Set<string>();
 
 	constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
@@ -122,20 +122,18 @@ export class EvolutionLogEvidenceService {
 
 	private getSubscriptions(): LogEvidenceSubscription[] {
 		if (this.deps.subscriptions) return this.deps.subscriptions;
-		if (this.cachedSubscriptions) return this.cachedSubscriptions;
 		const scopes = this.resolveDefaultProductScopes();
-		const subscriptions = scopes.map((scopeId) => ({
+		for (const scopeId of scopes) this.knownDefaultScopeIds.add(scopeId);
+		return [...this.knownDefaultScopeIds].map((scopeId) => ({
 			scopeId,
 			levels: ['warn', 'error', 'fatal'] as StructuredLogLevel[],
 		}));
-		if (subscriptions.length > 0) this.cachedSubscriptions = subscriptions;
-		return subscriptions;
 	}
 
 	private resolveDefaultProductScopes(): string[] {
 		const fixedScope = this.deps.evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID);
 		if (fixedScope) return [fixedScope.id];
-		const spaces = this.deps.spaceRepo?.listSpaces(true) ?? [];
+		const spaces = this.deps.spaceRepo?.listSpaces(false) ?? [];
 		return spaces
 			.flatMap((space) =>
 				typeof space.id === 'string' ? [this.findOrCreateProductScope(space.id)] : []
