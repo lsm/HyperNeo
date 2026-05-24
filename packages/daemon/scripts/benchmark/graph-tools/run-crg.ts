@@ -73,8 +73,6 @@ async function main() {
           'serve',
           '--repo',
           WORKTREE,
-          '--data-dir',
-          CRG_DATA_DIR,
           '--tools',
           CRG_TOOLS,
         ],
