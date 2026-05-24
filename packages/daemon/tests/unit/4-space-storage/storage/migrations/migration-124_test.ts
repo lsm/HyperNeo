@@ -15,28 +15,28 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-	createTables,
-	runMigration124,
-	runMigrations,
+  createTables,
+  runMigration124,
+  runMigrations,
 } from '../../../../../src/storage/schema/index.ts';
 
 function columnNames(db: BunDatabase, table: string): string[] {
-	const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
-	return rows.map((r) => r.name);
+  const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+  return rows.map((r) => r.name);
 }
 
 function tableExists(db: BunDatabase, table: string): boolean {
-	const row = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
-		.get(table) as { name?: string } | undefined;
-	return !!row?.name;
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(table) as { name?: string } | undefined;
+  return !!row?.name;
 }
 
 function indexExists(db: BunDatabase, name: string): boolean {
-	const row = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
-		.get(name) as { name?: string } | undefined;
-	return !!row?.name;
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
+    .get(name) as { name?: string } | undefined;
+  return !!row?.name;
 }
 
 /**
@@ -44,8 +44,8 @@ function indexExists(db: BunDatabase, name: string): boolean {
  * the deliveries child table.
  */
 function seedPreM124Schema(db: BunDatabase): void {
-	db.exec('PRAGMA foreign_keys = OFF');
-	db.exec(`
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
 			slug TEXT NOT NULL,
@@ -55,7 +55,7 @@ function seedPreM124Schema(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TABLE space_external_events (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -81,7 +81,7 @@ function seedPreM124Schema(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TABLE space_external_event_deliveries (
 			event_id TEXT NOT NULL,
 			delivery_key TEXT NOT NULL,
@@ -98,57 +98,57 @@ function seedPreM124Schema(db: BunDatabase): void {
 			FOREIGN KEY (event_id) REFERENCES space_external_events(id) ON DELETE CASCADE
 		)
 	`);
-	db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA foreign_keys = ON');
 }
 
 describe('Migration 124: simplify external-event schema', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(
-			process.cwd(),
-			'tmp',
-			'test-migration-124',
-			`test-${Date.now()}-${Math.random()}`
-		);
-		mkdirSync(testDir, { recursive: true });
-		db = new BunDatabase(join(testDir, 'test.db'));
-		db.exec('PRAGMA foreign_keys = ON');
-	});
+  beforeEach(() => {
+    testDir = join(
+      process.cwd(),
+      'tmp',
+      'test-migration-124',
+      `test-${Date.now()}-${Math.random()}`
+    );
+    mkdirSync(testDir, { recursive: true });
+    db = new BunDatabase(join(testDir, 'test.db'));
+    db.exec('PRAGMA foreign_keys = ON');
+  });
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	});
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
-	describe('fresh DB (all migrations applied)', () => {
-		beforeEach(() => {
-			runMigrations(db, () => {});
-			createTables(db);
-		});
+  describe('fresh DB (all migrations applied)', () => {
+    beforeEach(() => {
+      runMigrations(db, () => {});
+      createTables(db);
+    });
 
-		test('space_external_events does not have legacy columns', () => {
-			const columns = columnNames(db, 'space_external_events');
-			expect(columns).not.toContain('pr_number');
-			expect(columns).not.toContain('repo_owner');
-			expect(columns).not.toContain('repo_name');
-			expect(columns).not.toContain('branch');
-			expect(columns).not.toContain('routed_task_id');
-		});
+    test('space_external_events does not have legacy columns', () => {
+      const columns = columnNames(db, 'space_external_events');
+      expect(columns).not.toContain('pr_number');
+      expect(columns).not.toContain('repo_owner');
+      expect(columns).not.toContain('repo_name');
+      expect(columns).not.toContain('branch');
+      expect(columns).not.toContain('routed_task_id');
+    });
 
-		test('space_external_events has the simplified state CHECK', () => {
-			// Attempting to insert an old state should fail.
-			expect(() =>
-				db.exec(`
+    test('space_external_events has the simplified state CHECK', () => {
+      // Attempting to insert an old state should fail.
+      expect(() =>
+        db.exec(`
 					INSERT INTO space_external_events (
 						id, space_id, source, topic, dedupe_key,
 						occurred_at, ingested_at, summary, payload_json,
@@ -159,24 +159,24 @@ describe('Migration 124: simplify external-event schema', () => {
 						'routed', 1, 1
 					)
 				`)
-			).toThrow();
-		});
+      ).toThrow();
+    });
 
-		test('indexes are recreated', () => {
-			expect(indexExists(db, 'idx_space_external_events_lookup')).toBe(true);
-			expect(indexExists(db, 'idx_space_external_events_state')).toBe(true);
-		});
-	});
+    test('indexes are recreated', () => {
+      expect(indexExists(db, 'idx_space_external_events_lookup')).toBe(true);
+      expect(indexExists(db, 'idx_space_external_events_state')).toBe(true);
+    });
+  });
 
-	describe('backfill from pre-124 schema', () => {
-		beforeEach(() => {
-			seedPreM124Schema(db);
-			db.prepare(
-				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-			).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
+  describe('backfill from pre-124 schema', () => {
+    beforeEach(() => {
+      seedPreM124Schema(db);
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
 
-			// Event with legacy columns and minimal payload.
-			db.prepare(`
+      // Event with legacy columns and minimal payload.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -185,29 +185,29 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-legacy',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.opened',
-				'dk-legacy',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				'del-123',
-				42,
-				'lsm',
-				'neokai',
-				'feature-42',
-				'PR #42 opened',
-				'https://github.com/lsm/neokai/pull/42',
-				JSON.stringify({ action: 'opened' }),
-				'task-42',
-				'routed',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-legacy',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.opened',
+        'dk-legacy',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        'del-123',
+        42,
+        'lsm',
+        'neokai',
+        'feature-42',
+        'PR #42 opened',
+        'https://github.com/lsm/neokai/pull/42',
+        JSON.stringify({ action: 'opened' }),
+        'task-42',
+        'routed',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Event with legacy columns that are already duplicated in payload.
-			db.prepare(`
+      // Event with legacy columns that are already duplicated in payload.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -216,34 +216,34 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-payload-dup',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.closed',
-				'dk-payload-dup',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				99,
-				'acme',
-				'widget',
-				'hotfix-99',
-				'PR #99 closed',
-				null,
-				JSON.stringify({
-					prNumber: 99,
-					repoOwner: 'acme',
-					repoName: 'widget',
-					branch: 'hotfix-99',
-				}),
-				null,
-				'delivery_failed',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-payload-dup',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.closed',
+        'dk-payload-dup',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        99,
+        'acme',
+        'widget',
+        'hotfix-99',
+        'PR #99 closed',
+        null,
+        JSON.stringify({
+          prNumber: 99,
+          repoOwner: 'acme',
+          repoName: 'widget',
+          branch: 'hotfix-99',
+        }),
+        null,
+        'delivery_failed',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Event with no legacy columns (NULL).
-			db.prepare(`
+      // Event with no legacy columns (NULL).
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -252,29 +252,29 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-minimal',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/issue.created',
-				'dk-minimal',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				null,
-				null,
-				null,
-				null,
-				'Issue created',
-				null,
-				JSON.stringify({ number: 1 }),
-				null,
-				'ambiguous',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-minimal',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/issue.created',
+        'dk-minimal',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        null,
+        null,
+        null,
+        null,
+        'Issue created',
+        null,
+        JSON.stringify({ number: 1 }),
+        null,
+        'ambiguous',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Event with legacy columns that differ from payload — payload should win.
-			db.prepare(`
+      // Event with legacy columns that differ from payload — payload should win.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -283,34 +283,34 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-payload-wins',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.closed',
-				'dk-payload-wins',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				999,
-				'LEGACY_OWNER',
-				'LEGACY_NAME',
-				'legacy-branch',
-				'PR #99 closed',
-				null,
-				JSON.stringify({
-					prNumber: 99,
-					repoOwner: 'acme',
-					repoName: 'widget',
-					branch: 'hotfix-99',
-				}),
-				null,
-				'published',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-payload-wins',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.closed',
+        'dk-payload-wins',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        999,
+        'LEGACY_OWNER',
+        'LEGACY_NAME',
+        'legacy-branch',
+        'PR #99 closed',
+        null,
+        JSON.stringify({
+          prNumber: 99,
+          repoOwner: 'acme',
+          repoName: 'widget',
+          branch: 'hotfix-99',
+        }),
+        null,
+        'published',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Event with valid non-object JSON root (array) — should be coerced to {}.
-			db.prepare(`
+      // Event with valid non-object JSON root (array) — should be coerced to {}.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -319,29 +319,29 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-array-root',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.closed',
-				'dk-array-root',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				55,
-				'acme',
-				'widget',
-				'hotfix-55',
-				'PR #55 closed',
-				null,
-				JSON.stringify([1, 2, 3]),
-				null,
-				'published',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-array-root',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.closed',
+        'dk-array-root',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        55,
+        'acme',
+        'widget',
+        'hotfix-55',
+        'PR #55 closed',
+        null,
+        JSON.stringify([1, 2, 3]),
+        null,
+        'published',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Event with routed_task_id — should be preserved in payload.
-			db.prepare(`
+      // Event with routed_task_id — should be preserved in payload.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -350,29 +350,29 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-routed-task',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.opened',
-				'dk-routed-task',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				1,
-				'lsm',
-				'neokai',
-				'main',
-				'PR #1 opened',
-				null,
-				JSON.stringify({ action: 'opened' }),
-				'task-routed-1',
-				'routed',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-routed-task',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.opened',
+        'dk-routed-task',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        1,
+        'lsm',
+        'neokai',
+        'main',
+        'PR #1 opened',
+        null,
+        JSON.stringify({ action: 'opened' }),
+        'task-routed-1',
+        'routed',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Event with malformed payload_json — should not abort migration.
-			db.prepare(`
+      // Event with malformed payload_json — should not abort migration.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -381,243 +381,243 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-malformed',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.closed',
-				'dk-malformed',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				77,
-				'acme',
-				'widget',
-				'bugfix-77',
-				'PR #77 closed',
-				null,
-				'{not-valid-json',
-				null,
-				'published',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-malformed',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.closed',
+        'dk-malformed',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        77,
+        'acme',
+        'widget',
+        'bugfix-77',
+        'PR #77 closed',
+        null,
+        '{not-valid-json',
+        null,
+        'published',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Delivery row for evt-legacy — should survive the migration.
-			db.prepare(`
+      // Delivery row for evt-legacy — should survive the migration.
+      db.prepare(`
 				INSERT INTO space_external_event_deliveries (
 					event_id, delivery_key, workflow_run_id, task_id, node_id, agent_name,
 					state, failure_reason, delivered_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-legacy',
-				'dk-1',
-				'run-1',
-				'task-1',
-				'node-1',
-				'coder',
-				'pending',
-				null,
-				null,
-				1_700_000_000_000
-			);
-		});
+        'evt-legacy',
+        'dk-1',
+        'run-1',
+        'task-1',
+        'node-1',
+        'coder',
+        'pending',
+        null,
+        null,
+        1_700_000_000_000
+      );
+    });
 
-		test('legacy columns are backfilled into payload_json', () => {
-			runMigration124(db);
-			const row = db
-				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
-				.get('evt-legacy') as { payload_json: string };
-			const payload = JSON.parse(row.payload_json);
-			expect(payload.prNumber).toBe(42);
-			expect(payload.repoOwner).toBe('lsm');
-			expect(payload.repoName).toBe('neokai');
-			expect(payload.branch).toBe('feature-42');
-			// Original payload keys are preserved.
-			expect(payload.action).toBe('opened');
-		});
+    test('legacy columns are backfilled into payload_json', () => {
+      runMigration124(db);
+      const row = db
+        .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+        .get('evt-legacy') as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      expect(payload.prNumber).toBe(42);
+      expect(payload.repoOwner).toBe('lsm');
+      expect(payload.repoName).toBe('neokai');
+      expect(payload.branch).toBe('feature-42');
+      // Original payload keys are preserved.
+      expect(payload.action).toBe('opened');
+    });
 
-		test('backfill does not overwrite existing payload values', () => {
-			runMigration124(db);
-			const row = db
-				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
-				.get('evt-payload-dup') as { payload_json: string };
-			const payload = JSON.parse(row.payload_json);
-			// The payload already had these values — they should be preserved.
-			expect(payload.prNumber).toBe(99);
-			expect(payload.repoOwner).toBe('acme');
-			expect(payload.repoName).toBe('widget');
-			expect(payload.branch).toBe('hotfix-99');
-		});
+    test('backfill does not overwrite existing payload values', () => {
+      runMigration124(db);
+      const row = db
+        .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+        .get('evt-payload-dup') as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      // The payload already had these values — they should be preserved.
+      expect(payload.prNumber).toBe(99);
+      expect(payload.repoOwner).toBe('acme');
+      expect(payload.repoName).toBe('widget');
+      expect(payload.branch).toBe('hotfix-99');
+    });
 
-		test('malformed payload_json is coerced to valid JSON and backfilled', () => {
-			runMigration124(db);
-			const row = db
-				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
-				.get('evt-malformed') as { payload_json: string };
-			// Should be valid JSON now.
-			const payload = JSON.parse(row.payload_json);
-			// Legacy columns should still be backfilled into the coerced payload.
-			expect(payload.prNumber).toBe(77);
-			expect(payload.repoOwner).toBe('acme');
-			expect(payload.repoName).toBe('widget');
-			expect(payload.branch).toBe('bugfix-77');
-		});
+    test('malformed payload_json is coerced to valid JSON and backfilled', () => {
+      runMigration124(db);
+      const row = db
+        .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+        .get('evt-malformed') as { payload_json: string };
+      // Should be valid JSON now.
+      const payload = JSON.parse(row.payload_json);
+      // Legacy columns should still be backfilled into the coerced payload.
+      expect(payload.prNumber).toBe(77);
+      expect(payload.repoOwner).toBe('acme');
+      expect(payload.repoName).toBe('widget');
+      expect(payload.branch).toBe('bugfix-77');
+    });
 
-		test('payload values win over malformed legacy columns', () => {
-			runMigration124(db);
-			const row = db
-				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
-				.get('evt-payload-wins') as { payload_json: string };
-			const payload = JSON.parse(row.payload_json);
-			// Payload had normalized values; legacy columns had padded/case-variant
-			// strings. Payload should be preserved.
-			expect(payload.prNumber).toBe(99);
-			expect(payload.repoOwner).toBe('acme');
-			expect(payload.repoName).toBe('widget');
-			expect(payload.branch).toBe('hotfix-99');
-		});
+    test('payload values win over malformed legacy columns', () => {
+      runMigration124(db);
+      const row = db
+        .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+        .get('evt-payload-wins') as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      // Payload had normalized values; legacy columns had padded/case-variant
+      // strings. Payload should be preserved.
+      expect(payload.prNumber).toBe(99);
+      expect(payload.repoOwner).toBe('acme');
+      expect(payload.repoName).toBe('widget');
+      expect(payload.branch).toBe('hotfix-99');
+    });
 
-		test('valid non-object JSON root is coerced to object before backfill', () => {
-			runMigration124(db);
-			const row = db
-				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
-				.get('evt-array-root') as { payload_json: string };
-			const payload = JSON.parse(row.payload_json);
-			// Array root [1,2,3] should be coerced to {}, then backfilled.
-			expect(Array.isArray(payload)).toBe(false);
-			expect(payload.prNumber).toBe(55);
-			expect(payload.repoOwner).toBe('acme');
-			expect(payload.repoName).toBe('widget');
-			expect(payload.branch).toBe('hotfix-55');
-		});
+    test('valid non-object JSON root is coerced to object before backfill', () => {
+      runMigration124(db);
+      const row = db
+        .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+        .get('evt-array-root') as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      // Array root [1,2,3] should be coerced to {}, then backfilled.
+      expect(Array.isArray(payload)).toBe(false);
+      expect(payload.prNumber).toBe(55);
+      expect(payload.repoOwner).toBe('acme');
+      expect(payload.repoName).toBe('widget');
+      expect(payload.branch).toBe('hotfix-55');
+    });
 
-		test('routed_task_id is preserved in payload for historical events', () => {
-			runMigration124(db);
-			const row = db
-				.prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
-				.get('evt-routed-task') as { payload_json: string };
-			const payload = JSON.parse(row.payload_json);
-			expect(payload.routedTaskId).toBe('task-routed-1');
-			// State migrated to published so the event remains retryable.
-			const stateRow = db
-				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
-				.get('evt-routed-task') as { state: string };
-			expect(stateRow.state).toBe('published');
-		});
+    test('routed_task_id is preserved in payload for historical events', () => {
+      runMigration124(db);
+      const row = db
+        .prepare(`SELECT payload_json FROM space_external_events WHERE id = ?`)
+        .get('evt-routed-task') as { payload_json: string };
+      const payload = JSON.parse(row.payload_json);
+      expect(payload.routedTaskId).toBe('task-routed-1');
+      // State migrated to published so the event remains retryable.
+      const stateRow = db
+        .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+        .get('evt-routed-task') as { state: string };
+      expect(stateRow.state).toBe('published');
+    });
 
-		test('state values are migrated correctly', () => {
-			runMigration124(db);
-			const legacy = db
-				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
-				.get('evt-legacy') as { state: string };
-			expect(legacy.state).toBe('published'); // routed → published
+    test('state values are migrated correctly', () => {
+      runMigration124(db);
+      const legacy = db
+        .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+        .get('evt-legacy') as { state: string };
+      expect(legacy.state).toBe('published'); // routed → published
 
-			const payloadDup = db
-				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
-				.get('evt-payload-dup') as { state: string };
-			expect(payloadDup.state).toBe('published'); // delivery_failed → published
+      const payloadDup = db
+        .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+        .get('evt-payload-dup') as { state: string };
+      expect(payloadDup.state).toBe('published'); // delivery_failed → published
 
-			const minimal = db
-				.prepare(`SELECT state FROM space_external_events WHERE id = ?`)
-				.get('evt-minimal') as { state: string };
-			expect(minimal.state).toBe('ignored'); // ambiguous → ignored
-		});
+      const minimal = db
+        .prepare(`SELECT state FROM space_external_events WHERE id = ?`)
+        .get('evt-minimal') as { state: string };
+      expect(minimal.state).toBe('ignored'); // ambiguous → ignored
+    });
 
-		test('delivery rows are preserved (not cascade-deleted)', () => {
-			runMigration124(db);
-			const deliveries = db
-				.prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries WHERE event_id = ?`)
-				.get('evt-legacy') as { n: number };
-			expect(deliveries.n).toBe(1);
-		});
+    test('delivery rows are preserved (not cascade-deleted)', () => {
+      runMigration124(db);
+      const deliveries = db
+        .prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries WHERE event_id = ?`)
+        .get('evt-legacy') as { n: number };
+      expect(deliveries.n).toBe(1);
+    });
 
-		test('legacy columns are dropped from the schema', () => {
-			runMigration124(db);
-			const columns = columnNames(db, 'space_external_events');
-			expect(columns).not.toContain('pr_number');
-			expect(columns).not.toContain('repo_owner');
-			expect(columns).not.toContain('repo_name');
-			expect(columns).not.toContain('branch');
-			expect(columns).not.toContain('routed_task_id');
-		});
+    test('legacy columns are dropped from the schema', () => {
+      runMigration124(db);
+      const columns = columnNames(db, 'space_external_events');
+      expect(columns).not.toContain('pr_number');
+      expect(columns).not.toContain('repo_owner');
+      expect(columns).not.toContain('repo_name');
+      expect(columns).not.toContain('branch');
+      expect(columns).not.toContain('routed_task_id');
+    });
 
-		test('indexes are recreated', () => {
-			runMigration124(db);
-			expect(indexExists(db, 'idx_space_external_events_lookup')).toBe(true);
-			expect(indexExists(db, 'idx_space_external_events_state')).toBe(true);
-		});
+    test('indexes are recreated', () => {
+      runMigration124(db);
+      expect(indexExists(db, 'idx_space_external_events_lookup')).toBe(true);
+      expect(indexExists(db, 'idx_space_external_events_state')).toBe(true);
+    });
 
-		test('is idempotent — running a second time is a no-op', () => {
-			runMigration124(db);
-			const before = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
-				n: number;
-			};
-			const deliveriesBefore = db
-				.prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries`)
-				.get() as { n: number };
+    test('is idempotent — running a second time is a no-op', () => {
+      runMigration124(db);
+      const before = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+        n: number;
+      };
+      const deliveriesBefore = db
+        .prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries`)
+        .get() as { n: number };
 
-			expect(() => runMigration124(db)).not.toThrow();
+      expect(() => runMigration124(db)).not.toThrow();
 
-			const after = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
-				n: number;
-			};
-			const deliveriesAfter = db
-				.prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries`)
-				.get() as { n: number };
-			expect(after.n).toBe(before.n);
-			expect(deliveriesAfter.n).toBe(deliveriesBefore.n);
-		});
+      const after = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+        n: number;
+      };
+      const deliveriesAfter = db
+        .prepare(`SELECT COUNT(*) AS n FROM space_external_event_deliveries`)
+        .get() as { n: number };
+      expect(after.n).toBe(before.n);
+      expect(deliveriesAfter.n).toBe(deliveriesBefore.n);
+    });
 
-		test('restores original foreign_keys pragma after migration', () => {
-			// Start with FKs explicitly disabled.
-			db.exec('PRAGMA foreign_keys = OFF');
-			const before = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
-			expect(before.foreign_keys).toBe(0);
+    test('restores original foreign_keys pragma after migration', () => {
+      // Start with FKs explicitly disabled.
+      db.exec('PRAGMA foreign_keys = OFF');
+      const before = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
+      expect(before.foreign_keys).toBe(0);
 
-			runMigration124(db);
+      runMigration124(db);
 
-			const after = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
-			expect(after.foreign_keys).toBe(0); // restored to OFF, not forced ON
-		});
-	});
+      const after = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
+      expect(after.foreign_keys).toBe(0); // restored to OFF, not forced ON
+    });
+  });
 
-	describe('crash recovery', () => {
-		beforeEach(() => {
-			seedPreM124Schema(db);
-			db.prepare(
-				`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-			).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
-		});
+  describe('crash recovery', () => {
+    beforeEach(() => {
+      seedPreM124Schema(db);
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('sp-1', 'sp-1', '/tmp/test', 'Test Space', 1, 1);
+    });
 
-		test('cleans up leftover space_external_events_new from interrupted migration', () => {
-			// Simulate an interrupted migration by creating the temp table.
-			db.exec(`
+    test('cleans up leftover space_external_events_new from interrupted migration', () => {
+      // Simulate an interrupted migration by creating the temp table.
+      db.exec(`
 				CREATE TABLE space_external_events_new (
 					id TEXT PRIMARY KEY
 				)
 			`);
-			expect(tableExists(db, 'space_external_events_new')).toBe(true);
+      expect(tableExists(db, 'space_external_events_new')).toBe(true);
 
-			// The migration should drop the leftover table before starting.
-			expect(() => runMigration124(db)).not.toThrow();
-			expect(tableExists(db, 'space_external_events_new')).toBe(false);
-		});
+      // The migration should drop the leftover table before starting.
+      expect(() => runMigration124(db)).not.toThrow();
+      expect(tableExists(db, 'space_external_events_new')).toBe(false);
+    });
 
-		test('recovers when old table was dropped but new table remains', () => {
-			// Simulate a crash after DROP space_external_events but before RENAME.
-			db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
-			expect(tableExists(db, 'space_external_events')).toBe(false);
-			expect(tableExists(db, 'space_external_events_new')).toBe(true);
+    test('recovers when old table was dropped but new table remains', () => {
+      // Simulate a crash after DROP space_external_events but before RENAME.
+      db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
+      expect(tableExists(db, 'space_external_events')).toBe(false);
+      expect(tableExists(db, 'space_external_events_new')).toBe(true);
 
-			// The migration should detect this state and rename _new back.
-			expect(() => runMigration124(db)).not.toThrow();
-			expect(tableExists(db, 'space_external_events')).toBe(true);
-			expect(tableExists(db, 'space_external_events_new')).toBe(false);
-		});
+      // The migration should detect this state and rename _new back.
+      expect(() => runMigration124(db)).not.toThrow();
+      expect(tableExists(db, 'space_external_events')).toBe(true);
+      expect(tableExists(db, 'space_external_events_new')).toBe(false);
+    });
 
-		test('recovers when empty old table was recreated and new table still has data', () => {
-			// First, insert a row into the old-schema table so _new will have data.
-			db.prepare(`
+    test('recovers when empty old table was recreated and new table still has data', () => {
+      // First, insert a row into the old-schema table so _new will have data.
+      db.prepare(`
 				INSERT INTO space_external_events (
 					id, space_id, source, topic, dedupe_key,
 					occurred_at, ingested_at, source_event_id,
@@ -626,33 +626,33 @@ describe('Migration 124: simplify external-event schema', () => {
 					state, created_at, updated_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`).run(
-				'evt-recovery',
-				'sp-1',
-				'github',
-				'github/lsm/neokai/pull_request.opened',
-				'dk-recovery',
-				1_700_000_000_000,
-				1_700_000_001_000,
-				null,
-				1,
-				'lsm',
-				'neokai',
-				'main',
-				'PR #1 opened',
-				null,
-				JSON.stringify({ action: 'opened' }),
-				null,
-				'published',
-				1_700_000_000_000,
-				1_700_000_000_000
-			);
+        'evt-recovery',
+        'sp-1',
+        'github',
+        'github/lsm/neokai/pull_request.opened',
+        'dk-recovery',
+        1_700_000_000_000,
+        1_700_000_001_000,
+        null,
+        1,
+        'lsm',
+        'neokai',
+        'main',
+        'PR #1 opened',
+        null,
+        JSON.stringify({ action: 'opened' }),
+        null,
+        'published',
+        1_700_000_000_000,
+        1_700_000_000_000
+      );
 
-			// Simulate: M123 recreated an empty old table, but _new still has data
-			// from an interrupted migration.
-			db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
-			// Now recreate an empty old table (as M123 would do) — use IF NOT EXISTS
-			// since spaces already exists from beforeEach.
-			db.exec(`
+      // Simulate: M123 recreated an empty old table, but _new still has data
+      // from an interrupted migration.
+      db.exec(`ALTER TABLE space_external_events RENAME TO space_external_events_new`);
+      // Now recreate an empty old table (as M123 would do) — use IF NOT EXISTS
+      // since spaces already exists from beforeEach.
+      db.exec(`
 				CREATE TABLE IF NOT EXISTS space_external_events (
 					id TEXT PRIMARY KEY,
 					space_id TEXT NOT NULL,
@@ -678,27 +678,27 @@ describe('Migration 124: simplify external-event schema', () => {
 					FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 				)
 			`);
-			expect(tableExists(db, 'space_external_events')).toBe(true);
-			expect(tableExists(db, 'space_external_events_new')).toBe(true);
+      expect(tableExists(db, 'space_external_events')).toBe(true);
+      expect(tableExists(db, 'space_external_events_new')).toBe(true);
 
-			// The migration should detect _new has data while old is empty,
-			// drop the empty old table, and rename _new back.
-			expect(() => runMigration124(db)).not.toThrow();
-			expect(tableExists(db, 'space_external_events')).toBe(true);
-			expect(tableExists(db, 'space_external_events_new')).toBe(false);
+      // The migration should detect _new has data while old is empty,
+      // drop the empty old table, and rename _new back.
+      expect(() => runMigration124(db)).not.toThrow();
+      expect(tableExists(db, 'space_external_events')).toBe(true);
+      expect(tableExists(db, 'space_external_events_new')).toBe(false);
 
-			// Verify the data from _new was preserved.
-			const count = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
-				n: number;
-			};
-			expect(count.n).toBeGreaterThan(0);
-		});
-	});
+      // Verify the data from _new was preserved.
+      const count = db.prepare(`SELECT COUNT(*) AS n FROM space_external_events`).get() as {
+        n: number;
+      };
+      expect(count.n).toBeGreaterThan(0);
+    });
+  });
 
-	describe('missing table — no-op guard', () => {
-		test('runMigration124 on an empty DB does not throw', () => {
-			expect(() => runMigration124(db)).not.toThrow();
-			expect(tableExists(db, 'space_external_events')).toBe(false);
-		});
-	});
+  describe('missing table — no-op guard', () => {
+    test('runMigration124 on an empty DB does not throw', () => {
+      expect(() => runMigration124(db)).not.toThrow();
+      expect(tableExists(db, 'space_external_events')).toBe(false);
+    });
+  });
 });

@@ -18,36 +18,36 @@ import type { GateScript } from '@neokai/shared';
 
 /** Result of executing a gate script. */
 export interface GateScriptResult {
-	/** Whether the script passed (exit 0 with parseable stdout). */
-	success: boolean;
-	/** Parsed JSON data from stdout (deep-merged). Empty object when no JSON. */
-	data: Record<string, unknown>;
-	/** Human-readable error string on failure (stderr or timeout message). */
-	error?: string;
+  /** Whether the script passed (exit 0 with parseable stdout). */
+  success: boolean;
+  /** Parsed JSON data from stdout (deep-merged). Empty object when no JSON. */
+  data: Record<string, unknown>;
+  /** Human-readable error string on failure (stderr or timeout message). */
+  error?: string;
 }
 
 /** Context provided to the script executor. */
 export interface GateScriptContext {
-	/** Absolute path to the workspace root (used as cwd). */
-	workspacePath: string;
-	/** The gate ID this script belongs to. */
-	gateId: string;
-	/** The current workflow run ID. */
-	runId: string;
-	/**
-	 * Current gate runtime data used for evaluation.
-	 * Exposed to scripts as NEOKAI_GATE_DATA_JSON.
-	 */
-	gateData?: Record<string, unknown>;
-	/**
-	 * ISO8601 timestamp marking when the workflow run started (workflowRun.createdAt
-	 * converted to ISO8601). Exposed to scripts as NEOKAI_WORKFLOW_START_ISO.
-	 * Gate scripts that compare against fresh activity (e.g. reviews submitted
-	 * since start) rely on this variable.
-	 * Undefined when the context wasn't able to resolve a run start time
-	 * (e.g. in unit tests); the env var is only injected when set.
-	 */
-	workflowStartIso?: string;
+  /** Absolute path to the workspace root (used as cwd). */
+  workspacePath: string;
+  /** The gate ID this script belongs to. */
+  gateId: string;
+  /** The current workflow run ID. */
+  runId: string;
+  /**
+   * Current gate runtime data used for evaluation.
+   * Exposed to scripts as NEOKAI_GATE_DATA_JSON.
+   */
+  gateData?: Record<string, unknown>;
+  /**
+   * ISO8601 timestamp marking when the workflow run started (workflowRun.createdAt
+   * converted to ISO8601). Exposed to scripts as NEOKAI_WORKFLOW_START_ISO.
+   * Gate scripts that compare against fresh activity (e.g. reviews submitted
+   * since start) rely on this variable.
+   * Undefined when the context wasn't able to resolve a run start time
+   * (e.g. in unit tests); the env var is only injected when set.
+   */
+  workflowStartIso?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,16 +76,16 @@ const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
  * Environment variables that are always allowed regardless of the prefix/key pattern.
  */
 const ALLOWED_ENV_KEYS = new Set([
-	'PATH',
-	'HOME',
-	'USER',
-	'SHELL',
-	'LANG',
-	'TERM',
-	'TMPDIR',
-	'GH_TOKEN',
-	'GITHUB_TOKEN',
-	'GH_HOST',
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_HOST',
 ]);
 
 /** Keys that are rejected during deep-merge to prevent prototype pollution. */
@@ -102,68 +102,68 @@ const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
  * always allowing a safe allowlist. Then injects gate-specific variables.
  */
 export function buildRestrictedEnv(
-	context: GateScriptContext,
-	scriptEnv?: Record<string, string>
+  context: GateScriptContext,
+  scriptEnv?: Record<string, string>
 ): Record<string, string> {
-	const env: Record<string, string> = {};
+  const env: Record<string, string> = {};
 
-	for (const [key, value] of Object.entries(process.env)) {
-		if (value === undefined) continue;
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
 
-		if (ALLOWED_ENV_KEYS.has(key)) {
-			env[key] = value;
-			continue;
-		}
+    if (ALLOWED_ENV_KEYS.has(key)) {
+      env[key] = value;
+      continue;
+    }
 
-		const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
-		if (isPrefixRestricted) continue;
+    const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+    if (isPrefixRestricted) continue;
 
-		const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
-		if (isKeyRestricted) continue;
+    const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+    if (isKeyRestricted) continue;
 
-		env[key] = value;
-	}
+    env[key] = value;
+  }
 
-	// Inject gate-specific environment variables
-	env['NEOKAI_GATE_ID'] = context.gateId;
-	env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
-	env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
+  // Inject gate-specific environment variables
+  env['NEOKAI_GATE_ID'] = context.gateId;
+  env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
+  env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
 
-	if (context.workflowStartIso) {
-		env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
-	}
+  if (context.workflowStartIso) {
+    env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
+  }
 
-	const gateData = context.gateData ?? {};
-	try {
-		env['NEOKAI_GATE_DATA_JSON'] = JSON.stringify(gateData);
-	} catch {
-		env['NEOKAI_GATE_DATA_JSON'] = '{}';
-	}
+  const gateData = context.gateData ?? {};
+  try {
+    env['NEOKAI_GATE_DATA_JSON'] = JSON.stringify(gateData);
+  } catch {
+    env['NEOKAI_GATE_DATA_JSON'] = '{}';
+  }
 
-	// Merge user-specified env (applied after injected vars; cannot override gate-injected vars)
-	if (scriptEnv) {
-		for (const [key, value] of Object.entries(scriptEnv)) {
-			// User env cannot override gate-injected vars
-			if (
-				key === 'NEOKAI_GATE_ID' ||
-				key === 'NEOKAI_WORKFLOW_RUN_ID' ||
-				key === 'NEOKAI_WORKSPACE_PATH' ||
-				key === 'NEOKAI_GATE_DATA_JSON' ||
-				key === 'NEOKAI_WORKFLOW_START_ISO'
-			) {
-				continue;
-			}
-			// User env cannot carry credentials
-			const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
-			if (isPrefixRestricted) continue;
-			const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
-			if (isKeyRestricted) continue;
+  // Merge user-specified env (applied after injected vars; cannot override gate-injected vars)
+  if (scriptEnv) {
+    for (const [key, value] of Object.entries(scriptEnv)) {
+      // User env cannot override gate-injected vars
+      if (
+        key === 'NEOKAI_GATE_ID' ||
+        key === 'NEOKAI_WORKFLOW_RUN_ID' ||
+        key === 'NEOKAI_WORKSPACE_PATH' ||
+        key === 'NEOKAI_GATE_DATA_JSON' ||
+        key === 'NEOKAI_WORKFLOW_START_ISO'
+      ) {
+        continue;
+      }
+      // User env cannot carry credentials
+      const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+      if (isPrefixRestricted) continue;
+      const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+      if (isKeyRestricted) continue;
 
-			env[key] = value;
-		}
-	}
+      env[key] = value;
+    }
+  }
 
-	return env;
+  return env;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,58 +182,58 @@ export function buildRestrictedEnv(
  * @returns The merged target object.
  */
 export function deepMergeWithDepthLimit(
-	target: Record<string, unknown>,
-	source: unknown,
-	maxDepth = 5
+  target: Record<string, unknown>,
+  source: unknown,
+  maxDepth = 5
 ): Record<string, unknown> {
-	return _deepMerge(target, source, 0, maxDepth);
+  return _deepMerge(target, source, 0, maxDepth);
 }
 
 function _deepMerge(
-	target: Record<string, unknown>,
-	source: unknown,
-	currentDepth: number,
-	maxDepth: number
+  target: Record<string, unknown>,
+  source: unknown,
+  currentDepth: number,
+  maxDepth: number
 ): Record<string, unknown> {
-	if (
-		currentDepth >= maxDepth ||
-		source === null ||
-		typeof source !== 'object' ||
-		Array.isArray(source)
-	) {
-		return target;
-	}
+  if (
+    currentDepth >= maxDepth ||
+    source === null ||
+    typeof source !== 'object' ||
+    Array.isArray(source)
+  ) {
+    return target;
+  }
 
-	const sourceRecord = source as Record<string, unknown>;
+  const sourceRecord = source as Record<string, unknown>;
 
-	for (const [key, value] of Object.entries(sourceRecord)) {
-		// Block prototype pollution keys
-		if (PROTO_POLLUTION_KEYS.has(key)) {
-			continue;
-		}
+  for (const [key, value] of Object.entries(sourceRecord)) {
+    // Block prototype pollution keys
+    if (PROTO_POLLUTION_KEYS.has(key)) {
+      continue;
+    }
 
-		const existing = target[key];
+    const existing = target[key];
 
-		if (
-			value !== null &&
-			typeof value === 'object' &&
-			!Array.isArray(value) &&
-			existing !== null &&
-			typeof existing === 'object' &&
-			!Array.isArray(existing)
-		) {
-			target[key] = _deepMerge(
-				existing as Record<string, unknown>,
-				value,
-				currentDepth + 1,
-				maxDepth
-			);
-		} else {
-			target[key] = value;
-		}
-	}
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      existing !== null &&
+      typeof existing === 'object' &&
+      !Array.isArray(existing)
+    ) {
+      target[key] = _deepMerge(
+        existing as Record<string, unknown>,
+        value,
+        currentDepth + 1,
+        maxDepth
+      );
+    } else {
+      target[key] = value;
+    }
+  }
 
-	return target;
+  return target;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,21 +248,21 @@ function _deepMerge(
  * non-JSON output does not block the gate.
  */
 export function parseJsonStdout(raw: string): Record<string, unknown> | null {
-	const trimmed = raw.trim();
-	if (trimmed.length === 0) {
-		return null;
-	}
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
 
-	try {
-		const parsed = JSON.parse(trimmed);
-		if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
-		}
-		// Valid JSON but not an object (e.g., string, number, array) — ignore
-		return null;
-	} catch {
-		return null;
-	}
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    // Valid JSON but not an object (e.g., string, number, array) — ignore
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,47 +275,47 @@ export function parseJsonStdout(raw: string): Record<string, unknown> | null {
  * deadlock, but no further data is appended.
  */
 export async function collectWithMaxBuffer(
-	stream: ReadableStream<Uint8Array> | null,
-	maxBytes: number
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number
 ): Promise<{ text: string; truncated: boolean }> {
-	if (!stream) {
-		return { text: '', truncated: false };
-	}
+  if (!stream) {
+    return { text: '', truncated: false };
+  }
 
-	const reader = stream.getReader();
-	const decoder = new TextDecoder();
-	const chunks: string[] = [];
-	let totalBytes = 0;
-	let truncated = false;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let totalBytes = 0;
+  let truncated = false;
 
-	try {
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-			if (truncated) {
-				// Already exceeded limit — keep draining to avoid deadlock
-				continue;
-			}
+      if (truncated) {
+        // Already exceeded limit — keep draining to avoid deadlock
+        continue;
+      }
 
-			if (totalBytes + value.length > maxBytes) {
-				// Take only what fits up to the limit
-				const remaining = maxBytes - totalBytes;
-				if (remaining > 0) {
-					chunks.push(decoder.decode(value.subarray(0, remaining), { stream: true }));
-				}
-				totalBytes = maxBytes;
-				truncated = true;
-			} else {
-				chunks.push(decoder.decode(value, { stream: true }));
-				totalBytes += value.length;
-			}
-		}
-	} finally {
-		reader.releaseLock();
-	}
+      if (totalBytes + value.length > maxBytes) {
+        // Take only what fits up to the limit
+        const remaining = maxBytes - totalBytes;
+        if (remaining > 0) {
+          chunks.push(decoder.decode(value.subarray(0, remaining), { stream: true }));
+        }
+        totalBytes = maxBytes;
+        truncated = true;
+      } else {
+        chunks.push(decoder.decode(value, { stream: true }));
+        totalBytes += value.length;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 
-	return { text: chunks.join(''), truncated };
+  return { text: chunks.join(''), truncated };
 }
 
 // ---------------------------------------------------------------------------
@@ -335,96 +335,96 @@ export async function collectWithMaxBuffer(
  * @param env      Optional user-specified environment variables (filtered).
  */
 export async function executeGateScript(
-	script: GateScript,
-	context: GateScriptContext,
-	env?: Record<string, string>
+  script: GateScript,
+  context: GateScriptContext,
+  env?: Record<string, string>
 ): Promise<GateScriptResult> {
-	const timeoutMs = script.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = script.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-	// Build the command args array based on interpreter
-	let args: string[];
-	switch (script.interpreter) {
-		case 'bash':
-			args = ['bash', '-c', script.source];
-			break;
-		case 'node':
-			args = ['node', '-e', script.source];
-			break;
-		case 'python3':
-			args = ['python3', '-c', script.source];
-			break;
-		default:
-			return {
-				success: false,
-				data: {},
-				error: `Unknown interpreter: ${script.interpreter as string}`,
-			};
-	}
+  // Build the command args array based on interpreter
+  let args: string[];
+  switch (script.interpreter) {
+    case 'bash':
+      args = ['bash', '-c', script.source];
+      break;
+    case 'node':
+      args = ['node', '-e', script.source];
+      break;
+    case 'python3':
+      args = ['python3', '-c', script.source];
+      break;
+    default:
+      return {
+        success: false,
+        data: {},
+        error: `Unknown interpreter: ${script.interpreter as string}`,
+      };
+  }
 
-	const restrictedEnv = buildRestrictedEnv(context, env);
+  const restrictedEnv = buildRestrictedEnv(context, env);
 
-	let proc;
-	try {
-		proc = Bun.spawn(args, {
-			cwd: context.workspacePath,
-			env: restrictedEnv,
-			stdout: 'pipe',
-			stderr: 'pipe',
-		});
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		return {
-			success: false,
-			data: {},
-			error: `Failed to spawn ${script.interpreter}: ${message}`,
-		};
-	}
+  let proc;
+  try {
+    proc = Bun.spawn(args, {
+      cwd: context.workspacePath,
+      env: restrictedEnv,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      data: {},
+      error: `Failed to spawn ${script.interpreter}: ${message}`,
+    };
+  }
 
-	// Drain stdout and stderr concurrently with proc.exited to avoid pipe deadlock
-	// NOTE: SIGKILL on bash -c only kills the shell, not child processes (e.g. sleep).
-	// This is a known bash limitation. Gate scripts that spawn long-lived children
-	// should manage their own cleanup on SIGTERM-like signals. Process group kill
-	// (-proc.pid) is not used here because Bun.spawn may not always assign a usable PID.
-	const [stdoutResult, stderrResult, exitCode] = await Promise.all([
-		collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
-		collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
-		(async () => {
-			let killed = false;
-			const killTimer = setTimeout(() => {
-				killed = true;
-				proc.kill('SIGKILL');
-			}, timeoutMs);
+  // Drain stdout and stderr concurrently with proc.exited to avoid pipe deadlock
+  // NOTE: SIGKILL on bash -c only kills the shell, not child processes (e.g. sleep).
+  // This is a known bash limitation. Gate scripts that spawn long-lived children
+  // should manage their own cleanup on SIGTERM-like signals. Process group kill
+  // (-proc.pid) is not used here because Bun.spawn may not always assign a usable PID.
+  const [stdoutResult, stderrResult, exitCode] = await Promise.all([
+    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+    collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
+    (async () => {
+      let killed = false;
+      const killTimer = setTimeout(() => {
+        killed = true;
+        proc.kill('SIGKILL');
+      }, timeoutMs);
 
-			const code = await proc.exited;
-			clearTimeout(killTimer);
+      const code = await proc.exited;
+      clearTimeout(killTimer);
 
-			return { code, timedOut: killed };
-		})(),
-	]);
+      return { code, timedOut: killed };
+    })(),
+  ]);
 
-	if (exitCode.timedOut) {
-		return {
-			success: false,
-			data: {},
-			error: `Script timed out after ${timeoutMs}ms`,
-		};
-	}
+  if (exitCode.timedOut) {
+    return {
+      success: false,
+      data: {},
+      error: `Script timed out after ${timeoutMs}ms`,
+    };
+  }
 
-	if (exitCode.code !== 0) {
-		const stderrText = stderrResult.text.trim();
-		return {
-			success: false,
-			data: {},
-			error: stderrText || `Script exited with code ${exitCode.code}`,
-		};
-	}
+  if (exitCode.code !== 0) {
+    const stderrText = stderrResult.text.trim();
+    return {
+      success: false,
+      data: {},
+      error: stderrText || `Script exited with code ${exitCode.code}`,
+    };
+  }
 
-	// Exit 0 — parse JSON stdout and merge
-	const parsed = parseJsonStdout(stdoutResult.text);
-	const data = parsed ? deepMergeWithDepthLimit({}, parsed) : {};
+  // Exit 0 — parse JSON stdout and merge
+  const parsed = parseJsonStdout(stdoutResult.text);
+  const data = parsed ? deepMergeWithDepthLimit({}, parsed) : {};
 
-	return {
-		success: true,
-		data,
-	};
+  return {
+    success: true,
+    data,
+  };
 }

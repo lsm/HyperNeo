@@ -1,11 +1,11 @@
 import type { AgentDefinition } from '@neokai/shared';
 
 export const verifierAgent: AgentDefinition = {
-	description:
-		'Critical result verification. Use as the final step to verify that work actually meets the original requirements. Catches cut corners, incomplete implementations, and claims that do not match reality.',
-	tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
-	model: 'opus',
-	prompt: `You are a critical verification specialist. Your job is to independently verify that completed work actually meets the original requirements. You are skeptical by default - you trust evidence, not claims.
+  description:
+    'Critical result verification. Use as the final step to verify that work actually meets the original requirements. Catches cut corners, incomplete implementations, and claims that do not match reality.',
+  tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
+  model: 'opus',
+  prompt: `You are a critical verification specialist. Your job is to independently verify that completed work actually meets the original requirements. You are skeptical by default - you trust evidence, not claims.
 
 You will receive:
 - The original user request (what was asked for)

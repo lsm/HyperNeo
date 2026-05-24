@@ -36,15 +36,15 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
-	ChannelRouter,
-	ActivationError,
-	ARCHIVED_TASK_ERROR_MESSAGE,
+  ChannelRouter,
+  ActivationError,
+  ARCHIVED_TASK_ERROR_MESSAGE,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type {
-	DaemonInternalEventMap,
-	SpaceWorkflowRunReopenedEvent,
+  DaemonInternalEventMap,
+  SpaceWorkflowRunReopenedEvent,
 } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
@@ -52,27 +52,27 @@ import type {
 // ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
-	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
-	// I/O contention that caused beforeEach hook timeouts in CI.
-	const db = new BunDatabase(':memory:');
-	db.exec('PRAGMA foreign_keys = ON');
-	runMigrations(db, () => {});
-	return db;
+  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
+  // I/O contention that caused beforeEach hook timeouts in CI.
+  const db = new BunDatabase(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  runMigrations(db, () => {});
+  return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId: string): void {
-	db.prepare(
-		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+  db.prepare(
+    `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
      allowed_models, session_ids, slug, status, created_at, updated_at)
      VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
-	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+  ).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
-	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+  db.prepare(
+    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+  ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -80,26 +80,26 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
 // ---------------------------------------------------------------------------
 
 class RecordingCollector {
-	readonly events: Array<SpaceWorkflowRunReopenedEvent> = [];
-	private unsub: () => void;
+  readonly events: Array<SpaceWorkflowRunReopenedEvent> = [];
+  private unsub: () => void;
 
-	constructor(bus: InternalEventBus<DaemonInternalEventMap>) {
-		this.unsub = bus.subscribe(
-			'space.workflowRun.reopened',
-			(payload) => {
-				this.events.push(payload as SpaceWorkflowRunReopenedEvent);
-			},
-			{ subscriberName: 'test-collector:space.workflowRun.reopened' }
-		);
-	}
+  constructor(bus: InternalEventBus<DaemonInternalEventMap>) {
+    this.unsub = bus.subscribe(
+      'space.workflowRun.reopened',
+      (payload) => {
+        this.events.push(payload as SpaceWorkflowRunReopenedEvent);
+      },
+      { subscriberName: 'test-collector:space.workflowRun.reopened' }
+    );
+  }
 
-	reopens(): Array<SpaceWorkflowRunReopenedEvent> {
-		return this.events;
-	}
+  reopens(): Array<SpaceWorkflowRunReopenedEvent> {
+    return this.events;
+  }
 
-	destroy(): void {
-		this.unsub();
-	}
+  destroy(): void {
+    this.unsub();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,26 +107,26 @@ class RecordingCollector {
 // ---------------------------------------------------------------------------
 
 function buildSimpleWorkflow(
-	spaceId: string,
-	workflowManager: SpaceWorkflowManager,
-	nodes: Array<{ id: string; name: string; agentId: string }>,
-	channels: WorkflowChannel[] = [],
-	gates: Gate[] = []
+  spaceId: string,
+  workflowManager: SpaceWorkflowManager,
+  nodes: Array<{ id: string; name: string; agentId: string }>,
+  channels: WorkflowChannel[] = [],
+  gates: Gate[] = []
 ): SpaceWorkflow {
-	return workflowManager.createWorkflow({
-		spaceId,
-		name: `WF ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-		description: '',
-		nodes: nodes.map((n) => ({ id: n.id, name: n.name, agentId: n.agentId })),
-		transitions: [],
-		startNodeId: nodes[0].id,
-		endNodeId: nodes[nodes.length - 1].id,
-		rules: [],
-		tags: [],
-		channels,
-		gates,
-		completionAutonomyLevel: 3,
-	});
+  return workflowManager.createWorkflow({
+    spaceId,
+    name: `WF ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    description: '',
+    nodes: nodes.map((n) => ({ id: n.id, name: n.name, agentId: n.agentId })),
+    transitions: [],
+    startNodeId: nodes[0].id,
+    endNodeId: nodes[nodes.length - 1].id,
+    rules: [],
+    tags: [],
+    channels,
+    gates,
+    completionAutonomyLevel: 3,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -134,324 +134,324 @@ function buildSimpleWorkflow(
 // ---------------------------------------------------------------------------
 
 describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () => {
-	let db: BunDatabase;
+  let db: BunDatabase;
 
-	let taskRepo: SpaceTaskRepository;
-	let workflowRunRepo: SpaceWorkflowRunRepository;
-	let workflowManager: SpaceWorkflowManager;
-	let agentManager: SpaceAgentManager;
-	let gateDataRepo: GateDataRepository;
-	let channelCycleRepo: ChannelCycleRepository;
-	let bus: InternalEventBus<DaemonInternalEventMap>;
-	let collector: RecordingCollector;
-	let router: ChannelRouter;
+  let taskRepo: SpaceTaskRepository;
+  let workflowRunRepo: SpaceWorkflowRunRepository;
+  let workflowManager: SpaceWorkflowManager;
+  let agentManager: SpaceAgentManager;
+  let gateDataRepo: GateDataRepository;
+  let channelCycleRepo: ChannelCycleRepository;
+  let bus: InternalEventBus<DaemonInternalEventMap>;
+  let collector: RecordingCollector;
+  let router: ChannelRouter;
 
-	const SPACE_ID = 'space-reopen-1';
-	const AGENT_A = 'agent-a';
-	const AGENT_B = 'agent-b';
-	const NODE_A = 'node-a';
-	const NODE_B = 'node-b';
+  const SPACE_ID = 'space-reopen-1';
+  const AGENT_A = 'agent-a';
+  const AGENT_B = 'agent-b';
+  const NODE_A = 'node-a';
+  const NODE_B = 'node-b';
 
-	beforeEach(() => {
-		db = makeDb();
-		seedSpace(db, SPACE_ID);
-		seedAgent(db, AGENT_A, SPACE_ID);
-		seedAgent(db, AGENT_B, SPACE_ID);
+  beforeEach(() => {
+    db = makeDb();
+    seedSpace(db, SPACE_ID);
+    seedAgent(db, AGENT_A, SPACE_ID);
+    seedAgent(db, AGENT_B, SPACE_ID);
 
-		taskRepo = new SpaceTaskRepository(db);
-		workflowRunRepo = new SpaceWorkflowRunRepository(db);
-		gateDataRepo = new GateDataRepository(db);
-		channelCycleRepo = new ChannelCycleRepository(db);
+    taskRepo = new SpaceTaskRepository(db);
+    workflowRunRepo = new SpaceWorkflowRunRepository(db);
+    gateDataRepo = new GateDataRepository(db);
+    channelCycleRepo = new ChannelCycleRepository(db);
 
-		// One-task-per-run: ensure every createRun also creates a canonical task.
-		const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
-		(workflowRunRepo as unknown as { createRun: typeof workflowRunRepo.createRun }).createRun = ((
-			params: Parameters<typeof workflowRunRepo.createRun>[0]
-		) => {
-			const run = createRunOriginal(params);
-			taskRepo.createTask({
-				spaceId: params.spaceId,
-				title: params.title,
-				description: params.description ?? '',
-				status: 'open',
-				workflowRunId: run.id,
-			});
-			return run;
-		}) as typeof workflowRunRepo.createRun;
+    // One-task-per-run: ensure every createRun also creates a canonical task.
+    const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
+    (workflowRunRepo as unknown as { createRun: typeof workflowRunRepo.createRun }).createRun = ((
+      params: Parameters<typeof workflowRunRepo.createRun>[0]
+    ) => {
+      const run = createRunOriginal(params);
+      taskRepo.createTask({
+        spaceId: params.spaceId,
+        title: params.title,
+        description: params.description ?? '',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      return run;
+    }) as typeof workflowRunRepo.createRun;
 
-		agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
-		workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
-		bus = new InternalEventBus<DaemonInternalEventMap>();
-		collector = new RecordingCollector(bus);
+    agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    bus = new InternalEventBus<DaemonInternalEventMap>();
+    collector = new RecordingCollector(bus);
 
-		router = new ChannelRouter({
-			taskRepo,
-			workflowRunRepo,
-			workflowManager,
-			agentManager,
-			gateDataRepo,
-			channelCycleRepo,
-			db,
-			nodeExecutionRepo: new NodeExecutionRepository(db),
-			internalEventBus: bus,
-		});
-	});
+    router = new ChannelRouter({
+      taskRepo,
+      workflowRunRepo,
+      workflowManager,
+      agentManager,
+      gateDataRepo,
+      channelCycleRepo,
+      db,
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      internalEventBus: bus,
+    });
+  });
 
-	afterEach(() => {
-		collector.destroy();
-		db.close();
-	});
+  afterEach(() => {
+    collector.destroy();
+    db.close();
+  });
 
-	// -------------------------------------------------------------------------
-	// activateNode — reopen on terminal statuses
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // activateNode — reopen on terminal statuses
+  // -------------------------------------------------------------------------
 
-	describe('activateNode', () => {
-		test('reopens a done run, activates the target, and emits workflow_run_reopened', async () => {
-			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
-				{ id: NODE_A, name: 'A', agentId: AGENT_A },
-				{ id: NODE_B, name: 'B', agentId: AGENT_B },
-			]);
+  describe('activateNode', () => {
+    test('reopens a done run, activates the target, and emits workflow_run_reopened', async () => {
+      const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'A', agentId: AGENT_A },
+        { id: NODE_B, name: 'B', agentId: AGENT_B },
+      ]);
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Reopenable Done',
-			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reopenable Done',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-			const tasks = await router.activateNode(run.id, NODE_B, {
-				reopenReason: 'user followup',
-				reopenBy: 'user',
-			});
-			expect(tasks.length).toBeGreaterThan(0);
+      const tasks = await router.activateNode(run.id, NODE_B, {
+        reopenReason: 'user followup',
+        reopenBy: 'user',
+      });
+      expect(tasks.length).toBeGreaterThan(0);
 
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-			const reopens = collector.reopens();
-			expect(reopens).toHaveLength(1);
-			expect(reopens[0].fromStatus).toBe('done');
-			expect(reopens[0].by).toBe('user');
-			expect(reopens[0].runId).toBe(run.id);
-			expect(reopens[0].spaceId).toBe(SPACE_ID);
-			expect(reopens[0].reason).toBe('user followup');
-		});
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const reopens = collector.reopens();
+      expect(reopens).toHaveLength(1);
+      expect(reopens[0].fromStatus).toBe('done');
+      expect(reopens[0].by).toBe('user');
+      expect(reopens[0].runId).toBe(run.id);
+      expect(reopens[0].spaceId).toBe(SPACE_ID);
+      expect(reopens[0].reason).toBe('user followup');
+    });
 
-		test('reopens a cancelled run and emits workflow_run_reopened with fromStatus=cancelled', async () => {
-			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
-				{ id: NODE_A, name: 'A', agentId: AGENT_A },
-			]);
+    test('reopens a cancelled run and emits workflow_run_reopened with fromStatus=cancelled', async () => {
+      const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'A', agentId: AGENT_A },
+      ]);
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Reopenable Cancelled',
-			});
-			workflowRunRepo.transitionStatus(run.id, 'cancelled');
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reopenable Cancelled',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-			await router.activateNode(run.id, NODE_A, {
-				reopenReason: 'peer ping',
-				reopenBy: 'agent:buddy',
-			});
+      await router.activateNode(run.id, NODE_A, {
+        reopenReason: 'peer ping',
+        reopenBy: 'agent:buddy',
+      });
 
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-			const reopens = collector.reopens();
-			expect(reopens).toHaveLength(1);
-			expect(reopens[0].fromStatus).toBe('cancelled');
-			expect(reopens[0].by).toBe('agent:buddy');
-		});
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const reopens = collector.reopens();
+      expect(reopens).toHaveLength(1);
+      expect(reopens[0].fromStatus).toBe('cancelled');
+      expect(reopens[0].by).toBe('agent:buddy');
+    });
 
-		test('rejects with ARCHIVED_TASK_ERROR_MESSAGE when parent task is archived', async () => {
-			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
-				{ id: NODE_A, name: 'A', agentId: AGENT_A },
-			]);
+    test('rejects with ARCHIVED_TASK_ERROR_MESSAGE when parent task is archived', async () => {
+      const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'A', agentId: AGENT_A },
+      ]);
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Archived',
-			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
-			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
-				taskRepo.archiveTask(t.id);
-			}
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Archived',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+        taskRepo.archiveTask(t.id);
+      }
 
-			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
-			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(
-				ARCHIVED_TASK_ERROR_MESSAGE
-			);
-			expect(collector.reopens()).toHaveLength(0);
-			// Status must remain done — we never transitioned.
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-		});
+      await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
+      await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(
+        ARCHIVED_TASK_ERROR_MESSAGE
+      );
+      expect(collector.reopens()).toHaveLength(0);
+      // Status must remain done — we never transitioned.
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
 
-		test('does not emit workflow_run_reopened when the run is already in_progress', async () => {
-			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
-				{ id: NODE_A, name: 'A', agentId: AGENT_A },
-			]);
+    test('does not emit workflow_run_reopened when the run is already in_progress', async () => {
+      const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'A', agentId: AGENT_A },
+      ]);
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Fresh Run',
-			});
-			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Fresh Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			await router.activateNode(run.id, NODE_A);
-			expect(collector.reopens()).toHaveLength(0);
-		});
-	});
+      await router.activateNode(run.id, NODE_A);
+      expect(collector.reopens()).toHaveLength(0);
+    });
+  });
 
-	// -------------------------------------------------------------------------
-	// deliverMessage — attribution forwarding
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // deliverMessage — attribution forwarding
+  // -------------------------------------------------------------------------
 
-	describe('deliverMessage attribution', () => {
-		test('forwards fromRole as agent:<name> when reopening via peer send_message', async () => {
-			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
-				{ id: NODE_A, name: 'A', agentId: AGENT_A },
-				{ id: NODE_B, name: 'B', agentId: AGENT_B },
-			]);
+  describe('deliverMessage attribution', () => {
+    test('forwards fromRole as agent:<name> when reopening via peer send_message', async () => {
+      const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'A', agentId: AGENT_A },
+        { id: NODE_B, name: 'B', agentId: AGENT_B },
+      ]);
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Peer reopen attribution',
-			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Peer reopen attribution',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-			// Agent A sends a message to Agent B on a done run — expect reopen
-			// attributed to "agent:A".
-			await router.deliverMessage(run.id, 'A', 'B', 'hello');
+      // Agent A sends a message to Agent B on a done run — expect reopen
+      // attributed to "agent:A".
+      await router.deliverMessage(run.id, 'A', 'B', 'hello');
 
-			const reopens = collector.reopens();
-			expect(reopens).toHaveLength(1);
-			expect(reopens[0].by).toBe('agent:A');
-			expect(reopens[0].fromStatus).toBe('done');
-			expect(reopens[0].reason).toContain('peer send_message');
-			expect(reopens[0].reason).toContain('"A"');
-			expect(reopens[0].reason).toContain('"B"');
-		});
-	});
+      const reopens = collector.reopens();
+      expect(reopens).toHaveLength(1);
+      expect(reopens[0].by).toBe('agent:A');
+      expect(reopens[0].fromStatus).toBe('done');
+      expect(reopens[0].reason).toContain('peer send_message');
+      expect(reopens[0].reason).toContain('"A"');
+      expect(reopens[0].reason).toContain('"B"');
+    });
+  });
 
-	// -------------------------------------------------------------------------
-	// onGateDataChanged — reopen and archive blocking
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // onGateDataChanged — reopen and archive blocking
+  // -------------------------------------------------------------------------
 
-	describe('onGateDataChanged', () => {
-		test('re-activates target nodes on a done run when parent task is not archived', async () => {
-			const gate: Gate = {
-				id: 'ok-gate',
-				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-				resetOnCycle: false,
-			};
-			const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
-			const workflow = buildSimpleWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: NODE_A, name: 'A', agentId: AGENT_A },
-					{ id: NODE_B, name: 'B', agentId: AGENT_B },
-				],
-				channels,
-				[gate]
-			);
+  describe('onGateDataChanged', () => {
+    test('re-activates target nodes on a done run when parent task is not archived', async () => {
+      const gate: Gate = {
+        id: 'ok-gate',
+        fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
+      const workflow = buildSimpleWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'A', agentId: AGENT_A },
+          { id: NODE_B, name: 'B', agentId: AGENT_B },
+        ],
+        channels,
+        [gate]
+      );
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Gate Reopen',
-			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Gate Reopen',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-			gateDataRepo.set(run.id, 'ok-gate', { done: true });
-			const activated = await router.onGateDataChanged(run.id, 'ok-gate');
-			expect(activated.length).toBeGreaterThan(0);
+      gateDataRepo.set(run.id, 'ok-gate', { done: true });
+      const activated = await router.onGateDataChanged(run.id, 'ok-gate');
+      expect(activated.length).toBeGreaterThan(0);
 
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-			const reopens = collector.reopens();
-			expect(reopens).toHaveLength(1);
-			expect(reopens[0].by).toBe('gate:ok-gate');
-			expect(reopens[0].fromStatus).toBe('done');
-		});
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const reopens = collector.reopens();
+      expect(reopens).toHaveLength(1);
+      expect(reopens[0].by).toBe('gate:ok-gate');
+      expect(reopens[0].fromStatus).toBe('done');
+    });
 
-		test('returns [] and emits no reopen when parent task is archived', async () => {
-			const gate: Gate = {
-				id: 'ok-gate',
-				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-				resetOnCycle: false,
-			};
-			const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
-			const workflow = buildSimpleWorkflow(
-				SPACE_ID,
-				workflowManager,
-				[
-					{ id: NODE_A, name: 'A', agentId: AGENT_A },
-					{ id: NODE_B, name: 'B', agentId: AGENT_B },
-				],
-				channels,
-				[gate]
-			);
+    test('returns [] and emits no reopen when parent task is archived', async () => {
+      const gate: Gate = {
+        id: 'ok-gate',
+        fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
+      const workflow = buildSimpleWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'A', agentId: AGENT_A },
+          { id: NODE_B, name: 'B', agentId: AGENT_B },
+        ],
+        channels,
+        [gate]
+      );
 
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Gate Archived',
-			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
-			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
-				taskRepo.archiveTask(t.id);
-			}
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Gate Archived',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+        taskRepo.archiveTask(t.id);
+      }
 
-			gateDataRepo.set(run.id, 'ok-gate', { done: true });
-			const activated = await router.onGateDataChanged(run.id, 'ok-gate');
-			expect(activated).toHaveLength(0);
-			expect(collector.reopens()).toHaveLength(0);
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-		});
-	});
+      gateDataRepo.set(run.id, 'ok-gate', { done: true });
+      const activated = await router.onGateDataChanged(run.id, 'ok-gate');
+      expect(activated).toHaveLength(0);
+      expect(collector.reopens()).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
+  });
 
-	// -------------------------------------------------------------------------
-	// Idempotency & resilience
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Idempotency & resilience
+  // -------------------------------------------------------------------------
 
-	describe('resilience', () => {
-		test('a throwing InternalEventBus subscriber does not break activation', async () => {
-			// Create a bus with a subscriber that throws — simulates a downstream
-			// consumer crashing. The router must still complete the activation.
-			const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
-			throwingBus.subscribe(
-				'space.workflowRun.reopened',
-				() => {
-					throw new Error('boom');
-				},
-				{ subscriberName: 'test-throwing-subscriber' }
-			);
+  describe('resilience', () => {
+    test('a throwing InternalEventBus subscriber does not break activation', async () => {
+      // Create a bus with a subscriber that throws — simulates a downstream
+      // consumer crashing. The router must still complete the activation.
+      const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
+      throwingBus.subscribe(
+        'space.workflowRun.reopened',
+        () => {
+          throw new Error('boom');
+        },
+        { subscriberName: 'test-throwing-subscriber' }
+      );
 
-			const localRouter = new ChannelRouter({
-				taskRepo,
-				workflowRunRepo,
-				workflowManager,
-				agentManager,
-				gateDataRepo,
-				channelCycleRepo,
-				db,
-				nodeExecutionRepo: new NodeExecutionRepository(db),
-				internalEventBus: throwingBus,
-			});
+      const localRouter = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        internalEventBus: throwingBus,
+      });
 
-			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
-				{ id: NODE_A, name: 'A', agentId: AGENT_A },
-			]);
-			const run = workflowRunRepo.createRun({
-				spaceId: SPACE_ID,
-				workflowId: workflow.id,
-				title: 'Resilient',
-			});
-			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+      const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'A', agentId: AGENT_A },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Resilient',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-			// Should not throw despite the bus subscriber failing.
-			await localRouter.activateNode(run.id, NODE_A);
-			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-		});
-	});
+      // Should not throw despite the bus subscriber failing.
+      await localRouter.activateNode(run.id, NODE_A);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+  });
 });

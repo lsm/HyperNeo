@@ -9,540 +9,540 @@ import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-t
 import type { MessageHubRouter, ClientConnection, HubMessage } from '@neokai/shared';
 
 describe('WebSocketServerTransport', () => {
-	let transport: WebSocketServerTransport;
-	let mockRouter: MessageHubRouter;
-	let mockConnections: Map<string, ClientConnection>;
-	let registeredConnection: ClientConnection | null;
-
-	beforeEach(() => {
-		mockConnections = new Map();
-		registeredConnection = null;
-
-		// Create mock router
-		mockRouter = {
-			registerConnection: mock((conn: ClientConnection) => {
-				mockConnections.set(conn.id, conn);
-				registeredConnection = conn;
-			}),
-			unregisterConnection: mock((clientId: string) => {
-				mockConnections.delete(clientId);
-			}),
-			getClientCount: mock(() => mockConnections.size),
-			getClientById: mock((clientId: string) => mockConnections.get(clientId)),
-			broadcast: mock(() => {}),
-			routeEvent: mock(() => {}),
-			subscribeClient: mock(() => {}),
-			unsubscribeClient: mock(() => {}),
-			getSubscriptionsForClient: mock(() => new Set<string>()),
-		} as unknown as MessageHubRouter;
-
-		transport = new WebSocketServerTransport({
-			router: mockRouter,
-			name: 'test-transport',
-			staleTimeout: 5000, // Short timeout for tests
-			staleCheckInterval: 1000,
-		});
-	});
-
-	afterEach(async () => {
-		// Clean up transport
-		await transport.close();
-	});
-
-	describe('constructor', () => {
-		it('should create transport with default name', () => {
-			const defaultTransport = new WebSocketServerTransport({
-				router: mockRouter,
-			});
-			expect(defaultTransport.name).toBe('websocket-server');
-			defaultTransport.close();
-		});
-
-		it('should create transport with custom name', () => {
-			expect(transport.name).toBe('test-transport');
-		});
-	});
-
-	describe('initialize', () => {
-		it('should initialize transport', async () => {
-			await transport.initialize();
-			// If no error, initialization succeeded
-			expect(true).toBe(true);
-		});
-
-		it('should start stale connection checker', async () => {
-			await transport.initialize();
-			// The stale checker is internal, but we can test by closing
-			// which should stop it without error
-			await transport.close();
-			expect(true).toBe(true);
-		});
-	});
-
-	describe('registerClient', () => {
-		it('should register a client and return clientId', () => {
-			const mockWs = createMockWebSocket();
-
-			const clientId = transport.registerClient(mockWs, 'test-session-123');
-
-			expect(clientId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-			expect(mockRouter.registerConnection).toHaveBeenCalled();
-		});
-
-		it('should create client connection with send function', () => {
-			const mockWs = createMockWebSocket();
-
-			transport.registerClient(mockWs, 'test-session-123');
-
-			expect(registeredConnection).toBeDefined();
-			expect(registeredConnection?.send).toBeInstanceOf(Function);
-		});
-
-		it('should notify connection handlers on first client', () => {
-			const mockWs = createMockWebSocket();
-			const connectionHandler = mock(() => {});
-
-			transport.onConnectionChange(connectionHandler);
-			transport.registerClient(mockWs, 'test-session-123');
-
-			expect(connectionHandler).toHaveBeenCalledWith('connected', undefined);
-		});
-	});
-
-	describe('unregisterClient', () => {
-		it('should unregister a client', () => {
-			const mockWs = createMockWebSocket();
-			const clientId = transport.registerClient(mockWs, 'test-session-123');
-
-			transport.unregisterClient(clientId);
-
-			expect(mockRouter.unregisterConnection).toHaveBeenCalledWith(clientId);
-		});
-
-		it('should call client disconnect handlers', () => {
-			const mockWs = createMockWebSocket();
-			const disconnectHandler = mock(() => {});
-
-			transport.onClientDisconnect(disconnectHandler);
-			const clientId = transport.registerClient(mockWs, 'test-session-123');
-			transport.unregisterClient(clientId);
-
-			expect(disconnectHandler).toHaveBeenCalledWith(clientId);
-		});
-
-		it('should notify connection handlers when last client disconnects', () => {
-			const mockWs = createMockWebSocket();
-			const connectionHandler = mock(() => {});
-
-			const clientId = transport.registerClient(mockWs, 'test-session-123');
-			transport.onConnectionChange(connectionHandler);
-			transport.unregisterClient(clientId);
-
-			expect(connectionHandler).toHaveBeenCalledWith('disconnected', undefined);
-		});
-	});
-
-	describe('handleClientMessage', () => {
-		it('should forward message to all message handlers', () => {
-			const messageHandler = mock(() => {});
-			transport.onMessage(messageHandler);
-
-			const message: HubMessage = {
-				type: 'REQ',
-				method: 'test.method',
-				data: { foo: 'bar' },
-				id: 'test-id',
-				sessionId: 'test-session',
-			};
-
-			transport.handleClientMessage(message, 'client-123');
-
-			expect(messageHandler).toHaveBeenCalledWith(
-				expect.objectContaining({
-					type: 'REQ',
-					method: 'test.method',
-					clientId: 'client-123',
-				})
-			);
-		});
-
-		it('should add clientId to message metadata', () => {
-			let receivedMessage: HubMessage | null = null;
-			transport.onMessage((msg) => {
-				receivedMessage = msg;
-			});
-
-			const message: HubMessage = {
-				type: 'EVENT',
-				method: 'test.channel',
-				id: 'test-id',
-				sessionId: 'test-session',
-			};
-
-			transport.handleClientMessage(message, 'client-456');
-
-			expect((receivedMessage as HubMessage & { clientId: string }).clientId).toBe('client-456');
-		});
-	});
-
-	describe('send', () => {
-		it('should broadcast non-EVENT messages', async () => {
-			const message: HubMessage = {
-				type: 'RSP',
-				id: 'test-id',
-				method: 'test.method',
-				sessionId: 'test-session',
-				data: { success: true },
-			};
-
-			await transport.send(message);
-
-			expect(mockRouter.broadcast).toHaveBeenCalledWith(message);
-		});
-
-		it('should fallback broadcast for EVENT messages (deprecated path)', async () => {
-			const message: HubMessage = {
-				type: 'EVENT',
-				method: 'test.event',
-				id: 'test-id',
-				sessionId: 'test-session',
-				data: { data: 'test' },
-			};
-
-			await transport.send(message);
-
-			expect(mockRouter.broadcast).toHaveBeenCalledWith(message);
-		});
-	});
-
-	describe('onMessage', () => {
-		it('should return unsubscribe function', () => {
-			const handler = mock(() => {});
-			const unsubscribe = transport.onMessage(handler);
-
-			// First message should trigger handler
-			transport.handleClientMessage({ type: 'REQ', method: 'test', id: '1', sessionId: 'test' });
-			expect(handler).toHaveBeenCalledTimes(1);
-
-			// Unsubscribe
-			unsubscribe();
-
-			// Second message should not trigger handler
-			transport.handleClientMessage({ type: 'REQ', method: 'test', id: '2', sessionId: 'test' });
-			expect(handler).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	describe('onConnectionChange', () => {
-		it('should return unsubscribe function', () => {
-			const handler = mock(() => {});
-			const unsubscribe = transport.onConnectionChange(handler);
-
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-			expect(handler).toHaveBeenCalledTimes(1);
-
-			unsubscribe();
-
-			// Create another transport to register new client
-			const mockWs2 = createMockWebSocket();
-			transport.registerClient(mockWs2, 'session-2');
-			// Handler should not be called again after unsubscribe
-			expect(handler).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	describe('onClientDisconnect', () => {
-		it('should return unsubscribe function', () => {
-			const handler = mock(() => {});
-			const unsubscribe = transport.onClientDisconnect(handler);
-
-			const mockWs = createMockWebSocket();
-			const clientId = transport.registerClient(mockWs, 'session-1');
-			transport.unregisterClient(clientId);
-			expect(handler).toHaveBeenCalledTimes(1);
-
-			unsubscribe();
-
-			const mockWs2 = createMockWebSocket();
-			const clientId2 = transport.registerClient(mockWs2, 'session-2');
-			transport.unregisterClient(clientId2);
-			// Handler should not be called again
-			expect(handler).toHaveBeenCalledTimes(1);
-		});
-	});
-
-	describe('getState', () => {
-		it('should return disconnected when no clients', () => {
-			expect(transport.getState()).toBe('disconnected');
-		});
-
-		it('should return connected when clients exist', () => {
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-
-			expect(transport.getState()).toBe('connected');
-		});
-	});
-
-	describe('isReady', () => {
-		it('should return false when no clients', () => {
-			expect(transport.isReady()).toBe(false);
-		});
-
-		it('should return true when clients exist', () => {
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-
-			expect(transport.isReady()).toBe(true);
-		});
-	});
-
-	describe('getClientCount', () => {
-		it('should return count from router', () => {
-			expect(transport.getClientCount()).toBe(0);
-
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-
-			expect(transport.getClientCount()).toBe(1);
-		});
-	});
-
-	describe('getClient', () => {
-		it('should return client from router', () => {
-			const mockWs = createMockWebSocket();
-			const clientId = transport.registerClient(mockWs, 'session-1');
-
-			const client = transport.getClient(clientId);
-
-			expect(client).toBeDefined();
-		});
-
-		it('should return undefined for unknown client', () => {
-			const client = transport.getClient('unknown-client');
-
-			expect(client).toBeUndefined();
-		});
-	});
-
-	describe('getRouter', () => {
-		it('should return the router instance', () => {
-			expect(transport.getRouter()).toBe(mockRouter);
-		});
-	});
-
-	describe('updateClientActivity', () => {
-		it('should update activity time for existing client', () => {
-			const mockWs = createMockWebSocket();
-			const clientId = transport.registerClient(mockWs, 'session-1');
-
-			// Should not throw
-			transport.updateClientActivity(clientId);
-			expect(true).toBe(true);
-		});
-
-		it('should not throw for unknown client', () => {
-			// Should not throw
-			transport.updateClientActivity('unknown-client');
-			expect(true).toBe(true);
-		});
-	});
-
-	describe('canClientAccept (backpressure)', () => {
-		it('should return true when queue is not full', () => {
-			const mockWs = createMockWebSocket();
-			const clientId = transport.registerClient(mockWs, 'session-1');
-
-			expect(transport.canClientAccept(clientId)).toBe(true);
-		});
-
-		it('should return true for unknown client', () => {
-			expect(transport.canClientAccept('unknown-client')).toBe(true);
-		});
-	});
-
-	describe('getClientQueueSize', () => {
-		it('should return 0 for new client', () => {
-			const mockWs = createMockWebSocket();
-			const clientId = transport.registerClient(mockWs, 'session-1');
-
-			expect(transport.getClientQueueSize(clientId)).toBe(0);
-		});
-
-		it('should return 0 for unknown client', () => {
-			expect(transport.getClientQueueSize('unknown-client')).toBe(0);
-		});
-	});
-
-	describe('close', () => {
-		it('should unregister all clients', async () => {
-			const mockWs1 = createMockWebSocket();
-			const mockWs2 = createMockWebSocket();
-
-			transport.registerClient(mockWs1, 'session-1');
-			transport.registerClient(mockWs2, 'session-2');
-
-			await transport.close();
-
-			expect(transport.getClientCount()).toBe(0);
-		});
-
-		it('should notify connection handlers', async () => {
-			const handler = mock(() => {});
-			const mockWs = createMockWebSocket();
-
-			transport.registerClient(mockWs, 'session-1');
-			transport.onConnectionChange(handler);
-
-			await transport.close();
-
-			// Handler may be called multiple times during close
-			expect(handler).toHaveBeenCalledWith('disconnected', undefined);
-		});
-	});
-
-	describe('broadcastToSession', () => {
-		it('should add sessionId to message and send', async () => {
-			const message: HubMessage = {
-				type: 'EVENT',
-				method: 'test.event',
-				id: 'test-id',
-				sessionId: 'test-session',
-				data: { data: 'test' },
-			};
-
-			await transport.broadcastToSession('session-123', message);
-
-			expect(mockRouter.broadcast).toHaveBeenCalledWith(
-				expect.objectContaining({
-					sessionId: 'session-123',
-				})
-			);
-		});
-	});
-
-	describe('client connection send', () => {
-		it('should call ws.send through registered connection', () => {
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-
-			registeredConnection?.send('test message');
-
-			expect(mockWs.send).toHaveBeenCalledWith('test message');
-		});
-
-		it('should check isOpen through registered connection', () => {
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-
-			const isOpen = registeredConnection?.isOpen();
-
-			expect(isOpen).toBe(true);
-		});
-
-		it('should check canAccept through registered connection', () => {
-			const mockWs = createMockWebSocket();
-			transport.registerClient(mockWs, 'session-1');
-
-			const canAccept = registeredConnection?.canAccept?.();
-
-			expect(canAccept).toBe(true);
-		});
-	});
-
-	describe('stale connection checking', () => {
-		it('should close stale connections after timeout', async () => {
-			// Create transport with very short timeout for testing
-			const shortTimeoutTransport = new WebSocketServerTransport({
-				router: mockRouter,
-				name: 'stale-test-transport',
-				staleTimeout: 50, // 50ms timeout
-				staleCheckInterval: 20, // Check every 20ms
-			});
-
-			await shortTimeoutTransport.initialize();
-
-			const mockWs = createMockWebSocket();
-			shortTimeoutTransport.registerClient(mockWs, 'session-1');
-
-			// Wait for the stale checker to run
-			await new Promise((resolve) => setTimeout(resolve, 100));
-
-			// The connection should have been closed due to inactivity
-			expect(mockWs.close).toHaveBeenCalled();
-
-			await shortTimeoutTransport.close();
-		});
-
-		it('should not close active connections', async () => {
-			// Create transport with very short timeout for testing
-			const shortTimeoutTransport = new WebSocketServerTransport({
-				router: mockRouter,
-				name: 'active-test-transport',
-				staleTimeout: 100, // 100ms timeout
-				staleCheckInterval: 20, // Check every 20ms
-			});
-
-			await shortTimeoutTransport.initialize();
-
-			const mockWs = createMockWebSocket();
-			const clientId = shortTimeoutTransport.registerClient(mockWs, 'session-1');
-
-			// Keep the connection active by updating activity
-			const activityInterval = setInterval(() => {
-				shortTimeoutTransport.updateClientActivity(clientId);
-			}, 30);
-
-			// Wait for multiple stale checks
-			await new Promise((resolve) => setTimeout(resolve, 100));
-
-			clearInterval(activityInterval);
-
-			// The connection should NOT have been closed
-			expect(mockWs.close).not.toHaveBeenCalled();
-
-			await shortTimeoutTransport.close();
-		});
-
-		it('should handle errors when closing stale connections', async () => {
-			// Create transport with very short timeout for testing
-			const shortTimeoutTransport = new WebSocketServerTransport({
-				router: mockRouter,
-				name: 'error-test-transport',
-				staleTimeout: 50,
-				staleCheckInterval: 20,
-			});
-
-			await shortTimeoutTransport.initialize();
-
-			// Create a mock WS that throws on close
-			const errorWs = {
-				send: mock(() => {}),
-				close: mock(() => {
-					throw new Error('Close error');
-				}),
-				readyState: 1,
-			} as unknown as import('bun').ServerWebSocket<unknown>;
-
-			shortTimeoutTransport.registerClient(errorWs, 'session-1');
-
-			// Wait for the stale checker to run - should not throw
-			await new Promise((resolve) => setTimeout(resolve, 100));
-
-			// close was called (even though it threw)
-			expect(errorWs.close).toHaveBeenCalled();
-
-			await shortTimeoutTransport.close();
-		});
-	});
+  let transport: WebSocketServerTransport;
+  let mockRouter: MessageHubRouter;
+  let mockConnections: Map<string, ClientConnection>;
+  let registeredConnection: ClientConnection | null;
+
+  beforeEach(() => {
+    mockConnections = new Map();
+    registeredConnection = null;
+
+    // Create mock router
+    mockRouter = {
+      registerConnection: mock((conn: ClientConnection) => {
+        mockConnections.set(conn.id, conn);
+        registeredConnection = conn;
+      }),
+      unregisterConnection: mock((clientId: string) => {
+        mockConnections.delete(clientId);
+      }),
+      getClientCount: mock(() => mockConnections.size),
+      getClientById: mock((clientId: string) => mockConnections.get(clientId)),
+      broadcast: mock(() => {}),
+      routeEvent: mock(() => {}),
+      subscribeClient: mock(() => {}),
+      unsubscribeClient: mock(() => {}),
+      getSubscriptionsForClient: mock(() => new Set<string>()),
+    } as unknown as MessageHubRouter;
+
+    transport = new WebSocketServerTransport({
+      router: mockRouter,
+      name: 'test-transport',
+      staleTimeout: 5000, // Short timeout for tests
+      staleCheckInterval: 1000,
+    });
+  });
+
+  afterEach(async () => {
+    // Clean up transport
+    await transport.close();
+  });
+
+  describe('constructor', () => {
+    it('should create transport with default name', () => {
+      const defaultTransport = new WebSocketServerTransport({
+        router: mockRouter,
+      });
+      expect(defaultTransport.name).toBe('websocket-server');
+      defaultTransport.close();
+    });
+
+    it('should create transport with custom name', () => {
+      expect(transport.name).toBe('test-transport');
+    });
+  });
+
+  describe('initialize', () => {
+    it('should initialize transport', async () => {
+      await transport.initialize();
+      // If no error, initialization succeeded
+      expect(true).toBe(true);
+    });
+
+    it('should start stale connection checker', async () => {
+      await transport.initialize();
+      // The stale checker is internal, but we can test by closing
+      // which should stop it without error
+      await transport.close();
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('registerClient', () => {
+    it('should register a client and return clientId', () => {
+      const mockWs = createMockWebSocket();
+
+      const clientId = transport.registerClient(mockWs, 'test-session-123');
+
+      expect(clientId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(mockRouter.registerConnection).toHaveBeenCalled();
+    });
+
+    it('should create client connection with send function', () => {
+      const mockWs = createMockWebSocket();
+
+      transport.registerClient(mockWs, 'test-session-123');
+
+      expect(registeredConnection).toBeDefined();
+      expect(registeredConnection?.send).toBeInstanceOf(Function);
+    });
+
+    it('should notify connection handlers on first client', () => {
+      const mockWs = createMockWebSocket();
+      const connectionHandler = mock(() => {});
+
+      transport.onConnectionChange(connectionHandler);
+      transport.registerClient(mockWs, 'test-session-123');
+
+      expect(connectionHandler).toHaveBeenCalledWith('connected', undefined);
+    });
+  });
+
+  describe('unregisterClient', () => {
+    it('should unregister a client', () => {
+      const mockWs = createMockWebSocket();
+      const clientId = transport.registerClient(mockWs, 'test-session-123');
+
+      transport.unregisterClient(clientId);
+
+      expect(mockRouter.unregisterConnection).toHaveBeenCalledWith(clientId);
+    });
+
+    it('should call client disconnect handlers', () => {
+      const mockWs = createMockWebSocket();
+      const disconnectHandler = mock(() => {});
+
+      transport.onClientDisconnect(disconnectHandler);
+      const clientId = transport.registerClient(mockWs, 'test-session-123');
+      transport.unregisterClient(clientId);
+
+      expect(disconnectHandler).toHaveBeenCalledWith(clientId);
+    });
+
+    it('should notify connection handlers when last client disconnects', () => {
+      const mockWs = createMockWebSocket();
+      const connectionHandler = mock(() => {});
+
+      const clientId = transport.registerClient(mockWs, 'test-session-123');
+      transport.onConnectionChange(connectionHandler);
+      transport.unregisterClient(clientId);
+
+      expect(connectionHandler).toHaveBeenCalledWith('disconnected', undefined);
+    });
+  });
+
+  describe('handleClientMessage', () => {
+    it('should forward message to all message handlers', () => {
+      const messageHandler = mock(() => {});
+      transport.onMessage(messageHandler);
+
+      const message: HubMessage = {
+        type: 'REQ',
+        method: 'test.method',
+        data: { foo: 'bar' },
+        id: 'test-id',
+        sessionId: 'test-session',
+      };
+
+      transport.handleClientMessage(message, 'client-123');
+
+      expect(messageHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'REQ',
+          method: 'test.method',
+          clientId: 'client-123',
+        })
+      );
+    });
+
+    it('should add clientId to message metadata', () => {
+      let receivedMessage: HubMessage | null = null;
+      transport.onMessage((msg) => {
+        receivedMessage = msg;
+      });
+
+      const message: HubMessage = {
+        type: 'EVENT',
+        method: 'test.channel',
+        id: 'test-id',
+        sessionId: 'test-session',
+      };
+
+      transport.handleClientMessage(message, 'client-456');
+
+      expect((receivedMessage as HubMessage & { clientId: string }).clientId).toBe('client-456');
+    });
+  });
+
+  describe('send', () => {
+    it('should broadcast non-EVENT messages', async () => {
+      const message: HubMessage = {
+        type: 'RSP',
+        id: 'test-id',
+        method: 'test.method',
+        sessionId: 'test-session',
+        data: { success: true },
+      };
+
+      await transport.send(message);
+
+      expect(mockRouter.broadcast).toHaveBeenCalledWith(message);
+    });
+
+    it('should fallback broadcast for EVENT messages (deprecated path)', async () => {
+      const message: HubMessage = {
+        type: 'EVENT',
+        method: 'test.event',
+        id: 'test-id',
+        sessionId: 'test-session',
+        data: { data: 'test' },
+      };
+
+      await transport.send(message);
+
+      expect(mockRouter.broadcast).toHaveBeenCalledWith(message);
+    });
+  });
+
+  describe('onMessage', () => {
+    it('should return unsubscribe function', () => {
+      const handler = mock(() => {});
+      const unsubscribe = transport.onMessage(handler);
+
+      // First message should trigger handler
+      transport.handleClientMessage({ type: 'REQ', method: 'test', id: '1', sessionId: 'test' });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Unsubscribe
+      unsubscribe();
+
+      // Second message should not trigger handler
+      transport.handleClientMessage({ type: 'REQ', method: 'test', id: '2', sessionId: 'test' });
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('onConnectionChange', () => {
+    it('should return unsubscribe function', () => {
+      const handler = mock(() => {});
+      const unsubscribe = transport.onConnectionChange(handler);
+
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      unsubscribe();
+
+      // Create another transport to register new client
+      const mockWs2 = createMockWebSocket();
+      transport.registerClient(mockWs2, 'session-2');
+      // Handler should not be called again after unsubscribe
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('onClientDisconnect', () => {
+    it('should return unsubscribe function', () => {
+      const handler = mock(() => {});
+      const unsubscribe = transport.onClientDisconnect(handler);
+
+      const mockWs = createMockWebSocket();
+      const clientId = transport.registerClient(mockWs, 'session-1');
+      transport.unregisterClient(clientId);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      unsubscribe();
+
+      const mockWs2 = createMockWebSocket();
+      const clientId2 = transport.registerClient(mockWs2, 'session-2');
+      transport.unregisterClient(clientId2);
+      // Handler should not be called again
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getState', () => {
+    it('should return disconnected when no clients', () => {
+      expect(transport.getState()).toBe('disconnected');
+    });
+
+    it('should return connected when clients exist', () => {
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+
+      expect(transport.getState()).toBe('connected');
+    });
+  });
+
+  describe('isReady', () => {
+    it('should return false when no clients', () => {
+      expect(transport.isReady()).toBe(false);
+    });
+
+    it('should return true when clients exist', () => {
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+
+      expect(transport.isReady()).toBe(true);
+    });
+  });
+
+  describe('getClientCount', () => {
+    it('should return count from router', () => {
+      expect(transport.getClientCount()).toBe(0);
+
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+
+      expect(transport.getClientCount()).toBe(1);
+    });
+  });
+
+  describe('getClient', () => {
+    it('should return client from router', () => {
+      const mockWs = createMockWebSocket();
+      const clientId = transport.registerClient(mockWs, 'session-1');
+
+      const client = transport.getClient(clientId);
+
+      expect(client).toBeDefined();
+    });
+
+    it('should return undefined for unknown client', () => {
+      const client = transport.getClient('unknown-client');
+
+      expect(client).toBeUndefined();
+    });
+  });
+
+  describe('getRouter', () => {
+    it('should return the router instance', () => {
+      expect(transport.getRouter()).toBe(mockRouter);
+    });
+  });
+
+  describe('updateClientActivity', () => {
+    it('should update activity time for existing client', () => {
+      const mockWs = createMockWebSocket();
+      const clientId = transport.registerClient(mockWs, 'session-1');
+
+      // Should not throw
+      transport.updateClientActivity(clientId);
+      expect(true).toBe(true);
+    });
+
+    it('should not throw for unknown client', () => {
+      // Should not throw
+      transport.updateClientActivity('unknown-client');
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('canClientAccept (backpressure)', () => {
+    it('should return true when queue is not full', () => {
+      const mockWs = createMockWebSocket();
+      const clientId = transport.registerClient(mockWs, 'session-1');
+
+      expect(transport.canClientAccept(clientId)).toBe(true);
+    });
+
+    it('should return true for unknown client', () => {
+      expect(transport.canClientAccept('unknown-client')).toBe(true);
+    });
+  });
+
+  describe('getClientQueueSize', () => {
+    it('should return 0 for new client', () => {
+      const mockWs = createMockWebSocket();
+      const clientId = transport.registerClient(mockWs, 'session-1');
+
+      expect(transport.getClientQueueSize(clientId)).toBe(0);
+    });
+
+    it('should return 0 for unknown client', () => {
+      expect(transport.getClientQueueSize('unknown-client')).toBe(0);
+    });
+  });
+
+  describe('close', () => {
+    it('should unregister all clients', async () => {
+      const mockWs1 = createMockWebSocket();
+      const mockWs2 = createMockWebSocket();
+
+      transport.registerClient(mockWs1, 'session-1');
+      transport.registerClient(mockWs2, 'session-2');
+
+      await transport.close();
+
+      expect(transport.getClientCount()).toBe(0);
+    });
+
+    it('should notify connection handlers', async () => {
+      const handler = mock(() => {});
+      const mockWs = createMockWebSocket();
+
+      transport.registerClient(mockWs, 'session-1');
+      transport.onConnectionChange(handler);
+
+      await transport.close();
+
+      // Handler may be called multiple times during close
+      expect(handler).toHaveBeenCalledWith('disconnected', undefined);
+    });
+  });
+
+  describe('broadcastToSession', () => {
+    it('should add sessionId to message and send', async () => {
+      const message: HubMessage = {
+        type: 'EVENT',
+        method: 'test.event',
+        id: 'test-id',
+        sessionId: 'test-session',
+        data: { data: 'test' },
+      };
+
+      await transport.broadcastToSession('session-123', message);
+
+      expect(mockRouter.broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 'session-123',
+        })
+      );
+    });
+  });
+
+  describe('client connection send', () => {
+    it('should call ws.send through registered connection', () => {
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+
+      registeredConnection?.send('test message');
+
+      expect(mockWs.send).toHaveBeenCalledWith('test message');
+    });
+
+    it('should check isOpen through registered connection', () => {
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+
+      const isOpen = registeredConnection?.isOpen();
+
+      expect(isOpen).toBe(true);
+    });
+
+    it('should check canAccept through registered connection', () => {
+      const mockWs = createMockWebSocket();
+      transport.registerClient(mockWs, 'session-1');
+
+      const canAccept = registeredConnection?.canAccept?.();
+
+      expect(canAccept).toBe(true);
+    });
+  });
+
+  describe('stale connection checking', () => {
+    it('should close stale connections after timeout', async () => {
+      // Create transport with very short timeout for testing
+      const shortTimeoutTransport = new WebSocketServerTransport({
+        router: mockRouter,
+        name: 'stale-test-transport',
+        staleTimeout: 50, // 50ms timeout
+        staleCheckInterval: 20, // Check every 20ms
+      });
+
+      await shortTimeoutTransport.initialize();
+
+      const mockWs = createMockWebSocket();
+      shortTimeoutTransport.registerClient(mockWs, 'session-1');
+
+      // Wait for the stale checker to run
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // The connection should have been closed due to inactivity
+      expect(mockWs.close).toHaveBeenCalled();
+
+      await shortTimeoutTransport.close();
+    });
+
+    it('should not close active connections', async () => {
+      // Create transport with very short timeout for testing
+      const shortTimeoutTransport = new WebSocketServerTransport({
+        router: mockRouter,
+        name: 'active-test-transport',
+        staleTimeout: 100, // 100ms timeout
+        staleCheckInterval: 20, // Check every 20ms
+      });
+
+      await shortTimeoutTransport.initialize();
+
+      const mockWs = createMockWebSocket();
+      const clientId = shortTimeoutTransport.registerClient(mockWs, 'session-1');
+
+      // Keep the connection active by updating activity
+      const activityInterval = setInterval(() => {
+        shortTimeoutTransport.updateClientActivity(clientId);
+      }, 30);
+
+      // Wait for multiple stale checks
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      clearInterval(activityInterval);
+
+      // The connection should NOT have been closed
+      expect(mockWs.close).not.toHaveBeenCalled();
+
+      await shortTimeoutTransport.close();
+    });
+
+    it('should handle errors when closing stale connections', async () => {
+      // Create transport with very short timeout for testing
+      const shortTimeoutTransport = new WebSocketServerTransport({
+        router: mockRouter,
+        name: 'error-test-transport',
+        staleTimeout: 50,
+        staleCheckInterval: 20,
+      });
+
+      await shortTimeoutTransport.initialize();
+
+      // Create a mock WS that throws on close
+      const errorWs = {
+        send: mock(() => {}),
+        close: mock(() => {
+          throw new Error('Close error');
+        }),
+        readyState: 1,
+      } as unknown as import('bun').ServerWebSocket<unknown>;
+
+      shortTimeoutTransport.registerClient(errorWs, 'session-1');
+
+      // Wait for the stale checker to run - should not throw
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // close was called (even though it threw)
+      expect(errorWs.close).toHaveBeenCalled();
+
+      await shortTimeoutTransport.close();
+    });
+  });
 });
 
 // Helper function to create mock WebSocket
 function createMockWebSocket() {
-	return {
-		send: mock(() => {}),
-		close: mock(() => {}),
-		readyState: 1, // OPEN
-	} as unknown as import('bun').ServerWebSocket<unknown>;
+  return {
+    send: mock(() => {}),
+    close: mock(() => {}),
+    readyState: 1, // OPEN
+  } as unknown as import('bun').ServerWebSocket<unknown>;
 }

@@ -13,78 +13,78 @@ import { runMigrations, createTables } from '../../../../../src/storage/schema/i
 import { runMigration51 } from '../../../../../src/storage/schema/migrations.ts';
 
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
-	const result = db
-		.prepare(`SELECT name FROM pragma_table_info('${table}') WHERE name = ?`)
-		.get(column);
-	return !!result;
+  const result = db
+    .prepare(`SELECT name FROM pragma_table_info('${table}') WHERE name = ?`)
+    .get(column);
+  return !!result;
 }
 
 function getIndexes(db: BunDatabase, table: string): string[] {
-	const rows = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? ORDER BY name`)
-		.all(table) as Array<{ name: string }>;
-	return rows.map((r) => r.name);
+  const rows = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? ORDER BY name`)
+    .all(table) as Array<{ name: string }>;
+  return rows.map((r) => r.name);
 }
 
 describe('Migration 51: slot_role → agent_name + completion_summary on space_tasks', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-51', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
+  beforeEach(() => {
+    testDir = join(process.cwd(), 'tmp', 'test-migration-51', `test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
 
-		const dbPath = join(testDir, 'test.db');
-		db = new BunDatabase(dbPath);
-		db.exec('PRAGMA foreign_keys = ON');
-	});
+    const dbPath = join(testDir, 'test.db');
+    db = new BunDatabase(dbPath);
+    db.exec('PRAGMA foreign_keys = ON');
+  });
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	});
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
-	test('fresh DB does NOT have agent_name or completion_summary (removed by M71)', () => {
-		// M51 added agent_name and completion_summary, but M71 later removed both columns.
-		// After a full migration, neither column exists on space_tasks.
-		runMigrations(db, () => {});
-		createTables(db);
+  test('fresh DB does NOT have agent_name or completion_summary (removed by M71)', () => {
+    // M51 added agent_name and completion_summary, but M71 later removed both columns.
+    // After a full migration, neither column exists on space_tasks.
+    runMigrations(db, () => {});
+    createTables(db);
 
-		expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(false);
-		expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(false);
-		expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
-		// M71 added labels column instead
-		expect(columnExists(db, 'space_tasks', 'labels')).toBe(true);
-	});
+    expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(false);
+    expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(false);
+    expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
+    // M71 added labels column instead
+    expect(columnExists(db, 'space_tasks', 'labels')).toBe(true);
+  });
 
-	test('fresh DB has correct indexes after M71 rebuild', () => {
-		// M71 rebuilt space_tasks removing old columns and their indexes.
-		runMigrations(db, () => {});
-		createTables(db);
+  test('fresh DB has correct indexes after M71 rebuild', () => {
+    // M71 rebuilt space_tasks removing old columns and their indexes.
+    runMigrations(db, () => {});
+    createTables(db);
 
-		const indexes = getIndexes(db, 'space_tasks');
-		expect(indexes).toContain('idx_space_tasks_space_id');
-		expect(indexes).toContain('idx_space_tasks_workflow_run_id');
-		// Post-M71: these indexes were removed (their columns were dropped)
-		expect(indexes).not.toContain('idx_space_tasks_status');
-		expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
-		// M131 re-adds goal_id to space_tasks for space-native goals
-		expect(indexes).toContain('idx_space_tasks_goal_id');
-		expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
-		expect(indexes).not.toContain('idx_space_tasks_task_agent_session_id');
-	});
+    const indexes = getIndexes(db, 'space_tasks');
+    expect(indexes).toContain('idx_space_tasks_space_id');
+    expect(indexes).toContain('idx_space_tasks_workflow_run_id');
+    // Post-M71: these indexes were removed (their columns were dropped)
+    expect(indexes).not.toContain('idx_space_tasks_status');
+    expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
+    // M131 re-adds goal_id to space_tasks for space-native goals
+    expect(indexes).toContain('idx_space_tasks_goal_id');
+    expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
+    expect(indexes).not.toContain('idx_space_tasks_task_agent_session_id');
+  });
 
-	test('existing DB with slot_role gets renamed to agent_name', () => {
-		// Build a schema that looks like a pre-migration-51 DB (post-migration-46 schema)
-		db.exec(`
+  test('existing DB with slot_role gets renamed to agent_name', () => {
+    // Build a schema that looks like a pre-migration-51 DB (post-migration-46 schema)
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -103,7 +103,7 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -124,7 +124,7 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_nodes (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -134,7 +134,7 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -176,45 +176,45 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				FOREIGN KEY (workflow_node_id) REFERENCES space_workflow_nodes(id) ON DELETE SET NULL
 			)
 		`);
-		db.exec(`CREATE INDEX idx_space_tasks_space_id ON space_tasks(space_id)`);
-		db.exec(`CREATE INDEX idx_space_tasks_status ON space_tasks(status)`);
-		db.exec(`CREATE INDEX idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`);
-		db.exec(`CREATE INDEX idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`);
-		db.exec(`CREATE INDEX idx_space_tasks_goal_id ON space_tasks(goal_id)`);
-		db.exec(`CREATE INDEX idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`);
-		db.exec(
-			`CREATE INDEX idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
-		);
+    db.exec(`CREATE INDEX idx_space_tasks_space_id ON space_tasks(space_id)`);
+    db.exec(`CREATE INDEX idx_space_tasks_status ON space_tasks(status)`);
+    db.exec(`CREATE INDEX idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`);
+    db.exec(`CREATE INDEX idx_space_tasks_workflow_node_id ON space_tasks(workflow_node_id)`);
+    db.exec(`CREATE INDEX idx_space_tasks_goal_id ON space_tasks(goal_id)`);
+    db.exec(`CREATE INDEX idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`);
+    db.exec(
+      `CREATE INDEX idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
+    );
 
-		// Insert test data with slot_role
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/test', 'Test Space', now, now);
+    // Insert test data with slot_role
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('space-1', '/workspace/test', 'Test Space', now, now);
 
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
+    db.prepare(
+      `INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('task-1', 'space-1', 'Task 1', 'Desc 1', 'coder-role', '[]', now, now);
+    ).run('task-1', 'space-1', 'Task 1', 'Desc 1', 'coder-role', '[]', now, now);
 
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
+    db.prepare(
+      `INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('task-2', 'space-1', 'Task 2', 'Desc 2', null, '[]', now, now);
+    ).run('task-2', 'space-1', 'Task 2', 'Desc 2', null, '[]', now, now);
 
-		// Run migration
-		runMigration51(db);
+    // Run migration
+    runMigration51(db);
 
-		// Verify column rename
-		expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
-		expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
-		expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
-	});
+    // Verify column rename
+    expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
+    expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
+    expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
+  });
 
-	test('existing DB: slot_role values are preserved as agent_name', () => {
-		// Minimal setup: just spaces + space_tasks with slot_role
-		db.exec(`PRAGMA foreign_keys = OFF`);
-		db.exec(`
+  test('existing DB: slot_role values are preserved as agent_name', () => {
+    // Minimal setup: just spaces + space_tasks with slot_role
+    db.exec(`PRAGMA foreign_keys = OFF`);
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -223,18 +223,18 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				updated_at INTEGER NOT NULL
 			)
 		`);
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (id TEXT PRIMARY KEY, space_id TEXT, workflow_id TEXT,
 				title TEXT, description TEXT DEFAULT '', current_step_index INTEGER DEFAULT 0,
 				current_node_id TEXT, status TEXT DEFAULT 'pending', config TEXT,
 				iteration_count INTEGER DEFAULT 0, max_iterations INTEGER DEFAULT 5,
 				goal_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER)
 		`);
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_nodes (id TEXT PRIMARY KEY, workflow_id TEXT, name TEXT,
 				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)
 		`);
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -252,45 +252,45 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				updated_at INTEGER NOT NULL
 			)
 		`);
-		db.exec(`PRAGMA foreign_keys = ON`);
+    db.exec(`PRAGMA foreign_keys = ON`);
 
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('s1', '/ws', 'S', now, now);
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('s1', '/ws', 'S', now, now);
+    db.prepare(
+      `INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('t1', 's1', 'Title', 'Desc', 'reviewer', '[]', now, now);
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
+    ).run('t1', 's1', 'Title', 'Desc', 'reviewer', '[]', now, now);
+    db.prepare(
+      `INSERT INTO space_tasks (id, space_id, title, description, slot_role, depends_on, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('t2', 's1', 'Title2', 'Desc2', null, '[]', now, now);
+    ).run('t2', 's1', 'Title2', 'Desc2', null, '[]', now, now);
 
-		runMigration51(db);
+    runMigration51(db);
 
-		const t1 = db.prepare(`SELECT * FROM space_tasks WHERE id = ?`).get('t1') as Record<
-			string,
-			unknown
-		>;
-		const t2 = db.prepare(`SELECT * FROM space_tasks WHERE id = ?`).get('t2') as Record<
-			string,
-			unknown
-		>;
+    const t1 = db.prepare(`SELECT * FROM space_tasks WHERE id = ?`).get('t1') as Record<
+      string,
+      unknown
+    >;
+    const t2 = db.prepare(`SELECT * FROM space_tasks WHERE id = ?`).get('t2') as Record<
+      string,
+      unknown
+    >;
 
-		// slot_role value 'reviewer' should be in agent_name
-		expect(t1['agent_name']).toBe('reviewer');
-		expect(t1['completion_summary']).toBeNull();
+    // slot_role value 'reviewer' should be in agent_name
+    expect(t1['agent_name']).toBe('reviewer');
+    expect(t1['completion_summary']).toBeNull();
 
-		// null slot_role → null agent_name
-		expect(t2['agent_name']).toBeNull();
-		expect(t2['completion_summary']).toBeNull();
-	});
+    // null slot_role → null agent_name
+    expect(t2['agent_name']).toBeNull();
+    expect(t2['completion_summary']).toBeNull();
+  });
 
-	test('migration is idempotent — running twice does not fail', () => {
-		// Create minimal schema without slot_role (already migrated state)
-		db.exec(`PRAGMA foreign_keys = OFF`);
-		db.exec(`
+  test('migration is idempotent — running twice does not fail', () => {
+    // Create minimal schema without slot_role (already migrated state)
+    db.exec(`PRAGMA foreign_keys = OFF`);
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -299,18 +299,18 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				updated_at INTEGER NOT NULL
 			)
 		`);
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (id TEXT PRIMARY KEY, space_id TEXT, workflow_id TEXT,
 				title TEXT, description TEXT DEFAULT '', current_step_index INTEGER DEFAULT 0,
 				current_node_id TEXT, status TEXT DEFAULT 'pending', config TEXT,
 				iteration_count INTEGER DEFAULT 0, max_iterations INTEGER DEFAULT 5,
 				goal_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER)
 		`);
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_nodes (id TEXT PRIMARY KEY, workflow_id TEXT, name TEXT,
 				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)
 		`);
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -328,17 +328,17 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 				updated_at INTEGER NOT NULL
 			)
 		`);
-		db.exec(`PRAGMA foreign_keys = ON`);
+    db.exec(`PRAGMA foreign_keys = ON`);
 
-		// First run
-		expect(() => runMigration51(db)).not.toThrow();
+    // First run
+    expect(() => runMigration51(db)).not.toThrow();
 
-		// Second run should be a no-op (no error)
-		expect(() => runMigration51(db)).not.toThrow();
+    // Second run should be a no-op (no error)
+    expect(() => runMigration51(db)).not.toThrow();
 
-		// Column state after double run
-		expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
-		expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
-		expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
-	});
+    // Column state after double run
+    expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
+    expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
+    expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
+  });
 });

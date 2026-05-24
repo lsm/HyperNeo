@@ -17,94 +17,94 @@ import { setupLiveQueryHandlers } from '../../../../src/lib/rpc-handlers/live-qu
 
 type RequestHandler = (data: unknown, context: Partial<CallCtx>) => Promise<unknown> | unknown;
 type CallCtx = {
-	clientId?: string;
-	sessionId: string;
-	messageId: string;
-	method: string;
-	timestamp: string;
+  clientId?: string;
+  sessionId: string;
+  messageId: string;
+  method: string;
+  timestamp: string;
 };
 
 interface SentMessage {
-	clientId: string;
-	message: {
-		method: string;
-		data: {
-			subscriptionId: string;
-			rows?: unknown[];
-			added?: unknown[];
-			removed?: unknown[];
-			updated?: unknown[];
-			version: number;
-		};
-	};
+  clientId: string;
+  message: {
+    method: string;
+    data: {
+      subscriptionId: string;
+      rows?: unknown[];
+      added?: unknown[];
+      removed?: unknown[];
+      updated?: unknown[];
+      version: number;
+    };
+  };
 }
 
 function createMockSetup() {
-	const handlers = new Map<string, RequestHandler>();
-	let disconnectHandler: ((clientId: string) => void) | null = null;
-	const sentMessages: SentMessage[] = [];
-	let sendToClientResult = true;
-	let routerEnabled = true;
+  const handlers = new Map<string, RequestHandler>();
+  let disconnectHandler: ((clientId: string) => void) | null = null;
+  const sentMessages: SentMessage[] = [];
+  let sendToClientResult = true;
+  let routerEnabled = true;
 
-	const mockRouter = {
-		sendToClient: mock((clientId: string, message: unknown) => {
-			sentMessages.push({ clientId, message: message as SentMessage['message'] });
-			return sendToClientResult;
-		}),
-	};
+  const mockRouter = {
+    sendToClient: mock((clientId: string, message: unknown) => {
+      sentMessages.push({ clientId, message: message as SentMessage['message'] });
+      return sendToClientResult;
+    }),
+  };
 
-	const hub = {
-		onRequest: mock((method: string, handler: RequestHandler) => {
-			handlers.set(method, handler);
-			return () => handlers.delete(method);
-		}),
-		getRouter: mock(() => (routerEnabled ? mockRouter : null)),
-		onClientDisconnect: mock((handler: (clientId: string) => void) => {
-			disconnectHandler = handler;
-			return () => {
-				disconnectHandler = null;
-			};
-		}),
-	} as unknown as MessageHub;
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    getRouter: mock(() => (routerEnabled ? mockRouter : null)),
+    onClientDisconnect: mock((handler: (clientId: string) => void) => {
+      disconnectHandler = handler;
+      return () => {
+        disconnectHandler = null;
+      };
+    }),
+  } as unknown as MessageHub;
 
-	const callHandler = async (
-		method: string,
-		data: unknown,
-		ctx: Partial<CallCtx> = {}
-	): Promise<unknown> => {
-		const handler = handlers.get(method);
-		if (!handler) throw new Error(`No handler registered for method: ${method}`);
-		const fullCtx: CallCtx = {
-			clientId: 'client-1',
-			namespaceId: 'global',
-			sessionId: 'global',
-			messageId: 'msg-1',
-			method,
-			timestamp: new Date().toISOString(),
-			...ctx,
-		};
-		return handler(data, fullCtx);
-	};
+  const callHandler = async (
+    method: string,
+    data: unknown,
+    ctx: Partial<CallCtx> = {}
+  ): Promise<unknown> => {
+    const handler = handlers.get(method);
+    if (!handler) throw new Error(`No handler registered for method: ${method}`);
+    const fullCtx: CallCtx = {
+      clientId: 'client-1',
+      namespaceId: 'global',
+      sessionId: 'global',
+      messageId: 'msg-1',
+      method,
+      timestamp: new Date().toISOString(),
+      ...ctx,
+    };
+    return handler(data, fullCtx);
+  };
 
-	return {
-		hub,
-		sentMessages,
-		callHandler,
-		fireDisconnect: (clientId: string) => disconnectHandler?.(clientId),
-		setSendResult: (result: boolean) => {
-			sendToClientResult = result;
-		},
-		setRouterEnabled: (enabled: boolean) => {
-			routerEnabled = enabled;
-		},
-		mockRouter,
-	};
+  return {
+    hub,
+    sentMessages,
+    callHandler,
+    fireDisconnect: (clientId: string) => disconnectHandler?.(clientId),
+    setSendResult: (result: boolean) => {
+      sendToClientResult = result;
+    },
+    setRouterEnabled: (enabled: boolean) => {
+      routerEnabled = enabled;
+    },
+    mockRouter,
+  };
 }
 
 function createDb() {
-	const db = new BunDatabase(':memory:');
-	createTables(db);
-	db.exec(`
+  const db = new BunDatabase(':memory:');
+  createTables(db);
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
 			id TEXT PRIMARY KEY,
 			slug TEXT,
@@ -125,404 +125,404 @@ function createDb() {
 			updated_at INTEGER NOT NULL
 		)
 	`);
-	return db;
+  return db;
 }
 
 function insertRoom(db: BunDatabase, roomId: string) {
-	const now = Date.now();
-	db.exec(
-		`INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${now}, ${now})`
-	);
+  const now = Date.now();
+  db.exec(
+    `INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${now}, ${now})`
+  );
 }
 
 function insertTask(db: BunDatabase, taskId: string, roomId: string) {
-	const now = Date.now();
-	db.exec(
-		`INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
+  const now = Date.now();
+  db.exec(
+    `INSERT OR IGNORE INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
 		 VALUES ('${taskId}', '${roomId}', 'Test Task', '', 'pending', 'normal', 'coding', ${now}, ${now})`
-	);
+  );
 }
 
 function insertSessionGroup(
-	db: BunDatabase,
-	groupId: string,
-	refId: string,
-	groupType: string = 'task'
+  db: BunDatabase,
+  groupId: string,
+  refId: string,
+  groupType: string = 'task'
 ) {
-	const now = Date.now();
-	db.exec(
-		`INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, version, created_at)
+  const now = Date.now();
+  db.exec(
+    `INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, version, created_at)
 		 VALUES ('${groupId}', '${groupType}', '${refId}', 1, ${now})`
-	);
+  );
 }
 
 function insertMcpServer(db: BunDatabase, id: string, name: string, enabled = true) {
-	const now = Date.now();
-	db.exec(
-		`INSERT INTO app_mcp_servers (id, name, source_type, enabled, source, created_at, updated_at)
+  const now = Date.now();
+  db.exec(
+    `INSERT INTO app_mcp_servers (id, name, source_type, enabled, source, created_at, updated_at)
 		 VALUES ('${id}', '${name}', 'stdio', ${enabled ? 1 : 0}, 'user', ${now}, ${now})`
-	);
+  );
 }
 
 function insertWorkflowRun(db: BunDatabase, runId: string) {
-	const now = Date.now();
-	db.exec(
-		`INSERT OR IGNORE INTO space_workflow_runs (
+  const now = Date.now();
+  db.exec(
+    `INSERT OR IGNORE INTO space_workflow_runs (
 			id, space_id, workflow_id, title, description, status, config, created_at, updated_at
 		) VALUES (
 			'${runId}', 'space-test-1', 'workflow-test-1', 'Test Run', '', 'in_progress', '{}', ${now}, ${now}
 		)`
-	);
+  );
 }
 
 describe('setupLiveQueryHandlers', () => {
-	let db: BunDatabase;
-	let reactiveDb: ReactiveDatabase;
-	let engine: LiveQueryEngine;
-	let setup: ReturnType<typeof createMockSetup>;
-	const roomId = 'room-test-1';
-	const taskId = 'task-test-1';
+  let db: BunDatabase;
+  let reactiveDb: ReactiveDatabase;
+  let engine: LiveQueryEngine;
+  let setup: ReturnType<typeof createMockSetup>;
+  const roomId = 'room-test-1';
+  const taskId = 'task-test-1';
 
-	beforeEach(() => {
-		db = createDb();
-		reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
-		engine = new LiveQueryEngine(db, reactiveDb);
-		setup = createMockSetup();
-		setupLiveQueryHandlers(setup.hub, engine, db);
-		insertRoom(db, roomId);
-		insertTask(db, taskId, roomId);
-	});
+  beforeEach(() => {
+    db = createDb();
+    reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    engine = new LiveQueryEngine(db, reactiveDb);
+    setup = createMockSetup();
+    setupLiveQueryHandlers(setup.hub, engine, db);
+    insertRoom(db, roomId);
+    insertTask(db, taskId, roomId);
+  });
 
-	afterEach(() => {
-		engine.dispose();
-		db.close();
-	});
+  afterEach(() => {
+    engine.dispose();
+    db.close();
+  });
 
-	test('subscribe: absent clientId throws', async () => {
-		await expect(
-			setup.callHandler(
-				'liveQuery.subscribe',
-				{ queryName: 'mcpServers.global', params: [], subscriptionId: 'sub-1' },
-				{ clientId: undefined }
-			)
-		).rejects.toThrow('clientId absent');
-	});
+  test('subscribe: absent clientId throws', async () => {
+    await expect(
+      setup.callHandler(
+        'liveQuery.subscribe',
+        { queryName: 'mcpServers.global', params: [], subscriptionId: 'sub-1' },
+        { clientId: undefined }
+      )
+    ).rejects.toThrow('clientId absent');
+  });
 
-	test('unsubscribe: absent clientId throws', async () => {
-		await expect(
-			setup.callHandler(
-				'liveQuery.unsubscribe',
-				{ subscriptionId: 'sub-1' },
-				{ clientId: undefined }
-			)
-		).rejects.toThrow('clientId absent');
-	});
+  test('unsubscribe: absent clientId throws', async () => {
+    await expect(
+      setup.callHandler(
+        'liveQuery.unsubscribe',
+        { subscriptionId: 'sub-1' },
+        { clientId: undefined }
+      )
+    ).rejects.toThrow('clientId absent');
+  });
 
-	test('subscribe: unknown query name throws', async () => {
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'nonexistent.query',
-				params: ['x'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('Unknown query name');
-	});
+  test('subscribe: unknown query name throws', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'nonexistent.query',
+        params: ['x'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('Unknown query name');
+  });
 
-	test('retired Room-scoped query names are unknown', async () => {
-		for (const queryName of [
-			'tasks.byRoom',
-			'tasks.byRoom.all',
-			'goals.byRoom',
-			'mcpEnablement.byRoom',
-			'skills.byRoom',
-		]) {
-			await expect(
-				setup.callHandler('liveQuery.subscribe', {
-					queryName,
-					params: [roomId],
-					subscriptionId: `legacy-${queryName}`,
-				})
-			).rejects.toThrow(`Unknown query name: "${queryName}"`);
-		}
-	});
+  test('retired Room-scoped query names are unknown', async () => {
+    for (const queryName of [
+      'tasks.byRoom',
+      'tasks.byRoom.all',
+      'goals.byRoom',
+      'mcpEnablement.byRoom',
+      'skills.byRoom',
+    ]) {
+      await expect(
+        setup.callHandler('liveQuery.subscribe', {
+          queryName,
+          params: [roomId],
+          subscriptionId: `legacy-${queryName}`,
+        })
+      ).rejects.toThrow(`Unknown query name: "${queryName}"`);
+    }
+  });
 
-	test('subscribe: mismatched params count throws', async () => {
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'mcpServers.global',
-				params: ['extra'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('expects 0 parameter(s), got 1');
-	});
+  test('subscribe: mismatched params count throws', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: ['extra'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('expects 0 parameter(s), got 1');
+  });
 
-	test('subscribe spaceTaskActivity.byTask: nonexistent task rejected', async () => {
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'spaceTaskActivity.byTask',
-				params: ['space-task-does-not-exist'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('Unauthorized');
-	});
+  test('subscribe spaceTaskActivity.byTask: nonexistent task rejected', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskActivity.byTask',
+        params: ['space-task-does-not-exist'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('Unauthorized');
+  });
 
-	test('subscribe spaceTaskMessages.byTask.compact: nonexistent task rejected', async () => {
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'spaceTaskMessages.byTask.compact',
-				params: ['space-task-does-not-exist'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('Unauthorized');
-	});
+  test('subscribe spaceTaskMessages.byTask.compact: nonexistent task rejected', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: ['space-task-does-not-exist'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('Unauthorized');
+  });
 
-	test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {
-		insertWorkflowRun(db, 'workflow-run-valid');
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'actorMessages.byWorkflowRun',
-				params: ['workflow-run-valid', 'workflow-run-other', 'workflow-run-valid'],
-				subscriptionId: 'sub-actor-run',
-			})
-		).rejects.toThrow('requires matching workflow run ids');
-	});
+  test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {
+    insertWorkflowRun(db, 'workflow-run-valid');
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'actorMessages.byWorkflowRun',
+        params: ['workflow-run-valid', 'workflow-run-other', 'workflow-run-valid'],
+        subscriptionId: 'sub-actor-run',
+      })
+    ).rejects.toThrow('requires matching workflow run ids');
+  });
 
-	test('subscribe actorMessages.byWorkflowRun: nonexistent run rejected', async () => {
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'actorMessages.byWorkflowRun',
-				params: ['workflow-run-missing', 'workflow-run-missing', 'workflow-run-missing'],
-				subscriptionId: 'sub-actor-run-missing',
-			})
-		).rejects.toThrow('Unauthorized');
-	});
+  test('subscribe actorMessages.byWorkflowRun: nonexistent run rejected', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'actorMessages.byWorkflowRun',
+        params: ['workflow-run-missing', 'workflow-run-missing', 'workflow-run-missing'],
+        subscriptionId: 'sub-actor-run-missing',
+      })
+    ).rejects.toThrow('Unauthorized');
+  });
 
-	test('subscribe sessionGroupMessages.byGroup: nonexistent group rejected', async () => {
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'sessionGroupMessages.byGroup',
-				params: ['group-does-not-exist'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('Unauthorized');
-	});
+  test('subscribe sessionGroupMessages.byGroup: nonexistent group rejected', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'sessionGroupMessages.byGroup',
+        params: ['group-does-not-exist'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('Unauthorized');
+  });
 
-	test('subscribe sessionGroupMessages.byGroup: group with missing task rejected', async () => {
-		insertSessionGroup(db, 'grp-1', 'nonexistent-task', 'task');
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'sessionGroupMessages.byGroup',
-				params: ['grp-1'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('Unauthorized');
-	});
+  test('subscribe sessionGroupMessages.byGroup: group with missing task rejected', async () => {
+    insertSessionGroup(db, 'grp-1', 'nonexistent-task', 'task');
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'sessionGroupMessages.byGroup',
+        params: ['grp-1'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('Unauthorized');
+  });
 
-	test('subscribe sessionGroupMessages.byGroup: task with missing room rejected', async () => {
-		const orphanTask = 'orphan-task-1';
-		const missingRoom = 'missing-room-1';
-		const now = Date.now();
-		db.exec(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
+  test('subscribe sessionGroupMessages.byGroup: task with missing room rejected', async () => {
+    const orphanTask = 'orphan-task-1';
+    const missingRoom = 'missing-room-1';
+    const now = Date.now();
+    db.exec(
+      `INSERT INTO tasks (id, room_id, title, description, status, priority, task_type, created_at, updated_at)
 			 VALUES ('${orphanTask}', '${missingRoom}', 'Orphan Task', '', 'pending', 'normal', 'coding', ${now}, ${now})`
-		);
-		insertSessionGroup(db, 'grp-2', orphanTask, 'task');
+    );
+    insertSessionGroup(db, 'grp-2', orphanTask, 'task');
 
-		await expect(
-			setup.callHandler('liveQuery.subscribe', {
-				queryName: 'sessionGroupMessages.byGroup',
-				params: ['grp-2'],
-				subscriptionId: 'sub-1',
-			})
-		).rejects.toThrow('Unauthorized');
-	});
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'sessionGroupMessages.byGroup',
+        params: ['grp-2'],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('Unauthorized');
+  });
 
-	test('subscribe sessionGroupMessages.byGroup: valid legacy task group allowed', async () => {
-		insertSessionGroup(db, 'grp-valid', taskId, 'task');
-		const result = await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'sessionGroupMessages.byGroup',
-			params: ['grp-valid'],
-			subscriptionId: 'sub-msg',
-		});
-		expect(result).toEqual({ ok: true });
-		expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
-	});
+  test('subscribe sessionGroupMessages.byGroup: valid legacy task group allowed', async () => {
+    insertSessionGroup(db, 'grp-valid', taskId, 'task');
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'sessionGroupMessages.byGroup',
+      params: ['grp-valid'],
+      subscriptionId: 'sub-msg',
+    });
+    expect(result).toEqual({ ok: true });
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+  });
 
-	test('subscribe sessionGroupMessages.byGroup: non-task group_type allowed without task lookup', async () => {
-		insertSessionGroup(db, 'grp-other', 'some-ref', 'workflow');
-		const result = await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'sessionGroupMessages.byGroup',
-			params: ['grp-other'],
-			subscriptionId: 'sub-other',
-		});
-		expect(result).toEqual({ ok: true });
-	});
+  test('subscribe sessionGroupMessages.byGroup: non-task group_type allowed without task lookup', async () => {
+    insertSessionGroup(db, 'grp-other', 'some-ref', 'workflow');
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'sessionGroupMessages.byGroup',
+      params: ['grp-other'],
+      subscriptionId: 'sub-other',
+    });
+    expect(result).toEqual({ ok: true });
+  });
 
-	test('subscribe: snapshot delivered immediately on subscribe', async () => {
-		insertMcpServer(db, 'mcp-1', 'alpha');
-		const result = await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-1',
-		});
-		expect(result).toEqual({ ok: true });
-		expect(setup.sentMessages.length).toBe(1);
-		const msg = setup.sentMessages[0];
-		expect(msg.clientId).toBe('client-1');
-		expect(msg.message.method).toBe('liveQuery.snapshot');
-		expect(msg.message.data.subscriptionId).toBe('sub-1');
-		expect(Array.isArray(msg.message.data.rows)).toBe(true);
-		expect(typeof msg.message.data.version).toBe('number');
-	});
+  test('subscribe: snapshot delivered immediately on subscribe', async () => {
+    insertMcpServer(db, 'mcp-1', 'alpha');
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    expect(result).toEqual({ ok: true });
+    expect(setup.sentMessages.length).toBe(1);
+    const msg = setup.sentMessages[0];
+    expect(msg.clientId).toBe('client-1');
+    expect(msg.message.method).toBe('liveQuery.snapshot');
+    expect(msg.message.data.subscriptionId).toBe('sub-1');
+    expect(Array.isArray(msg.message.data.rows)).toBe(true);
+    expect(typeof msg.message.data.version).toBe('number');
+  });
 
-	test('full lifecycle: subscribe, delta, unsubscribe', async () => {
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-lc',
-		});
-		expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+  test('full lifecycle: subscribe, delta, unsubscribe', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-lc',
+    });
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
 
-		insertMcpServer(db, 'mcp-new-1', 'new-server');
-		reactiveDb.notifyChange('app_mcp_servers');
-		await new Promise((r) => setTimeout(r, 10));
-		expect(setup.sentMessages.length).toBeGreaterThanOrEqual(1);
+    insertMcpServer(db, 'mcp-new-1', 'new-server');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(setup.sentMessages.length).toBeGreaterThanOrEqual(1);
 
-		const unsubResult = await setup.callHandler('liveQuery.unsubscribe', {
-			subscriptionId: 'sub-lc',
-		});
-		expect(unsubResult).toEqual({ ok: true });
-	});
+    const unsubResult = await setup.callHandler('liveQuery.unsubscribe', {
+      subscriptionId: 'sub-lc',
+    });
+    expect(unsubResult).toEqual({ ok: true });
+  });
 
-	test('snapshot always delivered before any delta', async () => {
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-order',
-		});
-		expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
-		for (let i = 1; i < setup.sentMessages.length; i++) {
-			expect(setup.sentMessages[i].message.method).toBe('liveQuery.delta');
-		}
-	});
+  test('snapshot always delivered before any delta', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-order',
+    });
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+    for (let i = 1; i < setup.sentMessages.length; i++) {
+      expect(setup.sentMessages[i].message.method).toBe('liveQuery.delta');
+    }
+  });
 
-	test('subscriptionId collision replaces prior subscription', async () => {
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-collision',
-		});
-		expect(setup.sentMessages.length).toBe(1);
+  test('subscriptionId collision replaces prior subscription', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-collision',
+    });
+    expect(setup.sentMessages.length).toBe(1);
 
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-collision',
-		});
-		expect(setup.sentMessages.length).toBe(2);
-		expect(setup.sentMessages[1].message.method).toBe('liveQuery.snapshot');
-	});
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-collision',
+    });
+    expect(setup.sentMessages.length).toBe(2);
+    expect(setup.sentMessages[1].message.method).toBe('liveQuery.snapshot');
+  });
 
-	test('unsubscribe: unknown subscriptionId returns ok', async () => {
-		const result = await setup.callHandler('liveQuery.unsubscribe', {
-			subscriptionId: 'non-existent-sub',
-		});
-		expect(result).toEqual({ ok: true });
-	});
+  test('unsubscribe: unknown subscriptionId returns ok', async () => {
+    const result = await setup.callHandler('liveQuery.unsubscribe', {
+      subscriptionId: 'non-existent-sub',
+    });
+    expect(result).toEqual({ ok: true });
+  });
 
-	test('client disconnect disposes all subscriptions for that client', async () => {
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-a',
-		});
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-b',
-		});
-		expect(setup.sentMessages.length).toBe(2);
+  test('client disconnect disposes all subscriptions for that client', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-a',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-b',
+    });
+    expect(setup.sentMessages.length).toBe(2);
 
-		setup.fireDisconnect('client-1');
-		const result = await setup.callHandler('liveQuery.unsubscribe', {
-			subscriptionId: 'sub-a',
-		});
-		expect(result).toEqual({ ok: true });
-	});
+    setup.fireDisconnect('client-1');
+    const result = await setup.callHandler('liveQuery.unsubscribe', {
+      subscriptionId: 'sub-a',
+    });
+    expect(result).toEqual({ ok: true });
+  });
 
-	test('onClientDisconnect is registered exactly once at setup', async () => {
-		expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
-		for (let i = 0; i < 5; i++) {
-			await setup.callHandler('liveQuery.subscribe', {
-				queryName: 'mcpServers.global',
-				params: [],
-				subscriptionId: `sub-cycle-${i}`,
-			});
-			await setup.callHandler('liveQuery.unsubscribe', {
-				subscriptionId: `sub-cycle-${i}`,
-			});
-		}
-		expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
-	});
+  test('onClientDisconnect is registered exactly once at setup', async () => {
+    expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 5; i++) {
+      await setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: `sub-cycle-${i}`,
+      });
+      await setup.callHandler('liveQuery.unsubscribe', {
+        subscriptionId: `sub-cycle-${i}`,
+      });
+    }
+    expect(setup.hub.onClientDisconnect).toHaveBeenCalledTimes(1);
+  });
 
-	test('subscribe: snapshot delivery failure returns ok gracefully', async () => {
-		setup.setSendResult(false);
-		const result = await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-fail',
-		});
-		expect(result).toEqual({ ok: true });
-	});
+  test('subscribe: snapshot delivery failure returns ok gracefully', async () => {
+    setup.setSendResult(false);
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-fail',
+    });
+    expect(result).toEqual({ ok: true });
+  });
 
-	test('subscribe: null router during snapshot disposes handle and returns ok', async () => {
-		setup.setRouterEnabled(false);
-		const result = await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-no-router',
-		});
-		expect(setup.sentMessages.length).toBe(0);
-		expect(result).toEqual({ ok: true });
+  test('subscribe: null router during snapshot disposes handle and returns ok', async () => {
+    setup.setRouterEnabled(false);
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-no-router',
+    });
+    expect(setup.sentMessages.length).toBe(0);
+    expect(result).toEqual({ ok: true });
 
-		setup.setRouterEnabled(true);
-		const result2 = await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-no-router',
-		});
-		expect(result2).toEqual({ ok: true });
-		expect(setup.sentMessages.length).toBe(1);
-		expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
-	});
+    setup.setRouterEnabled(true);
+    const result2 = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-no-router',
+    });
+    expect(result2).toEqual({ ok: true });
+    expect(setup.sentMessages.length).toBe(1);
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+  });
 
-	test('version is monotonically increasing across snapshot and deltas', async () => {
-		await setup.callHandler('liveQuery.subscribe', {
-			queryName: 'mcpServers.global',
-			params: [],
-			subscriptionId: 'sub-version',
-		});
-		const snapshotVersion = setup.sentMessages[0].message.data.version;
-		expect(typeof snapshotVersion).toBe('number');
+  test('version is monotonically increasing across snapshot and deltas', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-version',
+    });
+    const snapshotVersion = setup.sentMessages[0].message.data.version;
+    expect(typeof snapshotVersion).toBe('number');
 
-		insertMcpServer(db, 'mcp-v2', 'server-v2');
-		reactiveDb.notifyChange('app_mcp_servers');
-		await new Promise((r) => setTimeout(r, 10));
+    insertMcpServer(db, 'mcp-v2', 'server-v2');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((r) => setTimeout(r, 10));
 
-		insertMcpServer(db, 'mcp-v3', 'server-v3');
-		reactiveDb.notifyChange('app_mcp_servers');
-		await new Promise((r) => setTimeout(r, 10));
+    insertMcpServer(db, 'mcp-v3', 'server-v3');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((r) => setTimeout(r, 10));
 
-		const deltas = setup.sentMessages
-			.slice(1)
-			.filter((m) => m.message.method === 'liveQuery.delta');
-		expect(deltas.length).toBeGreaterThanOrEqual(1);
+    const deltas = setup.sentMessages
+      .slice(1)
+      .filter((m) => m.message.method === 'liveQuery.delta');
+    expect(deltas.length).toBeGreaterThanOrEqual(1);
 
-		let prevVersion = snapshotVersion;
-		for (const delta of deltas) {
-			const v = delta.message.data.version;
-			expect(v).toBeGreaterThanOrEqual(prevVersion);
-			prevVersion = v;
-		}
-	});
+    let prevVersion = snapshotVersion;
+    for (const delta of deltas) {
+      const v = delta.message.data.version;
+      expect(v).toBeGreaterThanOrEqual(prevVersion);
+      prevVersion = v;
+    }
+  });
 });

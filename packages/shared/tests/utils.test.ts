@@ -2,170 +2,170 @@ import { describe, test, expect } from 'bun:test';
 import { generateUUID, parseJson, parseJsonOptional } from '../src/utils.ts';
 
 describe('generateUUID', () => {
-	test('generates valid UUID format', () => {
-		const uuid = generateUUID();
-		// UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-		expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-	});
+  test('generates valid UUID format', () => {
+    const uuid = generateUUID();
+    // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
 
-	test('generates unique UUIDs', () => {
-		const uuid1 = generateUUID();
-		const uuid2 = generateUUID();
-		expect(uuid1).not.toBe(uuid2);
-	});
+  test('generates unique UUIDs', () => {
+    const uuid1 = generateUUID();
+    const uuid2 = generateUUID();
+    expect(uuid1).not.toBe(uuid2);
+  });
 
-	test('uses native crypto.randomUUID if available', () => {
-		// In Bun, crypto.randomUUID should be available
-		const uuid = generateUUID();
-		expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-	});
+  test('uses native crypto.randomUUID if available', () => {
+    // In Bun, crypto.randomUUID should be available
+    const uuid = generateUUID();
+    expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  });
 
-	test('fallback works when crypto.randomUUID is not available', () => {
-		// Temporarily set crypto.randomUUID to undefined (delete doesn't work in Bun)
-		const original = globalThis.crypto?.randomUUID;
-		if (globalThis.crypto) {
-			// @ts-expect-error - Intentionally setting to undefined for test
-			globalThis.crypto.randomUUID = undefined;
-		}
+  test('fallback works when crypto.randomUUID is not available', () => {
+    // Temporarily set crypto.randomUUID to undefined (delete doesn't work in Bun)
+    const original = globalThis.crypto?.randomUUID;
+    if (globalThis.crypto) {
+      // @ts-expect-error - Intentionally setting to undefined for test
+      globalThis.crypto.randomUUID = undefined;
+    }
 
-		const uuid = generateUUID();
-		expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    const uuid = generateUUID();
+    expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 
-		// Restore
-		if (globalThis.crypto && original) {
-			globalThis.crypto.randomUUID = original;
-		}
-	});
+    // Restore
+    if (globalThis.crypto && original) {
+      globalThis.crypto.randomUUID = original;
+    }
+  });
 
-	test('fallback generates valid v4 UUID', () => {
-		// Temporarily set crypto.randomUUID to undefined to force fallback
-		const original = globalThis.crypto?.randomUUID;
-		if (globalThis.crypto) {
-			// @ts-expect-error - Intentionally setting to undefined for test
-			globalThis.crypto.randomUUID = undefined;
-		}
+  test('fallback generates valid v4 UUID', () => {
+    // Temporarily set crypto.randomUUID to undefined to force fallback
+    const original = globalThis.crypto?.randomUUID;
+    if (globalThis.crypto) {
+      // @ts-expect-error - Intentionally setting to undefined for test
+      globalThis.crypto.randomUUID = undefined;
+    }
 
-		const uuid = generateUUID();
+    const uuid = generateUUID();
 
-		// Check version field (4)
-		expect(uuid[14]).toBe('4');
+    // Check version field (4)
+    expect(uuid[14]).toBe('4');
 
-		// Check variant field (8, 9, a, or b)
-		expect(['8', '9', 'a', 'b']).toContain(uuid[19].toLowerCase());
+    // Check variant field (8, 9, a, or b)
+    expect(['8', '9', 'a', 'b']).toContain(uuid[19].toLowerCase());
 
-		// Restore
-		if (globalThis.crypto && original) {
-			globalThis.crypto.randomUUID = original;
-		}
-	});
+    // Restore
+    if (globalThis.crypto && original) {
+      globalThis.crypto.randomUUID = original;
+    }
+  });
 
-	test('generates multiple unique UUIDs in fallback mode', () => {
-		const original = globalThis.crypto?.randomUUID;
-		if (globalThis.crypto) {
-			// @ts-expect-error - Intentionally setting to undefined for test
-			globalThis.crypto.randomUUID = undefined;
-		}
+  test('generates multiple unique UUIDs in fallback mode', () => {
+    const original = globalThis.crypto?.randomUUID;
+    if (globalThis.crypto) {
+      // @ts-expect-error - Intentionally setting to undefined for test
+      globalThis.crypto.randomUUID = undefined;
+    }
 
-		const uuids = new Set();
-		for (let i = 0; i < 100; i++) {
-			uuids.add(generateUUID());
-		}
+    const uuids = new Set();
+    for (let i = 0; i < 100; i++) {
+      uuids.add(generateUUID());
+    }
 
-		expect(uuids.size).toBe(100); // All unique
+    expect(uuids.size).toBe(100); // All unique
 
-		// Restore
-		if (globalThis.crypto && original) {
-			globalThis.crypto.randomUUID = original;
-		}
-	});
+    // Restore
+    if (globalThis.crypto && original) {
+      globalThis.crypto.randomUUID = original;
+    }
+  });
 });
 
 describe('parseJson', () => {
-	test('returns parsed value for valid JSON string', () => {
-		const result1 = parseJson<Record<string, number>>('{"a":1}', {});
-		expect(result1).toEqual({ a: 1 });
+  test('returns parsed value for valid JSON string', () => {
+    const result1 = parseJson<Record<string, number>>('{"a":1}', {});
+    expect(result1).toEqual({ a: 1 });
 
-		const result2 = parseJson<number[]>('[1,2,3]', []);
-		expect(result2).toEqual([1, 2, 3]);
+    const result2 = parseJson<number[]>('[1,2,3]', []);
+    expect(result2).toEqual([1, 2, 3]);
 
-		const result3 = parseJson<string>('"hello"', 'fallback');
-		expect(result3).toBe('hello');
+    const result3 = parseJson<string>('"hello"', 'fallback');
+    expect(result3).toBe('hello');
 
-		const result4 = parseJson<number>('42', 0);
-		expect(result4).toBe(42);
+    const result4 = parseJson<number>('42', 0);
+    expect(result4).toBe(42);
 
-		const result5 = parseJson<boolean>('true', false);
-		expect(result5).toBe(true);
-	});
+    const result5 = parseJson<boolean>('true', false);
+    expect(result5).toBe(true);
+  });
 
-	test('returns fallback for null input', () => {
-		const result1 = parseJson<string>(null, 'default');
-		expect(result1).toBe('default');
+  test('returns fallback for null input', () => {
+    const result1 = parseJson<string>(null, 'default');
+    expect(result1).toBe('default');
 
-		const result2 = parseJson<Record<string, number>>(null, { key: 1 });
-		expect(result2).toEqual({ key: 1 });
-	});
+    const result2 = parseJson<Record<string, number>>(null, { key: 1 });
+    expect(result2).toEqual({ key: 1 });
+  });
 
-	test('returns fallback for undefined input', () => {
-		const result1 = parseJson<string>(undefined, 'default');
-		expect(result1).toBe('default');
+  test('returns fallback for undefined input', () => {
+    const result1 = parseJson<string>(undefined, 'default');
+    expect(result1).toBe('default');
 
-		const result2 = parseJson<number[]>(undefined, [1, 2]);
-		expect(result2).toEqual([1, 2]);
-	});
+    const result2 = parseJson<number[]>(undefined, [1, 2]);
+    expect(result2).toEqual([1, 2]);
+  });
 
-	test('returns fallback for invalid JSON string', () => {
-		const result1 = parseJson<string>('{not json}', 'fallback');
-		expect(result1).toBe('fallback');
+  test('returns fallback for invalid JSON string', () => {
+    const result1 = parseJson<string>('{not json}', 'fallback');
+    expect(result1).toBe('fallback');
 
-		const result2 = parseJson<Record<string, unknown>>('trailing comma,', {});
-		expect(result2).toEqual({});
+    const result2 = parseJson<Record<string, unknown>>('trailing comma,', {});
+    expect(result2).toEqual({});
 
-		const result3 = parseJson<Record<string, unknown>>('', {});
-		expect(result3).toEqual({});
-	});
+    const result3 = parseJson<Record<string, unknown>>('', {});
+    expect(result3).toEqual({});
+  });
 
-	test('returns fallback for empty string', () => {
-		const result1 = parseJson<string>('', 'default');
-		expect(result1).toBe('default');
+  test('returns fallback for empty string', () => {
+    const result1 = parseJson<string>('', 'default');
+    expect(result1).toBe('default');
 
-		const result2 = parseJson<number[]>('', []);
-		expect(result2).toEqual([]);
-	});
+    const result2 = parseJson<number[]>('', []);
+    expect(result2).toEqual([]);
+  });
 });
 
 describe('parseJsonOptional', () => {
-	test('returns parsed value for valid JSON string', () => {
-		const result1 = parseJsonOptional<Record<string, number>>('{"a":1}');
-		expect(result1).toEqual({ a: 1 });
+  test('returns parsed value for valid JSON string', () => {
+    const result1 = parseJsonOptional<Record<string, number>>('{"a":1}');
+    expect(result1).toEqual({ a: 1 });
 
-		const result2 = parseJsonOptional<number[]>('[1,2,3]');
-		expect(result2).toEqual([1, 2, 3]);
+    const result2 = parseJsonOptional<number[]>('[1,2,3]');
+    expect(result2).toEqual([1, 2, 3]);
 
-		const result3 = parseJsonOptional<string>('"hello"');
-		expect(result3).toBe('hello');
+    const result3 = parseJsonOptional<string>('"hello"');
+    expect(result3).toBe('hello');
 
-		const result4 = parseJsonOptional<number>('42');
-		expect(result4).toBe(42);
+    const result4 = parseJsonOptional<number>('42');
+    expect(result4).toBe(42);
 
-		const result5 = parseJsonOptional<boolean>('true');
-		expect(result5).toBe(true);
-	});
+    const result5 = parseJsonOptional<boolean>('true');
+    expect(result5).toBe(true);
+  });
 
-	test('returns undefined for null input', () => {
-		expect(parseJsonOptional(null)).toBeUndefined();
-	});
+  test('returns undefined for null input', () => {
+    expect(parseJsonOptional(null)).toBeUndefined();
+  });
 
-	test('returns undefined for undefined input', () => {
-		expect(parseJsonOptional(undefined)).toBeUndefined();
-	});
+  test('returns undefined for undefined input', () => {
+    expect(parseJsonOptional(undefined)).toBeUndefined();
+  });
 
-	test('returns undefined for invalid JSON string', () => {
-		expect(parseJsonOptional('{not json}')).toBeUndefined();
-		expect(parseJsonOptional('trailing comma,')).toBeUndefined();
-	});
+  test('returns undefined for invalid JSON string', () => {
+    expect(parseJsonOptional('{not json}')).toBeUndefined();
+    expect(parseJsonOptional('trailing comma,')).toBeUndefined();
+  });
 
-	test('returns undefined for empty string', () => {
-		expect(parseJsonOptional('')).toBeUndefined();
-	});
+  test('returns undefined for empty string', () => {
+    expect(parseJsonOptional('')).toBeUndefined();
+  });
 });

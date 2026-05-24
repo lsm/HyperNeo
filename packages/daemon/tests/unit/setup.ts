@@ -23,72 +23,72 @@ import { mock } from 'bun:test';
 // Individual test files that need different mock behaviour call mock.module() at the
 // top of their own file to override this default.
 mock.module('@anthropic-ai/claude-agent-sdk', () => {
-	// ---------------------------------------------------------------------------
-	// MockMcpServer — replicates the MCP server surface area needed by tests.
-	// ---------------------------------------------------------------------------
-	class MockMcpServer {
-		readonly _registeredTools: Record<string, object> = {};
+  // ---------------------------------------------------------------------------
+  // MockMcpServer — replicates the MCP server surface area needed by tests.
+  // ---------------------------------------------------------------------------
+  class MockMcpServer {
+    readonly _registeredTools: Record<string, object> = {};
 
-		connect(): void {}
-		disconnect(): void {}
-	}
+    connect(): void {}
+    disconnect(): void {}
+  }
 
-	// Per-call tool capture:
-	//   tool() is called with (name, description, inputSchema, handler) — we
-	//   store defs here keyed by name.  createSdkMcpServer drains the batch
-	//   into the server instance and resets so subsequent servers start clean.
-	let _toolBatch: Array<{ name: string; def: object }> = [];
+  // Per-call tool capture:
+  //   tool() is called with (name, description, inputSchema, handler) — we
+  //   store defs here keyed by name.  createSdkMcpServer drains the batch
+  //   into the server instance and resets so subsequent servers start clean.
+  let _toolBatch: Array<{ name: string; def: object }> = [];
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	function tool(name: string, description: string, inputSchema: any, handler: unknown): object {
-		const def = { name, description, inputSchema, handler };
-		_toolBatch.push({ name, def });
-		return def;
-	}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function tool(name: string, description: string, inputSchema: any, handler: unknown): object {
+    const def = { name, description, inputSchema, handler };
+    _toolBatch.push({ name, def });
+    return def;
+  }
 
-	return {
-		query: mock(async () => ({
-			interrupt: () => {},
-		})),
-		interrupt: mock(async () => {}),
-		supportedModels: mock(async () => {
-			throw new Error('SDK unavailable in unit test');
-		}),
-		createSdkMcpServer: mock((_options: { name: string; version?: string; tools?: unknown[] }) => {
-			const server = new MockMcpServer();
-			// Drain the batch into this server's _registeredTools
-			for (const { name, def } of _toolBatch) {
-				server._registeredTools[name] = def;
-			}
-			// Fallback: if _toolBatch was empty (e.g. module isolation in CI causes
-			// tool() and createSdkMcpServer to reference different closures), recover
-			// tool defs from the `tools` option passed by the caller.  Each element is
-			// the return value of tool() which is { name, description, inputSchema, handler }.
-			if (Object.keys(server._registeredTools).length === 0 && Array.isArray(_options.tools)) {
-				for (const t of _options.tools) {
-					const td = t as {
-						name?: string;
-						description?: string;
-						inputSchema?: unknown;
-						handler?: unknown;
-					};
-					if (td.name) {
-						server._registeredTools[td.name] = td;
-					}
-				}
-			}
-			_toolBatch = [];
+  return {
+    query: mock(async () => ({
+      interrupt: () => {},
+    })),
+    interrupt: mock(async () => {}),
+    supportedModels: mock(async () => {
+      throw new Error('SDK unavailable in unit test');
+    }),
+    createSdkMcpServer: mock((_options: { name: string; version?: string; tools?: unknown[] }) => {
+      const server = new MockMcpServer();
+      // Drain the batch into this server's _registeredTools
+      for (const { name, def } of _toolBatch) {
+        server._registeredTools[name] = def;
+      }
+      // Fallback: if _toolBatch was empty (e.g. module isolation in CI causes
+      // tool() and createSdkMcpServer to reference different closures), recover
+      // tool defs from the `tools` option passed by the caller.  Each element is
+      // the return value of tool() which is { name, description, inputSchema, handler }.
+      if (Object.keys(server._registeredTools).length === 0 && Array.isArray(_options.tools)) {
+        for (const t of _options.tools) {
+          const td = t as {
+            name?: string;
+            description?: string;
+            inputSchema?: unknown;
+            handler?: unknown;
+          };
+          if (td.name) {
+            server._registeredTools[td.name] = td;
+          }
+        }
+      }
+      _toolBatch = [];
 
-			return {
-				type: 'sdk' as const,
-				name: _options.name,
-				version: _options.version ?? '1.0.0',
-				tools: _options.tools ?? [],
-				instance: server,
-			};
-		}),
-		tool,
-	};
+      return {
+        type: 'sdk' as const,
+        name: _options.name,
+        version: _options.version ?? '1.0.0',
+        tools: _options.tools ?? [],
+        instance: server,
+      };
+    }),
+    tool,
+  };
 });
 
 import { configureLogger, LogLevel } from '@neokai/shared';
@@ -118,9 +118,9 @@ console.log = () => {};
 
 // Export originals for tests that need to restore console output
 (globalThis as unknown as Record<string, unknown>).__originalConsole = {
-	error: originalConsoleError,
-	warn: originalConsoleWarn,
-	log: originalConsoleLog,
+  error: originalConsoleError,
+  warn: originalConsoleWarn,
+  log: originalConsoleLog,
 };
 
 // Clear all API keys to ensure unit tests don't make real API calls

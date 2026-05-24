@@ -9,31 +9,31 @@ export const MULTI_AGENT_NODE_WIDTH = 200;
 export const MULTI_AGENT_NODE_HEIGHT = 112;
 
 export function getVisualNodeDimensions(step: NodeDraft): { width: number; height: number } {
-	if (isMultiAgentNode(step)) {
-		return {
-			width: MULTI_AGENT_NODE_WIDTH,
-			height: MULTI_AGENT_NODE_HEIGHT,
-		};
-	}
+  if (isMultiAgentNode(step)) {
+    return {
+      width: MULTI_AGENT_NODE_WIDTH,
+      height: MULTI_AGENT_NODE_HEIGHT,
+    };
+  }
 
-	return {
-		width: SINGLE_AGENT_NODE_WIDTH,
-		height: SINGLE_AGENT_NODE_HEIGHT,
-	};
+  return {
+    width: SINGLE_AGENT_NODE_WIDTH,
+    height: SINGLE_AGENT_NODE_HEIGHT,
+  };
 }
 
 export function buildVisualNodePositions(nodes: VisualNode[]): NodePosition {
-	const positions: NodePosition = {};
+  const positions: NodePosition = {};
 
-	for (const node of nodes) {
-		const { width, height } = getVisualNodeDimensions(node.step);
-		positions[node.step.localId] = {
-			x: node.position.x,
-			y: node.position.y,
-			width,
-			height,
-		};
-	}
+  for (const node of nodes) {
+    const { width, height } = getVisualNodeDimensions(node.step);
+    positions[node.step.localId] = {
+      x: node.position.x,
+      y: node.position.y,
+      width,
+      height,
+    };
+  }
 
-	return positions;
+  return positions;
 }

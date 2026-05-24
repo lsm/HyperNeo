@@ -13,9 +13,9 @@
  * feed needs.
  */
 import {
-	isSDKResultMessage,
-	isSDKUserMessage,
-	isSDKUserMessageReplay,
+  isSDKResultMessage,
+  isSDKUserMessage,
+  isSDKUserMessageReplay,
 } from '@neokai/shared/sdk/type-guards';
 import type { ParsedThreadRow } from './space-task-thread-events';
 
@@ -24,18 +24,18 @@ import type { ParsedThreadRow } from './space-task-thread-events';
  * corresponds to one exec cycle (init → tool uses + assistant text → result).
  */
 export interface AgentTurnBlock {
-	/** Stable id derived from the first row in the block. */
-	id: string;
-	/** Agent label, e.g. "Task Agent", "Coder Agent". */
-	agentLabel: string;
-	/** Rows in the block, in chronological order. */
-	rows: ParsedThreadRow[];
-	/**
-	 * True when the block contains an SDK result message. The minimal feed
-	 * uses this to decide whether the trailing block is "active" (eligible
-	 * for the live rail) or already closed.
-	 */
-	isTerminal: boolean;
+  /** Stable id derived from the first row in the block. */
+  id: string;
+  /** Agent label, e.g. "Task Agent", "Coder Agent". */
+  agentLabel: string;
+  /** Rows in the block, in chronological order. */
+  rows: ParsedThreadRow[];
+  /**
+   * True when the block contains an SDK result message. The minimal feed
+   * uses this to decide whether the trailing block is "active" (eligible
+   * for the live rail) or already closed.
+   */
+  isTerminal: boolean;
 }
 
 /**
@@ -47,11 +47,11 @@ export interface AgentTurnBlock {
  * boundaries.
  */
 export function normalizeAgentKey(label: string): string {
-	return label.trim().toLowerCase().replace(/\s+/g, ' ');
+  return label.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function rowIsTerminal(row: ParsedThreadRow): boolean {
-	return row.message !== null && isSDKResultMessage(row.message);
+  return row.message !== null && isSDKResultMessage(row.message);
 }
 
 /**
@@ -64,30 +64,30 @@ function rowIsTerminal(row: ParsedThreadRow): boolean {
  * for renderers that read closing text from `result.result`.
  */
 export function buildAgentTurns(rows: ParsedThreadRow[]): AgentTurnBlock[] {
-	const blocks: AgentTurnBlock[] = [];
-	let previousWasTerminal = false;
+  const blocks: AgentTurnBlock[] = [];
+  let previousWasTerminal = false;
 
-	for (const row of rows) {
-		const last = blocks[blocks.length - 1];
-		const isSameAgent =
-			last !== undefined && normalizeAgentKey(last.agentLabel) === normalizeAgentKey(row.label);
-		const terminal = rowIsTerminal(row);
+  for (const row of rows) {
+    const last = blocks[blocks.length - 1];
+    const isSameAgent =
+      last !== undefined && normalizeAgentKey(last.agentLabel) === normalizeAgentKey(row.label);
+    const terminal = rowIsTerminal(row);
 
-		if (isSameAgent && !previousWasTerminal) {
-			last.rows.push(row);
-			if (terminal) last.isTerminal = true;
-		} else {
-			blocks.push({
-				id: String(row.id),
-				agentLabel: row.label,
-				rows: [row],
-				isTerminal: terminal,
-			});
-		}
-		previousWasTerminal = terminal;
-	}
+    if (isSameAgent && !previousWasTerminal) {
+      last.rows.push(row);
+      if (terminal) last.isTerminal = true;
+    } else {
+      blocks.push({
+        id: String(row.id),
+        agentLabel: row.label,
+        rows: [row],
+        isTerminal: terminal,
+      });
+    }
+    previousWasTerminal = terminal;
+  }
 
-	return blocks;
+  return blocks;
 }
 
 /**
@@ -96,6 +96,6 @@ export function buildAgentTurns(rows: ParsedThreadRow[]): AgentTurnBlock[] {
  * rows out of their containing block as standalone "message turns".
  */
 export function isUserRow(row: ParsedThreadRow): boolean {
-	if (!row.message) return false;
-	return isSDKUserMessage(row.message) || isSDKUserMessageReplay(row.message);
+  if (!row.message) return false;
+  return isSDKUserMessage(row.message) || isSDKUserMessageReplay(row.message);
 }

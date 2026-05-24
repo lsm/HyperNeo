@@ -18,16 +18,16 @@
 import { useState, useCallback } from 'preact/hooks';
 
 export interface UseModalResult {
-	/** Whether the modal is currently open */
-	isOpen: boolean;
-	/** Open the modal */
-	open: () => void;
-	/** Close the modal */
-	close: () => void;
-	/** Toggle the modal state */
-	toggle: () => void;
-	/** Set the modal state directly */
-	setIsOpen: (open: boolean) => void;
+  /** Whether the modal is currently open */
+  isOpen: boolean;
+  /** Open the modal */
+  open: () => void;
+  /** Close the modal */
+  close: () => void;
+  /** Toggle the modal state */
+  toggle: () => void;
+  /** Set the modal state directly */
+  setIsOpen: (open: boolean) => void;
 }
 
 /**
@@ -37,17 +37,17 @@ export interface UseModalResult {
  * @returns Modal state and control functions
  */
 export function useModal(initialOpen = false): UseModalResult {
-	const [isOpen, setIsOpen] = useState(initialOpen);
+  const [isOpen, setIsOpen] = useState(initialOpen);
 
-	const open = useCallback(() => setIsOpen(true), []);
-	const close = useCallback(() => setIsOpen(false), []);
-	const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
+  const open = useCallback(() => setIsOpen(true), []);
+  const close = useCallback(() => setIsOpen(false), []);
+  const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
 
-	return {
-		isOpen,
-		open,
-		close,
-		toggle,
-		setIsOpen,
-	};
+  return {
+    isOpen,
+    open,
+    close,
+    toggle,
+    setIsOpen,
+  };
 }

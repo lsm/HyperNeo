@@ -28,34 +28,34 @@ await $`tailwindcss --input src/styles.css --output ${join(DIST_DIR, 'styles.css
 // Build JavaScript with content hashing
 console.log('📦 Building JavaScript with content hashing...');
 const buildResult = await Bun.build({
-	entrypoints: ['./src/client.tsx'],
-	outdir: DIST_DIR,
-	minify: true,
-	splitting: true,
-	naming: {
-		entry: '[dir]/[name]-[hash].[ext]',
-		chunk: '[dir]/[name]-[hash].[ext]',
-		asset: '[dir]/[name]-[hash].[ext]',
-	},
-	sourcemap: 'external',
+  entrypoints: ['./src/client.tsx'],
+  outdir: DIST_DIR,
+  minify: true,
+  splitting: true,
+  naming: {
+    entry: '[dir]/[name]-[hash].[ext]',
+    chunk: '[dir]/[name]-[hash].[ext]',
+    asset: '[dir]/[name]-[hash].[ext]',
+  },
+  sourcemap: 'external',
 });
 
 if (!buildResult.success) {
-	console.error('❌ Build failed:');
-	for (const log of buildResult.logs) {
-		console.error(log);
-	}
-	process.exit(1);
+  console.error('❌ Build failed:');
+  for (const log of buildResult.logs) {
+    console.error(log);
+  }
+  process.exit(1);
 }
 
 // Extract the hashed filename for the main bundle
 const mainBundle = buildResult.outputs.find(
-	(output) => output.path.includes('client') && output.path.endsWith('.js')
+  (output) => output.path.includes('client') && output.path.endsWith('.js')
 );
 
 if (!mainBundle) {
-	console.error('❌ Could not find main bundle output');
-	process.exit(1);
+  console.error('❌ Could not find main bundle output');
+  process.exit(1);
 }
 
 const mainBundleName = mainBundle.path.split('/').pop();

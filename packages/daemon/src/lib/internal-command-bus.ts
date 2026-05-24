@@ -21,14 +21,14 @@
  * Structured result returned by every command dispatch.
  */
 export interface CommandResult {
-	/** Whether the command handler completed successfully. */
-	ok: boolean;
+  /** Whether the command handler completed successfully. */
+  ok: boolean;
 
-	/** Error payload when `ok` is false. */
-	error?: unknown;
+  /** Error payload when `ok` is false. */
+  error?: unknown;
 
-	/** Arbitrary metadata the handler may attach (timings, ids, etc). */
-	metadata?: Record<string, unknown>;
+  /** Arbitrary metadata the handler may attach (timings, ids, etc). */
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -36,26 +36,26 @@ export interface CommandResult {
  * has an owner.
  */
 export class DuplicateCommandHandlerError extends Error {
-	constructor(public readonly commandName: string) {
-		super(`Command '${commandName}' already has a registered handler`);
-		this.name = 'DuplicateCommandHandlerError';
-	}
+  constructor(public readonly commandName: string) {
+    super(`Command '${commandName}' already has a registered handler`);
+    this.name = 'DuplicateCommandHandlerError';
+  }
 }
 
 /**
  * Thrown when `dispatch(...)` is called for a command with no registered handler.
  */
 export class MissingCommandHandlerError extends Error {
-	constructor(public readonly commandName: string) {
-		super(`No handler registered for command '${commandName}'`);
-		this.name = 'MissingCommandHandlerError';
-	}
+  constructor(public readonly commandName: string) {
+    super(`No handler registered for command '${commandName}'`);
+    this.name = 'MissingCommandHandlerError';
+  }
 }
 
 export type CommandHandler<TCommand> = (command: TCommand) => Promise<CommandResult>;
 
 interface RegisteredCommandHandler {
-	handler: (command: unknown) => Promise<CommandResult>;
+  handler: (command: unknown) => Promise<CommandResult>;
 }
 
 /**
@@ -64,93 +64,93 @@ interface RegisteredCommandHandler {
  * @template TCommandMap — map of dot-separated command names to payload shapes.
  */
 export class InternalCommandBus<TCommandMap extends object = Record<string, unknown>> {
-	private handlers = new Map<string, RegisteredCommandHandler>();
+  private handlers = new Map<string, RegisteredCommandHandler>();
 
-	/**
-	 * Register a handler for a command.
-	 *
-	 * @param commandName — typed command name
-	 * @param handler     — callback invoked when the command is dispatched
-	 * @returns unsubscribe function
-	 * @throws DuplicateCommandHandlerError if a handler already exists for this command
-	 */
-	register<K extends keyof TCommandMap & string>(
-		commandName: K,
-		handler: CommandHandler<TCommandMap[K]>
-	): () => void {
-		const key = commandName;
+  /**
+   * Register a handler for a command.
+   *
+   * @param commandName — typed command name
+   * @param handler     — callback invoked when the command is dispatched
+   * @returns unsubscribe function
+   * @throws DuplicateCommandHandlerError if a handler already exists for this command
+   */
+  register<K extends keyof TCommandMap & string>(
+    commandName: K,
+    handler: CommandHandler<TCommandMap[K]>
+  ): () => void {
+    const key = commandName;
 
-		if (this.handlers.has(key)) {
-			throw new DuplicateCommandHandlerError(key);
-		}
+    if (this.handlers.has(key)) {
+      throw new DuplicateCommandHandlerError(key);
+    }
 
-		const registered: RegisteredCommandHandler = {
-			handler: handler as (command: unknown) => Promise<CommandResult>,
-		};
+    const registered: RegisteredCommandHandler = {
+      handler: handler as (command: unknown) => Promise<CommandResult>,
+    };
 
-		this.handlers.set(key, registered);
+    this.handlers.set(key, registered);
 
-		return () => {
-			const current = this.handlers.get(key);
-			if (current === registered) {
-				this.handlers.delete(key);
-			}
-		};
-	}
+    return () => {
+      const current = this.handlers.get(key);
+      if (current === registered) {
+        this.handlers.delete(key);
+      }
+    };
+  }
 
-	/**
-	 * Dispatch a command to its registered handler and await the result.
-	 *
-	 * @param commandName — typed command name
-	 * @param command     — command payload
-	 * @returns structured `CommandResult`
-	 * @throws MissingCommandHandlerError if no handler is registered
-	 */
-	async dispatch<K extends keyof TCommandMap & string>(
-		commandName: K,
-		command: TCommandMap[K]
-	): Promise<CommandResult> {
-		const key = commandName;
-		const registered = this.handlers.get(key);
+  /**
+   * Dispatch a command to its registered handler and await the result.
+   *
+   * @param commandName — typed command name
+   * @param command     — command payload
+   * @returns structured `CommandResult`
+   * @throws MissingCommandHandlerError if no handler is registered
+   */
+  async dispatch<K extends keyof TCommandMap & string>(
+    commandName: K,
+    command: TCommandMap[K]
+  ): Promise<CommandResult> {
+    const key = commandName;
+    const registered = this.handlers.get(key);
 
-		if (!registered) {
-			throw new MissingCommandHandlerError(key);
-		}
+    if (!registered) {
+      throw new MissingCommandHandlerError(key);
+    }
 
-		try {
-			return await registered.handler(command);
-		} catch (error) {
-			return { ok: false, error };
-		}
-	}
+    try {
+      return await registered.handler(command);
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
 
-	/**
-	 * Return true if a handler is registered for the given command name.
-	 */
-	hasHandler<K extends keyof TCommandMap & string>(commandName: K): boolean {
-		return this.handlers.has(commandName);
-	}
+  /**
+   * Return true if a handler is registered for the given command name.
+   */
+  hasHandler<K extends keyof TCommandMap & string>(commandName: K): boolean {
+    return this.handlers.has(commandName);
+  }
 
-	/**
-	 * Remove the handler for a specific command.
-	 */
-	unregister<K extends keyof TCommandMap & string>(commandName: K): void {
-		this.handlers.delete(commandName);
-	}
+  /**
+   * Remove the handler for a specific command.
+   */
+  unregister<K extends keyof TCommandMap & string>(commandName: K): void {
+    this.handlers.delete(commandName);
+  }
 
-	/**
-	 * Remove all handlers.
-	 */
-	clear(): void {
-		this.handlers.clear();
-	}
+  /**
+   * Remove all handlers.
+   */
+  clear(): void {
+    this.handlers.clear();
+  }
 
-	/**
-	 * Return the number of registered handlers.
-	 */
-	getHandlerCount(): number {
-		return this.handlers.size;
-	}
+  /**
+   * Return the number of registered handlers.
+   */
+  getHandlerCount(): number {
+    return this.handlers.size;
+  }
 }
 
 /**
@@ -163,9 +163,9 @@ export class InternalCommandBus<TCommandMap extends object = Record<string, unkn
  *   const bus = createInternalCommandBus<MyCommandMap>();
  */
 export function createInternalCommandBus<
-	TCommandMap extends object = Record<string, unknown>,
+  TCommandMap extends object = Record<string, unknown>,
 >(): InternalCommandBus<TCommandMap> {
-	return new InternalCommandBus<TCommandMap>();
+  return new InternalCommandBus<TCommandMap>();
 }
 
 // ---------------------------------------------------------------------------
@@ -178,17 +178,17 @@ export function createInternalCommandBus<
  * Payload for `agent.message.inject` — inject a message into an agent session.
  */
 export interface AgentMessageInjectCommand {
-	/** Target session ID. */
-	sessionId: string;
+  /** Target session ID. */
+  sessionId: string;
 
-	/** Message content to inject (usually a formatted agent envelope). */
-	message: string;
+  /** Message content to inject (usually a formatted agent envelope). */
+  message: string;
 
-	/** Delivery strategy for busy/idle session handling. */
-	deliveryMode?: 'immediate' | 'defer';
+  /** Delivery strategy for busy/idle session handling. */
+  deliveryMode?: 'immediate' | 'defer';
 
-	/** Optional metadata for routing diagnostics. */
-	metadata?: Record<string, unknown>;
+  /** Optional metadata for routing diagnostics. */
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -198,5 +198,5 @@ export interface AgentMessageInjectCommand {
  * domain command maps so the bus can be typed with the full surface.
  */
 export interface DaemonCommandMap {
-	'agent.message.inject': AgentMessageInjectCommand;
+  'agent.message.inject': AgentMessageInjectCommand;
 }

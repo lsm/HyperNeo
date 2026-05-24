@@ -45,25 +45,25 @@ import { test, expect } from '../../fixtures';
 
 // eslint-disable-next-line no-empty-pattern
 test.describe
-	.skip('Post-approval auto-merge at autonomy level 4 (PENDING infra)', () => {
-		test('reviewer session spawns, merges PR, and marks task done without human input', async ({
-			page,
-		}) => {
-			// 1. Create a space with `autonomyLevel: 4` via RPC.
-			// 2. Seed a PR fixture: `git init`, `git checkout -b feature/test-high`,
-			//    commit a file, push via the mock `gh`'s `gh pr create`.
-			// 3. Call `spaceWorkflowRun.start` with workflow="Coding Workflow".
-			// 4. Drive the workflow through its gates by short-circuiting the
-			//    Coder + Reviewer agents via the LLM mock: the Reviewer's
-			//    scripted tool calls must include save_artifact({ prUrl }),
-			//    send_message(task-agent, data:{ pr_url }), approve_task().
-			// 5. Assert: task transitions `in_progress → approved`.
-			// 6. Assert: PostApprovalRouter spawns a reviewer session; the mock
-			//    `gh pr merge --squash` runs; the session calls `mark_complete`.
-			// 7. Assert: task ends at `done`; no `request_human_input` calls;
-			//    `workflow_run_artifacts` has a row with `status: 'merged'`.
-			// 8. Assert UI: no `PendingPostApprovalBanner` visible; task list
-			//    row shows green "done" indicator.
-			expect(page).toBeTruthy();
-		});
-	});
+  .skip('Post-approval auto-merge at autonomy level 4 (PENDING infra)', () => {
+    test('reviewer session spawns, merges PR, and marks task done without human input', async ({
+      page,
+    }) => {
+      // 1. Create a space with `autonomyLevel: 4` via RPC.
+      // 2. Seed a PR fixture: `git init`, `git checkout -b feature/test-high`,
+      //    commit a file, push via the mock `gh`'s `gh pr create`.
+      // 3. Call `spaceWorkflowRun.start` with workflow="Coding Workflow".
+      // 4. Drive the workflow through its gates by short-circuiting the
+      //    Coder + Reviewer agents via the LLM mock: the Reviewer's
+      //    scripted tool calls must include save_artifact({ prUrl }),
+      //    send_message(task-agent, data:{ pr_url }), approve_task().
+      // 5. Assert: task transitions `in_progress → approved`.
+      // 6. Assert: PostApprovalRouter spawns a reviewer session; the mock
+      //    `gh pr merge --squash` runs; the session calls `mark_complete`.
+      // 7. Assert: task ends at `done`; no `request_human_input` calls;
+      //    `workflow_run_artifacts` has a row with `status: 'merged'`.
+      // 8. Assert UI: no `PendingPostApprovalBanner` visible; task list
+      //    row shows green "done" indicator.
+      expect(page).toBeTruthy();
+    });
+  });

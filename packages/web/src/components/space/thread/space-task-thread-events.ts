@@ -1,545 +1,545 @@
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
-	type ContentBlock,
-	hasRenderableThinking,
-	isSDKAssistantMessage,
-	isSDKRateLimitEvent,
-	isSDKResultMessage,
-	isSDKSystemMessage,
-	isSDKToolProgressMessage,
-	isSDKUserMessage,
-	isTextBlock,
-	isThinkingBlock,
-	isToolUseBlock,
+  type ContentBlock,
+  hasRenderableThinking,
+  isSDKAssistantMessage,
+  isSDKRateLimitEvent,
+  isSDKResultMessage,
+  isSDKSystemMessage,
+  isSDKToolProgressMessage,
+  isSDKUserMessage,
+  isTextBlock,
+  isThinkingBlock,
+  isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { SpaceTaskThreadMessageRow } from '../../../hooks/useSpaceTaskMessages';
 
 export type SpaceTaskThreadEventKind =
-	| 'thinking'
-	| 'tool'
-	| 'subagent'
-	| 'text'
-	| 'user'
-	| 'system'
-	| 'result'
-	| 'rate_limit'
-	| 'progress'
-	| 'unknown';
+  | 'thinking'
+  | 'tool'
+  | 'subagent'
+  | 'text'
+  | 'user'
+  | 'system'
+  | 'result'
+  | 'rate_limit'
+  | 'progress'
+  | 'unknown';
 
 export interface ParsedThreadRow {
-	id: string | number;
-	sessionId: string | null;
-	kind: 'task_agent' | 'node_agent';
-	label: string;
-	role: string;
-	nodeExecutionId?: string | null;
-	taskId: string;
-	taskTitle: string;
-	createdAt: number;
-	turnIndex?: number;
-	turnHiddenMessageCount?: number;
-	deliveryState?: 'delivered' | 'failed' | null;
-	message: SDKMessage | null;
-	fallbackText: string | null;
+  id: string | number;
+  sessionId: string | null;
+  kind: 'task_agent' | 'node_agent';
+  label: string;
+  role: string;
+  nodeExecutionId?: string | null;
+  taskId: string;
+  taskTitle: string;
+  createdAt: number;
+  turnIndex?: number;
+  turnHiddenMessageCount?: number;
+  deliveryState?: 'delivered' | 'failed' | null;
+  message: SDKMessage | null;
+  fallbackText: string | null;
 }
 
 export interface TodoItem {
-	content: string;
-	status: 'pending' | 'in_progress' | 'completed';
-	activeForm: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm: string;
 }
 
 export interface SpaceTaskThreadEvent {
-	id: string;
-	label: string;
-	role: string;
-	nodeExecutionId?: string | null;
-	taskId: string;
-	taskTitle: string;
-	sessionId: string | null;
-	createdAt: number;
-	kind: SpaceTaskThreadEventKind;
-	title: string;
-	summary: string;
-	message?: SDKMessage | null;
-	iconToolName?: string;
-	systemSubtype?: string;
-	resultSubtype?: string;
-	isError?: boolean;
-	todos?: TodoItem[];
+  id: string;
+  label: string;
+  role: string;
+  nodeExecutionId?: string | null;
+  taskId: string;
+  taskTitle: string;
+  sessionId: string | null;
+  createdAt: number;
+  kind: SpaceTaskThreadEventKind;
+  title: string;
+  summary: string;
+  message?: SDKMessage | null;
+  iconToolName?: string;
+  systemSubtype?: string;
+  resultSubtype?: string;
+  isError?: boolean;
+  todos?: TodoItem[];
 }
 
 function oneLine(value: string, max = 180): string {
-	const collapsed = value.replace(/\s+/g, ' ').trim();
-	if (!collapsed) return '';
-	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
 function normalizeMultiline(value: string): string {
-	return value.replace(/\r\n/g, '\n').trim();
+  return value.replace(/\r\n/g, '\n').trim();
 }
 
 function shouldPromotePathToTitle(filePath: string): boolean {
-	const trimmed = filePath.trim();
-	if (!trimmed) return false;
-	const isRelative = !trimmed.startsWith('/');
-	return isRelative || trimmed.length <= 72;
+  const trimmed = filePath.trim();
+  if (!trimmed) return false;
+  const isRelative = !trimmed.startsWith('/');
+  return isRelative || trimmed.length <= 72;
 }
 
 function summarizeInputValue(value: unknown): string {
-	if (value == null) return 'none';
-	if (typeof value === 'string') return oneLine(value, 120);
-	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-	if (Array.isArray(value)) {
-		if (value.length === 0) return '[]';
-		const compact = value
-			.slice(0, 2)
-			.map((item) => summarizeInputValue(item))
-			.join(', ');
-		return value.length > 2 ? `[${compact}, +${value.length - 2}]` : `[${compact}]`;
-	}
-	if (typeof value === 'object') {
-		const obj = value as Record<string, unknown>;
-		const keys = Object.keys(obj);
-		if (keys.length === 0) return '{}';
-		if (typeof obj.query === 'string') return `query: ${oneLine(obj.query, 120)}`;
-		const fields = keys.slice(0, 2).join(', ');
-		return keys.length > 2 ? `{${fields}, +${keys.length - 2}}` : `{${fields}}`;
-	}
-	return oneLine(String(value), 120);
+  if (value == null) return 'none';
+  if (typeof value === 'string') return oneLine(value, 120);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    const compact = value
+      .slice(0, 2)
+      .map((item) => summarizeInputValue(item))
+      .join(', ');
+    return value.length > 2 ? `[${compact}, +${value.length - 2}]` : `[${compact}]`;
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '{}';
+    if (typeof obj.query === 'string') return `query: ${oneLine(obj.query, 120)}`;
+    const fields = keys.slice(0, 2).join(', ');
+    return keys.length > 2 ? `{${fields}, +${keys.length - 2}}` : `{${fields}}`;
+  }
+  return oneLine(String(value), 120);
 }
 
 function summarizeToolInput(input: Record<string, unknown>): string {
-	const keys = Object.keys(input);
-	if (keys.length === 0) return 'No input';
+  const keys = Object.keys(input);
+  if (keys.length === 0) return 'No input';
 
-	const entries = keys.slice(0, 3).map((key) => `${key}: ${summarizeInputValue(input[key])}`);
-	const summary = entries.join('\n');
-	return keys.length > 3 ? `${summary}\n+${keys.length - 3} fields` : summary;
+  const entries = keys.slice(0, 3).map((key) => `${key}: ${summarizeInputValue(input[key])}`);
+  const summary = entries.join('\n');
+  return keys.length > 3 ? `${summary}\n+${keys.length - 3} fields` : summary;
 }
 
 function extractUserText(message: Extract<SDKMessage, { type: 'user' }>): string {
-	const content = message.message?.content;
-	if (typeof content === 'string') return oneLine(content);
-	if (!Array.isArray(content)) return '';
+  const content = message.message?.content;
+  if (typeof content === 'string') return oneLine(content);
+  if (!Array.isArray(content)) return '';
 
-	const textParts: string[] = [];
-	for (const block of content) {
-		const blockObj = block as Record<string, unknown>;
-		if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
-			textParts.push(blockObj.text);
-		}
-	}
-	return oneLine(textParts.join(' '));
+  const textParts: string[] = [];
+  for (const block of content) {
+    const blockObj = block as Record<string, unknown>;
+    if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
+      textParts.push(blockObj.text);
+    }
+  }
+  return oneLine(textParts.join(' '));
 }
 
 function extractAssistantEvents(
-	row: ParsedThreadRow,
-	message: Extract<SDKMessage, { type: 'assistant' }>
+  row: ParsedThreadRow,
+  message: Extract<SDKMessage, { type: 'assistant' }>
 ) {
-	const events: SpaceTaskThreadEvent[] = [];
-	const content = Array.isArray(message.message?.content)
-		? (message.message.content as ContentBlock[])
-		: [];
+  const events: SpaceTaskThreadEvent[] = [];
+  const content = Array.isArray(message.message?.content)
+    ? (message.message.content as ContentBlock[])
+    : [];
 
-	for (let idx = 0; idx < content.length; idx += 1) {
-		const block = content[idx];
-		const eventId = `${String(row.id)}-assistant-${idx}`;
+  for (let idx = 0; idx < content.length; idx += 1) {
+    const block = content[idx];
+    const eventId = `${String(row.id)}-assistant-${idx}`;
 
-		if (isThinkingBlock(block)) {
-			// Skip Opus 4.7 "omitted" thinking stubs — they carry an empty
-			// `thinking` payload (plus a signature for multi-turn continuity)
-			// and would otherwise produce a blank "Thinking" thread event.
-			if (!hasRenderableThinking(block)) {
-				continue;
-			}
-			events.push({
-				id: eventId,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'thinking',
-				title: 'Thinking',
-				summary: oneLine(block.thinking),
-				iconToolName: 'Thinking',
-			});
-			continue;
-		}
+    if (isThinkingBlock(block)) {
+      // Skip Opus 4.7 "omitted" thinking stubs — they carry an empty
+      // `thinking` payload (plus a signature for multi-turn continuity)
+      // and would otherwise produce a blank "Thinking" thread event.
+      if (!hasRenderableThinking(block)) {
+        continue;
+      }
+      events.push({
+        id: eventId,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'thinking',
+        title: 'Thinking',
+        summary: oneLine(block.thinking),
+        iconToolName: 'Thinking',
+      });
+      continue;
+    }
 
-		if (isToolUseBlock(block)) {
-			// Special-case request_human_input: surface the question as a visible
-			// text message in the thread instead of a collapsed tool card. The
-			// tool stores the question only in task.result, so without this the
-			// question would be invisible in the thread.
-			if (block.name === 'request_human_input') {
-				const input = (block.input ?? {}) as Record<string, unknown>;
-				const question = typeof input.question === 'string' ? input.question.trim() : '';
-				const questionContext = typeof input.context === 'string' ? input.context.trim() : '';
-				const body = questionContext ? `${question}\n\nContext: ${questionContext}` : question;
-				if (body) {
-					// Synthesize a text-only SDKMessage so the renderer treats the
-					// question as plain markdown. We intentionally DROP the original
-					// tool_use block from this synthesized event's content: keeping
-					// it would cause SDKAssistantMessage to also render a collapsed
-					// tool card alongside the text bubble (see SDKAssistantMessage
-					// toolBlocks path), defeating the purpose of surfacing the
-					// question as visible text. Tool_use/tool_result pairing is
-					// unaffected — toolResultsMap in useMessageMaps is built from
-					// the raw messages array, not from synthesized events.
-					const questionMessage = {
-						...message,
-						message: {
-							...message.message,
-							content: [{ type: 'text', text: body }],
-						},
-					} as SDKMessage;
-					events.push({
-						id: eventId,
-						label: row.label,
-						role: row.role,
-						taskId: row.taskId,
-						taskTitle: row.taskTitle,
-						sessionId: row.sessionId,
-						createdAt: row.createdAt,
-						kind: 'text',
-						title: 'Question',
-						summary: body,
-						message: questionMessage,
-					});
-					continue;
-				}
-			}
+    if (isToolUseBlock(block)) {
+      // Special-case request_human_input: surface the question as a visible
+      // text message in the thread instead of a collapsed tool card. The
+      // tool stores the question only in task.result, so without this the
+      // question would be invisible in the thread.
+      if (block.name === 'request_human_input') {
+        const input = (block.input ?? {}) as Record<string, unknown>;
+        const question = typeof input.question === 'string' ? input.question.trim() : '';
+        const questionContext = typeof input.context === 'string' ? input.context.trim() : '';
+        const body = questionContext ? `${question}\n\nContext: ${questionContext}` : question;
+        if (body) {
+          // Synthesize a text-only SDKMessage so the renderer treats the
+          // question as plain markdown. We intentionally DROP the original
+          // tool_use block from this synthesized event's content: keeping
+          // it would cause SDKAssistantMessage to also render a collapsed
+          // tool card alongside the text bubble (see SDKAssistantMessage
+          // toolBlocks path), defeating the purpose of surfacing the
+          // question as visible text. Tool_use/tool_result pairing is
+          // unaffected — toolResultsMap in useMessageMaps is built from
+          // the raw messages array, not from synthesized events.
+          const questionMessage = {
+            ...message,
+            message: {
+              ...message.message,
+              content: [{ type: 'text', text: body }],
+            },
+          } as SDKMessage;
+          events.push({
+            id: eventId,
+            label: row.label,
+            role: row.role,
+            taskId: row.taskId,
+            taskTitle: row.taskTitle,
+            sessionId: row.sessionId,
+            createdAt: row.createdAt,
+            kind: 'text',
+            title: 'Question',
+            summary: body,
+            message: questionMessage,
+          });
+          continue;
+        }
+      }
 
-			const isSubagent = block.name === 'Task';
-			const isBash = block.name === 'Bash';
-			const input = (block.input ?? {}) as Record<string, unknown>;
-			const subagentType = typeof input.subagent_type === 'string' ? input.subagent_type : 'agent';
-			const description = typeof input.description === 'string' ? input.description : '';
-			const bashCommand =
-				typeof input.command === 'string' ? normalizeMultiline(input.command) : '';
-			const isRead = block.name === 'Read';
-			const readFilePath =
-				isRead && typeof input.file_path === 'string' ? normalizeMultiline(input.file_path) : '';
-			const showReadPathInTitle =
-				isRead && readFilePath ? shouldPromotePathToTitle(readFilePath) : false;
-			const readInputWithoutFilePath = showReadPathInTitle
-				? (Object.fromEntries(
-						Object.entries(input).filter(([key]) => key !== 'file_path')
-					) as Record<string, unknown>)
-				: input;
-			const isGrep = block.name === 'Grep';
-			const grepPattern =
-				isGrep && typeof input.pattern === 'string' ? normalizeMultiline(input.pattern) : '';
-			const showGrepPatternInTitle = isGrep && grepPattern.length > 0;
-			const grepInputWithoutPattern = showGrepPatternInTitle
-				? (Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'pattern')) as Record<
-						string,
-						unknown
-					>)
-				: input;
-			const isTodo = block.name === 'TodoWrite';
-			const todosRaw =
-				isTodo && Array.isArray(input.todos) ? (input.todos as TodoItem[]) : undefined;
-			const isGlob = block.name === 'Glob';
-			const globPattern = isGlob && typeof input.pattern === 'string' ? input.pattern : '';
-			const toolSummary =
-				isSubagent && description
-					? `${subagentType} · ${oneLine(description)}`
-					: isBash
-						? bashCommand || 'No command'
-						: isRead && showReadPathInTitle
-							? Object.keys(readInputWithoutFilePath).length > 0
-								? summarizeToolInput(readInputWithoutFilePath)
-								: ''
-							: isGrep && showGrepPatternInTitle
-								? Object.keys(grepInputWithoutPattern).length > 0
-									? summarizeToolInput(grepInputWithoutPattern)
-									: ''
-								: isGlob
-									? ''
-									: summarizeToolInput(input);
-			const toolTitle = isSubagent
-				? 'Sub-agent'
-				: isBash && description
-					? `Bash: ${oneLine(description, 120)}`
-					: isRead && showReadPathInTitle
-						? `Read: ${oneLine(readFilePath, 120)}`
-						: isGrep && showGrepPatternInTitle
-							? `Grep: ${oneLine(grepPattern, 120)}`
-							: isGlob && globPattern
-								? `Glob: ${oneLine(globPattern, 120)}`
-								: block.name;
+      const isSubagent = block.name === 'Task';
+      const isBash = block.name === 'Bash';
+      const input = (block.input ?? {}) as Record<string, unknown>;
+      const subagentType = typeof input.subagent_type === 'string' ? input.subagent_type : 'agent';
+      const description = typeof input.description === 'string' ? input.description : '';
+      const bashCommand =
+        typeof input.command === 'string' ? normalizeMultiline(input.command) : '';
+      const isRead = block.name === 'Read';
+      const readFilePath =
+        isRead && typeof input.file_path === 'string' ? normalizeMultiline(input.file_path) : '';
+      const showReadPathInTitle =
+        isRead && readFilePath ? shouldPromotePathToTitle(readFilePath) : false;
+      const readInputWithoutFilePath = showReadPathInTitle
+        ? (Object.fromEntries(
+            Object.entries(input).filter(([key]) => key !== 'file_path')
+          ) as Record<string, unknown>)
+        : input;
+      const isGrep = block.name === 'Grep';
+      const grepPattern =
+        isGrep && typeof input.pattern === 'string' ? normalizeMultiline(input.pattern) : '';
+      const showGrepPatternInTitle = isGrep && grepPattern.length > 0;
+      const grepInputWithoutPattern = showGrepPatternInTitle
+        ? (Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'pattern')) as Record<
+            string,
+            unknown
+          >)
+        : input;
+      const isTodo = block.name === 'TodoWrite';
+      const todosRaw =
+        isTodo && Array.isArray(input.todos) ? (input.todos as TodoItem[]) : undefined;
+      const isGlob = block.name === 'Glob';
+      const globPattern = isGlob && typeof input.pattern === 'string' ? input.pattern : '';
+      const toolSummary =
+        isSubagent && description
+          ? `${subagentType} · ${oneLine(description)}`
+          : isBash
+            ? bashCommand || 'No command'
+            : isRead && showReadPathInTitle
+              ? Object.keys(readInputWithoutFilePath).length > 0
+                ? summarizeToolInput(readInputWithoutFilePath)
+                : ''
+              : isGrep && showGrepPatternInTitle
+                ? Object.keys(grepInputWithoutPattern).length > 0
+                  ? summarizeToolInput(grepInputWithoutPattern)
+                  : ''
+                : isGlob
+                  ? ''
+                  : summarizeToolInput(input);
+      const toolTitle = isSubagent
+        ? 'Sub-agent'
+        : isBash && description
+          ? `Bash: ${oneLine(description, 120)}`
+          : isRead && showReadPathInTitle
+            ? `Read: ${oneLine(readFilePath, 120)}`
+            : isGrep && showGrepPatternInTitle
+              ? `Grep: ${oneLine(grepPattern, 120)}`
+              : isGlob && globPattern
+                ? `Glob: ${oneLine(globPattern, 120)}`
+                : block.name;
 
-			events.push({
-				id: eventId,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: isSubagent ? 'subagent' : 'tool',
-				title: toolTitle,
-				summary: toolSummary ?? block.name,
-				iconToolName: isSubagent ? 'Task' : block.name,
-				todos: todosRaw,
-			});
-			continue;
-		}
+      events.push({
+        id: eventId,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: isSubagent ? 'subagent' : 'tool',
+        title: toolTitle,
+        summary: toolSummary ?? block.name,
+        iconToolName: isSubagent ? 'Task' : block.name,
+        todos: todosRaw,
+      });
+      continue;
+    }
 
-		if (isTextBlock(block)) {
-			const text = normalizeMultiline(block.text);
-			if (!text) continue;
-			const textOnlyMessage = {
-				...message,
-				message: {
-					...message.message,
-					content: [{ type: 'text', text: block.text }],
-				},
-			} as SDKMessage;
-			events.push({
-				id: eventId,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'text',
-				title: row.label,
-				summary: text,
-				message: textOnlyMessage,
-			});
-		}
-	}
+    if (isTextBlock(block)) {
+      const text = normalizeMultiline(block.text);
+      if (!text) continue;
+      const textOnlyMessage = {
+        ...message,
+        message: {
+          ...message.message,
+          content: [{ type: 'text', text: block.text }],
+        },
+      } as SDKMessage;
+      events.push({
+        id: eventId,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'text',
+        title: row.label,
+        summary: text,
+        message: textOnlyMessage,
+      });
+    }
+  }
 
-	if (events.length === 0) {
-		events.push({
-			id: `${String(row.id)}-assistant-empty`,
-			label: row.label,
-			role: row.role,
-			nodeExecutionId: row.nodeExecutionId ?? null,
-			taskId: row.taskId,
-			taskTitle: row.taskTitle,
-			sessionId: row.sessionId,
-			createdAt: row.createdAt,
-			kind: 'text',
-			title: row.label,
-			summary: 'Assistant updated context',
-			message,
-		});
-	}
+  if (events.length === 0) {
+    events.push({
+      id: `${String(row.id)}-assistant-empty`,
+      label: row.label,
+      role: row.role,
+      nodeExecutionId: row.nodeExecutionId ?? null,
+      taskId: row.taskId,
+      taskTitle: row.taskTitle,
+      sessionId: row.sessionId,
+      createdAt: row.createdAt,
+      kind: 'text',
+      title: row.label,
+      summary: 'Assistant updated context',
+      message,
+    });
+  }
 
-	return events;
+  return events;
 }
 
 export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow {
-	try {
-		const parsed = JSON.parse(row.content) as SDKMessage;
-		const withTimestamp = {
-			...(parsed as Record<string, unknown>),
-			timestamp: row.createdAt,
-			...(row.origin ? { origin: row.origin } : {}),
-		} as unknown as SDKMessage;
+  try {
+    const parsed = JSON.parse(row.content) as SDKMessage;
+    const withTimestamp = {
+      ...(parsed as Record<string, unknown>),
+      timestamp: row.createdAt,
+      ...(row.origin ? { origin: row.origin } : {}),
+    } as unknown as SDKMessage;
 
-		return {
-			id: row.id,
-			sessionId: row.sessionId,
-			kind: row.kind,
-			label: row.label,
-			role: row.role,
-			nodeExecutionId: row.nodeExecutionId ?? null,
-			taskId: row.taskId,
-			taskTitle: row.taskTitle,
-			createdAt: row.createdAt,
-			turnIndex: row.turnIndex,
-			turnHiddenMessageCount: row.turnHiddenMessageCount,
-			deliveryState: row.deliveryState ?? null,
-			message: withTimestamp,
-			fallbackText: null,
-		};
-	} catch {
-		return {
-			id: row.id,
-			sessionId: row.sessionId,
-			kind: row.kind,
-			label: row.label,
-			role: row.role,
-			nodeExecutionId: row.nodeExecutionId ?? null,
-			taskId: row.taskId,
-			taskTitle: row.taskTitle,
-			createdAt: row.createdAt,
-			turnIndex: row.turnIndex,
-			turnHiddenMessageCount: row.turnHiddenMessageCount,
-			deliveryState: row.deliveryState ?? null,
-			message: null,
-			fallbackText: row.content,
-		};
-	}
+    return {
+      id: row.id,
+      sessionId: row.sessionId,
+      kind: row.kind,
+      label: row.label,
+      role: row.role,
+      nodeExecutionId: row.nodeExecutionId ?? null,
+      taskId: row.taskId,
+      taskTitle: row.taskTitle,
+      createdAt: row.createdAt,
+      turnIndex: row.turnIndex,
+      turnHiddenMessageCount: row.turnHiddenMessageCount,
+      deliveryState: row.deliveryState ?? null,
+      message: withTimestamp,
+      fallbackText: null,
+    };
+  } catch {
+    return {
+      id: row.id,
+      sessionId: row.sessionId,
+      kind: row.kind,
+      label: row.label,
+      role: row.role,
+      nodeExecutionId: row.nodeExecutionId ?? null,
+      taskId: row.taskId,
+      taskTitle: row.taskTitle,
+      createdAt: row.createdAt,
+      turnIndex: row.turnIndex,
+      turnHiddenMessageCount: row.turnHiddenMessageCount,
+      deliveryState: row.deliveryState ?? null,
+      message: null,
+      fallbackText: row.content,
+    };
+  }
 }
 
 export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThreadEvent[] {
-	const events: SpaceTaskThreadEvent[] = [];
+  const events: SpaceTaskThreadEvent[] = [];
 
-	for (const row of parsedRows) {
-		if (!row.message) {
-			events.push({
-				id: `${String(row.id)}-fallback`,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'unknown',
-				title: 'Raw',
-				summary: oneLine(row.fallbackText ?? ''),
-				message: row.message,
-			});
-			continue;
-		}
+  for (const row of parsedRows) {
+    if (!row.message) {
+      events.push({
+        id: `${String(row.id)}-fallback`,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'unknown',
+        title: 'Raw',
+        summary: oneLine(row.fallbackText ?? ''),
+        message: row.message,
+      });
+      continue;
+    }
 
-		if (isSDKAssistantMessage(row.message)) {
-			events.push(...extractAssistantEvents(row, row.message));
-			continue;
-		}
+    if (isSDKAssistantMessage(row.message)) {
+      events.push(...extractAssistantEvents(row, row.message));
+      continue;
+    }
 
-		if (isSDKUserMessage(row.message)) {
-			events.push({
-				id: `${String(row.id)}-user`,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'user',
-				title: 'User',
-				summary: extractUserText(row.message) || 'User message',
-				message: row.message,
-			});
-			continue;
-		}
+    if (isSDKUserMessage(row.message)) {
+      events.push({
+        id: `${String(row.id)}-user`,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'user',
+        title: 'User',
+        summary: extractUserText(row.message) || 'User message',
+        message: row.message,
+      });
+      continue;
+    }
 
-		if (isSDKToolProgressMessage(row.message)) {
-			const progressSummary = oneLine(
-				`${row.message.tool_name} · ${Math.max(0, Math.round(row.message.elapsed_time_seconds))}s`
-			);
-			events.push({
-				id: `${String(row.id)}-progress`,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'progress',
-				title: 'Progress',
-				summary: progressSummary,
-				message: row.message,
-				iconToolName: row.message.tool_name,
-			});
-			continue;
-		}
+    if (isSDKToolProgressMessage(row.message)) {
+      const progressSummary = oneLine(
+        `${row.message.tool_name} · ${Math.max(0, Math.round(row.message.elapsed_time_seconds))}s`
+      );
+      events.push({
+        id: `${String(row.id)}-progress`,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'progress',
+        title: 'Progress',
+        summary: progressSummary,
+        message: row.message,
+        iconToolName: row.message.tool_name,
+      });
+      continue;
+    }
 
-		if (isSDKResultMessage(row.message)) {
-			const usage = (row.message as { usage?: Record<string, number | undefined> }).usage;
-			const tokenSummary = usage
-				? `${usage.input_tokens ?? 0}→${usage.output_tokens ?? 0} tokens`
-				: '— tokens';
-			events.push({
-				id: `${String(row.id)}-result`,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'result',
-				title: row.message.subtype === 'success' ? 'Completed' : 'Error',
-				summary: tokenSummary,
-				message: row.message,
-				resultSubtype: row.message.subtype,
-				isError: row.message.subtype !== 'success',
-			});
-			continue;
-		}
+    if (isSDKResultMessage(row.message)) {
+      const usage = (row.message as { usage?: Record<string, number | undefined> }).usage;
+      const tokenSummary = usage
+        ? `${usage.input_tokens ?? 0}→${usage.output_tokens ?? 0} tokens`
+        : '— tokens';
+      events.push({
+        id: `${String(row.id)}-result`,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'result',
+        title: row.message.subtype === 'success' ? 'Completed' : 'Error',
+        summary: tokenSummary,
+        message: row.message,
+        resultSubtype: row.message.subtype,
+        isError: row.message.subtype !== 'success',
+      });
+      continue;
+    }
 
-		if (isSDKRateLimitEvent(row.message)) {
-			const rateLimitInfo = row.message.rate_limit_info;
-			// Only surface hard-rejected rate-limit states in compact feeds.
-			// `allowed` / `allowed_warning` are informational noise here, even if
-			// overageStatus contains warnings or restrictions.
-			const isRejected = rateLimitInfo.status === 'rejected';
-			const rateLimitType = rateLimitInfo.rateLimitType
-				? rateLimitInfo.rateLimitType.replace(/_/g, ' ')
-				: 'rate limit';
-			events.push({
-				id: `${String(row.id)}-rate-limit`,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'rate_limit',
-				title: 'Rate Limit',
-				summary: `${rateLimitType} · ${rateLimitInfo.status}`,
-				message: row.message,
-				isError: isRejected,
-			});
-			continue;
-		}
+    if (isSDKRateLimitEvent(row.message)) {
+      const rateLimitInfo = row.message.rate_limit_info;
+      // Only surface hard-rejected rate-limit states in compact feeds.
+      // `allowed` / `allowed_warning` are informational noise here, even if
+      // overageStatus contains warnings or restrictions.
+      const isRejected = rateLimitInfo.status === 'rejected';
+      const rateLimitType = rateLimitInfo.rateLimitType
+        ? rateLimitInfo.rateLimitType.replace(/_/g, ' ')
+        : 'rate limit';
+      events.push({
+        id: `${String(row.id)}-rate-limit`,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'rate_limit',
+        title: 'Rate Limit',
+        summary: `${rateLimitType} · ${rateLimitInfo.status}`,
+        message: row.message,
+        isError: isRejected,
+      });
+      continue;
+    }
 
-		if (isSDKSystemMessage(row.message)) {
-			const subtype = row.message.subtype ?? 'system';
-			let summary = subtype.replace(/_/g, ' ');
+    if (isSDKSystemMessage(row.message)) {
+      const subtype = row.message.subtype ?? 'system';
+      let summary = subtype.replace(/_/g, ' ');
 
-			if (subtype === 'task_progress' && 'description' in row.message) {
-				summary = oneLine(String(row.message.description ?? 'task progress'));
-			} else if (subtype === 'task_notification' && 'summary' in row.message) {
-				summary = oneLine(String(row.message.summary ?? 'task notification'));
-			} else if (subtype === 'status' && 'status' in row.message) {
-				summary = oneLine(String(row.message.status ?? 'status updated'));
-			}
+      if (subtype === 'task_progress' && 'description' in row.message) {
+        summary = oneLine(String(row.message.description ?? 'task progress'));
+      } else if (subtype === 'task_notification' && 'summary' in row.message) {
+        summary = oneLine(String(row.message.summary ?? 'task notification'));
+      } else if (subtype === 'status' && 'status' in row.message) {
+        summary = oneLine(String(row.message.status ?? 'status updated'));
+      }
 
-			events.push({
-				id: `${String(row.id)}-system`,
-				label: row.label,
-				role: row.role,
-				taskId: row.taskId,
-				taskTitle: row.taskTitle,
-				sessionId: row.sessionId,
-				createdAt: row.createdAt,
-				kind: 'system',
-				title: 'System',
-				summary,
-				message: row.message,
-				systemSubtype: subtype,
-			});
-			continue;
-		}
+      events.push({
+        id: `${String(row.id)}-system`,
+        label: row.label,
+        role: row.role,
+        taskId: row.taskId,
+        taskTitle: row.taskTitle,
+        sessionId: row.sessionId,
+        createdAt: row.createdAt,
+        kind: 'system',
+        title: 'System',
+        summary,
+        message: row.message,
+        systemSubtype: subtype,
+      });
+      continue;
+    }
 
-		events.push({
-			id: `${String(row.id)}-unknown`,
-			label: row.label,
-			role: row.role,
-			nodeExecutionId: row.nodeExecutionId ?? null,
-			taskId: row.taskId,
-			taskTitle: row.taskTitle,
-			sessionId: row.sessionId,
-			createdAt: row.createdAt,
-			kind: 'unknown',
-			title: String(row.message.type),
-			summary: oneLine(JSON.stringify(row.message)),
-			message: row.message,
-		});
-	}
+    events.push({
+      id: `${String(row.id)}-unknown`,
+      label: row.label,
+      role: row.role,
+      nodeExecutionId: row.nodeExecutionId ?? null,
+      taskId: row.taskId,
+      taskTitle: row.taskTitle,
+      sessionId: row.sessionId,
+      createdAt: row.createdAt,
+      kind: 'unknown',
+      title: String(row.message.type),
+      summary: oneLine(JSON.stringify(row.message)),
+      message: row.message,
+    });
+  }
 
-	return events;
+  return events;
 }
 
 // ============================================================================
@@ -547,15 +547,15 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 // ============================================================================
 
 export interface FileOperation {
-	path: string;
-	/** Last tool that touched this file */
-	tool: 'Write' | 'Edit';
-	/** Write: full file content written */
-	content?: string;
-	/** Edit: the string that was replaced */
-	oldString?: string;
-	/** Edit: the replacement string */
-	newString?: string;
+  path: string;
+  /** Last tool that touched this file */
+  tool: 'Write' | 'Edit';
+  /** Write: full file content written */
+  content?: string;
+  /** Edit: the string that was replaced */
+  oldString?: string;
+  /** Edit: the replacement string */
+  newString?: string;
 }
 
 /**
@@ -564,40 +564,40 @@ export interface FileOperation {
  * is not a git repository.
  */
 export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperation[] {
-	const opsByFile = new Map<string, FileOperation>();
+  const opsByFile = new Map<string, FileOperation>();
 
-	for (const row of parsedRows) {
-		const msg = row.message;
-		if (!msg || !isSDKAssistantMessage(msg)) continue;
-		const content = Array.isArray(msg.message?.content)
-			? (msg.message.content as ContentBlock[])
-			: [];
+  for (const row of parsedRows) {
+    const msg = row.message;
+    if (!msg || !isSDKAssistantMessage(msg)) continue;
+    const content = Array.isArray(msg.message?.content)
+      ? (msg.message.content as ContentBlock[])
+      : [];
 
-		for (const block of content) {
-			if (!isToolUseBlock(block)) continue;
-			const input =
-				typeof block.input === 'object' && block.input !== null
-					? (block.input as Record<string, unknown>)
-					: {};
+    for (const block of content) {
+      if (!isToolUseBlock(block)) continue;
+      const input =
+        typeof block.input === 'object' && block.input !== null
+          ? (block.input as Record<string, unknown>)
+          : {};
 
-			if (block.name === 'Write') {
-				const path = typeof input.file_path === 'string' ? input.file_path : null;
-				const fileContent = typeof input.content === 'string' ? input.content : null;
-				if (path && fileContent !== null) {
-					opsByFile.set(path, { path, tool: 'Write', content: fileContent });
-				}
-			} else if (block.name === 'Edit') {
-				const path = typeof input.file_path === 'string' ? input.file_path : null;
-				const oldString = typeof input.old_string === 'string' ? input.old_string : null;
-				const newString = typeof input.new_string === 'string' ? input.new_string : null;
-				if (path && oldString !== null && newString !== null) {
-					opsByFile.set(path, { path, tool: 'Edit', oldString, newString });
-				}
-			}
-		}
-	}
+      if (block.name === 'Write') {
+        const path = typeof input.file_path === 'string' ? input.file_path : null;
+        const fileContent = typeof input.content === 'string' ? input.content : null;
+        if (path && fileContent !== null) {
+          opsByFile.set(path, { path, tool: 'Write', content: fileContent });
+        }
+      } else if (block.name === 'Edit') {
+        const path = typeof input.file_path === 'string' ? input.file_path : null;
+        const oldString = typeof input.old_string === 'string' ? input.old_string : null;
+        const newString = typeof input.new_string === 'string' ? input.new_string : null;
+        if (path && oldString !== null && newString !== null) {
+          opsByFile.set(path, { path, tool: 'Edit', oldString, newString });
+        }
+      }
+    }
+  }
 
-	return Array.from(opsByFile.values());
+  return Array.from(opsByFile.values());
 }
 
 /**
@@ -608,32 +608,32 @@ export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperat
  * - Edit  → old_string lines as removals, new_string lines as additions
  */
 export function buildSyntheticDiff(op: FileOperation): {
-	diff: string;
-	additions: number;
-	deletions: number;
+  diff: string;
+  additions: number;
+  deletions: number;
 } {
-	if (op.tool === 'Write') {
-		const lines = (op.content ?? '').split('\n');
-		const hunks = lines.map((l) => `+${l}`).join('\n');
-		const diff = [
-			`diff --git a/${op.path} b/${op.path}`,
-			'--- /dev/null',
-			`+++ b/${op.path}`,
-			`@@ -0,0 +1,${lines.length} @@`,
-			hunks,
-		].join('\n');
-		return { diff, additions: lines.length, deletions: 0 };
-	}
+  if (op.tool === 'Write') {
+    const lines = (op.content ?? '').split('\n');
+    const hunks = lines.map((l) => `+${l}`).join('\n');
+    const diff = [
+      `diff --git a/${op.path} b/${op.path}`,
+      '--- /dev/null',
+      `+++ b/${op.path}`,
+      `@@ -0,0 +1,${lines.length} @@`,
+      hunks,
+    ].join('\n');
+    return { diff, additions: lines.length, deletions: 0 };
+  }
 
-	const oldLines = (op.oldString ?? '').split('\n');
-	const newLines = (op.newString ?? '').split('\n');
-	const diff = [
-		`diff --git a/${op.path} b/${op.path}`,
-		`--- a/${op.path}`,
-		`+++ b/${op.path}`,
-		`@@ -1,${oldLines.length} +1,${newLines.length} @@`,
-		...oldLines.map((l) => `-${l}`),
-		...newLines.map((l) => `+${l}`),
-	].join('\n');
-	return { diff, additions: newLines.length, deletions: oldLines.length };
+  const oldLines = (op.oldString ?? '').split('\n');
+  const newLines = (op.newString ?? '').split('\n');
+  const diff = [
+    `diff --git a/${op.path} b/${op.path}`,
+    `--- a/${op.path}`,
+    `+++ b/${op.path}`,
+    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+    ...oldLines.map((l) => `-${l}`),
+    ...newLines.map((l) => `+${l}`),
+  ].join('\n');
+  return { diff, additions: newLines.length, deletions: oldLines.length };
 }

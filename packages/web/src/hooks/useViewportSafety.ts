@@ -51,17 +51,17 @@ const KEYBOARD_THRESHOLD = 50;
  *   or "FxiOS" (Firefox on iOS) because iPadOS masquerades as macOS Safari.
  */
 function isIpadSafari(): boolean {
-	if (typeof navigator === 'undefined' || typeof window === 'undefined') {
-		return false;
-	}
-	const ua = navigator.userAgent;
-	const hasTouch = navigator.maxTouchPoints > 1;
-	const isSafariUA =
-		ua.includes('Safari') &&
-		!ua.includes('Chrome') &&
-		!ua.includes('CriOS') &&
-		!ua.includes('FxiOS');
-	return hasTouch && isSafariUA;
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') {
+    return false;
+  }
+  const ua = navigator.userAgent;
+  const hasTouch = navigator.maxTouchPoints > 1;
+  const isSafariUA =
+    ua.includes('Safari') &&
+    !ua.includes('Chrome') &&
+    !ua.includes('CriOS') &&
+    !ua.includes('FxiOS');
+  return hasTouch && isSafariUA;
 }
 
 /**
@@ -69,7 +69,7 @@ function isIpadSafari(): boolean {
  * using the current `visualViewport.height`.
  */
 function updateSafeHeight(vv: VisualViewport): void {
-	document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+  document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 }
 
 /**
@@ -82,8 +82,8 @@ function updateSafeHeight(vv: VisualViewport): void {
  * composer.
  */
 function updateKeyboardHeight(vv: VisualViewport): void {
-	const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-	document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
+  const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  document.documentElement.style.setProperty('--keyboard-height', `${height}px`);
 }
 
 /**
@@ -97,7 +97,7 @@ function updateKeyboardHeight(vv: VisualViewport): void {
  * size. The 50px threshold mitigates this.
  */
 function isKeyboardVisible(vv: VisualViewport): boolean {
-	return window.innerHeight - vv.height > KEYBOARD_THRESHOLD;
+  return window.innerHeight - vv.height > KEYBOARD_THRESHOLD;
 }
 
 /**
@@ -113,121 +113,121 @@ function isKeyboardVisible(vv: VisualViewport): boolean {
  * Must be called **once globally** in `App.tsx` only.
  */
 export function useViewportSafety(): void {
-	useEffect(() => {
-		const vv = window.visualViewport;
-		if (!vv) {
-			// No VisualViewport API — CSS fallback handles it.
-			return;
-		}
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) {
+      // No VisualViewport API — CSS fallback handles it.
+      return;
+    }
 
-		const ipadSafari = isIpadSafari();
-		let keyboardOpen = false;
-		let savedBottomBarHeight: string | null = null;
+    const ipadSafari = isIpadSafari();
+    let keyboardOpen = false;
+    let savedBottomBarHeight: string | null = null;
 
-		/**
-		 * Core resize handler. Runs on every `visualViewport.resize` and
-		 * `window.resize` event to keep layout in sync.
-		 */
-		const handleResize = () => {
-			// Part 1: iPad Safari — always keep --safe-height in sync
-			if (ipadSafari) {
-				updateSafeHeight(vv);
-			}
+    /**
+     * Core resize handler. Runs on every `visualViewport.resize` and
+     * `window.resize` event to keep layout in sync.
+     */
+    const handleResize = () => {
+      // Part 1: iPad Safari — always keep --safe-height in sync
+      if (ipadSafari) {
+        updateSafeHeight(vv);
+      }
 
-			// Part 2: Keyboard detection (all platforms)
-			const kbVisible = isKeyboardVisible(vv);
+      // Part 2: Keyboard detection (all platforms)
+      const kbVisible = isKeyboardVisible(vv);
 
-			if (kbVisible && !keyboardOpen) {
-				// Keyboard just appeared
-				keyboardOpen = true;
-				document.documentElement.classList.add('keyboard-open');
+      if (kbVisible && !keyboardOpen) {
+        // Keyboard just appeared
+        keyboardOpen = true;
+        document.documentElement.classList.add('keyboard-open');
 
-				// Shrink the app container to the visible viewport height
-				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+        // Shrink the app container to the visible viewport height
+        document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 
-				// Record keyboard height as a CSS custom property for potential future use.
-				// Currently no built-in element reads this, but it is available for extensions.
-				updateKeyboardHeight(vv);
+        // Record keyboard height as a CSS custom property for potential future use.
+        // Currently no built-in element reads this, but it is available for extensions.
+        updateKeyboardHeight(vv);
 
-				// Remove bottom bar padding — the BottomTabBar is fixed at bottom:0
-				// and hidden behind the keyboard, so reserving space for it creates a gap
-				savedBottomBarHeight =
-					document.documentElement.style.getPropertyValue('--bottom-bar-height');
-				document.documentElement.style.setProperty('--bottom-bar-height', '0px');
-			} else if (kbVisible && keyboardOpen) {
-				// Keep --safe-height and --keyboard-height in sync as keyboard
-				// height may change (e.g. switching between emoji and text keyboards)
-				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-				updateKeyboardHeight(vv);
-			} else if (!kbVisible && keyboardOpen) {
-				// Keyboard just closed
-				keyboardOpen = false;
-				document.documentElement.classList.remove('keyboard-open');
+        // Remove bottom bar padding — the BottomTabBar is fixed at bottom:0
+        // and hidden behind the keyboard, so reserving space for it creates a gap
+        savedBottomBarHeight =
+          document.documentElement.style.getPropertyValue('--bottom-bar-height');
+        document.documentElement.style.setProperty('--bottom-bar-height', '0px');
+      } else if (kbVisible && keyboardOpen) {
+        // Keep --safe-height and --keyboard-height in sync as keyboard
+        // height may change (e.g. switching between emoji and text keyboards)
+        document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+        updateKeyboardHeight(vv);
+      } else if (!kbVisible && keyboardOpen) {
+        // Keyboard just closed
+        keyboardOpen = false;
+        document.documentElement.classList.remove('keyboard-open');
 
-				// On non-iPad browsers, remove the --safe-height override so the
-				// CSS fallback (100svh) takes effect again
-				if (!ipadSafari) {
-					document.documentElement.style.removeProperty('--safe-height');
-				}
-				// On iPad, --safe-height is already updated above via updateSafeHeight()
+        // On non-iPad browsers, remove the --safe-height override so the
+        // CSS fallback (100svh) takes effect again
+        if (!ipadSafari) {
+          document.documentElement.style.removeProperty('--safe-height');
+        }
+        // On iPad, --safe-height is already updated above via updateSafeHeight()
 
-				// Remove keyboard height override
-				document.documentElement.style.removeProperty('--keyboard-height');
+        // Remove keyboard height override
+        document.documentElement.style.removeProperty('--keyboard-height');
 
-				// Restore bottom bar height from saved value.
-				// NOTE: We use !== null instead of truthiness because
-				// getPropertyValue returns '' when the property is not set
-				// inline (e.g. on desktop where BottomTabBar is md:hidden and
-				// never measures itself). null is the correct sentinel.
-				if (savedBottomBarHeight !== null) {
-					document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
-					savedBottomBarHeight = null;
-				}
+        // Restore bottom bar height from saved value.
+        // NOTE: We use !== null instead of truthiness because
+        // getPropertyValue returns '' when the property is not set
+        // inline (e.g. on desktop where BottomTabBar is md:hidden and
+        // never measures itself). null is the correct sentinel.
+        if (savedBottomBarHeight !== null) {
+          document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
+          savedBottomBarHeight = null;
+        }
 
-				// Dispatch resize so BottomTabBar's ResizeObserver re-measures.
-				// NOTE: This is synchronous and will re-enter handleResize.
-				// This is safe: keyboardOpen is already false and the keyboard
-				// is not visible, so neither branch of the keyboard detection
-				// logic executes. The only redundant work is an extra
-				// updateSafeHeight() call on iPad Safari (a harmless DOM write).
-				// BottomTabBar's listener uses requestAnimationFrame so it
-				// won't interfere with this handler's execution.
-				window.dispatchEvent(new Event('resize'));
-			}
-		};
+        // Dispatch resize so BottomTabBar's ResizeObserver re-measures.
+        // NOTE: This is synchronous and will re-enter handleResize.
+        // This is safe: keyboardOpen is already false and the keyboard
+        // is not visible, so neither branch of the keyboard detection
+        // logic executes. The only redundant work is an extra
+        // updateSafeHeight() call on iPad Safari (a harmless DOM write).
+        // BottomTabBar's listener uses requestAnimationFrame so it
+        // won't interfere with this handler's execution.
+        window.dispatchEvent(new Event('resize'));
+      }
+    };
 
-		// Set initial --safe-height for iPad Safari
-		if (ipadSafari) {
-			updateSafeHeight(vv);
-		}
+    // Set initial --safe-height for iPad Safari
+    if (ipadSafari) {
+      updateSafeHeight(vv);
+    }
 
-		// Check initial keyboard state (e.g. if keyboard was already open)
-		if (isKeyboardVisible(vv)) {
-			keyboardOpen = true;
-			document.documentElement.classList.add('keyboard-open');
-			document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
-			updateKeyboardHeight(vv);
-			savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
-			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
-		}
+    // Check initial keyboard state (e.g. if keyboard was already open)
+    if (isKeyboardVisible(vv)) {
+      keyboardOpen = true;
+      document.documentElement.classList.add('keyboard-open');
+      document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
+      updateKeyboardHeight(vv);
+      savedBottomBarHeight = document.documentElement.style.getPropertyValue('--bottom-bar-height');
+      document.documentElement.style.setProperty('--bottom-bar-height', '0px');
+    }
 
-		// `visualViewport.resize` fires whenever the visible area changes
-		// (address bar show/hide, keyboard appearance, etc.).
-		// `window.resize` fires on device rotation.
-		vv.addEventListener('resize', handleResize);
-		window.addEventListener('resize', handleResize);
+    // `visualViewport.resize` fires whenever the visible area changes
+    // (address bar show/hide, keyboard appearance, etc.).
+    // `window.resize` fires on device rotation.
+    vv.addEventListener('resize', handleResize);
+    window.addEventListener('resize', handleResize);
 
-		return () => {
-			vv.removeEventListener('resize', handleResize);
-			window.removeEventListener('resize', handleResize);
+    return () => {
+      vv.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', handleResize);
 
-			// Cleanup: restore original state
-			document.documentElement.classList.remove('keyboard-open');
-			document.documentElement.style.removeProperty('--safe-height');
-			document.documentElement.style.removeProperty('--keyboard-height');
-			if (savedBottomBarHeight !== null) {
-				document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
-			}
-		};
-	}, []);
+      // Cleanup: restore original state
+      document.documentElement.classList.remove('keyboard-open');
+      document.documentElement.style.removeProperty('--safe-height');
+      document.documentElement.style.removeProperty('--keyboard-height');
+      if (savedBottomBarHeight !== null) {
+        document.documentElement.style.setProperty('--bottom-bar-height', savedBottomBarHeight);
+      }
+    };
+  }, []);
 }

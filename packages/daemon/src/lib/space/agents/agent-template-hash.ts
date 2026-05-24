@@ -21,10 +21,10 @@
  * across callers that pass an empty array vs. omitting the field.
  */
 export interface AgentTemplateInput {
-	name: string;
-	description: string;
-	tools: string[];
-	customPrompt: string;
+  name: string;
+  description: string;
+  tools: string[];
+  customPrompt: string;
 }
 
 /**
@@ -34,14 +34,14 @@ export interface AgentTemplateInput {
  * object. Keep the keys in this fixed order; do NOT sort them.
  */
 export interface AgentTemplateFingerprint {
-	/** Lowercased + trimmed agent name. */
-	name: string;
-	/** Description as-supplied (already canonical text). */
-	description: string;
-	/** Tools sorted alphabetically for stability across array orderings. */
-	tools: string[];
-	/** Custom prompt verbatim — case + whitespace are part of the identity. */
-	customPrompt: string;
+  /** Lowercased + trimmed agent name. */
+  name: string;
+  /** Description as-supplied (already canonical text). */
+  description: string;
+  /** Tools sorted alphabetically for stability across array orderings. */
+  tools: string[];
+  /** Custom prompt verbatim — case + whitespace are part of the identity. */
+  customPrompt: string;
 }
 
 /**
@@ -49,12 +49,12 @@ export interface AgentTemplateFingerprint {
  * want to assert the shape *before* hashing.
  */
 export function buildAgentTemplateFingerprint(agent: AgentTemplateInput): AgentTemplateFingerprint {
-	return {
-		name: (agent.name ?? '').trim().toLowerCase(),
-		description: agent.description ?? '',
-		tools: [...(agent.tools ?? [])].sort(),
-		customPrompt: agent.customPrompt ?? '',
-	};
+  return {
+    name: (agent.name ?? '').trim().toLowerCase(),
+    description: agent.description ?? '',
+    tools: [...(agent.tools ?? [])].sort(),
+    customPrompt: agent.customPrompt ?? '',
+  };
 }
 
 /**
@@ -63,16 +63,16 @@ export function buildAgentTemplateFingerprint(agent: AgentTemplateInput): AgentT
  * definition in code and what was persisted on a space's `space_agents` row.
  */
 export function computeAgentTemplateHash(agent: AgentTemplateInput): string {
-	const fp = buildAgentTemplateFingerprint(agent);
-	const json = JSON.stringify(fp);
-	const hasher = new Bun.CryptoHasher('sha256');
-	hasher.update(json);
-	return hasher.digest('hex');
+  const fp = buildAgentTemplateFingerprint(agent);
+  const json = JSON.stringify(fp);
+  const hasher = new Bun.CryptoHasher('sha256');
+  hasher.update(json);
+  return hasher.digest('hex');
 }
 
 /**
  * Returns true when two preset agent definitions hash to the same value.
  */
 export function agentTemplatesMatch(a: AgentTemplateInput, b: AgentTemplateInput): boolean {
-	return computeAgentTemplateHash(a) === computeAgentTemplateHash(b);
+  return computeAgentTemplateHash(a) === computeAgentTemplateHash(b);
 }

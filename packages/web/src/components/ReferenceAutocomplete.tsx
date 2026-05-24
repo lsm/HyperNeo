@@ -5,31 +5,31 @@ import type { ReferenceSearchResult, ReferenceType } from '@neokai/shared';
 import ReferenceTypeIcon from './ReferenceTypeIcon.tsx';
 
 export interface ReferenceAutocompleteProps {
-	results: ReferenceSearchResult[];
-	selectedIndex: number;
-	onSelect: (result: ReferenceSearchResult) => void;
-	onClose: () => void;
-	position?: { top: number; left: number };
+  results: ReferenceSearchResult[];
+  selectedIndex: number;
+  onSelect: (result: ReferenceSearchResult) => void;
+  onClose: () => void;
+  position?: { top: number; left: number };
 }
 
 const TYPE_ORDER: ReferenceType[] = ['task', 'goal', 'file', 'folder'];
 
 const TYPE_LABELS: Record<ReferenceType, string> = {
-	task: 'Tasks',
-	goal: 'Goals',
-	file: 'Files',
-	folder: 'Folders',
+  task: 'Tasks',
+  goal: 'Goals',
+  file: 'Files',
+  folder: 'Folders',
 };
 
 const TYPE_ICON_CLASS: Record<ReferenceType, string> = {
-	task: 'w-3.5 h-3.5 text-indigo-400',
-	goal: 'w-3.5 h-3.5 text-amber-400',
-	file: 'w-3.5 h-3.5 text-blue-400',
-	folder: 'w-3.5 h-3.5 text-yellow-400',
+  task: 'w-3.5 h-3.5 text-indigo-400',
+  goal: 'w-3.5 h-3.5 text-amber-400',
+  file: 'w-3.5 h-3.5 text-blue-400',
+  folder: 'w-3.5 h-3.5 text-yellow-400',
 };
 
 function TypeIcon({ type }: { type: ReferenceType }) {
-	return <ReferenceTypeIcon type={type} className={TYPE_ICON_CLASS[type]} />;
+  return <ReferenceTypeIcon type={type} className={TYPE_ICON_CLASS[type]} />;
 }
 
 /**
@@ -38,163 +38,163 @@ function TypeIcon({ type }: { type: ReferenceType }) {
  * otherwise shows "References".
  */
 function resolveHeaderLabel(results: ReferenceSearchResult[]): string {
-	const types = new Set(results.map((r) => r.type));
-	const hasTaskOrGoal = types.has('task') || types.has('goal');
-	if (!hasTaskOrGoal) return 'Files & Folders';
-	return 'References';
+  const types = new Set(results.map((r) => r.type));
+  const hasTaskOrGoal = types.has('task') || types.has('goal');
+  if (!hasTaskOrGoal) return 'Files & Folders';
+  return 'References';
 }
 
 export default function ReferenceAutocomplete({
-	results,
-	selectedIndex,
-	onSelect,
-	onClose,
-	position,
+  results,
+  selectedIndex,
+  onSelect,
+  onClose,
+  position,
 }: ReferenceAutocompleteProps) {
-	const containerRef = useRef<HTMLDivElement>(null);
-	const selectedItemRef = useRef<HTMLButtonElement>(null);
-	const [isMobile, setIsMobile] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selectedItemRef = useRef<HTMLButtonElement>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
-	// Detect touch/mobile device on mount
-	useEffect(() => {
-		setIsMobile(window.matchMedia('(pointer: coarse)').matches);
-	}, []);
+  // Detect touch/mobile device on mount
+  useEffect(() => {
+    setIsMobile(window.matchMedia('(pointer: coarse)').matches);
+  }, []);
 
-	// Scroll selected item into view
-	useEffect(() => {
-		if (selectedItemRef.current) {
-			selectedItemRef.current.scrollIntoView({
-				block: 'nearest',
-				behavior: isMobile ? 'auto' : 'smooth',
-			});
-		}
-	}, [selectedIndex, isMobile]);
+  // Scroll selected item into view
+  useEffect(() => {
+    if (selectedItemRef.current) {
+      selectedItemRef.current.scrollIntoView({
+        block: 'nearest',
+        behavior: isMobile ? 'auto' : 'smooth',
+      });
+    }
+  }, [selectedIndex, isMobile]);
 
-	// Close on click or touch outside
-	useEffect(() => {
-		const handleOutside = (e: MouseEvent | TouchEvent) => {
-			if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-				onClose();
-			}
-		};
-		document.addEventListener('mousedown', handleOutside);
-		document.addEventListener('touchend', handleOutside);
-		return () => {
-			document.removeEventListener('mousedown', handleOutside);
-			document.removeEventListener('touchend', handleOutside);
-		};
-	}, [onClose]);
+  // Close on click or touch outside
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchend', handleOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchend', handleOutside);
+    };
+  }, [onClose]);
 
-	if (results.length === 0) return null;
+  if (results.length === 0) return null;
 
-	// Group results by type, preserving global index for selection
-	const groups: Array<{
-		type: ReferenceType;
-		items: Array<{ result: ReferenceSearchResult; globalIndex: number }>;
-	}> = [];
-	const indexMap = new Map<ReferenceSearchResult, number>(results.map((r, i) => [r, i]));
+  // Group results by type, preserving global index for selection
+  const groups: Array<{
+    type: ReferenceType;
+    items: Array<{ result: ReferenceSearchResult; globalIndex: number }>;
+  }> = [];
+  const indexMap = new Map<ReferenceSearchResult, number>(results.map((r, i) => [r, i]));
 
-	for (const type of TYPE_ORDER) {
-		const items = results
-			.filter((r) => r.type === type)
-			.map((r) => ({ result: r, globalIndex: indexMap.get(r) ?? 0 }));
-		if (items.length > 0) {
-			groups.push({ type, items });
-		}
-	}
+  for (const type of TYPE_ORDER) {
+    const items = results
+      .filter((r) => r.type === type)
+      .map((r) => ({ result: r, globalIndex: indexMap.get(r) ?? 0 }));
+    if (items.length > 0) {
+      groups.push({ type, items });
+    }
+  }
 
-	const headerLabel = resolveHeaderLabel(results);
+  const headerLabel = resolveHeaderLabel(results);
 
-	return (
-		<div
-			ref={containerRef}
-			data-testid="reference-autocomplete"
-			role="listbox"
-			aria-label={headerLabel}
-			class={cn(
-				`absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
-				'overflow-hidden max-h-72 overflow-y-auto',
-				'animate-slideIn'
-			)}
-			style={{
-				bottom: position ? undefined : '100%',
-				left: position?.left ?? 0,
-				top: position?.top,
-				marginBottom: position ? undefined : '8px',
-				width: isMobile ? '100%' : undefined,
-				minWidth: isMobile ? undefined : '280px',
-				maxWidth: isMobile ? undefined : '420px',
-			}}
-		>
-			{/* Header */}
-			<div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
-				<div class="flex items-center gap-2">
-					<svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
-						/>
-					</svg>
-					<span class="text-xs font-medium text-gray-400">{headerLabel}</span>
-				</div>
-			</div>
+  return (
+    <div
+      ref={containerRef}
+      data-testid="reference-autocomplete"
+      role="listbox"
+      aria-label={headerLabel}
+      class={cn(
+        `absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
+        'overflow-hidden max-h-72 overflow-y-auto',
+        'animate-slideIn'
+      )}
+      style={{
+        bottom: position ? undefined : '100%',
+        left: position?.left ?? 0,
+        top: position?.top,
+        marginBottom: position ? undefined : '8px',
+        width: isMobile ? '100%' : undefined,
+        minWidth: isMobile ? undefined : '280px',
+        maxWidth: isMobile ? undefined : '420px',
+      }}
+    >
+      {/* Header */}
+      <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
+            />
+          </svg>
+          <span class="text-xs font-medium text-gray-400">{headerLabel}</span>
+        </div>
+      </div>
 
-			{/* Grouped results */}
-			<div class="py-1">
-				{groups.map(({ type, items }) => (
-					<div key={type}>
-						{/* Section label */}
-						<div class="px-3 pt-2 pb-1">
-							<span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-								{TYPE_LABELS[type]}
-							</span>
-						</div>
+      {/* Grouped results */}
+      <div class="py-1">
+        {groups.map(({ type, items }) => (
+          <div key={type}>
+            {/* Section label */}
+            <div class="px-3 pt-2 pb-1">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                {TYPE_LABELS[type]}
+              </span>
+            </div>
 
-						{items.map(({ result, globalIndex }) => (
-							<button
-								key={`${result.type}:${result.id}`}
-								ref={globalIndex === selectedIndex ? selectedItemRef : null}
-								type="button"
-								role="option"
-								aria-selected={globalIndex === selectedIndex}
-								data-result-type={result.type}
-								onClick={() => onSelect(result)}
-								class={cn(
-									'w-full px-3 text-left transition-colors flex items-start gap-2',
-									isMobile ? 'py-3' : 'py-2',
-									'hover:bg-dark-700/50 active:bg-dark-700/70',
-									globalIndex === selectedIndex && 'bg-blue-500/20 border-l-2 border-blue-500'
-								)}
-							>
-								<span class="mt-0.5">
-									<TypeIcon type={result.type} />
-								</span>
-								<span class="flex flex-col min-w-0">
-									<span class="text-sm text-gray-100 truncate">{result.displayText}</span>
-									{result.subtitle && (
-										<span class="text-xs text-gray-500 truncate">{result.subtitle}</span>
-									)}
-								</span>
-							</button>
-						))}
-					</div>
-				))}
-			</div>
+            {items.map(({ result, globalIndex }) => (
+              <button
+                key={`${result.type}:${result.id}`}
+                ref={globalIndex === selectedIndex ? selectedItemRef : null}
+                type="button"
+                role="option"
+                aria-selected={globalIndex === selectedIndex}
+                data-result-type={result.type}
+                onClick={() => onSelect(result)}
+                class={cn(
+                  'w-full px-3 text-left transition-colors flex items-start gap-2',
+                  isMobile ? 'py-3' : 'py-2',
+                  'hover:bg-dark-700/50 active:bg-dark-700/70',
+                  globalIndex === selectedIndex && 'bg-blue-500/20 border-l-2 border-blue-500'
+                )}
+              >
+                <span class="mt-0.5">
+                  <TypeIcon type={result.type} />
+                </span>
+                <span class="flex flex-col min-w-0">
+                  <span class="text-sm text-gray-100 truncate">{result.displayText}</span>
+                  {result.subtitle && (
+                    <span class="text-xs text-gray-500 truncate">{result.subtitle}</span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
 
-			{/* Footer hint */}
-			<div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
-				{isMobile ? (
-					<p class="text-xs text-gray-500">Tap to select</p>
-				) : (
-					<p class="text-xs text-gray-500">
-						<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
-						<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
-						<kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
-					</p>
-				)}
-			</div>
-		</div>
-	);
+      {/* Footer hint */}
+      <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
+        {isMobile ? (
+          <p class="text-xs text-gray-500">Tap to select</p>
+        ) : (
+          <p class="text-xs text-gray-500">
+            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
+            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
+            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }

@@ -1,29 +1,29 @@
 import type {
-	EvidenceQualityPreflight,
-	EvolutionEpisode,
-	EvolutionEpisodeCreateResponse,
-	EvolutionEpisodeReviewBundleResponse,
-	EvolutionFinding,
-	EvolutionFindingDomain,
-	EvolutionLesson,
-	EvolutionRollupApplyResponse,
-	EvolutionTaskProposalCreateTaskResponse,
-	EvolutionScope,
-	EvolutionScopeCreateResponse,
-	EvolutionScopeKind,
-	EvolutionScopeListResponse,
-	EvolutionScopeUpdateResponse,
-	EvolutionEvidenceListResponse,
-	EvolutionMetricSnapshotCreateResponse,
-	EvolutionMetricSnapshotListResponse,
-	EvidenceRef,
-	MetricDefinition,
-	MetricDirection,
-	MetricSnapshot,
-	MetricSnapshotValues,
-	SpaceGoal,
-	TaskProposal,
-	TaskProposalStatus,
+  EvidenceQualityPreflight,
+  EvolutionEpisode,
+  EvolutionEpisodeCreateResponse,
+  EvolutionEpisodeReviewBundleResponse,
+  EvolutionFinding,
+  EvolutionFindingDomain,
+  EvolutionLesson,
+  EvolutionRollupApplyResponse,
+  EvolutionTaskProposalCreateTaskResponse,
+  EvolutionScope,
+  EvolutionScopeCreateResponse,
+  EvolutionScopeKind,
+  EvolutionScopeListResponse,
+  EvolutionScopeUpdateResponse,
+  EvolutionEvidenceListResponse,
+  EvolutionMetricSnapshotCreateResponse,
+  EvolutionMetricSnapshotListResponse,
+  EvidenceRef,
+  MetricDefinition,
+  MetricDirection,
+  MetricSnapshot,
+  MetricSnapshotValues,
+  SpaceGoal,
+  TaskProposal,
+  TaskProposalStatus,
 } from '@neokai/shared';
 import { scoreEvolutionEvidenceQuality } from '@neokai/shared';
 import type { ComponentChild } from 'preact';
@@ -36,16 +36,16 @@ import { cn, getRelativeTime } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import {
-	WorkflowModelSelect,
-	type WorkflowModelSelection,
+  WorkflowModelSelect,
+  type WorkflowModelSelection,
 } from './visual-editor/WorkflowModelSelect';
 
 type ScopeTab = 'overview' | 'evidence' | 'metrics' | 'lessons' | 'episodes';
 
 type ReviewAction =
-	| { kind: 'episode'; id: string; status: EvolutionEpisode['status'] }
-	| { kind: 'lesson'; id: string; status: EvolutionLesson['status'] }
-	| { kind: 'proposal'; id: string; status: TaskProposalStatus };
+  | { kind: 'episode'; id: string; status: EvolutionEpisode['status'] }
+  | { kind: 'lesson'; id: string; status: EvolutionLesson['status'] }
+  | { kind: 'proposal'; id: string; status: TaskProposalStatus };
 
 const SCOPE_KINDS: EvolutionScopeKind[] = ['mission', 'project', 'campaign', 'workflow', 'custom'];
 const SCOPE_TABS: ScopeTab[] = ['overview', 'evidence', 'metrics', 'lessons', 'episodes'];
@@ -53,1866 +53,1866 @@ const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 
 const EPISODE_JUDGE_TIMEOUT_MS = 120000;
 
 interface SpaceForgeProps {
-	spaceId: string;
+  spaceId: string;
 }
 
 interface ScopeCreateDialogProps {
-	isOpen: boolean;
-	spaceId: string;
-	goals: SpaceGoal[];
-	onClose: () => void;
-	onCreated: (scope: EvolutionScope) => void;
+  isOpen: boolean;
+  spaceId: string;
+  goals: SpaceGoal[];
+  onClose: () => void;
+  onCreated: (scope: EvolutionScope) => void;
 }
 
 interface MetricDefinitionDraft {
-	key: string;
-	label: string;
-	direction: MetricDirection;
-	unit: string;
-	targetValue: string;
+  key: string;
+  label: string;
+  direction: MetricDirection;
+  unit: string;
+  targetValue: string;
 }
 
 interface SnapshotValueDraft {
-	key: string;
-	value: string;
+  key: string;
+  value: string;
 }
 
 interface ProposalEditDraft {
-	title: string;
-	description: string;
-	reason: string;
-	priority: TaskProposal['priority'];
+  title: string;
+  description: string;
+  reason: string;
+  priority: TaskProposal['priority'];
 }
 
 interface RollupDraft {
-	summary: string;
-	progress: string;
-	nextSteps: string;
+  summary: string;
+  progress: string;
+  nextSteps: string;
 }
 
 function formatDate(value: number): string {
-	return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString();
 }
 
 function formatKind(kind: string): string {
-	return kind.replace(/_/g, ' ');
+  return kind.replace(/_/g, ' ');
 }
 
 function formatScopeCount(count: number): string {
-	return `${count} ${count === 1 ? 'scope' : 'scopes'}`;
+  return `${count} ${count === 1 ? 'scope' : 'scopes'}`;
 }
 
 function formatDefinitionCount(count: number): string {
-	return `${count} ${count === 1 ? 'definition' : 'definitions'}`;
+  return `${count} ${count === 1 ? 'definition' : 'definitions'}`;
 }
 
 function parseMetricValue(value: string): string | number | boolean | null {
-	const trimmed = value.trim();
-	if (!trimmed) return null;
-	if (trimmed === 'true') return true;
-	if (trimmed === 'false') return false;
-	const parsed = Number(trimmed);
-	return Number.isFinite(parsed) ? parsed : trimmed;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : trimmed;
 }
 
 function buildMetricDefinitions(drafts: MetricDefinitionDraft[]): MetricDefinition[] {
-	return drafts
-		.map((draft) => ({
-			key: draft.key.trim(),
-			label: draft.label.trim(),
-			direction: draft.direction,
-			unit: draft.unit.trim() || undefined,
-			targetValue: draft.targetValue.trim() ? parseMetricValue(draft.targetValue) : undefined,
-		}))
-		.filter((metric) => metric.key && metric.label);
+  return drafts
+    .map((draft) => ({
+      key: draft.key.trim(),
+      label: draft.label.trim(),
+      direction: draft.direction,
+      unit: draft.unit.trim() || undefined,
+      targetValue: draft.targetValue.trim() ? parseMetricValue(draft.targetValue) : undefined,
+    }))
+    .filter((metric) => metric.key && metric.label);
 }
 
 function createProposalDraft(proposal: TaskProposal): ProposalEditDraft {
-	return {
-		title: proposal.title,
-		description: proposal.description,
-		reason: proposal.reason,
-		priority: proposal.priority,
-	};
+  return {
+    title: proposal.title,
+    description: proposal.description,
+    reason: proposal.reason,
+    priority: proposal.priority,
+  };
 }
 
 function nextStepsFromText(value: string): string[] {
-	return value
-		.split('\n')
-		.map((step) => step.trim())
-		.filter(Boolean);
+  return value
+    .split('\n')
+    .map((step) => step.trim())
+    .filter(Boolean);
 }
 
 function buildEvidenceQualityPreflight(
-	evidence: EvidenceRef[],
-	selectedEvidenceIds: string[],
-	metricSnapshots: MetricSnapshot[] = [],
-	preflightContext?: EvolutionEvidenceListResponse['preflightContext']
+  evidence: EvidenceRef[],
+  selectedEvidenceIds: string[],
+  metricSnapshots: MetricSnapshot[] = [],
+  preflightContext?: EvolutionEvidenceListResponse['preflightContext']
 ): EvidenceQualityPreflight | null {
-	if (selectedEvidenceIds.length === 0) return null;
-	const selected = evidence.filter((item) => selectedEvidenceIds.includes(item.id));
-	if (selected.length === 0) return null;
-	const selectedIds = new Set(selected.map((item) => item.id));
-	return scoreEvolutionEvidenceQuality({
-		evidence: selected,
-		tasks: (preflightContext?.tasks ?? [])
-			.filter((item) => selectedIds.has(item.evidenceId))
-			.map(({ task }) => task),
-		workflowRuns: (preflightContext?.workflowRuns ?? [])
-			.filter((item) => item.evidenceIds.some((id) => selectedIds.has(id)))
-			.map(({ run, tasks, artifacts }) => ({
-				run,
-				tasks,
-				artifacts: artifacts.map((artifact) => ({
-					type: artifact.artifactType,
-					key: artifact.artifactKey,
-					data: artifact.data,
-				})),
-			})),
-		metricSnapshotCount: metricSnapshots.length,
-	});
+  if (selectedEvidenceIds.length === 0) return null;
+  const selected = evidence.filter((item) => selectedEvidenceIds.includes(item.id));
+  if (selected.length === 0) return null;
+  const selectedIds = new Set(selected.map((item) => item.id));
+  return scoreEvolutionEvidenceQuality({
+    evidence: selected,
+    tasks: (preflightContext?.tasks ?? [])
+      .filter((item) => selectedIds.has(item.evidenceId))
+      .map(({ task }) => task),
+    workflowRuns: (preflightContext?.workflowRuns ?? [])
+      .filter((item) => item.evidenceIds.some((id) => selectedIds.has(id)))
+      .map(({ run, tasks, artifacts }) => ({
+        run,
+        tasks,
+        artifacts: artifacts.map((artifact) => ({
+          type: artifact.artifactType,
+          key: artifact.artifactKey,
+          data: artifact.data,
+        })),
+      })),
+    metricSnapshotCount: metricSnapshots.length,
+  });
 }
 
 function getGoal(scope: EvolutionScope | null, goals: SpaceGoal[]): SpaceGoal | null {
-	if (!scope?.spaceGoalId) return null;
-	return goals.find((goal) => goal.id === scope.spaceGoalId) ?? null;
+  if (!scope?.spaceGoalId) return null;
+  return goals.find((goal) => goal.id === scope.spaceGoalId) ?? null;
 }
 
 function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: ScopeCreateDialogProps) {
-	const { request } = useMessageHub();
-	const [name, setName] = useState('');
-	const [objective, setObjective] = useState('');
-	const [kind, setKind] = useState<EvolutionScopeKind>('project');
-	const [spaceGoalId, setSpaceGoalId] = useState('');
-	const [episodeJudgeModel, setEpisodeJudgeModel] = useState<string | undefined>(undefined);
-	const [episodeJudgeProvider, setEpisodeJudgeProvider] = useState<string | undefined>(undefined);
-	const [metrics, setMetrics] = useState<MetricDefinitionDraft[]>([]);
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+  const { request } = useMessageHub();
+  const [name, setName] = useState('');
+  const [objective, setObjective] = useState('');
+  const [kind, setKind] = useState<EvolutionScopeKind>('project');
+  const [spaceGoalId, setSpaceGoalId] = useState('');
+  const [episodeJudgeModel, setEpisodeJudgeModel] = useState<string | undefined>(undefined);
+  const [episodeJudgeProvider, setEpisodeJudgeProvider] = useState<string | undefined>(undefined);
+  const [metrics, setMetrics] = useState<MetricDefinitionDraft[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-	const recurringGoals = goals.filter(
-		(goal) => goal.type === 'recurring' && goal.status !== 'archived'
-	);
+  const recurringGoals = goals.filter(
+    (goal) => goal.type === 'recurring' && goal.status !== 'archived'
+  );
 
-	const reset = () => {
-		setName('');
-		setObjective('');
-		setKind('project');
-		setSpaceGoalId('');
-		setEpisodeJudgeModel(undefined);
-		setEpisodeJudgeProvider(undefined);
-		setMetrics([]);
-		setError(null);
-	};
+  const reset = () => {
+    setName('');
+    setObjective('');
+    setKind('project');
+    setSpaceGoalId('');
+    setEpisodeJudgeModel(undefined);
+    setEpisodeJudgeProvider(undefined);
+    setMetrics([]);
+    setError(null);
+  };
 
-	const handleClose = () => {
-		reset();
-		onClose();
-	};
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
 
-	const handleEpisodeJudgeModelChange = (
-		value: string | undefined,
-		selection?: WorkflowModelSelection
-	) => {
-		setEpisodeJudgeModel(value);
-		setEpisodeJudgeProvider(selection?.provider);
-	};
+  const handleEpisodeJudgeModelChange = (
+    value: string | undefined,
+    selection?: WorkflowModelSelection
+  ) => {
+    setEpisodeJudgeModel(value);
+    setEpisodeJudgeProvider(selection?.provider);
+  };
 
-	const addMetric = () => {
-		setMetrics((current) => [
-			...current,
-			{ key: '', label: '', direction: 'increase', unit: '', targetValue: '' },
-		]);
-	};
+  const addMetric = () => {
+    setMetrics((current) => [
+      ...current,
+      { key: '', label: '', direction: 'increase', unit: '', targetValue: '' },
+    ]);
+  };
 
-	const updateMetric = (index: number, patch: Partial<MetricDefinitionDraft>) => {
-		setMetrics((current) =>
-			current.map((metric, metricIndex) =>
-				metricIndex === index ? { ...metric, ...patch } : metric
-			)
-		);
-	};
+  const updateMetric = (index: number, patch: Partial<MetricDefinitionDraft>) => {
+    setMetrics((current) =>
+      current.map((metric, metricIndex) =>
+        metricIndex === index ? { ...metric, ...patch } : metric
+      )
+    );
+  };
 
-	const removeMetric = (index: number) => {
-		setMetrics((current) => current.filter((_, metricIndex) => metricIndex !== index));
-	};
+  const removeMetric = (index: number) => {
+    setMetrics((current) => current.filter((_, metricIndex) => metricIndex !== index));
+  };
 
-	const handleSubmit = async (event: Event) => {
-		event.preventDefault();
-		const metricDefinitions = buildMetricDefinitions(metrics);
-		const keys = metricDefinitions.map((metric) => metric.key);
-		if (!name.trim()) {
-			setError('Scope name is required');
-			return;
-		}
-		if (!objective.trim()) {
-			setError('Objective is required');
-			return;
-		}
-		if (new Set(keys).size !== keys.length) {
-			setError('Metric keys must be unique');
-			return;
-		}
+  const handleSubmit = async (event: Event) => {
+    event.preventDefault();
+    const metricDefinitions = buildMetricDefinitions(metrics);
+    const keys = metricDefinitions.map((metric) => metric.key);
+    if (!name.trim()) {
+      setError('Scope name is required');
+      return;
+    }
+    if (!objective.trim()) {
+      setError('Objective is required');
+      return;
+    }
+    if (new Set(keys).size !== keys.length) {
+      setError('Metric keys must be unique');
+      return;
+    }
 
-		try {
-			setSubmitting(true);
-			setError(null);
-			const response = await request<EvolutionScopeCreateResponse>('evolution.scope.create', {
-				params: {
-					spaceId,
-					kind,
-					name: name.trim(),
-					objective: objective.trim(),
-					spaceGoalId: spaceGoalId || null,
-					metricDefinitions,
-					...(episodeJudgeModel ? { policy: { episodeJudgeModel, episodeJudgeProvider } } : {}),
-				},
-			});
-			toast.success(`Scope "${response.scope.name}" created`);
-			onCreated(response.scope);
-			handleClose();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to create scope');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+    try {
+      setSubmitting(true);
+      setError(null);
+      const response = await request<EvolutionScopeCreateResponse>('evolution.scope.create', {
+        params: {
+          spaceId,
+          kind,
+          name: name.trim(),
+          objective: objective.trim(),
+          spaceGoalId: spaceGoalId || null,
+          metricDefinitions,
+          ...(episodeJudgeModel ? { policy: { episodeJudgeModel, episodeJudgeProvider } } : {}),
+        },
+      });
+      toast.success(`Scope "${response.scope.name}" created`);
+      onCreated(response.scope);
+      handleClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create scope');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	return (
-		<Modal isOpen={isOpen} onClose={handleClose} title="Create Scope" size="lg">
-			<form onSubmit={handleSubmit} class="space-y-4">
-				{error && (
-					<div class="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-400">
-						{error}
-					</div>
-				)}
+  return (
+    <Modal isOpen={isOpen} onClose={handleClose} title="Create Scope" size="lg">
+      <form onSubmit={handleSubmit} class="space-y-4">
+        {error && (
+          <div class="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-400">
+            {error}
+          </div>
+        )}
 
-				<div>
-					<label class="mb-1.5 block text-sm font-medium text-gray-200">Name</label>
-					<input
-						value={name}
-						onInput={(event) => setName((event.target as HTMLInputElement).value)}
-						placeholder="Improve code review loop"
-						class="w-full rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-						autoFocus
-					/>
-				</div>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium text-gray-200">Name</label>
+          <input
+            value={name}
+            onInput={(event) => setName((event.target as HTMLInputElement).value)}
+            placeholder="Improve code review loop"
+            class="w-full rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            autoFocus
+          />
+        </div>
 
-				<div class="grid gap-4 md:grid-cols-2">
-					<div>
-						<label class="mb-1.5 block text-sm font-medium text-gray-300">Kind</label>
-						<select
-							value={kind}
-							onChange={(event) =>
-								setKind((event.target as HTMLSelectElement).value as EvolutionScopeKind)
-							}
-							class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-						>
-							{SCOPE_KINDS.map((option) => (
-								<option key={option} value={option}>
-									{formatKind(option)}
-								</option>
-							))}
-						</select>
-					</div>
-					<div>
-						<label class="mb-1.5 block text-sm font-medium text-gray-300">
-							Linked recurring goal
-						</label>
-						<select
-							aria-label="Linked recurring goal"
-							value={spaceGoalId}
-							onInput={(event) => setSpaceGoalId((event.target as HTMLSelectElement).value)}
-							class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-						>
-							<option value="">None</option>
-							{recurringGoals.map((goal) => (
-								<option key={goal.id} value={goal.id}>
-									{goal.title}
-								</option>
-							))}
-						</select>
-					</div>
-				</div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="mb-1.5 block text-sm font-medium text-gray-300">Kind</label>
+            <select
+              value={kind}
+              onChange={(event) =>
+                setKind((event.target as HTMLSelectElement).value as EvolutionScopeKind)
+              }
+              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            >
+              {SCOPE_KINDS.map((option) => (
+                <option key={option} value={option}>
+                  {formatKind(option)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-sm font-medium text-gray-300">
+              Linked recurring goal
+            </label>
+            <select
+              aria-label="Linked recurring goal"
+              value={spaceGoalId}
+              onInput={(event) => setSpaceGoalId((event.target as HTMLSelectElement).value)}
+              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">None</option>
+              {recurringGoals.map((goal) => (
+                <option key={goal.id} value={goal.id}>
+                  {goal.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-				<div>
-					<label class="mb-1.5 block text-sm font-medium text-gray-300">Objective</label>
-					<textarea
-						value={objective}
-						onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)}
-						placeholder="What should this scope prove or improve?"
-						rows={3}
-						class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-					/>
-				</div>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium text-gray-300">Objective</label>
+          <textarea
+            value={objective}
+            onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)}
+            placeholder="What should this scope prove or improve?"
+            rows={3}
+            class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+          />
+        </div>
 
-				<div>
-					<label class="mb-1.5 block text-sm font-medium text-gray-300">Episode judge model</label>
-					<WorkflowModelSelect
-						value={episodeJudgeModel}
-						provider={episodeJudgeProvider}
-						onChange={handleEpisodeJudgeModelChange}
-						testId="forge-scope-model-select"
-						className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-					/>
-					<p class="mt-1 text-xs text-gray-500">
-						Optional. Falls back to this Space&apos;s default model when unset.
-					</p>
-				</div>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium text-gray-300">Episode judge model</label>
+          <WorkflowModelSelect
+            value={episodeJudgeModel}
+            provider={episodeJudgeProvider}
+            onChange={handleEpisodeJudgeModelChange}
+            testId="forge-scope-model-select"
+            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+          />
+          <p class="mt-1 text-xs text-gray-500">
+            Optional. Falls back to this Space&apos;s default model when unset.
+          </p>
+        </div>
 
-				<div class="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
-					<div class="flex items-center justify-between gap-3">
-						<div>
-							<h3 class="text-sm font-medium text-gray-200">Metric definitions</h3>
-							<p class="text-xs text-gray-500">Optional keys tracked by snapshots.</p>
-						</div>
-						<Button type="button" variant="secondary" size="sm" onClick={addMetric}>
-							Add metric
-						</Button>
-					</div>
-					{metrics.length === 0 ? (
-						<p class="text-xs text-gray-600">No metrics yet.</p>
-					) : (
-						<div class="space-y-2">
-							{metrics.map((metric, index) => (
-								<div key={index} class="grid gap-2 md:grid-cols-[1fr_1fr_120px_100px_80px_auto]">
-									<input
-										value={metric.key}
-										onInput={(event) =>
-											updateMetric(index, { key: (event.target as HTMLInputElement).value })
-										}
-										placeholder="key"
-										class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-									/>
-									<input
-										value={metric.label}
-										onInput={(event) =>
-											updateMetric(index, { label: (event.target as HTMLInputElement).value })
-										}
-										placeholder="Label"
-										class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-									/>
-									<select
-										value={metric.direction}
-										onChange={(event) =>
-											updateMetric(index, {
-												direction: (event.target as HTMLSelectElement).value as MetricDirection,
-											})
-										}
-										class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
-									>
-										{METRIC_DIRECTIONS.map((direction) => (
-											<option key={direction} value={direction}>
-												{direction}
-											</option>
-										))}
-									</select>
-									<input
-										value={metric.unit}
-										onInput={(event) =>
-											updateMetric(index, { unit: (event.target as HTMLInputElement).value })
-										}
-										placeholder="unit"
-										class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-									/>
-									<input
-										value={metric.targetValue}
-										onInput={(event) =>
-											updateMetric(index, { targetValue: (event.target as HTMLInputElement).value })
-										}
-										placeholder="target"
-										class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-									/>
-									<button
-										type="button"
-										onClick={() => removeMetric(index)}
-										class="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-white/5 hover:text-red-300"
-									>
-										Remove
-									</button>
-								</div>
-							))}
-						</div>
-					)}
-				</div>
+        <div class="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-medium text-gray-200">Metric definitions</h3>
+              <p class="text-xs text-gray-500">Optional keys tracked by snapshots.</p>
+            </div>
+            <Button type="button" variant="secondary" size="sm" onClick={addMetric}>
+              Add metric
+            </Button>
+          </div>
+          {metrics.length === 0 ? (
+            <p class="text-xs text-gray-600">No metrics yet.</p>
+          ) : (
+            <div class="space-y-2">
+              {metrics.map((metric, index) => (
+                <div key={index} class="grid gap-2 md:grid-cols-[1fr_1fr_120px_100px_80px_auto]">
+                  <input
+                    value={metric.key}
+                    onInput={(event) =>
+                      updateMetric(index, { key: (event.target as HTMLInputElement).value })
+                    }
+                    placeholder="key"
+                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    value={metric.label}
+                    onInput={(event) =>
+                      updateMetric(index, { label: (event.target as HTMLInputElement).value })
+                    }
+                    placeholder="Label"
+                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <select
+                    value={metric.direction}
+                    onChange={(event) =>
+                      updateMetric(index, {
+                        direction: (event.target as HTMLSelectElement).value as MetricDirection,
+                      })
+                    }
+                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+                  >
+                    {METRIC_DIRECTIONS.map((direction) => (
+                      <option key={direction} value={direction}>
+                        {direction}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={metric.unit}
+                    onInput={(event) =>
+                      updateMetric(index, { unit: (event.target as HTMLInputElement).value })
+                    }
+                    placeholder="unit"
+                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <input
+                    value={metric.targetValue}
+                    onInput={(event) =>
+                      updateMetric(index, { targetValue: (event.target as HTMLInputElement).value })
+                    }
+                    placeholder="target"
+                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeMetric(index)}
+                    class="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-white/5 hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-				<div class="flex justify-end gap-2 border-t border-white/10 pt-4">
-					<Button type="button" variant="ghost" onClick={handleClose} disabled={submitting}>
-						Cancel
-					</Button>
-					<Button type="submit" disabled={submitting}>
-						{submitting ? 'Creating…' : 'Create scope'}
-					</Button>
-				</div>
-			</form>
-		</Modal>
-	);
+        <div class="flex justify-end gap-2 border-t border-white/10 pt-4">
+          <Button type="button" variant="ghost" onClick={handleClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? 'Creating…' : 'Create scope'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 function GoalSummary({ goal }: { goal: SpaceGoal }) {
-	return (
-		<div class="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
-			<div class="mb-3 flex items-center justify-between gap-3">
-				<div>
-					<p class="text-[11px] font-semibold uppercase tracking-wide text-blue-300">
-						Linked recurring goal
-					</p>
-					<h3 class="mt-1 text-sm font-medium text-gray-100">{goal.title}</h3>
-				</div>
-				<span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
-					{goal.progress}%
-				</span>
-			</div>
-			<div class="mb-3 h-1.5 overflow-hidden rounded-full bg-dark-800">
-				<div
-					class="h-full rounded-full bg-blue-400 transition-[width]"
-					style={{ width: `${Math.max(0, Math.min(100, goal.progress))}%` }}
-				/>
-			</div>
-			{goal.summary && <p class="text-sm text-gray-300">{goal.summary}</p>}
-			{goal.nextSteps.length > 0 && (
-				<ul class="mt-3 space-y-1 text-xs text-gray-400">
-					{goal.nextSteps.map((step) => (
-						<li key={step}>Next: {step}</li>
-					))}
-				</ul>
-			)}
-		</div>
-	);
+  return (
+    <div class="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-blue-300">
+            Linked recurring goal
+          </p>
+          <h3 class="mt-1 text-sm font-medium text-gray-100">{goal.title}</h3>
+        </div>
+        <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
+          {goal.progress}%
+        </span>
+      </div>
+      <div class="mb-3 h-1.5 overflow-hidden rounded-full bg-dark-800">
+        <div
+          class="h-full rounded-full bg-blue-400 transition-[width]"
+          style={{ width: `${Math.max(0, Math.min(100, goal.progress))}%` }}
+        />
+      </div>
+      {goal.summary && <p class="text-sm text-gray-300">{goal.summary}</p>}
+      {goal.nextSteps.length > 0 && (
+        <ul class="mt-3 space-y-1 text-xs text-gray-400">
+          {goal.nextSteps.map((step) => (
+            <li key={step}>Next: {step}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function EvidenceTab({ scope }: { scope: EvolutionScope }) {
-	const { request } = useMessageHub();
-	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
-	const [note, setNote] = useState('');
-	const [loading, setLoading] = useState(false);
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const requestVersion = useRef(0);
+  const { request } = useMessageHub();
+  const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
 
-	const loadEvidence = useCallback(async () => {
-		const version = ++requestVersion.current;
-		setLoading(true);
-		setError(null);
-		try {
-			const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
-				scopeId: scope.id,
-			});
-			if (requestVersion.current === version) setEvidence(response.evidence ?? []);
-		} catch (err) {
-			if (requestVersion.current === version) {
-				setError(err instanceof Error ? err.message : 'Failed to load evidence');
-			}
-		} finally {
-			if (requestVersion.current === version) setLoading(false);
-		}
-	}, [request, scope.id]);
+  const loadEvidence = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
+        scopeId: scope.id,
+      });
+      if (requestVersion.current === version) setEvidence(response.evidence ?? []);
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load evidence');
+      }
+    } finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
+  }, [request, scope.id]);
 
-	useEffect(() => {
-		loadEvidence().catch(() => undefined);
-	}, [loadEvidence]);
+  useEffect(() => {
+    loadEvidence().catch(() => undefined);
+  }, [loadEvidence]);
 
-	const handleAddNote = async (event: Event) => {
-		event.preventDefault();
-		if (!note.trim()) return;
-		try {
-			setSubmitting(true);
-			setError(null);
-			await request<{ evidence: EvidenceRef }>('evolution.evidence.addManualNote', {
-				scopeId: scope.id,
-				summary: note.trim(),
-			});
-			setNote('');
-			await loadEvidence();
-			toast.success('Evidence note attached');
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to attach note');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+  const handleAddNote = async (event: Event) => {
+    event.preventDefault();
+    if (!note.trim()) return;
+    try {
+      setSubmitting(true);
+      setError(null);
+      await request<{ evidence: EvidenceRef }>('evolution.evidence.addManualNote', {
+        scopeId: scope.id,
+        summary: note.trim(),
+      });
+      setNote('');
+      await loadEvidence();
+      toast.success('Evidence note attached');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to attach note');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	const timeline = [...evidence].sort((a, b) => b.createdAt - a.createdAt);
+  const timeline = [...evidence].sort((a, b) => b.createdAt - a.createdAt);
 
-	return (
-		<div class="space-y-4">
-			<form onSubmit={handleAddNote} class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-				<label class="mb-2 block text-sm font-medium text-gray-200">Attach manual note</label>
-				<textarea
-					value={note}
-					onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
-					placeholder="What happened? What evidence should Forge remember?"
-					rows={3}
-					class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-				/>
-				<div class="mt-3 flex justify-end">
-					<Button type="submit" size="sm" disabled={submitting || !note.trim()}>
-						{submitting ? 'Attaching…' : 'Attach note'}
-					</Button>
-				</div>
-			</form>
+  return (
+    <div class="space-y-4">
+      <form onSubmit={handleAddNote} class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <label class="mb-2 block text-sm font-medium text-gray-200">Attach manual note</label>
+        <textarea
+          value={note}
+          onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
+          placeholder="What happened? What evidence should Forge remember?"
+          rows={3}
+          class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+        />
+        <div class="mt-3 flex justify-end">
+          <Button type="submit" size="sm" disabled={submitting || !note.trim()}>
+            {submitting ? 'Attaching…' : 'Attach note'}
+          </Button>
+        </div>
+      </form>
 
-			{error && (
-				<div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
-					{error}
-				</div>
-			)}
+      {error && (
+        <div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
-			<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-				<div class="mb-3 flex items-center justify-between">
-					<h3 class="text-sm font-medium text-gray-100">Evidence timeline</h3>
-					<span class="text-xs text-gray-500">{timeline.length} items</span>
-				</div>
-				{loading ? (
-					<p class="text-sm text-gray-500">Loading evidence…</p>
-				) : timeline.length === 0 ? (
-					<div class="text-sm text-gray-500">
-						<p>No evidence attached yet.</p>
-						<p class="mt-1 text-xs text-gray-600">
-							Attach a completed task, metric snapshot, or manual note before generating an episode.
-						</p>
-					</div>
-				) : (
-					<div class="space-y-3">
-						{timeline.map((item) => (
-							<div key={item.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-								<div class="mb-1 flex items-center justify-between gap-3">
-									<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
-										{formatKind(item.kind)}
-									</span>
-									<span class="text-xs text-gray-600">{formatDate(item.createdAt)}</span>
-								</div>
-								<p class="text-sm text-gray-200">{item.summary}</p>
-							</div>
-						))}
-					</div>
-				)}
-			</section>
-		</div>
-	);
+      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <div class="mb-3 flex items-center justify-between">
+          <h3 class="text-sm font-medium text-gray-100">Evidence timeline</h3>
+          <span class="text-xs text-gray-500">{timeline.length} items</span>
+        </div>
+        {loading ? (
+          <p class="text-sm text-gray-500">Loading evidence…</p>
+        ) : timeline.length === 0 ? (
+          <div class="text-sm text-gray-500">
+            <p>No evidence attached yet.</p>
+            <p class="mt-1 text-xs text-gray-600">
+              Attach a completed task, metric snapshot, or manual note before generating an episode.
+            </p>
+          </div>
+        ) : (
+          <div class="space-y-3">
+            {timeline.map((item) => (
+              <div key={item.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                <div class="mb-1 flex items-center justify-between gap-3">
+                  <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+                    {formatKind(item.kind)}
+                  </span>
+                  <span class="text-xs text-gray-600">{formatDate(item.createdAt)}</span>
+                </div>
+                <p class="text-sm text-gray-200">{item.summary}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
 }
 
 function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal | null }) {
-	const { request } = useMessageHub();
-	const [episodes, setEpisodes] = useState<EvolutionEpisode[]>([]);
-	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
-	const [proposals, setProposals] = useState<TaskProposal[]>([]);
-	const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
-	const [preflightContext, setPreflightContext] =
-		useState<EvolutionEvidenceListResponse['preflightContext']>();
-	const [metricSnapshots, setMetricSnapshots] = useState<MetricSnapshot[]>([]);
-	const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
-	const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
-	const [loading, setLoading] = useState(false);
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [editingProposalId, setEditingProposalId] = useState<string | null>(null);
-	const [proposalDraft, setProposalDraft] = useState<ProposalEditDraft | null>(null);
-	const [rollupDraft, setRollupDraft] = useState<RollupDraft>({
-		summary: goal?.summary ?? '',
-		progress: String(goal?.progress ?? 0),
-		nextSteps: goal?.nextSteps.join('\n') ?? '',
-	});
-	const requestVersion = useRef(0);
+  const { request } = useMessageHub();
+  const [episodes, setEpisodes] = useState<EvolutionEpisode[]>([]);
+  const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
+  const [proposals, setProposals] = useState<TaskProposal[]>([]);
+  const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+  const [preflightContext, setPreflightContext] =
+    useState<EvolutionEvidenceListResponse['preflightContext']>();
+  const [metricSnapshots, setMetricSnapshots] = useState<MetricSnapshot[]>([]);
+  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
+  const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editingProposalId, setEditingProposalId] = useState<string | null>(null);
+  const [proposalDraft, setProposalDraft] = useState<ProposalEditDraft | null>(null);
+  const [rollupDraft, setRollupDraft] = useState<RollupDraft>({
+    summary: goal?.summary ?? '',
+    progress: String(goal?.progress ?? 0),
+    nextSteps: goal?.nextSteps.join('\n') ?? '',
+  });
+  const requestVersion = useRef(0);
 
-	const loadReview = useCallback(async () => {
-		const version = ++requestVersion.current;
-		setLoading(true);
-		setError(null);
-		try {
-			const metricSnapshotsPromise = request<EvolutionMetricSnapshotListResponse>(
-				'evolution.metricSnapshot.list',
-				{ scopeId: scope.id }
-			).catch(() => ({ snapshots: [] }));
-			const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
-				request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
-					scopeId: scope.id,
-				}),
-				request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
-					scopeId: scope.id,
-					includePreflightContext: true,
-				}),
-				metricSnapshotsPromise,
-			]);
-			if (requestVersion.current !== version) return;
-			setEpisodes(reviewResponse.episodes ?? []);
-			setLessons(reviewResponse.lessons ?? []);
-			setProposals(reviewResponse.proposals ?? []);
-			setEvidence(evidenceResponse.evidence ?? []);
-			setPreflightContext(evidenceResponse.preflightContext);
-			setMetricSnapshots(metricResponse.snapshots ?? []);
-			setSelectedEvidenceIds((current) =>
-				current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
-			);
-		} catch (err) {
-			if (requestVersion.current === version) {
-				setError(err instanceof Error ? err.message : 'Failed to load episode review');
-			}
-		} finally {
-			if (requestVersion.current === version) setLoading(false);
-		}
-	}, [request, scope.id]);
+  const loadReview = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const metricSnapshotsPromise = request<EvolutionMetricSnapshotListResponse>(
+        'evolution.metricSnapshot.list',
+        { scopeId: scope.id }
+      ).catch(() => ({ snapshots: [] }));
+      const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
+        request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
+          scopeId: scope.id,
+        }),
+        request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
+          scopeId: scope.id,
+          includePreflightContext: true,
+        }),
+        metricSnapshotsPromise,
+      ]);
+      if (requestVersion.current !== version) return;
+      setEpisodes(reviewResponse.episodes ?? []);
+      setLessons(reviewResponse.lessons ?? []);
+      setProposals(reviewResponse.proposals ?? []);
+      setEvidence(evidenceResponse.evidence ?? []);
+      setPreflightContext(evidenceResponse.preflightContext);
+      setMetricSnapshots(metricResponse.snapshots ?? []);
+      setSelectedEvidenceIds((current) =>
+        current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
+      );
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load episode review');
+      }
+    } finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
+  }, [request, scope.id]);
 
-	useEffect(() => {
-		setSelectedEvidenceIds([]);
-		loadReview().catch(() => undefined);
-	}, [loadReview]);
+  useEffect(() => {
+    setSelectedEvidenceIds([]);
+    loadReview().catch(() => undefined);
+  }, [loadReview]);
 
-	useEffect(() => {
-		setRollupDraft({
-			summary: goal?.summary ?? '',
-			progress: String(goal?.progress ?? 0),
-			nextSteps: goal?.nextSteps.join('\n') ?? '',
-		});
-	}, [goal]);
+  useEffect(() => {
+    setRollupDraft({
+      summary: goal?.summary ?? '',
+      progress: String(goal?.progress ?? 0),
+      nextSteps: goal?.nextSteps.join('\n') ?? '',
+    });
+  }, [goal]);
 
-	// MVP review focuses on the newest draft; deeper episode history/selection can layer on later.
-	const latestEpisode = episodes[0] ?? null;
-	const groupedFindings = useMemo(
-		() => groupFindingsByDomain(latestEpisode?.findings ?? []),
-		[latestEpisode]
-	);
-	const frictionFindings = (latestEpisode?.findings ?? []).filter(
-		(finding) => finding.kind === 'friction'
-	);
-	const candidateLessons = lessons.filter((lesson) => lesson.status === 'candidate');
-	const proposedTasks = proposals.filter((proposal) => proposal.status === 'proposed');
-	const canApplyRollup =
-		!!goal &&
-		!!latestEpisode &&
-		latestEpisode.status !== 'dismissed' &&
-		latestEpisode.rollupAppliedAt === null;
-	const preflight = useMemo(
-		() =>
-			buildEvidenceQualityPreflight(
-				evidence,
-				selectedEvidenceIds,
-				metricSnapshots,
-				preflightContext
-			),
-		[evidence, metricSnapshots, preflightContext, selectedEvidenceIds]
-	);
-	const preflightReady = preflight?.requiresConfirmation ? confirmLowConfidence : true;
+  // MVP review focuses on the newest draft; deeper episode history/selection can layer on later.
+  const latestEpisode = episodes[0] ?? null;
+  const groupedFindings = useMemo(
+    () => groupFindingsByDomain(latestEpisode?.findings ?? []),
+    [latestEpisode]
+  );
+  const frictionFindings = (latestEpisode?.findings ?? []).filter(
+    (finding) => finding.kind === 'friction'
+  );
+  const candidateLessons = lessons.filter((lesson) => lesson.status === 'candidate');
+  const proposedTasks = proposals.filter((proposal) => proposal.status === 'proposed');
+  const canApplyRollup =
+    !!goal &&
+    !!latestEpisode &&
+    latestEpisode.status !== 'dismissed' &&
+    latestEpisode.rollupAppliedAt === null;
+  const preflight = useMemo(
+    () =>
+      buildEvidenceQualityPreflight(
+        evidence,
+        selectedEvidenceIds,
+        metricSnapshots,
+        preflightContext
+      ),
+    [evidence, metricSnapshots, preflightContext, selectedEvidenceIds]
+  );
+  const preflightReady = preflight?.requiresConfirmation ? confirmLowConfidence : true;
 
-	const toggleEvidence = (id: string) => {
-		setConfirmLowConfidence(false);
-		setSelectedEvidenceIds((current) =>
-			current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-		);
-	};
+  const toggleEvidence = (id: string) => {
+    setConfirmLowConfidence(false);
+    setSelectedEvidenceIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  };
 
-	const handleCreateEpisode = async () => {
-		if (selectedEvidenceIds.length === 0) {
-			setError('Select at least one evidence item');
-			return;
-		}
-		try {
-			setSubmitting(true);
-			setError(null);
-			const response = await request<EvolutionEpisodeCreateResponse>(
-				'evolution.episode.createFromEvidence',
-				{
-					scopeId: scope.id,
-					evidenceIds: selectedEvidenceIds,
-					confirmLowConfidence: confirmLowConfidence || undefined,
-				},
-				{ timeout: EPISODE_JUDGE_TIMEOUT_MS }
-			);
-			setEpisodes((current) => [response.episode, ...current]);
-			setLessons((current) => [...(response.lessons ?? []), ...current]);
-			setProposals((current) => [...(response.proposals ?? []), ...current]);
-			setSelectedEvidenceIds([]);
-			setConfirmLowConfidence(false);
-			toast.success(`Episode "${response.episode.title}" drafted`);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to create episode');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+  const handleCreateEpisode = async () => {
+    if (selectedEvidenceIds.length === 0) {
+      setError('Select at least one evidence item');
+      return;
+    }
+    try {
+      setSubmitting(true);
+      setError(null);
+      const response = await request<EvolutionEpisodeCreateResponse>(
+        'evolution.episode.createFromEvidence',
+        {
+          scopeId: scope.id,
+          evidenceIds: selectedEvidenceIds,
+          confirmLowConfidence: confirmLowConfidence || undefined,
+        },
+        { timeout: EPISODE_JUDGE_TIMEOUT_MS }
+      );
+      setEpisodes((current) => [response.episode, ...current]);
+      setLessons((current) => [...(response.lessons ?? []), ...current]);
+      setProposals((current) => [...(response.proposals ?? []), ...current]);
+      setSelectedEvidenceIds([]);
+      setConfirmLowConfidence(false);
+      toast.success(`Episode "${response.episode.title}" drafted`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create episode');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	const updateReviewItem = async (action: ReviewAction) => {
-		try {
-			setError(null);
-			if (action.kind === 'episode') {
-				const response = await request<{ episode: EvolutionEpisode | null }>(
-					'evolution.episode.update',
-					{
-						id: action.id,
-						params: { status: action.status },
-					}
-				);
-				if (response.episode) {
-					setEpisodes((current) =>
-						current.map((item) => (item.id === response.episode?.id ? response.episode : item))
-					);
-				}
-			} else if (action.kind === 'lesson') {
-				const response = await request<{ lesson: EvolutionLesson | null }>(
-					'evolution.lesson.update',
-					{
-						id: action.id,
-						params: { status: action.status },
-					}
-				);
-				if (response.lesson) {
-					setLessons((current) =>
-						current.map((item) => (item.id === response.lesson?.id ? response.lesson : item))
-					);
-				}
-			} else {
-				const response = await request<{ proposal: TaskProposal | null }>(
-					'evolution.taskProposal.update',
-					{
-						id: action.id,
-						params: { status: action.status },
-					}
-				);
-				if (response.proposal) {
-					setProposals((current) =>
-						current.map((item) => (item.id === response.proposal?.id ? response.proposal : item))
-					);
-				}
-			}
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to update review item');
-		}
-	};
+  const updateReviewItem = async (action: ReviewAction) => {
+    try {
+      setError(null);
+      if (action.kind === 'episode') {
+        const response = await request<{ episode: EvolutionEpisode | null }>(
+          'evolution.episode.update',
+          {
+            id: action.id,
+            params: { status: action.status },
+          }
+        );
+        if (response.episode) {
+          setEpisodes((current) =>
+            current.map((item) => (item.id === response.episode?.id ? response.episode : item))
+          );
+        }
+      } else if (action.kind === 'lesson') {
+        const response = await request<{ lesson: EvolutionLesson | null }>(
+          'evolution.lesson.update',
+          {
+            id: action.id,
+            params: { status: action.status },
+          }
+        );
+        if (response.lesson) {
+          setLessons((current) =>
+            current.map((item) => (item.id === response.lesson?.id ? response.lesson : item))
+          );
+        }
+      } else {
+        const response = await request<{ proposal: TaskProposal | null }>(
+          'evolution.taskProposal.update',
+          {
+            id: action.id,
+            params: { status: action.status },
+          }
+        );
+        if (response.proposal) {
+          setProposals((current) =>
+            current.map((item) => (item.id === response.proposal?.id ? response.proposal : item))
+          );
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update review item');
+    }
+  };
 
-	const createTaskFromProposal = async (proposal: TaskProposal, draft?: ProposalEditDraft) => {
-		try {
-			setSubmitting(true);
-			setError(null);
-			const response = await request<EvolutionTaskProposalCreateTaskResponse>(
-				'evolution.taskProposal.createTask',
-				{
-					id: proposal.id,
-					params: draft
-						? {
-								title: draft.title,
-								description: draft.description,
-								reason: draft.reason,
-								priority: draft.priority,
-							}
-						: undefined,
-				}
-			);
-			setProposals((current) =>
-				current.map((item) => (item.id === response.proposal.id ? response.proposal : item))
-			);
-			setEditingProposalId(null);
-			setProposalDraft(null);
-			toast.success(`Task #${response.task.taskNumber} created`);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to create task from proposal');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+  const createTaskFromProposal = async (proposal: TaskProposal, draft?: ProposalEditDraft) => {
+    try {
+      setSubmitting(true);
+      setError(null);
+      const response = await request<EvolutionTaskProposalCreateTaskResponse>(
+        'evolution.taskProposal.createTask',
+        {
+          id: proposal.id,
+          params: draft
+            ? {
+                title: draft.title,
+                description: draft.description,
+                reason: draft.reason,
+                priority: draft.priority,
+              }
+            : undefined,
+        }
+      );
+      setProposals((current) =>
+        current.map((item) => (item.id === response.proposal.id ? response.proposal : item))
+      );
+      setEditingProposalId(null);
+      setProposalDraft(null);
+      toast.success(`Task #${response.task.taskNumber} created`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create task from proposal');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	const beginEditProposal = (proposal: TaskProposal) => {
-		setEditingProposalId(proposal.id);
-		setProposalDraft(createProposalDraft(proposal));
-	};
+  const beginEditProposal = (proposal: TaskProposal) => {
+    setEditingProposalId(proposal.id);
+    setProposalDraft(createProposalDraft(proposal));
+  };
 
-	const applyRollup = async () => {
-		if (!latestEpisode || !goal) return;
-		const progress = Number(rollupDraft.progress);
-		if (!Number.isFinite(progress)) {
-			setError('Progress must be a number');
-			return;
-		}
-		try {
-			setSubmitting(true);
-			setError(null);
-			const response = await request<EvolutionRollupApplyResponse>('evolution.rollup.apply', {
-				episodeId: latestEpisode.id,
-				goalUpdate: {
-					summary: rollupDraft.summary.trim(),
-					progress,
-					nextSteps: nextStepsFromText(rollupDraft.nextSteps),
-				},
-			});
-			setEpisodes((current) =>
-				current.map((item) => (item.id === response.episode.id ? response.episode : item))
-			);
-			if (spaceStore.spaceId.value === response.goal.spaceId) {
-				spaceStore.upsertGoal(response.goal);
-			}
-			toast.success(`Rollup applied to "${response.goal.title}"`);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to apply rollup');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+  const applyRollup = async () => {
+    if (!latestEpisode || !goal) return;
+    const progress = Number(rollupDraft.progress);
+    if (!Number.isFinite(progress)) {
+      setError('Progress must be a number');
+      return;
+    }
+    try {
+      setSubmitting(true);
+      setError(null);
+      const response = await request<EvolutionRollupApplyResponse>('evolution.rollup.apply', {
+        episodeId: latestEpisode.id,
+        goalUpdate: {
+          summary: rollupDraft.summary.trim(),
+          progress,
+          nextSteps: nextStepsFromText(rollupDraft.nextSteps),
+        },
+      });
+      setEpisodes((current) =>
+        current.map((item) => (item.id === response.episode.id ? response.episode : item))
+      );
+      if (spaceStore.spaceId.value === response.goal.spaceId) {
+        spaceStore.upsertGoal(response.goal);
+      }
+      toast.success(`Rollup applied to "${response.goal.title}"`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply rollup');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	return (
-		<div class="space-y-4">
-			<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-				<div class="mb-3 flex items-start justify-between gap-3">
-					<div>
-						<h3 class="text-sm font-medium text-gray-100">Generate episode draft</h3>
-						<p class="mt-1 text-xs text-gray-500">
-							Select scoped evidence. Judge creates draft only; lessons and proposals remain
-							candidates.
-						</p>
-					</div>
-					<Button
-						type="button"
-						size="sm"
-						onClick={handleCreateEpisode}
-						disabled={submitting || selectedEvidenceIds.length === 0 || !preflightReady}
-					>
-						{submitting ? 'Judging…' : 'Create episode'}
-					</Button>
-				</div>
-				{evidence.length === 0 ? (
-					<div class="text-sm text-gray-500">
-						<p>No evidence available.</p>
-						<p class="mt-1 text-xs text-gray-600">
-							Add evidence from the Evidence or Metrics tab, then return here to draft an episode.
-						</p>
-					</div>
-				) : (
-					<div class="space-y-3">
-						<div class="grid gap-2 md:grid-cols-2">
-							{evidence.map((item) => (
-								<label
-									key={item.id}
-									class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
-								>
-									<input
-										type="checkbox"
-										checked={selectedEvidenceIds.includes(item.id)}
-										onChange={() => toggleEvidence(item.id)}
-										class="mt-1"
-									/>
-									<span>
-										<span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
-										{item.summary}
-									</span>
-								</label>
-							))}
-						</div>
-						{preflight && (
-							<div
-								class={`rounded-lg border px-3 py-2 text-sm ${
-									preflight.level === 'high'
-										? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
-										: preflight.level === 'medium'
-											? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-											: 'border-red-500/30 bg-red-500/10 text-red-100'
-								}`}
-							>
-								<div class="flex flex-wrap items-center justify-between gap-2">
-									<span class="font-medium">Evidence preflight: {preflight.level} confidence</span>
-									<span class="text-xs opacity-80">
-										{preflight.score}/{preflight.maxScore} · {preflight.counts.total} selected
-									</span>
-								</div>
-								{preflight.reasons.length > 0 && (
-									<ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
-										{preflight.reasons.map((reason) => (
-											<li key={reason}>{reason}</li>
-										))}
-									</ul>
-								)}
-								{preflight.warnings.length > 0 && (
-									<ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
-										{preflight.warnings.map((warning) => (
-											<li key={warning}>{warning}</li>
-										))}
-									</ul>
-								)}
-								{preflight.requiresConfirmation && (
-									<label class="mt-3 flex items-center gap-2 text-xs">
-										<input
-											type="checkbox"
-											checked={confirmLowConfidence}
-											onChange={(event) =>
-												setConfirmLowConfidence((event.currentTarget as HTMLInputElement).checked)
-											}
-										/>
-										Generate low-confidence episode anyway
-									</label>
-								)}
-							</div>
-						)}
-					</div>
-				)}
-			</section>
+  return (
+    <div class="space-y-4">
+      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <div class="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-medium text-gray-100">Generate episode draft</h3>
+            <p class="mt-1 text-xs text-gray-500">
+              Select scoped evidence. Judge creates draft only; lessons and proposals remain
+              candidates.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleCreateEpisode}
+            disabled={submitting || selectedEvidenceIds.length === 0 || !preflightReady}
+          >
+            {submitting ? 'Judging…' : 'Create episode'}
+          </Button>
+        </div>
+        {evidence.length === 0 ? (
+          <div class="text-sm text-gray-500">
+            <p>No evidence available.</p>
+            <p class="mt-1 text-xs text-gray-600">
+              Add evidence from the Evidence or Metrics tab, then return here to draft an episode.
+            </p>
+          </div>
+        ) : (
+          <div class="space-y-3">
+            <div class="grid gap-2 md:grid-cols-2">
+              {evidence.map((item) => (
+                <label
+                  key={item.id}
+                  class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedEvidenceIds.includes(item.id)}
+                    onChange={() => toggleEvidence(item.id)}
+                    class="mt-1"
+                  />
+                  <span>
+                    <span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
+                    {item.summary}
+                  </span>
+                </label>
+              ))}
+            </div>
+            {preflight && (
+              <div
+                class={`rounded-lg border px-3 py-2 text-sm ${
+                  preflight.level === 'high'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
+                    : preflight.level === 'medium'
+                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                      : 'border-red-500/30 bg-red-500/10 text-red-100'
+                }`}
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-medium">Evidence preflight: {preflight.level} confidence</span>
+                  <span class="text-xs opacity-80">
+                    {preflight.score}/{preflight.maxScore} · {preflight.counts.total} selected
+                  </span>
+                </div>
+                {preflight.reasons.length > 0 && (
+                  <ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
+                    {preflight.reasons.map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                )}
+                {preflight.warnings.length > 0 && (
+                  <ul class="mt-2 list-disc space-y-1 pl-5 text-xs opacity-90">
+                    {preflight.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                )}
+                {preflight.requiresConfirmation && (
+                  <label class="mt-3 flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={confirmLowConfidence}
+                      onChange={(event) =>
+                        setConfirmLowConfidence((event.currentTarget as HTMLInputElement).checked)
+                      }
+                    />
+                    Generate low-confidence episode anyway
+                  </label>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
-			{error && (
-				<div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
-					{error}
-				</div>
-			)}
+      {error && (
+        <div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
-			{loading ? (
-				<p class="text-sm text-gray-500">Loading review…</p>
-			) : !latestEpisode ? (
-				<div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
-					<p>No episode drafts yet.</p>
-					<p class="mt-1 text-xs text-gray-600">
-						Select scoped evidence above to generate candidate lessons and next action proposals.
-					</p>
-				</div>
-			) : (
-				<div class="space-y-4">
-					<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-						<div class="flex items-start justify-between gap-3">
-							<div>
-								<p class="text-xs uppercase tracking-wide text-gray-500">Outcome summary</p>
-								<h3 class="mt-1 text-base font-semibold text-gray-100">{latestEpisode.title}</h3>
-							</div>
-							<span class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
-								{latestEpisode.status}
-							</span>
-						</div>
-						<p class="mt-3 text-sm text-gray-300">{latestEpisode.outcomeSummary}</p>
-						<div class="mt-4 flex gap-2">
-							<Button
-								size="sm"
-								onClick={() =>
-									updateReviewItem({ kind: 'episode', id: latestEpisode.id, status: 'accepted' })
-								}
-							>
-								Accept
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								onClick={() =>
-									updateReviewItem({ kind: 'episode', id: latestEpisode.id, status: 'dismissed' })
-								}
-							>
-								Dismiss
-							</Button>
-						</div>
-					</section>
+      {loading ? (
+        <p class="text-sm text-gray-500">Loading review…</p>
+      ) : !latestEpisode ? (
+        <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
+          <p>No episode drafts yet.</p>
+          <p class="mt-1 text-xs text-gray-600">
+            Select scoped evidence above to generate candidate lessons and next action proposals.
+          </p>
+        </div>
+      ) : (
+        <div class="space-y-4">
+          <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-xs uppercase tracking-wide text-gray-500">Outcome summary</p>
+                <h3 class="mt-1 text-base font-semibold text-gray-100">{latestEpisode.title}</h3>
+              </div>
+              <span class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
+                {latestEpisode.status}
+              </span>
+            </div>
+            <p class="mt-3 text-sm text-gray-300">{latestEpisode.outcomeSummary}</p>
+            <div class="mt-4 flex gap-2">
+              <Button
+                size="sm"
+                onClick={() =>
+                  updateReviewItem({ kind: 'episode', id: latestEpisode.id, status: 'accepted' })
+                }
+              >
+                Accept
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  updateReviewItem({ kind: 'episode', id: latestEpisode.id, status: 'dismissed' })
+                }
+              >
+                Dismiss
+              </Button>
+            </div>
+          </section>
 
-					{canApplyRollup && (
-						<section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-							<p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
-							<p class="mt-1 text-xs text-blue-200/70">
-								Apply accepted episode state to linked recurring goal.
-							</p>
-							<div class="mt-3 grid gap-3 md:grid-cols-[1fr_110px]">
-								<textarea
-									aria-label="Rollup summary"
-									value={rollupDraft.summary}
-									onInput={(event) =>
-										setRollupDraft((current) => ({
-											...current,
-											summary: (event.target as HTMLTextAreaElement).value,
-										}))
-									}
-									placeholder="Goal summary after this rollup"
-									rows={3}
-									class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-								/>
-								<input
-									aria-label="Rollup progress"
-									value={rollupDraft.progress}
-									onInput={(event) =>
-										setRollupDraft((current) => ({
-											...current,
-											progress: (event.target as HTMLInputElement).value,
-										}))
-									}
-									placeholder="0-100"
-									class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-								/>
-							</div>
-							<textarea
-								aria-label="Rollup next steps"
-								value={rollupDraft.nextSteps}
-								onInput={(event) =>
-									setRollupDraft((current) => ({
-										...current,
-										nextSteps: (event.target as HTMLTextAreaElement).value,
-									}))
-								}
-								placeholder="One next step per line"
-								rows={2}
-								class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-							/>
-							<div class="mt-3 flex justify-end">
-								<Button size="sm" onClick={applyRollup} disabled={submitting}>
-									Apply rollup
-								</Button>
-							</div>
-						</section>
-					)}
+          {canApplyRollup && (
+            <section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+              <p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
+              <p class="mt-1 text-xs text-blue-200/70">
+                Apply accepted episode state to linked recurring goal.
+              </p>
+              <div class="mt-3 grid gap-3 md:grid-cols-[1fr_110px]">
+                <textarea
+                  aria-label="Rollup summary"
+                  value={rollupDraft.summary}
+                  onInput={(event) =>
+                    setRollupDraft((current) => ({
+                      ...current,
+                      summary: (event.target as HTMLTextAreaElement).value,
+                    }))
+                  }
+                  placeholder="Goal summary after this rollup"
+                  rows={3}
+                  class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+                <input
+                  aria-label="Rollup progress"
+                  value={rollupDraft.progress}
+                  onInput={(event) =>
+                    setRollupDraft((current) => ({
+                      ...current,
+                      progress: (event.target as HTMLInputElement).value,
+                    }))
+                  }
+                  placeholder="0-100"
+                  class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <textarea
+                aria-label="Rollup next steps"
+                value={rollupDraft.nextSteps}
+                onInput={(event) =>
+                  setRollupDraft((current) => ({
+                    ...current,
+                    nextSteps: (event.target as HTMLTextAreaElement).value,
+                  }))
+                }
+                placeholder="One next step per line"
+                rows={2}
+                class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+              />
+              <div class="mt-3 flex justify-end">
+                <Button size="sm" onClick={applyRollup} disabled={submitting}>
+                  Apply rollup
+                </Button>
+              </div>
+            </section>
+          )}
 
-					<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-						<h3 class="mb-3 text-sm font-medium text-gray-100">Findings by domain</h3>
-						<div class="space-y-3">
-							{Object.entries(groupedFindings).map(([domain, findings]) => (
-								<div key={domain} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-									<h4 class="mb-2 text-sm font-medium text-cyan-200">{formatKind(domain)}</h4>
-									<div class="space-y-2">
-										{findings.map((finding, index) => (
-											<FindingCard key={`${domain}-${index}`} finding={finding} />
-										))}
-									</div>
-								</div>
-							))}
-						</div>
-					</section>
+          <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <h3 class="mb-3 text-sm font-medium text-gray-100">Findings by domain</h3>
+            <div class="space-y-3">
+              {Object.entries(groupedFindings).map(([domain, findings]) => (
+                <div key={domain} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                  <h4 class="mb-2 text-sm font-medium text-cyan-200">{formatKind(domain)}</h4>
+                  <div class="space-y-2">
+                    {findings.map((finding, index) => (
+                      <FindingCard key={`${domain}-${index}`} finding={finding} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
 
-					<section class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
-						<h3 class="mb-3 text-sm font-medium text-orange-100">NeoKai friction findings</h3>
-						{frictionFindings.length === 0 ? (
-							<p class="text-sm text-orange-200/70">No friction findings in latest episode.</p>
-						) : (
-							<div class="space-y-2">
-								{frictionFindings.map((finding, index) => (
-									<FindingCard key={`friction-${index}`} finding={finding} />
-								))}
-							</div>
-						)}
-					</section>
+          <section class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
+            <h3 class="mb-3 text-sm font-medium text-orange-100">NeoKai friction findings</h3>
+            {frictionFindings.length === 0 ? (
+              <p class="text-sm text-orange-200/70">No friction findings in latest episode.</p>
+            ) : (
+              <div class="space-y-2">
+                {frictionFindings.map((finding, index) => (
+                  <FindingCard key={`friction-${index}`} finding={finding} />
+                ))}
+              </div>
+            )}
+          </section>
 
-					<div class="grid gap-4 lg:grid-cols-2">
-						<ReviewList
-							title="Candidate lessons"
-							empty="No candidate lessons."
-							items={candidateLessons}
-							render={(lesson) => (
-								<div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-									<p class="text-sm text-gray-100">{lesson.rule}</p>
-									<p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
-									<div class="mt-3 flex gap-2">
-										<Button
-											size="sm"
-											onClick={() =>
-												updateReviewItem({ kind: 'lesson', id: lesson.id, status: 'active' })
-											}
-										>
-											Activate
-										</Button>
-										<Button
-											size="sm"
-											variant="secondary"
-											onClick={() =>
-												updateReviewItem({ kind: 'lesson', id: lesson.id, status: 'dismissed' })
-											}
-										>
-											Dismiss
-										</Button>
-									</div>
-								</div>
-							)}
-						/>
-						<ReviewList
-							title="Next action proposals"
-							empty="No proposed actions."
-							items={proposedTasks}
-							render={(proposal) => {
-								const editing = editingProposalId === proposal.id && proposalDraft;
-								return (
-									<div
-										key={proposal.id}
-										class="rounded-lg border border-white/10 bg-dark-900/60 p-3"
-									>
-										{editing ? (
-											<div class="space-y-2">
-												<input
-													aria-label="Proposal title"
-													value={proposalDraft.title}
-													onInput={(event) =>
-														setProposalDraft((current) =>
-															current
-																? { ...current, title: (event.target as HTMLInputElement).value }
-																: current
-														)
-													}
-													class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-												/>
-												<textarea
-													aria-label="Proposal description"
-													value={proposalDraft.description}
-													onInput={(event) =>
-														setProposalDraft((current) =>
-															current
-																? {
-																		...current,
-																		description: (event.target as HTMLTextAreaElement).value,
-																	}
-																: current
-														)
-													}
-													rows={2}
-													class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-												/>
-												<textarea
-													aria-label="Proposal reason"
-													value={proposalDraft.reason}
-													onInput={(event) =>
-														setProposalDraft((current) =>
-															current
-																? {
-																		...current,
-																		reason: (event.target as HTMLTextAreaElement).value,
-																	}
-																: current
-														)
-													}
-													rows={2}
-													class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-												/>
-												<select
-													aria-label="Proposal priority"
-													value={proposalDraft.priority}
-													onChange={(event) =>
-														setProposalDraft((current) =>
-															current
-																? {
-																		...current,
-																		priority: (event.target as HTMLSelectElement)
-																			.value as TaskProposal['priority'],
-																	}
-																: current
-														)
-													}
-													class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-												>
-													{(['low', 'normal', 'high', 'urgent'] as const).map((priority) => (
-														<option key={priority} value={priority}>
-															{priority}
-														</option>
-													))}
-												</select>
-											</div>
-										) : (
-											<>
-												<div class="flex items-start justify-between gap-2">
-													<p class="text-sm font-medium text-gray-100">{proposal.title}</p>
-													<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400">
-														{proposal.priority}
-													</span>
-												</div>
-												<p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
-												<p class="mt-2 text-xs text-gray-500">Reason: {proposal.reason}</p>
-											</>
-										)}
-										<div class="mt-3 flex flex-wrap gap-2">
-											<Button
-												size="sm"
-												onClick={() => createTaskFromProposal(proposal)}
-												disabled={submitting}
-											>
-												Create Task
-											</Button>
-											{editing ? (
-												<Button
-													size="sm"
-													onClick={() => createTaskFromProposal(proposal, proposalDraft)}
-													disabled={submitting || !proposalDraft.title.trim()}
-												>
-													Save & Create
-												</Button>
-											) : (
-												<Button
-													size="sm"
-													variant="secondary"
-													onClick={() => beginEditProposal(proposal)}
-												>
-													Edit & Create
-												</Button>
-											)}
-											<Button
-												size="sm"
-												variant="secondary"
-												onClick={() =>
-													updateReviewItem({
-														kind: 'proposal',
-														id: proposal.id,
-														status: 'dismissed',
-													})
-												}
-											>
-												Dismiss
-											</Button>
-										</div>
-									</div>
-								);
-							}}
-						/>
-					</div>
-				</div>
-			)}
-		</div>
-	);
+          <div class="grid gap-4 lg:grid-cols-2">
+            <ReviewList
+              title="Candidate lessons"
+              empty="No candidate lessons."
+              items={candidateLessons}
+              render={(lesson) => (
+                <div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                  <p class="text-sm text-gray-100">{lesson.rule}</p>
+                  <p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
+                  <div class="mt-3 flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        updateReviewItem({ kind: 'lesson', id: lesson.id, status: 'active' })
+                      }
+                    >
+                      Activate
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        updateReviewItem({ kind: 'lesson', id: lesson.id, status: 'dismissed' })
+                      }
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              )}
+            />
+            <ReviewList
+              title="Next action proposals"
+              empty="No proposed actions."
+              items={proposedTasks}
+              render={(proposal) => {
+                const editing = editingProposalId === proposal.id && proposalDraft;
+                return (
+                  <div
+                    key={proposal.id}
+                    class="rounded-lg border border-white/10 bg-dark-900/60 p-3"
+                  >
+                    {editing ? (
+                      <div class="space-y-2">
+                        <input
+                          aria-label="Proposal title"
+                          value={proposalDraft.title}
+                          onInput={(event) =>
+                            setProposalDraft((current) =>
+                              current
+                                ? { ...current, title: (event.target as HTMLInputElement).value }
+                                : current
+                            )
+                          }
+                          class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                        />
+                        <textarea
+                          aria-label="Proposal description"
+                          value={proposalDraft.description}
+                          onInput={(event) =>
+                            setProposalDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    description: (event.target as HTMLTextAreaElement).value,
+                                  }
+                                : current
+                            )
+                          }
+                          rows={2}
+                          class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                        />
+                        <textarea
+                          aria-label="Proposal reason"
+                          value={proposalDraft.reason}
+                          onInput={(event) =>
+                            setProposalDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    reason: (event.target as HTMLTextAreaElement).value,
+                                  }
+                                : current
+                            )
+                          }
+                          rows={2}
+                          class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                        />
+                        <select
+                          aria-label="Proposal priority"
+                          value={proposalDraft.priority}
+                          onChange={(event) =>
+                            setProposalDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    priority: (event.target as HTMLSelectElement)
+                                      .value as TaskProposal['priority'],
+                                  }
+                                : current
+                            )
+                          }
+                          class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                        >
+                          {(['low', 'normal', 'high', 'urgent'] as const).map((priority) => (
+                            <option key={priority} value={priority}>
+                              {priority}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <>
+                        <div class="flex items-start justify-between gap-2">
+                          <p class="text-sm font-medium text-gray-100">{proposal.title}</p>
+                          <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400">
+                            {proposal.priority}
+                          </span>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
+                        <p class="mt-2 text-xs text-gray-500">Reason: {proposal.reason}</p>
+                      </>
+                    )}
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => createTaskFromProposal(proposal)}
+                        disabled={submitting}
+                      >
+                        Create Task
+                      </Button>
+                      {editing ? (
+                        <Button
+                          size="sm"
+                          onClick={() => createTaskFromProposal(proposal, proposalDraft)}
+                          disabled={submitting || !proposalDraft.title.trim()}
+                        >
+                          Save & Create
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => beginEditProposal(proposal)}
+                        >
+                          Edit & Create
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          updateReviewItem({
+                            kind: 'proposal',
+                            id: proposal.id,
+                            status: 'dismissed',
+                          })
+                        }
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
-	const { request } = useMessageHub();
-	const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const requestVersion = useRef(0);
+  const { request } = useMessageHub();
+  const [lessons, setLessons] = useState<EvolutionLesson[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
 
-	const loadLessons = useCallback(async () => {
-		const version = ++requestVersion.current;
-		setLoading(true);
-		setError(null);
-		try {
-			const response = await request<{ lessons: EvolutionLesson[] }>('evolution.lesson.list', {
-				scopeId: scope.id,
-				status: 'active',
-			});
-			if (requestVersion.current === version) setLessons(response.lessons ?? []);
-		} catch (err) {
-			if (requestVersion.current === version) {
-				setError(err instanceof Error ? err.message : 'Failed to load active lessons');
-			}
-		} finally {
-			if (requestVersion.current === version) setLoading(false);
-		}
-	}, [request, scope.id]);
+  const loadLessons = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await request<{ lessons: EvolutionLesson[] }>('evolution.lesson.list', {
+        scopeId: scope.id,
+        status: 'active',
+      });
+      if (requestVersion.current === version) setLessons(response.lessons ?? []);
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load active lessons');
+      }
+    } finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
+  }, [request, scope.id]);
 
-	useEffect(() => {
-		loadLessons().catch(() => undefined);
-	}, [loadLessons]);
+  useEffect(() => {
+    loadLessons().catch(() => undefined);
+  }, [loadLessons]);
 
-	const dismissLesson = async (lessonId: string) => {
-		try {
-			setError(null);
-			const response = await request<{ lesson: EvolutionLesson | null }>(
-				'evolution.lesson.update',
-				{
-					id: lessonId,
-					params: { status: 'dismissed' },
-				}
-			);
-			if (response.lesson) setLessons((current) => current.filter((item) => item.id !== lessonId));
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to dismiss lesson');
-		}
-	};
+  const dismissLesson = async (lessonId: string) => {
+    try {
+      setError(null);
+      const response = await request<{ lesson: EvolutionLesson | null }>(
+        'evolution.lesson.update',
+        {
+          id: lessonId,
+          params: { status: 'dismissed' },
+        }
+      );
+      if (response.lesson) setLessons((current) => current.filter((item) => item.id !== lessonId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to dismiss lesson');
+    }
+  };
 
-	return (
-		<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-			<div class="mb-3">
-				<h3 class="text-sm font-medium text-gray-100">Active lessons</h3>
-				<p class="mt-1 text-xs text-gray-500">
-					Top active lessons from this scope are injected into future scoped task-agent messages.
-				</p>
-			</div>
-			{error && (
-				<div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
-					{error}
-				</div>
-			)}
-			{loading ? (
-				<p class="text-sm text-gray-500">Loading active lessons…</p>
-			) : lessons.length === 0 ? (
-				<p class="text-sm text-gray-500">No active lessons yet.</p>
-			) : (
-				<div class="space-y-3">
-					{lessons.map((lesson) => (
-						<div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-							<div class="flex items-start justify-between gap-3">
-								<div>
-									<p class="text-sm text-gray-100">{lesson.rule}</p>
-									<p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
-									{lesson.appliesTo.length > 0 && (
-										<p class="mt-2 text-xs text-cyan-300">
-											Applies to: {lesson.appliesTo.join(', ')}
-										</p>
-									)}
-								</div>
-								<Button size="sm" variant="secondary" onClick={() => dismissLesson(lesson.id)}>
-									Dismiss
-								</Button>
-							</div>
-						</div>
-					))}
-				</div>
-			)}
-		</section>
-	);
+  return (
+    <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div class="mb-3">
+        <h3 class="text-sm font-medium text-gray-100">Active lessons</h3>
+        <p class="mt-1 text-xs text-gray-500">
+          Top active lessons from this scope are injected into future scoped task-agent messages.
+        </p>
+      </div>
+      {error && (
+        <div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+          {error}
+        </div>
+      )}
+      {loading ? (
+        <p class="text-sm text-gray-500">Loading active lessons…</p>
+      ) : lessons.length === 0 ? (
+        <p class="text-sm text-gray-500">No active lessons yet.</p>
+      ) : (
+        <div class="space-y-3">
+          {lessons.map((lesson) => (
+            <div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <p class="text-sm text-gray-100">{lesson.rule}</p>
+                  <p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
+                  {lesson.appliesTo.length > 0 && (
+                    <p class="mt-2 text-xs text-cyan-300">
+                      Applies to: {lesson.appliesTo.join(', ')}
+                    </p>
+                  )}
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => dismissLesson(lesson.id)}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function FindingCard({ finding }: { finding: EvolutionFinding }) {
-	return (
-		<div class="rounded-md border border-white/10 bg-black/20 p-3">
-			<div class="mb-2 flex flex-wrap gap-2">
-				<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
-					{formatKind(finding.kind)}
-				</span>
-				<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
-					{finding.impact} impact
-				</span>
-				<span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
-					{Math.round(finding.confidence * 100)}% confidence
-				</span>
-			</div>
-			<p class="text-sm text-gray-200">{finding.proposedAction}</p>
-			{finding.evidence.length > 0 && (
-				<p class="mt-2 text-xs text-gray-500">Evidence: {finding.evidence.join(', ')}</p>
-			)}
-		</div>
-	);
+  return (
+    <div class="rounded-md border border-white/10 bg-black/20 p-3">
+      <div class="mb-2 flex flex-wrap gap-2">
+        <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+          {formatKind(finding.kind)}
+        </span>
+        <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+          {finding.impact} impact
+        </span>
+        <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+          {Math.round(finding.confidence * 100)}% confidence
+        </span>
+      </div>
+      <p class="text-sm text-gray-200">{finding.proposedAction}</p>
+      {finding.evidence.length > 0 && (
+        <p class="mt-2 text-xs text-gray-500">Evidence: {finding.evidence.join(', ')}</p>
+      )}
+    </div>
+  );
 }
 
 function ReviewList<T>({
-	title,
-	empty,
-	items,
-	render,
+  title,
+  empty,
+  items,
+  render,
 }: {
-	title: string;
-	empty: string;
-	items: T[];
-	render: (item: T) => ComponentChild;
+  title: string;
+  empty: string;
+  items: T[];
+  render: (item: T) => ComponentChild;
 }) {
-	return (
-		<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-			<h3 class="mb-3 text-sm font-medium text-gray-100">{title}</h3>
-			{items.length === 0 ? (
-				<p class="text-sm text-gray-500">{empty}</p>
-			) : (
-				<div class="space-y-3">{items.map(render)}</div>
-			)}
-		</section>
-	);
+  return (
+    <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <h3 class="mb-3 text-sm font-medium text-gray-100">{title}</h3>
+      {items.length === 0 ? (
+        <p class="text-sm text-gray-500">{empty}</p>
+      ) : (
+        <div class="space-y-3">{items.map(render)}</div>
+      )}
+    </section>
+  );
 }
 
 function groupFindingsByDomain(
-	findings: EvolutionFinding[]
+  findings: EvolutionFinding[]
 ): Record<EvolutionFindingDomain, EvolutionFinding[]> {
-	return {
-		workflow: findings.filter((finding) => finding.domain === 'workflow'),
-		target_artifact: findings.filter((finding) => finding.domain === 'target_artifact'),
-		neokai_product: findings.filter((finding) => finding.domain === 'neokai_product'),
-	};
+  return {
+    workflow: findings.filter((finding) => finding.domain === 'workflow'),
+    target_artifact: findings.filter((finding) => finding.domain === 'target_artifact'),
+    neokai_product: findings.filter((finding) => finding.domain === 'neokai_product'),
+  };
 }
 
 function MetricsTab({ scope }: { scope: EvolutionScope }) {
-	const { request } = useMessageHub();
-	const [snapshots, setSnapshots] = useState<MetricSnapshot[]>([]);
-	const [values, setValues] = useState<SnapshotValueDraft[]>(
-		scope.metricDefinitions.map((metric) => ({ key: metric.key, value: '' }))
-	);
-	const [note, setNote] = useState('');
-	const [loading, setLoading] = useState(false);
-	const [submitting, setSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const requestVersion = useRef(0);
+  const { request } = useMessageHub();
+  const [snapshots, setSnapshots] = useState<MetricSnapshot[]>([]);
+  const [values, setValues] = useState<SnapshotValueDraft[]>(
+    scope.metricDefinitions.map((metric) => ({ key: metric.key, value: '' }))
+  );
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
 
-	const loadSnapshots = useCallback(async () => {
-		const version = ++requestVersion.current;
-		setLoading(true);
-		setError(null);
-		try {
-			const response = await request<EvolutionMetricSnapshotListResponse>(
-				'evolution.metricSnapshot.list',
-				{
-					scopeId: scope.id,
-				}
-			);
-			if (requestVersion.current === version) setSnapshots(response.snapshots ?? []);
-		} catch (err) {
-			if (requestVersion.current === version) {
-				setError(err instanceof Error ? err.message : 'Failed to load metric snapshots');
-			}
-		} finally {
-			if (requestVersion.current === version) setLoading(false);
-		}
-	}, [request, scope.id]);
+  const loadSnapshots = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await request<EvolutionMetricSnapshotListResponse>(
+        'evolution.metricSnapshot.list',
+        {
+          scopeId: scope.id,
+        }
+      );
+      if (requestVersion.current === version) setSnapshots(response.snapshots ?? []);
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load metric snapshots');
+      }
+    } finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
+  }, [request, scope.id]);
 
-	useEffect(() => {
-		setValues(scope.metricDefinitions.map((metric) => ({ key: metric.key, value: '' })));
-		loadSnapshots().catch(() => undefined);
-	}, [loadSnapshots, scope.metricDefinitions]);
+  useEffect(() => {
+    setValues(scope.metricDefinitions.map((metric) => ({ key: metric.key, value: '' })));
+    loadSnapshots().catch(() => undefined);
+  }, [loadSnapshots, scope.metricDefinitions]);
 
-	const updateValue = (index: number, value: string) => {
-		setValues((current) =>
-			current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, value } : entry))
-		);
-	};
+  const updateValue = (index: number, value: string) => {
+    setValues((current) =>
+      current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, value } : entry))
+    );
+  };
 
-	const handleAddSnapshot = async (event: Event) => {
-		event.preventDefault();
-		const snapshotValues = values.reduce<MetricSnapshotValues>((acc, entry) => {
-			if (entry.value.trim()) acc[entry.key] = parseMetricValue(entry.value);
-			return acc;
-		}, {});
-		if (Object.keys(snapshotValues).length === 0) {
-			setError('At least one metric value is required');
-			return;
-		}
-		try {
-			setSubmitting(true);
-			setError(null);
-			await request<EvolutionMetricSnapshotCreateResponse>('evolution.metricSnapshot.create', {
-				params: {
-					scopeId: scope.id,
-					values: snapshotValues,
-					source: 'manual',
-					note: note.trim() || null,
-				},
-			});
-			setValues((current) => current.map((entry) => ({ ...entry, value: '' })));
-			setNote('');
-			await loadSnapshots();
-			toast.success('Metric snapshot added');
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to add metric snapshot');
-		} finally {
-			setSubmitting(false);
-		}
-	};
+  const handleAddSnapshot = async (event: Event) => {
+    event.preventDefault();
+    const snapshotValues = values.reduce<MetricSnapshotValues>((acc, entry) => {
+      if (entry.value.trim()) acc[entry.key] = parseMetricValue(entry.value);
+      return acc;
+    }, {});
+    if (Object.keys(snapshotValues).length === 0) {
+      setError('At least one metric value is required');
+      return;
+    }
+    try {
+      setSubmitting(true);
+      setError(null);
+      await request<EvolutionMetricSnapshotCreateResponse>('evolution.metricSnapshot.create', {
+        params: {
+          scopeId: scope.id,
+          values: snapshotValues,
+          source: 'manual',
+          note: note.trim() || null,
+        },
+      });
+      setValues((current) => current.map((entry) => ({ ...entry, value: '' })));
+      setNote('');
+      await loadSnapshots();
+      toast.success('Metric snapshot added');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add metric snapshot');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-	return (
-		<div class="space-y-4">
-			<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-				<h3 class="mb-3 text-sm font-medium text-gray-100">Metric definitions</h3>
-				{scope.metricDefinitions.length === 0 ? (
-					<p class="text-sm text-gray-500">No metric definitions for this scope.</p>
-				) : (
-					<div class="grid gap-3 md:grid-cols-2">
-						{scope.metricDefinitions.map((metric) => (
-							<div key={metric.key} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-								<div class="flex items-center justify-between gap-3">
-									<p class="text-sm font-medium text-gray-100">{metric.label}</p>
-									<span class="text-xs text-gray-500">{metric.direction}</span>
-								</div>
-								<p class="mt-1 text-xs text-gray-500">
-									{metric.key}
-									{metric.unit ? ` · ${metric.unit}` : ''}
-								</p>
-							</div>
-						))}
-					</div>
-				)}
-			</section>
+  return (
+    <div class="space-y-4">
+      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <h3 class="mb-3 text-sm font-medium text-gray-100">Metric definitions</h3>
+        {scope.metricDefinitions.length === 0 ? (
+          <p class="text-sm text-gray-500">No metric definitions for this scope.</p>
+        ) : (
+          <div class="grid gap-3 md:grid-cols-2">
+            {scope.metricDefinitions.map((metric) => (
+              <div key={metric.key} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="text-sm font-medium text-gray-100">{metric.label}</p>
+                  <span class="text-xs text-gray-500">{metric.direction}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">
+                  {metric.key}
+                  {metric.unit ? ` · ${metric.unit}` : ''}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
-			{scope.metricDefinitions.length > 0 && (
-				<form
-					onSubmit={handleAddSnapshot}
-					class="rounded-xl border border-white/10 bg-white/[0.02] p-4"
-				>
-					<h3 class="mb-3 text-sm font-medium text-gray-100">Add metric snapshot</h3>
-					<div class="grid gap-3 md:grid-cols-2">
-						{values.map((entry, index) => {
-							const metric = scope.metricDefinitions.find(
-								(definition) => definition.key === entry.key
-							);
-							return (
-								<label key={entry.key} class="block">
-									<span class="mb-1 block text-xs text-gray-400">{metric?.label ?? entry.key}</span>
-									<input
-										value={entry.value}
-										onInput={(event) =>
-											updateValue(index, (event.target as HTMLInputElement).value)
-										}
-										placeholder={metric?.unit ?? 'value'}
-										class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-									/>
-								</label>
-							);
-						})}
-					</div>
-					<textarea
-						value={note}
-						onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
-						placeholder="Optional snapshot note"
-						rows={2}
-						class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-					/>
-					<div class="mt-3 flex justify-end">
-						<Button type="submit" size="sm" disabled={submitting}>
-							{submitting ? 'Adding…' : 'Add snapshot'}
-						</Button>
-					</div>
-				</form>
-			)}
+      {scope.metricDefinitions.length > 0 && (
+        <form
+          onSubmit={handleAddSnapshot}
+          class="rounded-xl border border-white/10 bg-white/[0.02] p-4"
+        >
+          <h3 class="mb-3 text-sm font-medium text-gray-100">Add metric snapshot</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            {values.map((entry, index) => {
+              const metric = scope.metricDefinitions.find(
+                (definition) => definition.key === entry.key
+              );
+              return (
+                <label key={entry.key} class="block">
+                  <span class="mb-1 block text-xs text-gray-400">{metric?.label ?? entry.key}</span>
+                  <input
+                    value={entry.value}
+                    onInput={(event) =>
+                      updateValue(index, (event.target as HTMLInputElement).value)
+                    }
+                    placeholder={metric?.unit ?? 'value'}
+                    class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <textarea
+            value={note}
+            onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
+            placeholder="Optional snapshot note"
+            rows={2}
+            class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+          />
+          <div class="mt-3 flex justify-end">
+            <Button type="submit" size="sm" disabled={submitting}>
+              {submitting ? 'Adding…' : 'Add snapshot'}
+            </Button>
+          </div>
+        </form>
+      )}
 
-			{error && (
-				<div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
-					{error}
-				</div>
-			)}
+      {error && (
+        <div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
-			<section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-				<h3 class="mb-3 text-sm font-medium text-gray-100">Snapshot history</h3>
-				{loading ? (
-					<p class="text-sm text-gray-500">Loading snapshots…</p>
-				) : snapshots.length === 0 ? (
-					<p class="text-sm text-gray-500">No metric snapshots yet.</p>
-				) : (
-					<div class="space-y-3">
-						{snapshots.map((snapshot) => (
-							<div key={snapshot.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-								<div class="mb-2 flex items-center justify-between gap-3">
-									<span class="text-sm text-gray-200">{snapshot.source}</span>
-									<span class="text-xs text-gray-600">{formatDate(snapshot.capturedAt)}</span>
-								</div>
-								<div class="flex flex-wrap gap-2">
-									{Object.entries(snapshot.values).map(([key, value]) => (
-										<span key={key} class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
-											{key}: {String(value)}
-										</span>
-									))}
-								</div>
-								{snapshot.note && <p class="mt-2 text-sm text-gray-400">{snapshot.note}</p>}
-							</div>
-						))}
-					</div>
-				)}
-			</section>
-		</div>
-	);
+      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <h3 class="mb-3 text-sm font-medium text-gray-100">Snapshot history</h3>
+        {loading ? (
+          <p class="text-sm text-gray-500">Loading snapshots…</p>
+        ) : snapshots.length === 0 ? (
+          <p class="text-sm text-gray-500">No metric snapshots yet.</p>
+        ) : (
+          <div class="space-y-3">
+            {snapshots.map((snapshot) => (
+              <div key={snapshot.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                <div class="mb-2 flex items-center justify-between gap-3">
+                  <span class="text-sm text-gray-200">{snapshot.source}</span>
+                  <span class="text-xs text-gray-600">{formatDate(snapshot.capturedAt)}</span>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  {Object.entries(snapshot.values).map(([key, value]) => (
+                    <span key={key} class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
+                      {key}: {String(value)}
+                    </span>
+                  ))}
+                </div>
+                {snapshot.note && <p class="mt-2 text-sm text-gray-400">{snapshot.note}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
 }
 
 export function ScopeDetail({
-	scope,
-	goals,
-	onScopeUpdated,
+  scope,
+  goals,
+  onScopeUpdated,
 }: {
-	scope: EvolutionScope;
-	goals: SpaceGoal[];
-	onScopeUpdated: (scope: EvolutionScope) => void;
+  scope: EvolutionScope;
+  goals: SpaceGoal[];
+  onScopeUpdated: (scope: EvolutionScope) => void;
 }) {
-	const { request } = useMessageHub();
-	const [tab, setTab] = useState<ScopeTab>('overview');
-	const [settingsError, setSettingsError] = useState<string | null>(null);
-	const [savingJudgeModel, setSavingJudgeModel] = useState(false);
-	const judgeModelRequestVersion = useRef(0);
-	const judgeModelScopeId = useRef(scope.id);
-	const goal = getGoal(scope, goals);
+  const { request } = useMessageHub();
+  const [tab, setTab] = useState<ScopeTab>('overview');
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [savingJudgeModel, setSavingJudgeModel] = useState(false);
+  const judgeModelRequestVersion = useRef(0);
+  const judgeModelScopeId = useRef(scope.id);
+  const goal = getGoal(scope, goals);
 
-	useEffect(() => {
-		if (judgeModelScopeId.current === scope.id) return;
-		judgeModelScopeId.current = scope.id;
-		judgeModelRequestVersion.current += 1;
-		setSavingJudgeModel(false);
-		setSettingsError(null);
-	}, [scope.id]);
+  useEffect(() => {
+    if (judgeModelScopeId.current === scope.id) return;
+    judgeModelScopeId.current = scope.id;
+    judgeModelRequestVersion.current += 1;
+    setSavingJudgeModel(false);
+    setSettingsError(null);
+  }, [scope.id]);
 
-	const handleJudgeModelChange = async (
-		value: string | undefined,
-		selection?: WorkflowModelSelection
-	) => {
-		const version = ++judgeModelRequestVersion.current;
-		try {
-			setSavingJudgeModel(true);
-			setSettingsError(null);
-			const nextPolicy = { ...scope.policy };
-			if (value) {
-				nextPolicy.episodeJudgeModel = value;
-				if (selection?.provider) {
-					nextPolicy.episodeJudgeProvider = selection.provider;
-				} else {
-					delete nextPolicy.episodeJudgeProvider;
-				}
-			} else {
-				delete nextPolicy.episodeJudgeModel;
-				delete nextPolicy.episodeJudgeProvider;
-			}
-			const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
-				id: scope.id,
-				params: { policy: nextPolicy },
-			});
-			if (judgeModelRequestVersion.current !== version) return;
-			if (response.scope) {
-				onScopeUpdated(response.scope);
-				toast.success(
-					value ? 'Episode judge model updated' : 'Episode judge model override cleared'
-				);
-			}
-		} catch (err) {
-			if (judgeModelRequestVersion.current === version) {
-				setSettingsError(err instanceof Error ? err.message : 'Failed to update judge model');
-			}
-		} finally {
-			if (judgeModelRequestVersion.current === version) {
-				setSavingJudgeModel(false);
-			}
-		}
-	};
+  const handleJudgeModelChange = async (
+    value: string | undefined,
+    selection?: WorkflowModelSelection
+  ) => {
+    const version = ++judgeModelRequestVersion.current;
+    try {
+      setSavingJudgeModel(true);
+      setSettingsError(null);
+      const nextPolicy = { ...scope.policy };
+      if (value) {
+        nextPolicy.episodeJudgeModel = value;
+        if (selection?.provider) {
+          nextPolicy.episodeJudgeProvider = selection.provider;
+        } else {
+          delete nextPolicy.episodeJudgeProvider;
+        }
+      } else {
+        delete nextPolicy.episodeJudgeModel;
+        delete nextPolicy.episodeJudgeProvider;
+      }
+      const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
+        id: scope.id,
+        params: { policy: nextPolicy },
+      });
+      if (judgeModelRequestVersion.current !== version) return;
+      if (response.scope) {
+        onScopeUpdated(response.scope);
+        toast.success(
+          value ? 'Episode judge model updated' : 'Episode judge model override cleared'
+        );
+      }
+    } catch (err) {
+      if (judgeModelRequestVersion.current === version) {
+        setSettingsError(err instanceof Error ? err.message : 'Failed to update judge model');
+      }
+    } finally {
+      if (judgeModelRequestVersion.current === version) {
+        setSavingJudgeModel(false);
+      }
+    }
+  };
 
-	return (
-		<div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-			<div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
-				{/* pr-12 keeps badges clear of the floating right-panel toggle. */}
-				<div class="pr-12">
-					<h2 class="truncate text-base font-semibold leading-6 text-gray-100">{scope.name}</h2>
-				</div>
-				<div class="mt-2 flex flex-wrap items-center gap-2 pr-12">
-					<span class="rounded-full bg-cyan-500/10 px-2 py-1 text-xs text-cyan-300">
-						{formatKind(scope.kind)}
-					</span>
-					{goal && (
-						<span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-300">
-							{goal.title}
-						</span>
-					)}
-				</div>
-				<div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10" />
-			</div>
-			<div class="px-3 pb-3 pt-3">
-				<div class="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1">
-					{SCOPE_TABS.map((item) => (
-						<button
-							key={item}
-							type="button"
-							onClick={() => setTab(item)}
-							class={cn(
-								'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium capitalize transition-colors',
-								tab === item
-									? 'bg-dark-700 text-gray-100 shadow-sm'
-									: 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
-							)}
-						>
-							{item}
-						</button>
-					))}
-				</div>
-			</div>
-			<div class="flex-1 overflow-y-auto p-5">
-				{tab === 'overview' && (
-					<div class="space-y-4">
-						{scope.objective && (
-							<p class="px-1 text-sm leading-5 text-gray-400">{scope.objective}</p>
-						)}
-						{goal ? (
-							<GoalSummary goal={goal} />
-						) : (
-							<div class="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
-								No recurring goal linked.
-							</div>
-						)}
-						<div class="grid gap-3 md:grid-cols-2">
-							<div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-								<p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-									Created
-								</p>
-								<p class="mt-1 text-sm text-gray-200">{getRelativeTime(scope.createdAt)}</p>
-							</div>
-							<div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-								<p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-									Metrics
-								</p>
-								<p class="mt-1 text-sm text-gray-200">
-									{formatDefinitionCount(scope.metricDefinitions.length)}
-								</p>
-							</div>
-						</div>
-						<section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-							<div class="mb-3">
-								<h3 class="text-sm font-medium text-gray-100">Episode judge model</h3>
-								<p class="mt-1 text-xs text-gray-500">
-									Override model for episode judging, or clear to use Space default.
-								</p>
-							</div>
-							<WorkflowModelSelect
-								value={
-									typeof scope.policy.episodeJudgeModel === 'string'
-										? scope.policy.episodeJudgeModel
-										: undefined
-								}
-								provider={
-									typeof scope.policy.episodeJudgeProvider === 'string'
-										? scope.policy.episodeJudgeProvider
-										: undefined
-								}
-								onChange={handleJudgeModelChange}
-								testId="scope-episode-judge-model-select"
-								className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
-							/>
-							{savingJudgeModel && <p class="mt-2 text-xs text-gray-500">Saving…</p>}
-							{settingsError && <p class="mt-2 text-xs text-red-400">{settingsError}</p>}
-						</section>
-					</div>
-				)}
-				{tab === 'evidence' && <EvidenceTab scope={scope} />}
-				{tab === 'metrics' && <MetricsTab scope={scope} />}
-				{tab === 'lessons' && <ActiveLessonsTab scope={scope} />}
-				{tab === 'episodes' && <EpisodesTab scope={scope} goal={goal} />}
-			</div>
-		</div>
-	);
+  return (
+    <div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+      <div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
+        {/* pr-12 keeps badges clear of the floating right-panel toggle. */}
+        <div class="pr-12">
+          <h2 class="truncate text-base font-semibold leading-6 text-gray-100">{scope.name}</h2>
+        </div>
+        <div class="mt-2 flex flex-wrap items-center gap-2 pr-12">
+          <span class="rounded-full bg-cyan-500/10 px-2 py-1 text-xs text-cyan-300">
+            {formatKind(scope.kind)}
+          </span>
+          {goal && (
+            <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-300">
+              {goal.title}
+            </span>
+          )}
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10" />
+      </div>
+      <div class="px-3 pb-3 pt-3">
+        <div class="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1">
+          {SCOPE_TABS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setTab(item)}
+              class={cn(
+                'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium capitalize transition-colors',
+                tab === item
+                  ? 'bg-dark-700 text-gray-100 shadow-sm'
+                  : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+              )}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto p-5">
+        {tab === 'overview' && (
+          <div class="space-y-4">
+            {scope.objective && (
+              <p class="px-1 text-sm leading-5 text-gray-400">{scope.objective}</p>
+            )}
+            {goal ? (
+              <GoalSummary goal={goal} />
+            ) : (
+              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
+                No recurring goal linked.
+              </div>
+            )}
+            <div class="grid gap-3 md:grid-cols-2">
+              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                  Created
+                </p>
+                <p class="mt-1 text-sm text-gray-200">{getRelativeTime(scope.createdAt)}</p>
+              </div>
+              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                  Metrics
+                </p>
+                <p class="mt-1 text-sm text-gray-200">
+                  {formatDefinitionCount(scope.metricDefinitions.length)}
+                </p>
+              </div>
+            </div>
+            <section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+              <div class="mb-3">
+                <h3 class="text-sm font-medium text-gray-100">Episode judge model</h3>
+                <p class="mt-1 text-xs text-gray-500">
+                  Override model for episode judging, or clear to use Space default.
+                </p>
+              </div>
+              <WorkflowModelSelect
+                value={
+                  typeof scope.policy.episodeJudgeModel === 'string'
+                    ? scope.policy.episodeJudgeModel
+                    : undefined
+                }
+                provider={
+                  typeof scope.policy.episodeJudgeProvider === 'string'
+                    ? scope.policy.episodeJudgeProvider
+                    : undefined
+                }
+                onChange={handleJudgeModelChange}
+                testId="scope-episode-judge-model-select"
+                className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+              />
+              {savingJudgeModel && <p class="mt-2 text-xs text-gray-500">Saving…</p>}
+              {settingsError && <p class="mt-2 text-xs text-red-400">{settingsError}</p>}
+            </section>
+          </div>
+        )}
+        {tab === 'evidence' && <EvidenceTab scope={scope} />}
+        {tab === 'metrics' && <MetricsTab scope={scope} />}
+        {tab === 'lessons' && <ActiveLessonsTab scope={scope} />}
+        {tab === 'episodes' && <EpisodesTab scope={scope} goal={goal} />}
+      </div>
+    </div>
+  );
 }
 
 export function SpaceForge({ spaceId }: SpaceForgeProps) {
-	const { request } = useMessageHub();
-	const [scopes, setScopes] = useState<EvolutionScope[]>([]);
-	const selectedScopeId = currentSpaceScopeIdSignal.value;
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [createOpen, setCreateOpen] = useState(false);
-	const requestVersion = useRef(0);
-	const localMutationVersion = useRef(0);
-	const goals = spaceStore.spaceId.value === spaceId ? spaceStore.goals.value : [];
+  const { request } = useMessageHub();
+  const [scopes, setScopes] = useState<EvolutionScope[]>([]);
+  const selectedScopeId = currentSpaceScopeIdSignal.value;
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const requestVersion = useRef(0);
+  const localMutationVersion = useRef(0);
+  const goals = spaceStore.spaceId.value === spaceId ? spaceStore.goals.value : [];
 
-	const loadScopes = useCallback(async () => {
-		const version = ++requestVersion.current;
-		const mutationVersion = localMutationVersion.current;
-		setScopes([]);
-		setLoading(true);
-		setError(null);
-		try {
-			const scopeResponse = await request<EvolutionScopeListResponse>('evolution.scope.list', {
-				spaceId,
-			});
-			if (requestVersion.current !== version) {
-				return;
-			}
-			if (spaceStore.spaceId.value === spaceId) {
-				await spaceStore.listGoals({ includeArchived: false }).catch(() => []);
-			}
-			if (requestVersion.current !== version) {
-				return;
-			}
-			const nextScopes = scopeResponse.scopes ?? [];
-			if (localMutationVersion.current !== mutationVersion) {
-				setScopes((current) => {
-					const existingIds = new Set(current.map((scope) => scope.id));
-					return [...current, ...nextScopes.filter((scope) => !existingIds.has(scope.id))];
-				});
-				return;
-			}
-			setScopes(nextScopes);
-		} catch (err) {
-			if (requestVersion.current === version) {
-				setError(err instanceof Error ? err.message : 'Failed to load scopes');
-			}
-		} finally {
-			if (requestVersion.current === version) {
-				setLoading(false);
-			}
-		}
-	}, [request, spaceId]);
+  const loadScopes = useCallback(async () => {
+    const version = ++requestVersion.current;
+    const mutationVersion = localMutationVersion.current;
+    setScopes([]);
+    setLoading(true);
+    setError(null);
+    try {
+      const scopeResponse = await request<EvolutionScopeListResponse>('evolution.scope.list', {
+        spaceId,
+      });
+      if (requestVersion.current !== version) {
+        return;
+      }
+      if (spaceStore.spaceId.value === spaceId) {
+        await spaceStore.listGoals({ includeArchived: false }).catch(() => []);
+      }
+      if (requestVersion.current !== version) {
+        return;
+      }
+      const nextScopes = scopeResponse.scopes ?? [];
+      if (localMutationVersion.current !== mutationVersion) {
+        setScopes((current) => {
+          const existingIds = new Set(current.map((scope) => scope.id));
+          return [...current, ...nextScopes.filter((scope) => !existingIds.has(scope.id))];
+        });
+        return;
+      }
+      setScopes(nextScopes);
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load scopes');
+      }
+    } finally {
+      if (requestVersion.current === version) {
+        setLoading(false);
+      }
+    }
+  }, [request, spaceId]);
 
-	useEffect(() => {
-		loadScopes().catch(() => undefined);
-	}, [loadScopes]);
+  useEffect(() => {
+    loadScopes().catch(() => undefined);
+  }, [loadScopes]);
 
-	// Clear selection + any open scope panel when leaving this space's Forge view.
-	useEffect(() => {
-		return () => {
-			currentSpaceScopeIdSignal.value = null;
-			if (rightPanelTargetSignal.value?.type === 'scope') rightPanelTargetSignal.value = null;
-		};
-	}, [spaceId]);
+  // Clear selection + any open scope panel when leaving this space's Forge view.
+  useEffect(() => {
+    return () => {
+      currentSpaceScopeIdSignal.value = null;
+      if (rightPanelTargetSignal.value?.type === 'scope') rightPanelTargetSignal.value = null;
+    };
+  }, [spaceId]);
 
-	// Keep a valid default selection so the right-panel toggle always has a target.
-	useEffect(() => {
-		if (selectedScopeId && scopes.some((scope) => scope.id === selectedScopeId)) return;
-		currentSpaceScopeIdSignal.value = scopes[0]?.id ?? null;
-	}, [scopes, selectedScopeId]);
+  // Keep a valid default selection so the right-panel toggle always has a target.
+  useEffect(() => {
+    if (selectedScopeId && scopes.some((scope) => scope.id === selectedScopeId)) return;
+    currentSpaceScopeIdSignal.value = scopes[0]?.id ?? null;
+  }, [scopes, selectedScopeId]);
 
-	const openScope = (scopeId: string) => {
-		currentSpaceScopeIdSignal.value = scopeId;
-		rightPanelTargetSignal.value = { type: 'scope', spaceId, scopeId };
-	};
+  const openScope = (scopeId: string) => {
+    currentSpaceScopeIdSignal.value = scopeId;
+    rightPanelTargetSignal.value = { type: 'scope', spaceId, scopeId };
+  };
 
-	const handleCreated = (scope: EvolutionScope) => {
-		localMutationVersion.current += 1;
-		setScopes((current) => [scope, ...current]);
-		openScope(scope.id);
-	};
+  const handleCreated = (scope: EvolutionScope) => {
+    localMutationVersion.current += 1;
+    setScopes((current) => [scope, ...current]);
+    openScope(scope.id);
+  };
 
-	return (
-		<div class="flex h-full min-h-0 flex-col overflow-hidden">
-			<div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
-				<div>
-					<h2 class="text-sm font-semibold text-gray-100">Forge scopes</h2>
-					<p class="text-xs text-gray-500">
-						{formatScopeCount(scopes.length)} collecting evidence, metrics, and lessons
-					</p>
-				</div>
-			</div>
+  return (
+    <div class="flex h-full min-h-0 flex-col overflow-hidden">
+      <div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
+        <div>
+          <h2 class="text-sm font-semibold text-gray-100">Forge scopes</h2>
+          <p class="text-xs text-gray-500">
+            {formatScopeCount(scopes.length)} collecting evidence, metrics, and lessons
+          </p>
+        </div>
+      </div>
 
-			<div class="flex-1 overflow-y-auto p-4">
-				<div class="mb-4 flex">
-					<Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-						Create scope
-					</Button>
-				</div>
-				{error && (
-					<div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
-						{error}
-					</div>
-				)}
-				{scopes.length === 0 && loading ? (
-					<p class="text-sm text-gray-500">Loading scopes...</p>
-				) : scopes.length === 0 ? (
-					<div class="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
-						<p class="text-sm text-gray-400">No Forge scopes yet.</p>
-						<p class="mt-1 text-xs text-gray-600">
-							Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
-							tasks.
-						</p>
-						<Button type="button" size="sm" class="mt-3" onClick={() => setCreateOpen(true)}>
-							Create scope
-						</Button>
-					</div>
-				) : (
-					<div class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(20rem,1fr))]">
-						{scopes.map((scope) => {
-							const goal = getGoal(scope, goals);
-							const selected = selectedScopeId === scope.id;
-							return (
-								<button
-									key={scope.id}
-									type="button"
-									onClick={() => openScope(scope.id)}
-									class={cn(
-										'group flex min-h-[9.5rem] w-full flex-col rounded-lg border p-4 text-left transition-colors',
-										selected
-											? 'border-cyan-500/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgb(6_182_212_/_0.08)]'
-											: 'border-dark-700 bg-dark-900/60 hover:border-dark-600 hover:bg-dark-850/80'
-									)}
-								>
-									<div class="min-w-0">
-										<h3 class="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">
-											{scope.name}
-										</h3>
-										<div class="mt-2 flex flex-wrap items-center gap-2">
-											<span class="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-300">
-												{formatKind(scope.kind)}
-											</span>
-											<span class="rounded-full border border-dark-600 px-2 py-0.5 text-[11px] text-gray-400">
-												{formatDefinitionCount(scope.metricDefinitions.length)}
-											</span>
-										</div>
-									</div>
-									<p class="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-gray-400">
-										{scope.objective || 'No objective recorded yet'}
-									</p>
-									<div class="mt-auto grid grid-cols-2 gap-3 pt-4 text-xs">
-										<div class="min-w-0">
-											<span class="block text-gray-600">Goal</span>
-											<span class="truncate text-blue-300">
-												{goal ? `Goal: ${goal.title}` : 'No linked goal'}
-											</span>
-										</div>
-										<div>
-											<span class="block text-gray-600">Updated</span>
-											<span class="text-gray-300">{getRelativeTime(scope.updatedAt)}</span>
-										</div>
-									</div>
-								</button>
-							);
-						})}
-					</div>
-				)}
-			</div>
+      <div class="flex-1 overflow-y-auto p-4">
+        <div class="mb-4 flex">
+          <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
+            Create scope
+          </Button>
+        </div>
+        {error && (
+          <div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
+            {error}
+          </div>
+        )}
+        {scopes.length === 0 && loading ? (
+          <p class="text-sm text-gray-500">Loading scopes...</p>
+        ) : scopes.length === 0 ? (
+          <div class="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
+            <p class="text-sm text-gray-400">No Forge scopes yet.</p>
+            <p class="mt-1 text-xs text-gray-600">
+              Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
+              tasks.
+            </p>
+            <Button type="button" size="sm" class="mt-3" onClick={() => setCreateOpen(true)}>
+              Create scope
+            </Button>
+          </div>
+        ) : (
+          <div class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(20rem,1fr))]">
+            {scopes.map((scope) => {
+              const goal = getGoal(scope, goals);
+              const selected = selectedScopeId === scope.id;
+              return (
+                <button
+                  key={scope.id}
+                  type="button"
+                  onClick={() => openScope(scope.id)}
+                  class={cn(
+                    'group flex min-h-[9.5rem] w-full flex-col rounded-lg border p-4 text-left transition-colors',
+                    selected
+                      ? 'border-cyan-500/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgb(6_182_212_/_0.08)]'
+                      : 'border-dark-700 bg-dark-900/60 hover:border-dark-600 hover:bg-dark-850/80'
+                  )}
+                >
+                  <div class="min-w-0">
+                    <h3 class="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">
+                      {scope.name}
+                    </h3>
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                      <span class="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-300">
+                        {formatKind(scope.kind)}
+                      </span>
+                      <span class="rounded-full border border-dark-600 px-2 py-0.5 text-[11px] text-gray-400">
+                        {formatDefinitionCount(scope.metricDefinitions.length)}
+                      </span>
+                    </div>
+                  </div>
+                  <p class="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-gray-400">
+                    {scope.objective || 'No objective recorded yet'}
+                  </p>
+                  <div class="mt-auto grid grid-cols-2 gap-3 pt-4 text-xs">
+                    <div class="min-w-0">
+                      <span class="block text-gray-600">Goal</span>
+                      <span class="truncate text-blue-300">
+                        {goal ? `Goal: ${goal.title}` : 'No linked goal'}
+                      </span>
+                    </div>
+                    <div>
+                      <span class="block text-gray-600">Updated</span>
+                      <span class="text-gray-300">{getRelativeTime(scope.updatedAt)}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-			<ScopeCreateDialog
-				isOpen={createOpen}
-				spaceId={spaceId}
-				goals={goals}
-				onClose={() => setCreateOpen(false)}
-				onCreated={handleCreated}
-			/>
-		</div>
-	);
+      <ScopeCreateDialog
+        isOpen={createOpen}
+        spaceId={spaceId}
+        goals={goals}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+      />
+    </div>
+  );
 }

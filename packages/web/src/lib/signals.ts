@@ -57,23 +57,23 @@ export const spaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
 
 // Message selected from search results. ChatContainer consumes this after routing to target session.
 export interface SearchMessageLoadTarget {
-	sessionId: string;
-	before?: number;
+  sessionId: string;
+  before?: number;
 }
 
 export interface SearchHighlightTarget {
-	sessionId: string;
-	messageId: string;
-	loadTarget?: SearchMessageLoadTarget;
+  sessionId: string;
+  messageId: string;
+  loadTarget?: SearchMessageLoadTarget;
 }
 export const searchHighlightMessageIdSignal = signal<SearchHighlightTarget | null>(null);
 // Task messaging context for live workflow node-agent overlays. When set, sends
 // from AgentOverlayChat route through space.task.sendMessage instead of the
 // generic message.send RPC so they target the already-live workflow sub-session.
 export interface SpaceOverlayTaskContext {
-	taskId: string;
-	agentName: string;
-	nodeExecutionId?: string | null;
+  taskId: string;
+  agentName: string;
+  nodeExecutionId?: string | null;
 }
 
 export const spaceOverlayTaskContextSignal = signal<SpaceOverlayTaskContext | null>(null);
@@ -98,20 +98,20 @@ export const commandPaletteModeSignal = signal<CommandPaletteMode>('commands');
 // contextual detail panel: Git status for sessions, goal/scope detail for the
 // Space Goals and Forge views.
 export type RightPanelTarget =
-	| { type: 'git'; sessionId: string }
-	| { type: 'goal'; spaceId: string; goalId: string }
-	| { type: 'scope'; spaceId: string; scopeId: string }
-	| { type: 'task'; spaceId: string; taskId: string; tab?: TaskRightPanelTab };
+  | { type: 'git'; sessionId: string }
+  | { type: 'goal'; spaceId: string; goalId: string }
+  | { type: 'scope'; spaceId: string; scopeId: string }
+  | { type: 'task'; spaceId: string; taskId: string; tab?: TaskRightPanelTab };
 export const rightPanelTargetSignal = signal<RightPanelTarget | null>(null);
 
 export type TaskRightPanelTab =
-	| 'details'
-	| 'workflow'
-	| 'agents'
-	| 'gates'
-	| 'artifacts'
-	| 'timeline'
-	| 'log';
+  | 'details'
+  | 'workflow'
+  | 'agents'
+  | 'gates'
+  | 'artifacts'
+  | 'timeline'
+  | 'log';
 
 // Current selection within the Space Goals / Forge lists. Drives card highlight
 // and gives the right-panel toggle something to (re)open. Distinct from
@@ -121,13 +121,13 @@ export const currentSpaceScopeIdSignal = signal<string | null>(null);
 
 // Settings section signal - which settings section is active
 export type SettingsSection =
-	| 'general'
-	| 'providers'
-	| 'custom-endpoints'
-	| 'app-mcp-servers'
-	| 'skills'
-	| 'models'
-	| 'usage'
-	| 'shortcuts'
-	| 'about';
+  | 'general'
+  | 'providers'
+  | 'custom-endpoints'
+  | 'app-mcp-servers'
+  | 'skills'
+  | 'models'
+  | 'usage'
+  | 'shortcuts'
+  | 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

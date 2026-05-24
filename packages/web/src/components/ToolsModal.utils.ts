@@ -13,10 +13,10 @@
  */
 
 import type {
-	AppMcpServer,
-	AppSkill,
-	McpEffectiveEnablementSource,
-	SessionMcpServerEntry,
+  AppMcpServer,
+  AppSkill,
+  McpEffectiveEnablementSource,
+  SessionMcpServerEntry,
 } from '@neokai/shared';
 
 /**
@@ -29,16 +29,16 @@ import type {
  * group header in the modal.
  */
 export function computeSkillGroupState(items: { enabled: boolean }[]): {
-	allEnabled: boolean;
-	someEnabled: boolean;
-	isIndeterminate: boolean;
+  allEnabled: boolean;
+  someEnabled: boolean;
+  isIndeterminate: boolean;
 } {
-	if (items.length === 0) {
-		return { allEnabled: false, someEnabled: false, isIndeterminate: false };
-	}
-	const allEnabled = items.every((s) => s.enabled);
-	const someEnabled = items.some((s) => s.enabled);
-	return { allEnabled, someEnabled, isIndeterminate: someEnabled && !allEnabled };
+  if (items.length === 0) {
+    return { allEnabled: false, someEnabled: false, isIndeterminate: false };
+  }
+  const allEnabled = items.every((s) => s.enabled);
+  const someEnabled = items.some((s) => s.enabled);
+  return { allEnabled, someEnabled, isIndeterminate: someEnabled && !allEnabled };
 }
 
 /**
@@ -66,23 +66,23 @@ export function computeSkillGroupState(items: { enabled: boolean }[]): {
  *                          "no indicator shown" by callers.
  */
 export type McpSkillRuntimeStatus =
-	| 'active'
-	| 'skill-disabled'
-	| 'server-off'
-	| 'server-missing'
-	| 'unknown';
+  | 'active'
+  | 'skill-disabled'
+  | 'server-off'
+  | 'server-missing'
+  | 'unknown';
 
 export interface McpSkillRuntimeState {
-	status: McpSkillRuntimeStatus;
-	/** The `app_mcp_servers.id` the skill points at, when known. */
-	appMcpServerId?: string;
-	/**
-	 * Which level of the scope chain owns the `server-off` decision. Present
-	 * only when `status === 'server-off'`; omitted for other statuses.
-	 */
-	overrideSource?: SessionMcpServerEntry['source'];
-	/** Short label suitable for rendering under the skill name. */
-	label: string;
+  status: McpSkillRuntimeStatus;
+  /** The `app_mcp_servers.id` the skill points at, when known. */
+  appMcpServerId?: string;
+  /**
+   * Which level of the scope chain owns the `server-off` decision. Present
+   * only when `status === 'server-off'`; omitted for other statuses.
+   */
+  overrideSource?: SessionMcpServerEntry['source'];
+  /** Short label suitable for rendering under the skill name. */
+  label: string;
 }
 
 /**
@@ -103,70 +103,70 @@ export interface McpSkillRuntimeState {
  *                         yet" (loading).
  */
 export function computeMcpSkillRuntimeState(
-	skill: AppSkill,
-	sessionMcpList: SessionMcpServerEntry[],
-	sessionMcpLoaded: boolean
+  skill: AppSkill,
+  sessionMcpList: SessionMcpServerEntry[],
+  sessionMcpLoaded: boolean
 ): McpSkillRuntimeState {
-	if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') {
-		return { status: 'unknown', label: '' };
-	}
+  if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') {
+    return { status: 'unknown', label: '' };
+  }
 
-	const appMcpServerId = skill.config.appMcpServerId;
+  const appMcpServerId = skill.config.appMcpServerId;
 
-	if (!sessionMcpLoaded) {
-		return { status: 'unknown', appMcpServerId, label: '' };
-	}
+  if (!sessionMcpLoaded) {
+    return { status: 'unknown', appMcpServerId, label: '' };
+  }
 
-	// If the skill itself is off, the skill bridge never injects it regardless
-	// of the backing server's enablement. Surface that first so users aren't
-	// misled by a green "active" indicator when their own checkbox is off.
-	if (!skill.enabled) {
-		const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
-		if (!entry) {
-			return {
-				status: 'server-missing',
-				appMcpServerId,
-				label: 'No backing MCP server',
-			};
-		}
-		return {
-			status: 'skill-disabled',
-			appMcpServerId,
-			label: 'Skill off — not injected',
-		};
-	}
+  // If the skill itself is off, the skill bridge never injects it regardless
+  // of the backing server's enablement. Surface that first so users aren't
+  // misled by a green "active" indicator when their own checkbox is off.
+  if (!skill.enabled) {
+    const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
+    if (!entry) {
+      return {
+        status: 'server-missing',
+        appMcpServerId,
+        label: 'No backing MCP server',
+      };
+    }
+    return {
+      status: 'skill-disabled',
+      appMcpServerId,
+      label: 'Skill off — not injected',
+    };
+  }
 
-	const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
-	if (!entry) {
-		return {
-			status: 'server-missing',
-			appMcpServerId,
-			label: 'No backing MCP server',
-		};
-	}
+  const entry = sessionMcpList.find((e) => e.server.id === appMcpServerId);
+  if (!entry) {
+    return {
+      status: 'server-missing',
+      appMcpServerId,
+      label: 'No backing MCP server',
+    };
+  }
 
-	if (!entry.enabled) {
-		const where =
-			entry.source === 'session'
-				? 'this session'
-				: entry.source === 'room'
-					? 'room'
-					: entry.source === 'space'
-						? 'space'
-						: 'registry';
-		return {
-			status: 'server-off',
-			appMcpServerId,
-			overrideSource: entry.source,
-			label: `MCP server disabled at ${where}`,
-		};
-	}
+  if (!entry.enabled) {
+    const where =
+      entry.source === 'session'
+        ? 'this session'
+        : entry.source === 'room'
+          ? 'room'
+          : entry.source === 'space'
+            ? 'space'
+            : 'registry';
+    return {
+      status: 'server-off',
+      appMcpServerId,
+      overrideSource: entry.source,
+      label: `MCP server disabled at ${where}`,
+    };
+  }
 
-	return {
-		status: 'active',
-		appMcpServerId,
-		label: 'Active in this session',
-	};
+  return {
+    status: 'active',
+    appMcpServerId,
+    label: 'Active in this session',
+  };
 }
 
 /**
@@ -184,22 +184,22 @@ export function computeMcpSkillRuntimeState(
  * does", and sharing the colour makes that signal consistent across views.
  */
 export interface McpSkillRuntimeClasses {
-	dot: string;
-	text: string;
+  dot: string;
+  text: string;
 }
 
 export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSkillRuntimeClasses {
-	switch (status) {
-		case 'active':
-			return { dot: 'bg-emerald-400', text: 'text-emerald-500/70' };
-		case 'server-off':
-			return { dot: 'bg-amber-400', text: 'text-amber-500/70' };
-		case 'server-missing':
-			return { dot: 'bg-red-400', text: 'text-red-400' };
-		case 'skill-disabled':
-		case 'unknown':
-			return { dot: 'bg-gray-500', text: 'text-gray-500' };
-	}
+  switch (status) {
+    case 'active':
+      return { dot: 'bg-emerald-400', text: 'text-emerald-500/70' };
+    case 'server-off':
+      return { dot: 'bg-amber-400', text: 'text-amber-500/70' };
+    case 'server-missing':
+      return { dot: 'bg-red-400', text: 'text-red-400' };
+    case 'skill-disabled':
+    case 'unknown':
+      return { dot: 'bg-gray-500', text: 'text-gray-500' };
+  }
 }
 
 /**
@@ -213,16 +213,16 @@ export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSki
  * user clone) we keep the first; the UI shouldn't encourage that topology.
  */
 export function computeMcpServerSkillLinkage(skills: AppSkill[]): Map<string, AppSkill> {
-	const map = new Map<string, AppSkill>();
-	for (const skill of skills) {
-		if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
-		const serverId = skill.config.appMcpServerId;
-		if (!serverId) continue;
-		if (!map.has(serverId)) {
-			map.set(serverId, skill);
-		}
-	}
-	return map;
+  const map = new Map<string, AppSkill>();
+  for (const skill of skills) {
+    if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
+    const serverId = skill.config.appMcpServerId;
+    if (!serverId) continue;
+    if (!map.has(serverId)) {
+      map.set(serverId, skill);
+    }
+  }
+  return map;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,11 +255,11 @@ export function computeMcpServerSkillLinkage(skills: AppSkill[]): Map<string, Ap
  * with the underlying enablement contract.
  */
 export function isSkillEnabledForSession(
-	skill: AppSkill,
-	pendingDisabledSkills: ReadonlySet<string>
+  skill: AppSkill,
+  pendingDisabledSkills: ReadonlySet<string>
 ): boolean {
-	if (!skill.enabled) return false;
-	return !pendingDisabledSkills.has(skill.id);
+  if (!skill.enabled) return false;
+  return !pendingDisabledSkills.has(skill.id);
 }
 
 /**
@@ -270,14 +270,14 @@ export function isSkillEnabledForSession(
  * disabled-skill entries from accumulating across rename/delete cycles.
  */
 export function buildDisabledSkillsList(
-	skills: AppSkill[],
-	pendingDisabledSkills: ReadonlySet<string>
+  skills: AppSkill[],
+  pendingDisabledSkills: ReadonlySet<string>
 ): string[] {
-	const out: string[] = [];
-	for (const skill of skills) {
-		if (pendingDisabledSkills.has(skill.id)) out.push(skill.id);
-	}
-	return out;
+  const out: string[] = [];
+  for (const skill of skills) {
+    if (pendingDisabledSkills.has(skill.id)) out.push(skill.id);
+  }
+  return out;
 }
 
 /**
@@ -291,19 +291,19 @@ export function buildDisabledSkillsList(
  *   - mcp_server → amber  (matches the AppMcpServersSettings amber accent)
  */
 export interface SourceBadgeStyle {
-	label: string;
-	className: string;
+  label: string;
+  className: string;
 }
 
 export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
-	switch (skill.sourceType) {
-		case 'builtin':
-			return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
-		case 'plugin':
-			return { label: 'Plugin', className: 'text-violet-400/80 bg-violet-400/10' };
-		case 'mcp_server':
-			return { label: 'MCP', className: 'text-amber-400/80 bg-amber-400/10' };
-	}
+  switch (skill.sourceType) {
+    case 'builtin':
+      return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
+    case 'plugin':
+      return { label: 'Plugin', className: 'text-violet-400/80 bg-violet-400/10' };
+    case 'mcp_server':
+      return { label: 'MCP', className: 'text-amber-400/80 bg-amber-400/10' };
+  }
 }
 
 /**
@@ -311,10 +311,10 @@ export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
  * Used to label the source badge and to keep ordering deterministic in tests.
  */
 const MCP_SOURCE_LABELS: Record<McpEffectiveEnablementSource, SourceBadgeStyle> = {
-	session: { label: 'Session override', className: 'text-sky-400/80 bg-sky-400/10' },
-	room: { label: 'Inherited from room', className: 'text-purple-400/80 bg-purple-400/10' },
-	space: { label: 'Inherited from space', className: 'text-fuchsia-400/80 bg-fuchsia-400/10' },
-	registry: { label: 'Registry default', className: 'text-gray-400/80 bg-gray-400/10' },
+  session: { label: 'Session override', className: 'text-sky-400/80 bg-sky-400/10' },
+  room: { label: 'Inherited from room', className: 'text-purple-400/80 bg-purple-400/10' },
+  space: { label: 'Inherited from space', className: 'text-fuchsia-400/80 bg-fuchsia-400/10' },
+  registry: { label: 'Registry default', className: 'text-gray-400/80 bg-gray-400/10' },
 };
 
 /**
@@ -323,7 +323,7 @@ const MCP_SOURCE_LABELS: Record<McpEffectiveEnablementSource, SourceBadgeStyle> 
  * badge below.
  */
 export function getMcpServerSourceBadge(source: McpEffectiveEnablementSource): SourceBadgeStyle {
-	return MCP_SOURCE_LABELS[source];
+  return MCP_SOURCE_LABELS[source];
 }
 
 /**
@@ -333,14 +333,14 @@ export function getMcpServerSourceBadge(source: McpEffectiveEnablementSource): S
  * from one they imported from a project's .mcp.json.
  */
 export function getMcpServerProvenanceBadge(server: AppMcpServer): SourceBadgeStyle {
-	switch (server.source) {
-		case 'builtin':
-			return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
-		case 'imported':
-			return { label: 'Imported', className: 'text-emerald-400/80 bg-emerald-400/10' };
-		case 'user':
-			return { label: 'User', className: 'text-gray-300/80 bg-gray-400/10' };
-	}
+  switch (server.source) {
+    case 'builtin':
+      return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
+    case 'imported':
+      return { label: 'Imported', className: 'text-emerald-400/80 bg-emerald-400/10' };
+    case 'user':
+      return { label: 'User', className: 'text-gray-300/80 bg-gray-400/10' };
+  }
 }
 
 /**
@@ -366,9 +366,9 @@ export type PendingMcpOverride = { enabled: boolean | null };
  * inherited value is what the user will see after Save, so we display that.
  */
 export function getMcpServerEffectiveEnabled(
-	entry: SessionMcpServerEntry,
-	pending: PendingMcpOverride | undefined
+  entry: SessionMcpServerEntry,
+  pending: PendingMcpOverride | undefined
 ): boolean {
-	if (pending && pending.enabled !== null) return pending.enabled;
-	return entry.enabled;
+  if (pending && pending.enabled !== null) return pending.enabled;
+  return entry.enabled;
 }

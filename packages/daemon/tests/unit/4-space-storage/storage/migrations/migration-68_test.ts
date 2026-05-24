@@ -22,13 +22,13 @@ import { createTables } from '../../../../../src/storage/schema/index.ts';
 import { runMigration68 } from '../../../../../src/storage/schema/migrations.ts';
 
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
-	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-	return rows.some((r) => r.name === column);
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === column);
 }
 
 /** Create sdk_messages WITHOUT origin column to simulate a pre-migration DB */
 function createLegacySdkMessagesTable(db: BunDatabase): void {
-	db.exec(`
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
@@ -42,129 +42,129 @@ function createLegacySdkMessagesTable(db: BunDatabase): void {
 }
 
 describe('Migration 68: Add origin column to sdk_messages', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-68', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
-		const dbPath = join(testDir, 'test.db');
-		db = new BunDatabase(dbPath);
-		db.exec('PRAGMA foreign_keys = OFF');
-	});
+  beforeEach(() => {
+    testDir = join(process.cwd(), 'tmp', 'test-migration-68', `test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const dbPath = join(testDir, 'test.db');
+    db = new BunDatabase(dbPath);
+    db.exec('PRAGMA foreign_keys = OFF');
+  });
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	});
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
-	test('origin column is added to existing sdk_messages table', () => {
-		createLegacySdkMessagesTable(db);
-		expect(columnExists(db, 'sdk_messages', 'origin')).toBe(false);
+  test('origin column is added to existing sdk_messages table', () => {
+    createLegacySdkMessagesTable(db);
+    expect(columnExists(db, 'sdk_messages', 'origin')).toBe(false);
 
-		runMigration68(db);
+    runMigration68(db);
 
-		expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
-	});
+    expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
+  });
 
-	test('origin column defaults to NULL for new rows after migration', () => {
-		createLegacySdkMessagesTable(db);
-		runMigration68(db);
+  test('origin column defaults to NULL for new rows after migration', () => {
+    createLegacySdkMessagesTable(db);
+    runMigration68(db);
 
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 			 VALUES (?, ?, ?, ?, ?)`
-		).run('msg-1', 'session-1', 'user', '{}', new Date().toISOString());
+    ).run('msg-1', 'session-1', 'user', '{}', new Date().toISOString());
 
-		const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-1'`).get() as {
-			origin: string | null;
-		};
-		expect(row.origin).toBeNull();
-	});
+    const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-1'`).get() as {
+      origin: string | null;
+    };
+    expect(row.origin).toBeNull();
+  });
 
-	test('origin=system can be stored after migration', () => {
-		createLegacySdkMessagesTable(db);
-		runMigration68(db);
+  test('origin=system can be stored after migration', () => {
+    createLegacySdkMessagesTable(db);
+    runMigration68(db);
 
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
 			 VALUES (?, ?, ?, ?, ?, ?)`
-		).run('msg-sys', 'session-1', 'user', '{}', new Date().toISOString(), 'system');
+    ).run('msg-sys', 'session-1', 'user', '{}', new Date().toISOString(), 'system');
 
-		const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-sys'`).get() as {
-			origin: string;
-		};
-		expect(row.origin).toBe('system');
-	});
+    const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-sys'`).get() as {
+      origin: string;
+    };
+    expect(row.origin).toBe('system');
+  });
 
-	test('origin=human can be stored after migration', () => {
-		createLegacySdkMessagesTable(db);
-		runMigration68(db);
+  test('origin=human can be stored after migration', () => {
+    createLegacySdkMessagesTable(db);
+    runMigration68(db);
 
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
 			 VALUES (?, ?, ?, ?, ?, ?)`
-		).run('msg-human', 'session-1', 'user', '{}', new Date().toISOString(), 'human');
+    ).run('msg-human', 'session-1', 'user', '{}', new Date().toISOString(), 'human');
 
-		const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-human'`).get() as {
-			origin: string;
-		};
-		expect(row.origin).toBe('human');
-	});
+    const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'msg-human'`).get() as {
+      origin: string;
+    };
+    expect(row.origin).toBe('human');
+  });
 
-	test('invalid origin value is rejected by CHECK constraint', () => {
-		createLegacySdkMessagesTable(db);
-		runMigration68(db);
+  test('invalid origin value is rejected by CHECK constraint', () => {
+    createLegacySdkMessagesTable(db);
+    runMigration68(db);
 
-		expect(() => {
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
+    expect(() => {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
 				 VALUES (?, ?, ?, ?, ?, ?)`
-			).run('msg-bad', 'session-1', 'user', '{}', new Date().toISOString(), 'robot');
-		}).toThrow();
-	});
+      ).run('msg-bad', 'session-1', 'user', '{}', new Date().toISOString(), 'robot');
+    }).toThrow();
+  });
 
-	test('runMigration68 is idempotent — running twice does not error', () => {
-		createLegacySdkMessagesTable(db);
-		runMigration68(db);
-		expect(() => runMigration68(db)).not.toThrow();
-		expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
-	});
+  test('runMigration68 is idempotent — running twice does not error', () => {
+    createLegacySdkMessagesTable(db);
+    runMigration68(db);
+    expect(() => runMigration68(db)).not.toThrow();
+    expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
+  });
 
-	test('existing rows without origin are NULL after migration', () => {
-		createLegacySdkMessagesTable(db);
+  test('existing rows without origin are NULL after migration', () => {
+    createLegacySdkMessagesTable(db);
 
-		// Insert a row before running migration
-		db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+    // Insert a row before running migration
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 			 VALUES (?, ?, ?, ?, ?)`
-		).run('old-msg', 'session-1', 'assistant', '{}', new Date().toISOString());
+    ).run('old-msg', 'session-1', 'assistant', '{}', new Date().toISOString());
 
-		runMigration68(db);
+    runMigration68(db);
 
-		// Old row should have NULL origin
-		const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'old-msg'`).get() as {
-			origin: string | null;
-		};
-		expect(row.origin).toBeNull();
-	});
+    // Old row should have NULL origin
+    const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'old-msg'`).get() as {
+      origin: string | null;
+    };
+    expect(row.origin).toBeNull();
+  });
 
-	test('fresh DB via createTables has origin column on sdk_messages', () => {
-		// createTables uses CREATE TABLE IF NOT EXISTS with origin column already in schema
-		createTables(db);
-		expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
-	});
+  test('fresh DB via createTables has origin column on sdk_messages', () => {
+    // createTables uses CREATE TABLE IF NOT EXISTS with origin column already in schema
+    createTables(db);
+    expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
+  });
 
-	test('runMigration68 is no-op when sdk_messages does not exist', () => {
-		// If sdk_messages doesn't exist, migration should just return without error
-		expect(() => runMigration68(db)).not.toThrow();
-	});
+  test('runMigration68 is no-op when sdk_messages does not exist', () => {
+    // If sdk_messages doesn't exist, migration should just return without error
+    expect(() => runMigration68(db)).not.toThrow();
+  });
 });

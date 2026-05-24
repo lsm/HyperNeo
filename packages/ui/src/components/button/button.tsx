@@ -5,76 +5,76 @@ import type { ElementType } from '../../internal/types.ts';
 
 // InputDeviceCapabilities is not in lib.dom.d.ts yet
 interface FocusEventWithCapabilities extends FocusEvent {
-	sourceCapabilities?: { firesTouchEvents: boolean };
+  sourceCapabilities?: { firesTouchEvents: boolean };
 }
 
 // --- Button ---
 
 interface ButtonProps {
-	as?: ElementType;
-	type?: string;
-	disabled?: boolean;
-	autoFocus?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  type?: string;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function ButtonFn({
-	as: Tag = 'button',
-	type,
-	disabled = false,
-	autoFocus = false,
-	children,
-	...rest
+  as: Tag = 'button',
+  type,
+  disabled = false,
+  autoFocus = false,
+  children,
+  ...rest
 }: ButtonProps) {
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
-	const [active, setActive] = useState(false);
-	const isTouch = useRef(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const [active, setActive] = useState(false);
+  const isTouch = useRef(false);
 
-	const resolvedType = Tag === 'button' ? (type ?? 'button') : type;
+  const resolvedType = Tag === 'button' ? (type ?? 'button') : type;
 
-	const ourProps: Record<string, unknown> = {
-		autoFocus,
-		disabled: disabled || undefined,
-		...(resolvedType !== undefined ? { type: resolvedType } : {}),
-		onPointerEnter: (e: PointerEvent) => {
-			if (e.pointerType === 'touch') return;
-			setHover(true);
-		},
-		onPointerLeave: (e: PointerEvent) => {
-			if (e.pointerType === 'touch') return;
-			setHover(false);
-		},
-		onPointerDown: (e: PointerEvent) => {
-			isTouch.current = e.pointerType === 'touch';
-			setActive(true);
-		},
-		onPointerUp: () => {
-			setActive(false);
-		},
-		onFocus: (e: FocusEventWithCapabilities) => {
-			// Only track focus for keyboard navigation
-			if (e.sourceCapabilities?.firesTouchEvents === true) {
-				return;
-			}
-			if (isTouch.current) return;
-			setFocus(true);
-		},
-		onBlur: () => {
-			setFocus(false);
-		},
-	};
+  const ourProps: Record<string, unknown> = {
+    autoFocus,
+    disabled: disabled || undefined,
+    ...(resolvedType !== undefined ? { type: resolvedType } : {}),
+    onPointerEnter: (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      setHover(true);
+    },
+    onPointerLeave: (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      setHover(false);
+    },
+    onPointerDown: (e: PointerEvent) => {
+      isTouch.current = e.pointerType === 'touch';
+      setActive(true);
+    },
+    onPointerUp: () => {
+      setActive(false);
+    },
+    onFocus: (e: FocusEventWithCapabilities) => {
+      // Only track focus for keyboard navigation
+      if (e.sourceCapabilities?.firesTouchEvents === true) {
+        return;
+      }
+      if (isTouch.current) return;
+      setFocus(true);
+    },
+    onBlur: () => {
+      setFocus(false);
+    },
+  };
 
-	const slot = { hover, focus, active, autofocus: autoFocus, disabled };
+  const slot = { hover, focus, active, autofocus: autoFocus, disabled };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'button',
-		name: 'Button',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'button',
+    name: 'Button',
+  });
 }
 
 ButtonFn.displayName = 'Button';
@@ -83,60 +83,60 @@ export const Button = ButtonFn;
 // --- CloseButton ---
 
 interface CloseButtonProps {
-	as?: ElementType;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function CloseButtonFn({ as: Tag = 'button', children, ...rest }: CloseButtonProps) {
-	const close = useContext(CloseContext);
+  const close = useContext(CloseContext);
 
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
-	const [active, setActive] = useState(false);
-	const isTouch = useRef(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const [active, setActive] = useState(false);
+  const isTouch = useRef(false);
 
-	const ourProps: Record<string, unknown> = {
-		type: Tag === 'button' ? 'button' : undefined,
-		onClick: () => {
-			if (close) close();
-		},
-		onPointerEnter: (e: PointerEvent) => {
-			if (e.pointerType === 'touch') return;
-			setHover(true);
-		},
-		onPointerLeave: (e: PointerEvent) => {
-			if (e.pointerType === 'touch') return;
-			setHover(false);
-		},
-		onPointerDown: (e: PointerEvent) => {
-			isTouch.current = e.pointerType === 'touch';
-			setActive(true);
-		},
-		onPointerUp: () => {
-			setActive(false);
-		},
-		onFocus: (e: FocusEventWithCapabilities) => {
-			if (e.sourceCapabilities?.firesTouchEvents === true) {
-				return;
-			}
-			if (isTouch.current) return;
-			setFocus(true);
-		},
-		onBlur: () => {
-			setFocus(false);
-		},
-	};
+  const ourProps: Record<string, unknown> = {
+    type: Tag === 'button' ? 'button' : undefined,
+    onClick: () => {
+      if (close) close();
+    },
+    onPointerEnter: (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      setHover(true);
+    },
+    onPointerLeave: (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      setHover(false);
+    },
+    onPointerDown: (e: PointerEvent) => {
+      isTouch.current = e.pointerType === 'touch';
+      setActive(true);
+    },
+    onPointerUp: () => {
+      setActive(false);
+    },
+    onFocus: (e: FocusEventWithCapabilities) => {
+      if (e.sourceCapabilities?.firesTouchEvents === true) {
+        return;
+      }
+      if (isTouch.current) return;
+      setFocus(true);
+    },
+    onBlur: () => {
+      setFocus(false);
+    },
+  };
 
-	const slot = { hover, focus, active, autofocus: false, disabled: false };
+  const slot = { hover, focus, active, autofocus: false, disabled: false };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'button',
-		name: 'CloseButton',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'button',
+    name: 'CloseButton',
+  });
 }
 
 CloseButtonFn.displayName = 'CloseButton';
@@ -145,49 +145,49 @@ export const CloseButton = CloseButtonFn;
 // --- DataInteractive ---
 
 interface DataInteractiveProps {
-	as?: ElementType;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function DataInteractiveFn({ as: Tag = 'div', children, ...rest }: DataInteractiveProps) {
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
-	const isTouch = useRef(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const isTouch = useRef(false);
 
-	const ourProps: Record<string, unknown> = {
-		onPointerEnter: (e: PointerEvent) => {
-			if (e.pointerType === 'touch') return;
-			setHover(true);
-		},
-		onPointerLeave: (e: PointerEvent) => {
-			if (e.pointerType === 'touch') return;
-			setHover(false);
-		},
-		onPointerDown: (e: PointerEvent) => {
-			isTouch.current = e.pointerType === 'touch';
-		},
-		onFocus: (e: FocusEventWithCapabilities) => {
-			if (e.sourceCapabilities?.firesTouchEvents === true) {
-				return;
-			}
-			if (isTouch.current) return;
-			setFocus(true);
-		},
-		onBlur: () => {
-			setFocus(false);
-		},
-	};
+  const ourProps: Record<string, unknown> = {
+    onPointerEnter: (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      setHover(true);
+    },
+    onPointerLeave: (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+      setHover(false);
+    },
+    onPointerDown: (e: PointerEvent) => {
+      isTouch.current = e.pointerType === 'touch';
+    },
+    onFocus: (e: FocusEventWithCapabilities) => {
+      if (e.sourceCapabilities?.firesTouchEvents === true) {
+        return;
+      }
+      if (isTouch.current) return;
+      setFocus(true);
+    },
+    onBlur: () => {
+      setFocus(false);
+    },
+  };
 
-	const slot = { hover, focus };
+  const slot = { hover, focus };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'div',
-		name: 'DataInteractive',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'div',
+    name: 'DataInteractive',
+  });
 }
 
 DataInteractiveFn.displayName = 'DataInteractive';
@@ -196,31 +196,31 @@ export const DataInteractive = DataInteractiveFn;
 // --- ButtonGroup ---
 
 interface ButtonGroupProps {
-	as?: ElementType;
-	children?: unknown;
-	'aria-label'?: string;
-	[key: string]: unknown;
+  as?: ElementType;
+  children?: unknown;
+  'aria-label'?: string;
+  [key: string]: unknown;
 }
 
 function ButtonGroupFn({
-	as: Tag = 'div',
-	children,
-	'aria-label': ariaLabel,
-	...rest
+  as: Tag = 'div',
+  children,
+  'aria-label': ariaLabel,
+  ...rest
 }: ButtonGroupProps) {
-	const ourProps: Record<string, unknown> = {
-		role: 'group',
-		'data-slot': 'button-group',
-		...(ariaLabel !== undefined ? { 'aria-label': ariaLabel } : {}),
-	};
+  const ourProps: Record<string, unknown> = {
+    role: 'group',
+    'data-slot': 'button-group',
+    ...(ariaLabel !== undefined ? { 'aria-label': ariaLabel } : {}),
+  };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot: {},
-		defaultTag: 'div',
-		name: 'ButtonGroup',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot: {},
+    defaultTag: 'div',
+    name: 'ButtonGroup',
+  });
 }
 
 ButtonGroupFn.displayName = 'ButtonGroup';

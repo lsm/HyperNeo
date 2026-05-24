@@ -48,11 +48,11 @@ import { z } from 'zod';
  *     it while findings are open — request changes and continue the loop instead.
  */
 export const ApproveTaskSchema = z
-	.object({})
-	.strict()
-	.describe(
-		'Self-close the task as approved. TERMINAL: closes the review/QA loop. Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be addressed in the latest commits you reviewed. While findings are open, request changes and continue the loop instead — do NOT call this tool.'
-	);
+  .object({})
+  .strict()
+  .describe(
+    'Self-close the task as approved. TERMINAL: closes the review/QA loop. Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be addressed in the latest commits you reviewed. While findings are open, request changes and continue the loop instead — do NOT call this tool.'
+  );
 
 export type ApproveTaskInput = z.infer<typeof ApproveTaskSchema>;
 
@@ -81,22 +81,22 @@ export type ApproveTaskInput = z.infer<typeof ApproveTaskSchema>;
  *     open — request changes and continue the loop instead.
  */
 export const SubmitForApprovalSchema = z
-	.object({
-		/**
-		 * Optional human-readable reason for requesting review. Surfaces in the
-		 * approval UI so the human reviewer knows why the agent escalated.
-		 */
-		reason: z
-			.string()
-			.describe(
-				'Optional note explaining why you are requesting human review (visible in the approval UI)'
-			)
-			.optional(),
-	})
-	.strict()
-	.describe(
-		'Request human sign-off as the final close action. TERMINAL: closes the review/QA loop, equivalent in semantic to `approve_task` (both signal "the work is approved by me"). Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be resolved in the commits you reviewed. Do NOT use this to defer judgment while findings are open — request changes and continue the loop instead.'
-	);
+  .object({
+    /**
+     * Optional human-readable reason for requesting review. Surfaces in the
+     * approval UI so the human reviewer knows why the agent escalated.
+     */
+    reason: z
+      .string()
+      .describe(
+        'Optional note explaining why you are requesting human review (visible in the approval UI)'
+      )
+      .optional(),
+  })
+  .strict()
+  .describe(
+    'Request human sign-off as the final close action. TERMINAL: closes the review/QA loop, equivalent in semantic to `approve_task` (both signal "the work is approved by me"). Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be resolved in the commits you reviewed. Do NOT use this to defer judgment while findings are open — request changes and continue the loop instead.'
+  );
 
 export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;
 
@@ -121,33 +121,33 @@ export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;
  * context. Strict schema so future fields fail fast until explicitly added.
  */
 export const GoalUpdateSchema = z
-	.object({
-		summary: z.string().describe('Updated rolling summary for the linked goal').optional(),
-		progress: z
-			.number()
-			.int()
-			.min(0)
-			.max(100)
-			.describe('Updated goal progress percentage from 0 to 100')
-			.optional(),
-		metrics: z
-			.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
-			.describe('Updated structured metric state for the linked goal')
-			.optional(),
-		nextSteps: z
-			.array(z.string())
-			.describe('Updated list of next steps for the linked goal')
-			.optional(),
-	})
-	.strict();
+  .object({
+    summary: z.string().describe('Updated rolling summary for the linked goal').optional(),
+    progress: z
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .describe('Updated goal progress percentage from 0 to 100')
+      .optional(),
+    metrics: z
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+      .describe('Updated structured metric state for the linked goal')
+      .optional(),
+    nextSteps: z
+      .array(z.string())
+      .describe('Updated list of next steps for the linked goal')
+      .optional(),
+  })
+  .strict();
 
 export const MarkCompleteSchema = z
-	.object({
-		goal_update: GoalUpdateSchema.describe(
-			"Optional rolling-state update for the task's linked goal. Provide this when completed work changes long-horizon goal state."
-		).optional(),
-	})
-	.strict();
+  .object({
+    goal_update: GoalUpdateSchema.describe(
+      "Optional rolling-state update for the task's linked goal. Provide this when completed work changes long-horizon goal state."
+    ).optional(),
+  })
+  .strict();
 
 export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
 
@@ -160,13 +160,13 @@ export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
  * Pauses workflow execution and surfaces a question to the human user.
  */
 export const RequestHumanInputSchema = z.object({
-	/** The question to ask the human. */
-	question: z.string().describe('The question to surface to the human user'),
-	/** Optional context to help the human understand why the question is being asked. */
-	context: z
-		.string()
-		.describe('Optional context explaining why this question is being asked')
-		.optional(),
+  /** The question to ask the human. */
+  question: z.string().describe('The question to surface to the human user'),
+  /** Optional context to help the human understand why the question is being asked. */
+  context: z
+    .string()
+    .describe('Optional context explaining why this question is being asked')
+    .optional(),
 });
 
 export type RequestHumanInputInput = z.infer<typeof RequestHumanInputSchema>;
@@ -196,11 +196,11 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
  * Other tasks in the space cannot be modified through this tool.
  */
 export const UpdateTaskSchema = z.object({
-	task_id: z.string().describe('UUID of the task to update'),
-	title: z.string().min(1).describe('New title for the task').optional(),
-	description: z.string().describe('New description for the task').optional(),
-	priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
-	depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
+  task_id: z.string().describe('UUID of the task to update'),
+  title: z.string().min(1).describe('New title for the task').optional(),
+  description: z.string().describe('New description for the task').optional(),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
+  depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
 });
 
 export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
@@ -214,12 +214,12 @@ export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
  * The MCP server factory can iterate this map to register tools.
  */
 export const TASK_AGENT_TOOL_SCHEMAS = {
-	approve_task: ApproveTaskSchema,
-	submit_for_approval: SubmitForApprovalSchema,
-	mark_complete: MarkCompleteSchema,
-	request_human_input: RequestHumanInputSchema,
-	list_group_members: ListGroupMembersSchema,
-	update_task: UpdateTaskSchema,
+  approve_task: ApproveTaskSchema,
+  submit_for_approval: SubmitForApprovalSchema,
+  mark_complete: MarkCompleteSchema,
+  request_human_input: RequestHumanInputSchema,
+  list_group_members: ListGroupMembersSchema,
+  update_task: UpdateTaskSchema,
 } as const;
 
 export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;

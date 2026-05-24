@@ -14,331 +14,331 @@ import chatContainerSource from '../ChatContainer.tsx?raw';
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];
 const mockRaf = vi.fn((callback: FrameRequestCallback) => {
-	rafCallbacks.push(callback as unknown as () => void);
-	return rafCallbacks.length;
+  rafCallbacks.push(callback as unknown as () => void);
+  return rafCallbacks.length;
 });
 
 /**
  * Helper to flush all pending requestAnimationFrame callbacks
  */
 function flushRAF(): void {
-	const callbacks = [...rafCallbacks];
-	rafCallbacks.length = 0;
-	callbacks.forEach((cb) => cb());
+  const callbacks = [...rafCallbacks];
+  rafCallbacks.length = 0;
+  callbacks.forEach((cb) => cb());
 }
 
 describe('ChatContainer State Batching', () => {
-	const originalRAF = globalThis.requestAnimationFrame;
+  const originalRAF = globalThis.requestAnimationFrame;
 
-	beforeEach(() => {
-		rafCallbacks.length = 0;
-		mockRaf.mockClear();
-		// Mock requestAnimationFrame globally
-		globalThis.requestAnimationFrame = mockRaf as unknown as typeof requestAnimationFrame;
-	});
+  beforeEach(() => {
+    rafCallbacks.length = 0;
+    mockRaf.mockClear();
+    // Mock requestAnimationFrame globally
+    globalThis.requestAnimationFrame = mockRaf as unknown as typeof requestAnimationFrame;
+  });
 
-	afterEach(() => {
-		// Restore original requestAnimationFrame
-		globalThis.requestAnimationFrame = originalRAF;
-	});
+  afterEach(() => {
+    // Restore original requestAnimationFrame
+    globalThis.requestAnimationFrame = originalRAF;
+  });
 
-	describe('requestAnimationFrame batching', () => {
-		it('should defer state updates to requestAnimationFrame', () => {
-			// Simulate the state.session handler behavior
-			const stateUpdates: string[] = [];
+  describe('requestAnimationFrame batching', () => {
+    it('should defer state updates to requestAnimationFrame', () => {
+      // Simulate the state.session handler behavior
+      const stateUpdates: string[] = [];
 
-			const mockSetSession = vi.fn((val: unknown) => stateUpdates.push(`session:${val}`));
-			const mockSetContextUsage = vi.fn((val: unknown) => stateUpdates.push(`context:${val}`));
-			const mockSetSending = vi.fn((val: unknown) => stateUpdates.push(`sending:${val}`));
-			const mockSetCurrentAction = vi.fn((val: unknown) => stateUpdates.push(`action:${val}`));
-			const mockSetStreamingPhase = vi.fn((val: unknown) => stateUpdates.push(`phase:${val}`));
+      const mockSetSession = vi.fn((val: unknown) => stateUpdates.push(`session:${val}`));
+      const mockSetContextUsage = vi.fn((val: unknown) => stateUpdates.push(`context:${val}`));
+      const mockSetSending = vi.fn((val: unknown) => stateUpdates.push(`sending:${val}`));
+      const mockSetCurrentAction = vi.fn((val: unknown) => stateUpdates.push(`action:${val}`));
+      const mockSetStreamingPhase = vi.fn((val: unknown) => stateUpdates.push(`phase:${val}`));
 
-			// Simulate receiving state.session event
-			const data = {
-				session: { id: 'test-session' },
-				context: { tokens: 1000 },
-				agent: {
-					status: 'processing' as const,
-					phase: 'initializing' as const,
-				},
-				commands: { availableCommands: ['/help'] },
-			};
+      // Simulate receiving state.session event
+      const data = {
+        session: { id: 'test-session' },
+        context: { tokens: 1000 },
+        agent: {
+          status: 'processing' as const,
+          phase: 'initializing' as const,
+        },
+        commands: { availableCommands: ['/help'] },
+      };
 
-			// The handler wraps everything in requestAnimationFrame
-			requestAnimationFrame(() => {
-				if (data.session) {
-					mockSetSession(data.session);
-				}
-				if (data.context) {
-					mockSetContextUsage(data.context);
-				}
+      // The handler wraps everything in requestAnimationFrame
+      requestAnimationFrame(() => {
+        if (data.session) {
+          mockSetSession(data.session);
+        }
+        if (data.context) {
+          mockSetContextUsage(data.context);
+        }
 
-				// Apply state updates together
-				mockSetSending(true);
-				mockSetCurrentAction('Starting...');
-				mockSetStreamingPhase('initializing');
-			});
+        // Apply state updates together
+        mockSetSending(true);
+        mockSetCurrentAction('Starting...');
+        mockSetStreamingPhase('initializing');
+      });
 
-			// Before flushing, no updates should have happened
-			expect(stateUpdates.length).toBe(0);
-			expect(mockRaf).toHaveBeenCalledTimes(1);
+      // Before flushing, no updates should have happened
+      expect(stateUpdates.length).toBe(0);
+      expect(mockRaf).toHaveBeenCalledTimes(1);
 
-			// Flush requestAnimationFrame
-			flushRAF();
+      // Flush requestAnimationFrame
+      flushRAF();
 
-			// After flushing, all updates should have happened together
-			expect(stateUpdates.length).toBe(5);
-			expect(stateUpdates).toContain('session:[object Object]');
-			expect(stateUpdates).toContain('sending:true');
-			expect(stateUpdates).toContain('action:Starting...');
-			expect(stateUpdates).toContain('phase:initializing');
-		});
+      // After flushing, all updates should have happened together
+      expect(stateUpdates.length).toBe(5);
+      expect(stateUpdates).toContain('session:[object Object]');
+      expect(stateUpdates).toContain('sending:true');
+      expect(stateUpdates).toContain('action:Starting...');
+      expect(stateUpdates).toContain('phase:initializing');
+    });
 
-		it('should process multiple state events in order', () => {
-			const events: string[] = [];
+    it('should process multiple state events in order', () => {
+      const events: string[] = [];
 
-			// Simulate multiple rapid state events
-			requestAnimationFrame(() => events.push('event1'));
-			requestAnimationFrame(() => events.push('event2'));
-			requestAnimationFrame(() => events.push('event3'));
+      // Simulate multiple rapid state events
+      requestAnimationFrame(() => events.push('event1'));
+      requestAnimationFrame(() => events.push('event2'));
+      requestAnimationFrame(() => events.push('event3'));
 
-			expect(events.length).toBe(0);
-			expect(mockRaf).toHaveBeenCalledTimes(3);
+      expect(events.length).toBe(0);
+      expect(mockRaf).toHaveBeenCalledTimes(3);
 
-			flushRAF();
+      flushRAF();
 
-			expect(events).toEqual(['event1', 'event2', 'event3']);
-		});
-	});
+      expect(events).toEqual(['event1', 'event2', 'event3']);
+    });
+  });
 
-	describe('agent status transitions', () => {
-		it('should correctly map idle status to state values', () => {
-			const agentStatus = 'idle' as const;
+  describe('agent status transitions', () => {
+    it('should correctly map idle status to state values', () => {
+      const agentStatus = 'idle' as const;
 
-			let newSending = false;
-			let newAction: string | undefined;
-			let newPhase: string | null = null;
-			let clearStreamingEvents = false;
+      let newSending = false;
+      let newAction: string | undefined;
+      let newPhase: string | null = null;
+      let clearStreamingEvents = false;
 
-			switch (agentStatus) {
-				case 'idle':
-					newSending = false;
-					newAction = undefined;
-					newPhase = null;
-					clearStreamingEvents = true;
-					break;
-			}
+      switch (agentStatus) {
+        case 'idle':
+          newSending = false;
+          newAction = undefined;
+          newPhase = null;
+          clearStreamingEvents = true;
+          break;
+      }
 
-			expect(newSending).toBe(false);
-			expect(newAction).toBeUndefined();
-			expect(newPhase).toBeNull();
-			expect(clearStreamingEvents).toBe(true);
-		});
+      expect(newSending).toBe(false);
+      expect(newAction).toBeUndefined();
+      expect(newPhase).toBeNull();
+      expect(clearStreamingEvents).toBe(true);
+    });
 
-		it('should correctly map queued status to state values', () => {
-			const agentStatus = 'queued' as const;
+    it('should correctly map queued status to state values', () => {
+      const agentStatus = 'queued' as const;
 
-			let newSending = false;
-			let newAction: string | undefined;
-			let newPhase: string | null = null;
+      let newSending = false;
+      let newAction: string | undefined;
+      let newPhase: string | null = null;
 
-			switch (agentStatus) {
-				case 'queued':
-					newSending = true;
-					newAction = 'Queued...';
-					newPhase = null;
-					break;
-			}
+      switch (agentStatus) {
+        case 'queued':
+          newSending = true;
+          newAction = 'Queued...';
+          newPhase = null;
+          break;
+      }
 
-			expect(newSending).toBe(true);
-			expect(newAction).toBe('Queued...');
-			expect(newPhase).toBeNull();
-		});
+      expect(newSending).toBe(true);
+      expect(newAction).toBe('Queued...');
+      expect(newPhase).toBeNull();
+    });
 
-		it('should correctly map processing/initializing to state values', () => {
-			const agentStatus = 'processing' as const;
-			const agentPhase = 'initializing';
+    it('should correctly map processing/initializing to state values', () => {
+      const agentStatus = 'processing' as const;
+      const agentPhase = 'initializing';
 
-			let newSending = false;
-			let newAction: string | undefined;
-			let newPhase: string | null = null;
+      let newSending = false;
+      let newAction: string | undefined;
+      let newPhase: string | null = null;
 
-			if (agentStatus === 'processing') {
-				newSending = true;
-				newPhase = agentPhase;
+      if (agentStatus === 'processing') {
+        newSending = true;
+        newPhase = agentPhase;
 
-				// Map phase to action - using if/else to avoid TypeScript narrowing issues
-				if (agentPhase === 'initializing') {
-					newAction = 'Starting...';
-				} else if (agentPhase === 'thinking') {
-					newAction = 'Thinking...';
-				} else if (agentPhase === 'streaming') {
-					newAction = 'Streaming...';
-				} else if (agentPhase === 'finalizing') {
-					newAction = 'Finalizing...';
-				}
-			}
+        // Map phase to action - using if/else to avoid TypeScript narrowing issues
+        if (agentPhase === 'initializing') {
+          newAction = 'Starting...';
+        } else if (agentPhase === 'thinking') {
+          newAction = 'Thinking...';
+        } else if (agentPhase === 'streaming') {
+          newAction = 'Streaming...';
+        } else if (agentPhase === 'finalizing') {
+          newAction = 'Finalizing...';
+        }
+      }
 
-			expect(newSending).toBe(true);
-			expect(newAction).toBe('Starting...');
-			expect(newPhase).toBe('initializing');
-		});
+      expect(newSending).toBe(true);
+      expect(newAction).toBe('Starting...');
+      expect(newPhase).toBe('initializing');
+    });
 
-		it('should correctly map interrupted status to state values', () => {
-			const agentStatus = 'interrupted' as const;
+    it('should correctly map interrupted status to state values', () => {
+      const agentStatus = 'interrupted' as const;
 
-			let newSending = false;
-			let newAction: string | undefined;
-			let newPhase: string | null = null;
-			let clearStreamingEvents = false;
+      let newSending = false;
+      let newAction: string | undefined;
+      let newPhase: string | null = null;
+      let clearStreamingEvents = false;
 
-			switch (agentStatus) {
-				case 'interrupted':
-					newSending = false;
-					newAction = 'Interrupted';
-					newPhase = null;
-					clearStreamingEvents = true;
-					break;
-			}
+      switch (agentStatus) {
+        case 'interrupted':
+          newSending = false;
+          newAction = 'Interrupted';
+          newPhase = null;
+          clearStreamingEvents = true;
+          break;
+      }
 
-			expect(newSending).toBe(false);
-			expect(newAction).toBe('Interrupted');
-			expect(newPhase).toBeNull();
-			expect(clearStreamingEvents).toBe(true);
-		});
+      expect(newSending).toBe(false);
+      expect(newAction).toBe('Interrupted');
+      expect(newPhase).toBeNull();
+      expect(clearStreamingEvents).toBe(true);
+    });
 
-		it('should calculate streaming duration correctly', () => {
-			const streamingStartedAt = Date.now() - 5000; // 5 seconds ago
+    it('should calculate streaming duration correctly', () => {
+      const streamingStartedAt = Date.now() - 5000; // 5 seconds ago
 
-			const duration = streamingStartedAt
-				? Math.floor((Date.now() - streamingStartedAt) / 1000)
-				: 0;
+      const duration = streamingStartedAt
+        ? Math.floor((Date.now() - streamingStartedAt) / 1000)
+        : 0;
 
-			expect(duration).toBeGreaterThanOrEqual(4);
-			expect(duration).toBeLessThanOrEqual(6);
+      expect(duration).toBeGreaterThanOrEqual(4);
+      expect(duration).toBeLessThanOrEqual(6);
 
-			const action = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
-			expect(action).toMatch(/Streaming \(\d+s\)\.\.\./);
-		});
-	});
+      const action = duration > 0 ? `Streaming (${duration}s)...` : 'Streaming...';
+      expect(action).toMatch(/Streaming \(\d+s\)\.\.\./);
+    });
+  });
 });
 
 describe('Scroll Behavior', () => {
-	describe('scrollToBottom function', () => {
-		it('should use instant scroll by default', () => {
-			let scrollOptions: ScrollIntoViewOptions | undefined;
+  describe('scrollToBottom function', () => {
+    it('should use instant scroll by default', () => {
+      let scrollOptions: ScrollIntoViewOptions | undefined;
 
-			const mockScrollIntoView = vi.fn((options: ScrollIntoViewOptions) => {
-				scrollOptions = options;
-			});
+      const mockScrollIntoView = vi.fn((options: ScrollIntoViewOptions) => {
+        scrollOptions = options;
+      });
 
-			const mockRef = { current: { scrollIntoView: mockScrollIntoView } };
+      const mockRef = { current: { scrollIntoView: mockScrollIntoView } };
 
-			// Simulate scrollToBottom(false) - default
-			const smooth = false;
-			mockRef.current?.scrollIntoView({
-				behavior: smooth ? 'smooth' : 'instant',
-			});
+      // Simulate scrollToBottom(false) - default
+      const smooth = false;
+      mockRef.current?.scrollIntoView({
+        behavior: smooth ? 'smooth' : 'instant',
+      });
 
-			expect(scrollOptions?.behavior).toBe('instant');
-		});
+      expect(scrollOptions?.behavior).toBe('instant');
+    });
 
-		it('should use smooth scroll when explicitly requested', () => {
-			let scrollOptions: ScrollIntoViewOptions | undefined;
+    it('should use smooth scroll when explicitly requested', () => {
+      let scrollOptions: ScrollIntoViewOptions | undefined;
 
-			const mockScrollIntoView = vi.fn((options: ScrollIntoViewOptions) => {
-				scrollOptions = options;
-			});
+      const mockScrollIntoView = vi.fn((options: ScrollIntoViewOptions) => {
+        scrollOptions = options;
+      });
 
-			const mockRef = { current: { scrollIntoView: mockScrollIntoView } };
+      const mockRef = { current: { scrollIntoView: mockScrollIntoView } };
 
-			// Simulate scrollToBottom(true) - smooth
-			const smooth = true;
-			mockRef.current?.scrollIntoView({
-				behavior: smooth ? 'smooth' : 'instant',
-			});
+      // Simulate scrollToBottom(true) - smooth
+      const smooth = true;
+      mockRef.current?.scrollIntoView({
+        behavior: smooth ? 'smooth' : 'instant',
+      });
 
-			expect(scrollOptions?.behavior).toBe('smooth');
-		});
-	});
+      expect(scrollOptions?.behavior).toBe('smooth');
+    });
+  });
 
-	describe('scroll button visibility logic', () => {
-		it('should show button when not near bottom', () => {
-			// Simulate scroll container state
-			const scrollTop = 0;
-			const scrollHeight = 1000;
-			const clientHeight = 500;
+  describe('scroll button visibility logic', () => {
+    it('should show button when not near bottom', () => {
+      // Simulate scroll container state
+      const scrollTop = 0;
+      const scrollHeight = 1000;
+      const clientHeight = 500;
 
-			const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
 
-			expect(isNearBottom).toBe(false);
-			// showScrollButton = !isNearBottom = true
-			expect(!isNearBottom).toBe(true);
-		});
+      expect(isNearBottom).toBe(false);
+      // showScrollButton = !isNearBottom = true
+      expect(!isNearBottom).toBe(true);
+    });
 
-		it('should hide button when near bottom', () => {
-			// Simulate scroll container near bottom
-			const scrollTop = 350;
-			const scrollHeight = 1000;
-			const clientHeight = 500;
+    it('should hide button when near bottom', () => {
+      // Simulate scroll container near bottom
+      const scrollTop = 350;
+      const scrollHeight = 1000;
+      const clientHeight = 500;
 
-			const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
 
-			expect(isNearBottom).toBe(true);
-			// showScrollButton = !isNearBottom = false
-			expect(!isNearBottom).toBe(false);
-		});
+      expect(isNearBottom).toBe(true);
+      // showScrollButton = !isNearBottom = false
+      expect(!isNearBottom).toBe(false);
+    });
 
-		it('should hide button when exactly at bottom', () => {
-			// Simulate scroll container at bottom
-			const scrollTop = 500;
-			const scrollHeight = 1000;
-			const clientHeight = 500;
+    it('should hide button when exactly at bottom', () => {
+      // Simulate scroll container at bottom
+      const scrollTop = 500;
+      const scrollHeight = 1000;
+      const clientHeight = 500;
 
-			const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
 
-			expect(isNearBottom).toBe(true);
-			// showScrollButton = !isNearBottom = false
-			expect(!isNearBottom).toBe(false);
-		});
-	});
+      expect(isNearBottom).toBe(true);
+      // showScrollButton = !isNearBottom = false
+      expect(!isNearBottom).toBe(false);
+    });
+  });
 });
 
 describe('ResizeObserver Integration', () => {
-	it('should create ResizeObserver for scroll button updates', () => {
-		const observeCalls: Element[] = [];
-		const disconnectCalled = { value: false };
+  it('should create ResizeObserver for scroll button updates', () => {
+    const observeCalls: Element[] = [];
+    const disconnectCalled = { value: false };
 
-		// Mock ResizeObserver
-		const MockResizeObserver = class {
-			callback: ResizeObserverCallback;
-			constructor(callback: ResizeObserverCallback) {
-				this.callback = callback;
-			}
-			observe(element: Element) {
-				observeCalls.push(element);
-			}
-			unobserve(_element: Element) {}
-			disconnect() {
-				disconnectCalled.value = true;
-			}
-		};
+    // Mock ResizeObserver
+    const MockResizeObserver = class {
+      callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+      observe(element: Element) {
+        observeCalls.push(element);
+      }
+      unobserve(_element: Element) {}
+      disconnect() {
+        disconnectCalled.value = true;
+      }
+    };
 
-		// Simulate the useEffect behavior
-		const container = { tagName: 'DIV' } as unknown as Element;
-		const handleScroll = vi.fn(() => {});
+    // Simulate the useEffect behavior
+    const container = { tagName: 'DIV' } as unknown as Element;
+    const handleScroll = vi.fn(() => {});
 
-		const resizeObserver = new MockResizeObserver(() => {
-			handleScroll();
-		});
-		resizeObserver.observe(container);
+    const resizeObserver = new MockResizeObserver(() => {
+      handleScroll();
+    });
+    resizeObserver.observe(container);
 
-		expect(observeCalls).toContain(container);
+    expect(observeCalls).toContain(container);
 
-		// Simulate cleanup
-		resizeObserver.disconnect();
-		expect(disconnectCalled.value).toBe(true);
-	});
+    // Simulate cleanup
+    resizeObserver.disconnect();
+    expect(disconnectCalled.value).toBe(true);
+  });
 });
 
 /**
@@ -355,70 +355,70 @@ describe('ResizeObserver Integration', () => {
  *   consumes height that later disappears, causing the messages area to shift.
  */
 describe('ChatContainer Loading Skeleton CLS Prevention', () => {
-	const source = chatContainerSource;
+  const source = chatContainerSource;
 
-	it('skeleton header uses h-[52px] to match ChatHeader fixed height', () => {
-		// ChatHeader sets `h-[52px]`.  The skeleton must use the same value so
-		// the header occupies identical vertical space before and after load.
-		expect(source).toMatch(/Skeleton header[\s\S]*?h-\[52px\]/);
-	});
+  it('skeleton header uses h-[52px] to match ChatHeader fixed height', () => {
+    // ChatHeader sets `h-[52px]`.  The skeleton must use the same value so
+    // the header occupies identical vertical space before and after load.
+    expect(source).toMatch(/Skeleton header[\s\S]*?h-\[52px\]/);
+  });
 
-	it('skeleton header does not use py-3 for height', () => {
-		// py-3 gives ~40 px, which caused a visible shift when the real
-		// header appeared.  Verify it is not used as a height stand-in.
-		const skeletonSection =
-			source.match(/\/\* Skeleton header[\s\S]*?\/\* Skeleton messages/)?.[0] ?? '';
-		expect(skeletonSection).not.toContain('py-3');
-	});
+  it('skeleton header does not use py-3 for height', () => {
+    // py-3 gives ~40 px, which caused a visible shift when the real
+    // header appeared.  Verify it is not used as a height stand-in.
+    const skeletonSection =
+      source.match(/\/\* Skeleton header[\s\S]*?\/\* Skeleton messages/)?.[0] ?? '';
+    expect(skeletonSection).not.toContain('py-3');
+  });
 
-	it('skeleton footer uses absolute positioning to match ChatComposer layout', () => {
-		// ChatComposer renders as `absolute bottom-0 left-0 right-0` — it is
-		// outside the flex flow.  The skeleton footer must also be absolute so the
-		// flex calculation (header + messages flex-1) is identical on both sides of
-		// the skeleton → content transition.
-		expect(source).toMatch(/Skeleton footer[\s\S]*?absolute bottom-0 left-0 right-0/);
-	});
+  it('skeleton footer uses absolute positioning to match ChatComposer layout', () => {
+    // ChatComposer renders as `absolute bottom-0 left-0 right-0` — it is
+    // outside the flex flow.  The skeleton footer must also be absolute so the
+    // flex calculation (header + messages flex-1) is identical on both sides of
+    // the skeleton → content transition.
+    expect(source).toMatch(/Skeleton footer[\s\S]*?absolute bottom-0 left-0 right-0/);
+  });
 
-	it('skeleton outer container includes relative to anchor the absolute footer', () => {
-		// The absolutely-positioned footer needs a positioned ancestor.
-		// Verify `relative` is present in the skeleton's outer container class.
-		expect(source).toMatch(
-			/flex-1 flex flex-col bg-app-content overflow-hidden relative[\s\S]*?Skeleton header/
-		);
-	});
+  it('skeleton outer container includes relative to anchor the absolute footer', () => {
+    // The absolutely-positioned footer needs a positioned ancestor.
+    // Verify `relative` is present in the skeleton's outer container class.
+    expect(source).toMatch(
+      /flex-1 flex flex-col bg-app-content overflow-hidden relative[\s\S]*?Skeleton header/
+    );
+  });
 });
 
 describe('Passive Event Listener', () => {
-	it('should add scroll listener with passive option', () => {
-		const addEventListenerCalls: Array<{
-			type: string;
-			options: AddEventListenerOptions | boolean | undefined;
-		}> = [];
+  it('should add scroll listener with passive option', () => {
+    const addEventListenerCalls: Array<{
+      type: string;
+      options: AddEventListenerOptions | boolean | undefined;
+    }> = [];
 
-		const mockContainer = {
-			addEventListener: vi.fn(
-				(
-					type: string,
-					_handler: EventListener,
-					options: AddEventListenerOptions | boolean | undefined
-				) => {
-					addEventListenerCalls.push({ type, options });
-				}
-			),
-			removeEventListener: vi.fn(() => {}),
-			scrollTop: 0,
-			scrollHeight: 1000,
-			clientHeight: 500,
-		};
+    const mockContainer = {
+      addEventListener: vi.fn(
+        (
+          type: string,
+          _handler: EventListener,
+          options: AddEventListenerOptions | boolean | undefined
+        ) => {
+          addEventListenerCalls.push({ type, options });
+        }
+      ),
+      removeEventListener: vi.fn(() => {}),
+      scrollTop: 0,
+      scrollHeight: 1000,
+      clientHeight: 500,
+    };
 
-		// Simulate adding scroll listener with passive: true
-		const handleScroll = () => {};
-		mockContainer.addEventListener('scroll', handleScroll, { passive: true });
+    // Simulate adding scroll listener with passive: true
+    const handleScroll = () => {};
+    mockContainer.addEventListener('scroll', handleScroll, { passive: true });
 
-		expect(addEventListenerCalls.length).toBe(1);
-		expect(addEventListenerCalls[0].type).toBe('scroll');
-		expect(addEventListenerCalls[0].options).toEqual({ passive: true });
-	});
+    expect(addEventListenerCalls.length).toBe(1);
+    expect(addEventListenerCalls[0].type).toBe('scroll');
+    expect(addEventListenerCalls[0].options).toEqual({ passive: true });
+  });
 });
 
 /**
@@ -437,80 +437,80 @@ describe('Passive Event Listener', () => {
  *      `replaceOverlayHistory(sessionId, agentName, undefined, taskContext)` to hand off.
  */
 describe('Pending Agent Mode', () => {
-	const source = chatContainerSource;
+  const source = chatContainerSource;
 
-	it('pendingAgent prop is declared on the interface', () => {
-		expect(source).toMatch(
-			/pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string\s*\}\s*\|\s*null/
-		);
-	});
+  it('pendingAgent prop is declared on the interface', () => {
+    expect(source).toMatch(
+      /pendingAgent\?:\s*\{\s*taskId:\s*string;\s*agentName:\s*string\s*\}\s*\|\s*null/
+    );
+  });
 
-	it('pending render root div has data-testid="pending-agent-overlay"', () => {
-		// The early-return block for pendingAgent renders a div with this test ID
-		expect(source).toMatch(/data-testid="pending-agent-overlay"/);
-	});
+  it('pending render root div has data-testid="pending-agent-overlay"', () => {
+    // The early-return block for pendingAgent renders a div with this test ID
+    expect(source).toMatch(/data-testid="pending-agent-overlay"/);
+  });
 
-	it('pending render root div has an aria-label for accessibility', () => {
-		// Screen readers need to identify which agent overlay is open
-		expect(source).toMatch(
-			/aria-label=\{\`\$\{pendingAgent\.agentName\}\s*chat\s*\(starting\)\`\}/
-		);
-	});
+  it('pending render root div has an aria-label for accessibility', () => {
+    // Screen readers need to identify which agent overlay is open
+    expect(source).toMatch(
+      /aria-label=\{\`\$\{pendingAgent\.agentName\}\s*chat\s*\(starting\)\`\}/
+    );
+  });
 
-	it('pending header mirrors ChatHeader height (h-[52px]) for CLS prevention', () => {
-		// The pending header must match ChatHeader's fixed 52px height to avoid
-		// layout shift when the overlay hands off to the live session view.
-		const pendingBlock =
-			source.match(/Pending Agent Render[\s\S]*?pending-agent-overlay-textarea/)?.[0] ?? '';
-		expect(pendingBlock).toContain('min-h-[52px]');
-	});
+  it('pending header mirrors ChatHeader height (h-[52px]) for CLS prevention', () => {
+    // The pending header must match ChatHeader's fixed 52px height to avoid
+    // layout shift when the overlay hands off to the live session view.
+    const pendingBlock =
+      source.match(/Pending Agent Render[\s\S]*?pending-agent-overlay-textarea/)?.[0] ?? '';
+    expect(pendingBlock).toContain('min-h-[52px]');
+  });
 
-	it('pending body has data-testid="pending-agent-overlay-body"', () => {
-		expect(source).toMatch(/data-testid="pending-agent-overlay-body"/);
-	});
+  it('pending body has data-testid="pending-agent-overlay-body"', () => {
+    expect(source).toMatch(/data-testid="pending-agent-overlay-body"/);
+  });
 
-	it('handoff calls replaceOverlayHistory when live session appears', () => {
-		// The effect that watches pendingLiveMember must call replaceOverlayHistory
-		// with the session ID to transition from pending to live session mode.
-		expect(source).toMatch(/pendingLiveMember\?\.sessionId[\s\S]*?replaceOverlayHistory/);
-	});
+  it('handoff calls replaceOverlayHistory when live session appears', () => {
+    // The effect that watches pendingLiveMember must call replaceOverlayHistory
+    // with the session ID to transition from pending to live session mode.
+    expect(source).toMatch(/pendingLiveMember\?\.sessionId[\s\S]*?replaceOverlayHistory/);
+  });
 
-	it('send handler calls spaceStore.activateTaskNodeAgent', () => {
-		// On send, the pending mode activates the agent via the store method
-		expect(source).toMatch(/spaceStore\.activateTaskNodeAgent\(/);
-	});
+  it('send handler calls spaceStore.activateTaskNodeAgent', () => {
+    // On send, the pending mode activates the agent via the store method
+    expect(source).toMatch(/spaceStore\.activateTaskNodeAgent\(/);
+  });
 
-	it('send handler calls replaceOverlayHistory when daemon returns sessionId', () => {
-		// If the daemon returns a sessionId synchronously, hand off immediately
-		expect(source).toMatch(/result\.sessionId[\s\S]*?replaceOverlayHistory/);
-	});
+  it('send handler calls replaceOverlayHistory when daemon returns sessionId', () => {
+    // If the daemon returns a sessionId synchronously, hand off immediately
+    expect(source).toMatch(/result\.sessionId[\s\S]*?replaceOverlayHistory/);
+  });
 
-	it('pending live-member handoff preserves nodeExecutionId in task context', () => {
-		expect(source).toMatch(
-			/pendingLiveMember\?\.sessionId[\s\S]*?pendingLiveMember\.nodeExecution\?\.nodeExecutionId[\s\S]*?nodeExecutionId: pendingLiveMember\.nodeExecution\.nodeExecutionId/
-		);
-	});
+  it('pending live-member handoff preserves nodeExecutionId in task context', () => {
+    expect(source).toMatch(
+      /pendingLiveMember\?\.sessionId[\s\S]*?pendingLiveMember\.nodeExecution\?\.nodeExecutionId[\s\S]*?nodeExecutionId: pendingLiveMember\.nodeExecution\.nodeExecutionId/
+    );
+  });
 
-	it('synchronous pending send handoff preserves nodeExecutionId when activity is available', () => {
-		expect(source).toMatch(
-			/result\.sessionId[\s\S]*?matchingLiveMember[\s\S]*?matchingLiveMember\?\.nodeExecution\?\.nodeExecutionId[\s\S]*?nodeExecutionId: matchingLiveMember\.nodeExecution\.nodeExecutionId/
-		);
-	});
+  it('synchronous pending send handoff preserves nodeExecutionId when activity is available', () => {
+    expect(source).toMatch(
+      /result\.sessionId[\s\S]*?matchingLiveMember[\s\S]*?matchingLiveMember\?\.nodeExecution\?\.nodeExecutionId[\s\S]*?nodeExecutionId: matchingLiveMember\.nodeExecution\.nodeExecutionId/
+    );
+  });
 
-	it('error state sets pendingErrorMessage on failure', () => {
-		// When activateTaskNodeAgent throws, the error message must be surfaced
-		expect(source).toMatch(/setPendingErrorMessage\(/);
-	});
+  it('error state sets pendingErrorMessage on failure', () => {
+    // When activateTaskNodeAgent throws, the error message must be surfaced
+    expect(source).toMatch(/setPendingErrorMessage\(/);
+  });
 
-	it('Enter key triggers send (without Shift)', () => {
-		// The pending composer should send on Enter alone, like the main composer
-		expect(source).toMatch(/handlePendingKeyDown[\s\S]*?e\.key === 'Enter' && !e\.shiftKey/);
-	});
+  it('Enter key triggers send (without Shift)', () => {
+    // The pending composer should send on Enter alone, like the main composer
+    expect(source).toMatch(/handlePendingKeyDown[\s\S]*?e\.key === 'Enter' && !e\.shiftKey/);
+  });
 
-	it('pending mode skips sessionStore.select() on mount', () => {
-		// When pendingAgent is set, the component must NOT call sessionStore.select()
-		// since there is no live session to load.
-		const selectGuard = source.match(/pendingAgent[\s\S]*?sessionStore\.select\(/)?.[0] ?? '';
-		expect(selectGuard).toContain('!');
-	});
+  it('pending mode skips sessionStore.select() on mount', () => {
+    // When pendingAgent is set, the component must NOT call sessionStore.select()
+    // since there is no live session to load.
+    const selectGuard = source.match(/pendingAgent[\s\S]*?sessionStore\.select\(/)?.[0] ?? '';
+    expect(selectGuard).toContain('!');
+  });
 });

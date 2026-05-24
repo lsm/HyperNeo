@@ -19,89 +19,89 @@ import type { Signal } from '@preact/signals';
  * - Computed properties (also signals): agentState, contextInfo, commandsData, error
  */
 interface SessionStore {
-	// ========================================
-	// Core Signals
-	// ========================================
+  // ========================================
+  // Core Signals
+  // ========================================
 
-	/** Current active session ID (signal) */
-	activeSessionId: Signal<string | null>;
+  /** Current active session ID (signal) */
+  activeSessionId: Signal<string | null>;
 
-	/** Unified session state from state.session channel (signal) */
-	sessionState: Signal<{
-		sessionInfo?: Session;
-		agentState?: AgentProcessingState;
-		contextInfo?: ContextInfo | null;
-		commandsData?: { availableCommands?: string[] } | null;
-		error?: { message: string; details?: unknown; occurredAt: number } | null;
-	} | null>;
+  /** Unified session state from state.session channel (signal) */
+  sessionState: Signal<{
+    sessionInfo?: Session;
+    agentState?: AgentProcessingState;
+    contextInfo?: ContextInfo | null;
+    commandsData?: { availableCommands?: string[] } | null;
+    error?: { message: string; details?: unknown; occurredAt: number } | null;
+  } | null>;
 
-	/** SDK messages from state.sdkMessages channel (signal) */
-	sdkMessages: Signal<SDKMessage[]>;
+  /** SDK messages from state.sdkMessages channel (signal) */
+  sdkMessages: Signal<SDKMessage[]>;
 
-	// ========================================
-	// Computed Properties (Signals)
-	// ========================================
+  // ========================================
+  // Computed Properties (Signals)
+  // ========================================
 
-	/** Agent processing state (computed signal, returns { status: 'idle' } as default) */
-	agentState: Signal<AgentProcessingState>;
+  /** Agent processing state (computed signal, returns { status: 'idle' } as default) */
+  agentState: Signal<AgentProcessingState>;
 
-	/** Context info (computed signal) */
-	contextInfo: Signal<ContextInfo | null>;
+  /** Context info (computed signal) */
+  contextInfo: Signal<ContextInfo | null>;
 
-	/** Available slash commands (computed signal, returns string[] directly) */
-	commandsData: Signal<string[]>;
+  /** Available slash commands (computed signal, returns string[] directly) */
+  commandsData: Signal<string[]>;
 
-	/** Session error state (computed signal) */
-	error: Signal<{
-		message: string;
-		details?: unknown;
-		occurredAt: number;
-	} | null>;
+  /** Session error state (computed signal) */
+  error: Signal<{
+    message: string;
+    details?: unknown;
+    occurredAt: number;
+  } | null>;
 }
 
 /**
  * GlobalStore interface (simplified for E2E tests)
  */
 interface GlobalStore {
-	/** All sessions (signal) */
-	sessions: Signal<Session[]>;
+  /** All sessions (signal) */
+  sessions: Signal<Session[]>;
 
-	/** Whether there are any archived sessions in the database (signal) */
-	hasArchivedSessions: Signal<boolean>;
+  /** Whether there are any archived sessions in the database (signal) */
+  hasArchivedSessions: Signal<boolean>;
 
-	/** Unified system state (signal) */
-	systemState: Signal<{
-		auth?: unknown;
-		health?: unknown;
-		apiConnection?: unknown;
-	} | null>;
+  /** Unified system state (signal) */
+  systemState: Signal<{
+    auth?: unknown;
+    health?: unknown;
+    apiConnection?: unknown;
+  } | null>;
 
-	/** Global settings (signal) */
-	settings: Signal<unknown | null>;
+  /** Global settings (signal) */
+  settings: Signal<unknown | null>;
 }
 
 /**
  * Global application state exposed on window
  */
 interface AppState {
-	messageHub?: MessageHub;
+  messageHub?: MessageHub;
 }
 
 /**
  * MessageHub-like interface for E2E tests (subset of actual MessageHub)
  */
 interface TestMessageHub {
-	getState(): ConnectionState;
-	subscribe<T = unknown>(
-		event: string,
-		handler: (data: T) => void | Promise<void>,
-		options?: { sessionId?: string }
-	): Promise<() => Promise<void>>;
-	request<TResult = unknown>(
-		method: string,
-		data?: unknown,
-		options?: { sessionId?: string; timeout?: number }
-	): Promise<TResult>;
+  getState(): ConnectionState;
+  subscribe<T = unknown>(
+    event: string,
+    handler: (data: T) => void | Promise<void>,
+    options?: { sessionId?: string }
+  ): Promise<() => Promise<void>>;
+  request<TResult = unknown>(
+    method: string,
+    data?: unknown,
+    options?: { sessionId?: string; timeout?: number }
+  ): Promise<TResult>;
 }
 
 /**
@@ -111,22 +111,22 @@ interface TestMessageHub {
  * Using this declaration avoids (window as any) casts throughout tests.
  */
 declare global {
-	interface Window {
-		/** MessageHub instance for direct RPC/event access in tests */
-		__messageHub?: TestMessageHub;
+  interface Window {
+    /** MessageHub instance for direct RPC/event access in tests */
+    __messageHub?: TestMessageHub;
 
-		/** Application state for observing signals */
-		appState?: AppState;
+    /** Application state for observing signals */
+    appState?: AppState;
 
-		/** Current session ID signal (if exposed globally) */
-		currentSessionIdSignal?: Signal<string | null>;
+    /** Current session ID signal (if exposed globally) */
+    currentSessionIdSignal?: Signal<string | null>;
 
-		/** GlobalStore for sessions list */
-		globalStore?: GlobalStore;
+    /** GlobalStore for sessions list */
+    globalStore?: GlobalStore;
 
-		/** SessionStore for current session state */
-		sessionStore?: SessionStore;
-	}
+    /** SessionStore for current session state */
+    sessionStore?: SessionStore;
+  }
 }
 
 export {};

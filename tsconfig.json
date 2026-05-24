@@ -1,12 +1,12 @@
 {
-	"files": [],
-	"references": [
-		{ "path": "./packages/cli" },
-		{ "path": "./packages/daemon" },
-		{ "path": "./packages/messaging" },
-		{ "path": "./packages/shared" },
-		{ "path": "./packages/ui" },
-		{ "path": "./packages/web" }
-	],
-	"exclude": ["node_modules", "tmp", "dist"]
+  "files": [],
+  "references": [
+    { "path": "./packages/cli" },
+    { "path": "./packages/daemon" },
+    { "path": "./packages/messaging" },
+    { "path": "./packages/shared" },
+    { "path": "./packages/ui" },
+    { "path": "./packages/web" }
+  ],
+  "exclude": ["node_modules", "tmp", "dist"]
 }

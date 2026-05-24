@@ -1,24 +1,24 @@
 {
-	"compilerOptions": {
-		"lib": ["DOM", "DOM.Iterable", "ESNext"],
-		"module": "ESNext",
-		"target": "ESNext",
-		"moduleResolution": "bundler",
-		"jsx": "react-jsx",
-		"jsxImportSource": "preact",
-		"strict": true,
-		"skipLibCheck": true,
-		"allowImportingTsExtensions": true,
-		"noEmit": true,
-		"types": ["vitest/globals"],
-		"paths": {
-			"@/*": ["./*"],
-			"@neokai/shared": ["../shared/src/mod.ts"],
-			"@neokai/shared/*": ["../shared/src/*"],
-			"@neokai/ui": ["../ui/src/mod.ts"],
-			"@neokai/ui/*": ["../ui/src/*"]
-		}
-	},
-	"include": ["src/**/*", "build.ts", "../shared/src/**/*", "../ui/src/**/*"],
-	"exclude": ["node_modules", "dist", "tests/**/*", "../shared/src/sdk/**/*"]
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["vitest/globals"],
+    "paths": {
+      "@/*": ["./*"],
+      "@neokai/shared": ["../shared/src/mod.ts"],
+      "@neokai/shared/*": ["../shared/src/*"],
+      "@neokai/ui": ["../ui/src/mod.ts"],
+      "@neokai/ui/*": ["../ui/src/*"]
+    }
+  },
+  "include": ["src/**/*", "build.ts", "../shared/src/**/*", "../ui/src/**/*"],
+  "exclude": ["node_modules", "dist", "tests/**/*", "../shared/src/sdk/**/*"]
 }

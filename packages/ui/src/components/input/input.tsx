@@ -7,74 +7,74 @@ import { useFieldContext, useFieldsetContext } from '../field/field.tsx';
 // --- Input ---
 
 interface InputProps {
-	as?: ElementType;
-	invalid?: boolean;
-	disabled?: boolean;
-	autoFocus?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  invalid?: boolean;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function InputFn({
-	as: Tag = 'input',
-	invalid = false,
-	disabled: ownDisabled = false,
-	autoFocus = false,
-	children,
-	...rest
+  as: Tag = 'input',
+  invalid = false,
+  disabled: ownDisabled = false,
+  autoFocus = false,
+  children,
+  ...rest
 }: InputProps) {
-	const fieldCtx = useFieldContext();
-	const fieldsetCtx = useFieldsetContext();
+  const fieldCtx = useFieldContext();
+  const fieldsetCtx = useFieldsetContext();
 
-	const isDisabled = ownDisabled || (fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false);
+  const isDisabled = ownDisabled || (fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false);
 
-	const id = useId();
+  const id = useId();
 
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
 
-	useEffect(() => {
-		if (!fieldCtx) return;
-		fieldCtx.setControlId(id);
-		return () => {
-			fieldCtx.setControlId(null);
-		};
-	}, [id, fieldCtx]);
+  useEffect(() => {
+    if (!fieldCtx) return;
+    fieldCtx.setControlId(id);
+    return () => {
+      fieldCtx.setControlId(null);
+    };
+  }, [id, fieldCtx]);
 
-	// Compute combined invalid state: prop invalid OR any FieldError present
-	const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
+  // Compute combined invalid state: prop invalid OR any FieldError present
+  const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
-	const slot = {
-		disabled: isDisabled,
-		invalid: isInvalid,
-		hover,
-		focus,
-		autofocus: autoFocus,
-	};
+  const slot = {
+    disabled: isDisabled,
+    invalid: isInvalid,
+    hover,
+    focus,
+    autofocus: autoFocus,
+  };
 
-	const ourProps: Record<string, unknown> = {
-		id,
-		disabled: isDisabled || undefined,
-		'aria-labelledby': fieldCtx?.labelId ?? undefined,
-		'aria-describedby':
-			fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
-				? fieldCtx.descriptionIds.join(' ')
-				: undefined,
-		'aria-invalid': isInvalid || undefined,
-		autoFocus: autoFocus || undefined,
-		onMouseEnter: () => setHover(true),
-		onMouseLeave: () => setHover(false),
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
-	};
+  const ourProps: Record<string, unknown> = {
+    id,
+    disabled: isDisabled || undefined,
+    'aria-labelledby': fieldCtx?.labelId ?? undefined,
+    'aria-describedby':
+      fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
+        ? fieldCtx.descriptionIds.join(' ')
+        : undefined,
+    'aria-invalid': isInvalid || undefined,
+    autoFocus: autoFocus || undefined,
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => setHover(false),
+    onFocus: () => setFocus(true),
+    onBlur: () => setFocus(false),
+  };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'input',
-		name: 'Input',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'input',
+    name: 'Input',
+  });
 }
 
 InputFn.displayName = 'Input';
@@ -83,74 +83,74 @@ export const Input = InputFn;
 // --- Textarea ---
 
 interface TextareaProps {
-	as?: ElementType;
-	invalid?: boolean;
-	disabled?: boolean;
-	autoFocus?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  invalid?: boolean;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function TextareaFn({
-	as: Tag = 'textarea',
-	invalid = false,
-	disabled: ownDisabled = false,
-	autoFocus = false,
-	children,
-	...rest
+  as: Tag = 'textarea',
+  invalid = false,
+  disabled: ownDisabled = false,
+  autoFocus = false,
+  children,
+  ...rest
 }: TextareaProps) {
-	const fieldCtx = useFieldContext();
-	const fieldsetCtx = useFieldsetContext();
+  const fieldCtx = useFieldContext();
+  const fieldsetCtx = useFieldsetContext();
 
-	const isDisabled = ownDisabled || (fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false);
+  const isDisabled = ownDisabled || (fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false);
 
-	const id = useId();
+  const id = useId();
 
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
 
-	useEffect(() => {
-		if (!fieldCtx) return;
-		fieldCtx.setControlId(id);
-		return () => {
-			fieldCtx.setControlId(null);
-		};
-	}, [id, fieldCtx]);
+  useEffect(() => {
+    if (!fieldCtx) return;
+    fieldCtx.setControlId(id);
+    return () => {
+      fieldCtx.setControlId(null);
+    };
+  }, [id, fieldCtx]);
 
-	// Compute combined invalid state: prop invalid OR any FieldError present
-	const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
+  // Compute combined invalid state: prop invalid OR any FieldError present
+  const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
-	const slot = {
-		disabled: isDisabled,
-		invalid: isInvalid,
-		hover,
-		focus,
-		autofocus: autoFocus,
-	};
+  const slot = {
+    disabled: isDisabled,
+    invalid: isInvalid,
+    hover,
+    focus,
+    autofocus: autoFocus,
+  };
 
-	const ourProps: Record<string, unknown> = {
-		id,
-		disabled: isDisabled || undefined,
-		'aria-labelledby': fieldCtx?.labelId ?? undefined,
-		'aria-describedby':
-			fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
-				? fieldCtx.descriptionIds.join(' ')
-				: undefined,
-		'aria-invalid': isInvalid || undefined,
-		autoFocus: autoFocus || undefined,
-		onMouseEnter: () => setHover(true),
-		onMouseLeave: () => setHover(false),
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
-	};
+  const ourProps: Record<string, unknown> = {
+    id,
+    disabled: isDisabled || undefined,
+    'aria-labelledby': fieldCtx?.labelId ?? undefined,
+    'aria-describedby':
+      fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
+        ? fieldCtx.descriptionIds.join(' ')
+        : undefined,
+    'aria-invalid': isInvalid || undefined,
+    autoFocus: autoFocus || undefined,
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => setHover(false),
+    onFocus: () => setFocus(true),
+    onBlur: () => setFocus(false),
+  };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'textarea',
-		name: 'Textarea',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'textarea',
+    name: 'Textarea',
+  });
 }
 
 TextareaFn.displayName = 'Textarea';
@@ -159,74 +159,74 @@ export const Textarea = TextareaFn;
 // --- Select ---
 
 interface SelectProps {
-	as?: ElementType;
-	invalid?: boolean;
-	disabled?: boolean;
-	autoFocus?: boolean;
-	children?: unknown;
-	[key: string]: unknown;
+  as?: ElementType;
+  invalid?: boolean;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  children?: unknown;
+  [key: string]: unknown;
 }
 
 function SelectFn({
-	as: Tag = 'select',
-	invalid = false,
-	disabled: ownDisabled = false,
-	autoFocus = false,
-	children,
-	...rest
+  as: Tag = 'select',
+  invalid = false,
+  disabled: ownDisabled = false,
+  autoFocus = false,
+  children,
+  ...rest
 }: SelectProps) {
-	const fieldCtx = useFieldContext();
-	const fieldsetCtx = useFieldsetContext();
+  const fieldCtx = useFieldContext();
+  const fieldsetCtx = useFieldsetContext();
 
-	const isDisabled = ownDisabled || (fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false);
+  const isDisabled = ownDisabled || (fieldCtx?.disabled ?? fieldsetCtx?.disabled ?? false);
 
-	const id = useId();
+  const id = useId();
 
-	const [hover, setHover] = useState(false);
-	const [focus, setFocus] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
 
-	useEffect(() => {
-		if (!fieldCtx) return;
-		fieldCtx.setControlId(id);
-		return () => {
-			fieldCtx.setControlId(null);
-		};
-	}, [id, fieldCtx]);
+  useEffect(() => {
+    if (!fieldCtx) return;
+    fieldCtx.setControlId(id);
+    return () => {
+      fieldCtx.setControlId(null);
+    };
+  }, [id, fieldCtx]);
 
-	// Compute combined invalid state: prop invalid OR any FieldError present
-	const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
+  // Compute combined invalid state: prop invalid OR any FieldError present
+  const isInvalid = invalid || (fieldCtx?.invalidCount ?? 0) > 0;
 
-	const slot = {
-		disabled: isDisabled,
-		invalid: isInvalid,
-		hover,
-		focus,
-		autofocus: autoFocus,
-	};
+  const slot = {
+    disabled: isDisabled,
+    invalid: isInvalid,
+    hover,
+    focus,
+    autofocus: autoFocus,
+  };
 
-	const ourProps: Record<string, unknown> = {
-		id,
-		disabled: isDisabled || undefined,
-		'aria-labelledby': fieldCtx?.labelId ?? undefined,
-		'aria-describedby':
-			fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
-				? fieldCtx.descriptionIds.join(' ')
-				: undefined,
-		'aria-invalid': isInvalid || undefined,
-		autoFocus: autoFocus || undefined,
-		onMouseEnter: () => setHover(true),
-		onMouseLeave: () => setHover(false),
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
-	};
+  const ourProps: Record<string, unknown> = {
+    id,
+    disabled: isDisabled || undefined,
+    'aria-labelledby': fieldCtx?.labelId ?? undefined,
+    'aria-describedby':
+      fieldCtx?.descriptionIds && fieldCtx.descriptionIds.length > 0
+        ? fieldCtx.descriptionIds.join(' ')
+        : undefined,
+    'aria-invalid': isInvalid || undefined,
+    autoFocus: autoFocus || undefined,
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => setHover(false),
+    onFocus: () => setFocus(true),
+    onBlur: () => setFocus(false),
+  };
 
-	return render({
-		ourProps,
-		theirProps: { as: Tag, children, ...rest },
-		slot,
-		defaultTag: 'select',
-		name: 'Select',
-	});
+  return render({
+    ourProps,
+    theirProps: { as: Tag, children, ...rest },
+    slot,
+    defaultTag: 'select',
+    name: 'Select',
+  });
 }
 
 SelectFn.displayName = 'Select';

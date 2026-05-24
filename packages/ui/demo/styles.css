@@ -2,86 +2,86 @@
 
 /* Semantic color tokens — light mode defaults */
 :root {
-	/* Surface colors */
-	--surface-0: #fafafa;
-	--surface-1: #f5f5f5;
-	--surface-2: #ebebeb;
-	--surface-3: #e0e0e0;
-	--surface-border: #d4d4d4;
-	--surface-border-subtle: #e5e5e5;
+  /* Surface colors */
+  --surface-0: #fafafa;
+  --surface-1: #f5f5f5;
+  --surface-2: #ebebeb;
+  --surface-3: #e0e0e0;
+  --surface-border: #d4d4d4;
+  --surface-border-subtle: #e5e5e5;
 
-	/* Text colors */
-	--text-primary: #171717;
-	--text-secondary: #525252;
-	--text-tertiary: #737373;
-	--text-muted: #a3a3a3;
+  /* Text colors */
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-tertiary: #737373;
+  --text-muted: #a3a3a3;
 
-	/* Misc */
-	--overlay-bg: rgba(0, 0, 0, 0.3);
-	--shadow-color: rgba(0, 0, 0, 0.1);
+  /* Misc */
+  --overlay-bg: rgba(0, 0, 0, 0.3);
+  --shadow-color: rgba(0, 0, 0, 0.1);
 }
 
 .dark {
-	--surface-0: #0a0a0f;
-	--surface-1: #111118;
-	--surface-2: #1c1c27;
-	--surface-3: #2a2a38;
-	--surface-border: #2a2a38;
-	--surface-border-subtle: #1c1c27;
+  --surface-0: #0a0a0f;
+  --surface-1: #111118;
+  --surface-2: #1c1c27;
+  --surface-3: #2a2a38;
+  --surface-border: #2a2a38;
+  --surface-border-subtle: #1c1c27;
 
-	--text-primary: #e8e8f0;
-	--text-secondary: #b0b0c0;
-	--text-tertiary: #8a8a9e;
-	--text-muted: #5a5a6e;
+  --text-primary: #e8e8f0;
+  --text-secondary: #b0b0c0;
+  --text-tertiary: #8a8a9e;
+  --text-muted: #5a5a6e;
 
-	--overlay-bg: rgba(0, 0, 0, 0.6);
-	--shadow-color: rgba(0, 0, 0, 0.4);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+  --shadow-color: rgba(0, 0, 0, 0.4);
 }
 
 @theme {
-	/* Semantic surface tokens */
-	--color-surface-0: var(--surface-0);
-	--color-surface-1: var(--surface-1);
-	--color-surface-2: var(--surface-2);
-	--color-surface-3: var(--surface-3);
-	--color-surface-border: var(--surface-border);
-	--color-surface-border-subtle: var(--surface-border-subtle);
+  /* Semantic surface tokens */
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-border: var(--surface-border);
+  --color-surface-border-subtle: var(--surface-border-subtle);
 
-	/* Semantic text tokens */
-	--color-text-primary: var(--text-primary);
-	--color-text-secondary: var(--text-secondary);
-	--color-text-tertiary: var(--text-tertiary);
-	--color-text-muted: var(--text-muted);
+  /* Semantic text tokens */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-muted: var(--text-muted);
 
-	/* Legacy dark-* tokens (kept for backward compat, fixed to dark values) */
-	--color-dark-950: #0a0a0f;
-	--color-dark-900: #111118;
-	--color-dark-850: #16161f;
-	--color-dark-800: #1c1c27;
-	--color-dark-700: #2a2a38;
-	--color-dark-600: #3a3a4a;
-	--color-dark-500: #5a5a6e;
-	--color-dark-400: #8a8a9e;
-	--color-dark-300: #b0b0c0;
-	--color-dark-200: #d0d0dd;
-	--color-dark-100: #e8e8f0;
+  /* Legacy dark-* tokens (kept for backward compat, fixed to dark values) */
+  --color-dark-950: #0a0a0f;
+  --color-dark-900: #111118;
+  --color-dark-850: #16161f;
+  --color-dark-800: #1c1c27;
+  --color-dark-700: #2a2a38;
+  --color-dark-600: #3a3a4a;
+  --color-dark-500: #5a5a6e;
+  --color-dark-400: #8a8a9e;
+  --color-dark-300: #b0b0c0;
+  --color-dark-200: #d0d0dd;
+  --color-dark-100: #e8e8f0;
 
-	/* Accent colors */
-	--color-accent-500: #6366f1;
-	--color-accent-600: #4f46e5;
-	--color-accent-400: #818cf8;
+  /* Accent colors */
+  --color-accent-500: #6366f1;
+  --color-accent-600: #4f46e5;
+  --color-accent-400: #818cf8;
 }
 
 /* Page composition preview containers */
 .page-preview {
-	height: 600px;
-	overflow: auto;
-	/* Creates a new containing block so position:fixed children are scoped to this element */
-	transform: translateZ(0);
+  height: 600px;
+  overflow: auto;
+  /* Creates a new containing block so position:fixed children are scoped to this element */
+  transform: translateZ(0);
 }
 
 .dark .page-preview {
-	background-color: #111118;
+  background-color: #111118;
 }
 
 /*
@@ -90,6 +90,6 @@
  * stay inside the preview box instead of escaping to the viewport.
  */
 .shell-frame {
-	overflow: hidden;
-	transform: translateZ(0);
+  overflow: hidden;
+  transform: translateZ(0);
 }

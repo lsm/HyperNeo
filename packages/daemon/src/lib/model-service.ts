@@ -23,19 +23,19 @@ import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers
  * This is needed for backward compatibility with existing sessions
  */
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
-	// Old alias mappings
-	default: 'sonnet', // Legacy: 'default' maps to 'sonnet'
-	// Full model IDs (any sonnet variant maps to sonnet)
-	'claude-sonnet-4-6': 'sonnet',
-	'claude-sonnet-4-5-20250929': 'sonnet',
-	'claude-sonnet-4-20241022': 'sonnet',
-	'claude-3-5-sonnet-20241022': 'sonnet',
-	// Opus - SDK uses 'opus'
-	'claude-opus-4-5-20251101': 'opus',
-	'claude-opus-4-20250514': 'opus',
-	// Haiku - SDK uses 'haiku'
-	'claude-haiku-4-5-20251001': 'haiku',
-	'claude-3-5-haiku-20241022': 'haiku',
+  // Old alias mappings
+  default: 'sonnet', // Legacy: 'default' maps to 'sonnet'
+  // Full model IDs (any sonnet variant maps to sonnet)
+  'claude-sonnet-4-6': 'sonnet',
+  'claude-sonnet-4-5-20250929': 'sonnet',
+  'claude-sonnet-4-20241022': 'sonnet',
+  'claude-3-5-sonnet-20241022': 'sonnet',
+  // Opus - SDK uses 'opus'
+  'claude-opus-4-5-20251101': 'opus',
+  'claude-opus-4-20250514': 'opus',
+  // Haiku - SDK uses 'haiku'
+  'claude-haiku-4-5-20251001': 'haiku',
+  'claude-3-5-haiku-20241022': 'haiku',
 };
 
 /**
@@ -63,39 +63,39 @@ const CACHE_TTL = 4 * 60 * 60 * 1000;
  * resolution (alias → ID) still works without a live API call.
  */
 const FALLBACK_MODELS: ModelInfo[] = [
-	{
-		id: 'sonnet',
-		name: 'Claude Sonnet',
-		alias: 'default',
-		family: 'sonnet',
-		provider: 'anthropic',
-		contextWindow: 200000,
-		description: 'Best balance of speed and intelligence',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'opus',
-		name: 'Claude Opus',
-		alias: 'opus',
-		family: 'opus',
-		provider: 'anthropic',
-		contextWindow: 200000,
-		description: 'Most capable model for complex tasks',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'haiku',
-		name: 'Claude Haiku',
-		alias: 'haiku',
-		family: 'haiku',
-		provider: 'anthropic',
-		contextWindow: 200000,
-		description: 'Fastest and most compact model',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
+  {
+    id: 'sonnet',
+    name: 'Claude Sonnet',
+    alias: 'default',
+    family: 'sonnet',
+    provider: 'anthropic',
+    contextWindow: 200000,
+    description: 'Best balance of speed and intelligence',
+    releaseDate: '2025-01-01',
+    available: true,
+  },
+  {
+    id: 'opus',
+    name: 'Claude Opus',
+    alias: 'opus',
+    family: 'opus',
+    provider: 'anthropic',
+    contextWindow: 200000,
+    description: 'Most capable model for complex tasks',
+    releaseDate: '2025-01-01',
+    available: true,
+  },
+  {
+    id: 'haiku',
+    name: 'Claude Haiku',
+    alias: 'haiku',
+    family: 'haiku',
+    provider: 'anthropic',
+    contextWindow: 200000,
+    description: 'Fastest and most compact model',
+    releaseDate: '2025-01-01',
+    available: true,
+  },
 ];
 
 /**
@@ -121,21 +121,21 @@ const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
  * 'anthropic-copilot' may expose 'claude-sonnet-4.6').
  */
 function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
-	// Key by "provider:id" so same-id models from different providers
-	// are preserved as distinct entries rather than last-writer-wins.
-	const modelMap = new Map<string, ModelInfo>();
+  // Key by "provider:id" so same-id models from different providers
+  // are preserved as distinct entries rather than last-writer-wins.
+  const modelMap = new Map<string, ModelInfo>();
 
-	// Add fallback models first
-	for (const model of FALLBACK_MODELS) {
-		modelMap.set(`${model.provider}:${model.id}`, model);
-	}
+  // Add fallback models first
+  for (const model of FALLBACK_MODELS) {
+    modelMap.set(`${model.provider}:${model.id}`, model);
+  }
 
-	// Provider models override fallbacks with same (provider, id)
-	for (const model of providerModels) {
-		modelMap.set(`${model.provider}:${model.id}`, model);
-	}
+  // Provider models override fallbacks with same (provider, id)
+  for (const model of providerModels) {
+    modelMap.set(`${model.provider}:${model.id}`, model);
+  }
 
-	return Array.from(modelMap.values());
+  return Array.from(modelMap.values());
 }
 
 /**
@@ -160,41 +160,41 @@ const cacheGeneration = new Map<string, number>();
  * @returns Array of ModelInfo, or empty array if query doesn't support it
  */
 export async function getSupportedModelsFromQuery(
-	queryObject: Query | null,
-	cacheKey: string = 'global'
+  queryObject: Query | null,
+  cacheKey: string = 'global'
 ): Promise<ModelInfo[]> {
-	// Return cached if available
-	if (modelsCache.has(cacheKey)) {
-		return modelsCache.get(cacheKey)!;
-	}
+  // Return cached if available
+  if (modelsCache.has(cacheKey)) {
+    return modelsCache.get(cacheKey)!;
+  }
 
-	// Try to get models from query object using AnthropicProvider
-	if (queryObject && typeof queryObject.supportedModels === 'function') {
-		try {
-			const { getAnthropicModelsFromQuery } = await import('./providers/anthropic-provider.js');
-			const models = await getAnthropicModelsFromQuery(queryObject);
-			if (models.length > 0) {
-				// Cache the result with timestamp
-				modelsCache.set(cacheKey, models);
-				cacheTimestamps.set(cacheKey, Date.now());
-				return models;
-			}
-			/* v8 ignore next 2 */
-		} catch {
-			// Failed to load models from SDK
-		}
-	}
+  // Try to get models from query object using AnthropicProvider
+  if (queryObject && typeof queryObject.supportedModels === 'function') {
+    try {
+      const { getAnthropicModelsFromQuery } = await import('./providers/anthropic-provider.js');
+      const models = await getAnthropicModelsFromQuery(queryObject);
+      if (models.length > 0) {
+        // Cache the result with timestamp
+        modelsCache.set(cacheKey, models);
+        cacheTimestamps.set(cacheKey, Date.now());
+        return models;
+      }
+      /* v8 ignore next 2 */
+    } catch {
+      // Failed to load models from SDK
+    }
+  }
 
-	return [];
+  return [];
 }
 
 /**
  * Get all available providers
  */
 function getAvailableProviders(): Provider[] {
-	const registry = getProviderRegistry();
-	// Synchronous check - we'll filter later if needed
-	return registry.getAll();
+  const registry = getProviderRegistry();
+  // Synchronous check - we'll filter later if needed
+  return registry.getAll();
 }
 
 /**
@@ -202,71 +202,71 @@ function getAvailableProviders(): Provider[] {
  * Does not block - runs asynchronously
  */
 async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
-	// Check if refresh already in progress
-	if (refreshInProgress.has(cacheKey)) {
-		return;
-	}
+  // Check if refresh already in progress
+  if (refreshInProgress.has(cacheKey)) {
+    return;
+  }
 
-	const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+  const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 
-	// Start background refresh
-	const refreshPromise = (async () => {
-		try {
-			const models = await loadModelsFromProviders();
-			// Only write if the cache wasn't cleared while we were loading.
-			// This prevents a stale pre-change provider list from overwriting
-			// the cache after `clearModelsCache()` has been called.
-			if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
-				// Merge with fallback models to ensure Anthropic aliases are always available
-				const mergedModels = mergeWithFallbackModels(models);
-				modelsCache.set(cacheKey, mergedModels);
-				cacheTimestamps.set(cacheKey, Date.now());
-			}
-			/* v8 ignore next 2 */
-		} catch {
-			// Background refresh failed
-		} finally {
-			refreshInProgress.delete(cacheKey);
-			// Prune generation tracking if the cache key is no longer referenced
-			if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-				cacheGeneration.delete(cacheKey);
-			}
-		}
-	})();
+  // Start background refresh
+  const refreshPromise = (async () => {
+    try {
+      const models = await loadModelsFromProviders();
+      // Only write if the cache wasn't cleared while we were loading.
+      // This prevents a stale pre-change provider list from overwriting
+      // the cache after `clearModelsCache()` has been called.
+      if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
+        // Merge with fallback models to ensure Anthropic aliases are always available
+        const mergedModels = mergeWithFallbackModels(models);
+        modelsCache.set(cacheKey, mergedModels);
+        cacheTimestamps.set(cacheKey, Date.now());
+      }
+      /* v8 ignore next 2 */
+    } catch {
+      // Background refresh failed
+    } finally {
+      refreshInProgress.delete(cacheKey);
+      // Prune generation tracking if the cache key is no longer referenced
+      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+        cacheGeneration.delete(cacheKey);
+      }
+    }
+  })();
 
-	refreshInProgress.set(cacheKey, refreshPromise);
+  refreshInProgress.set(cacheKey, refreshPromise);
 }
 
 /**
  * Load models from all available providers
  */
 async function loadModelsFromProviders(): Promise<ModelInfo[]> {
-	const providers = getAvailableProviders();
-	const allModels: ModelInfo[] = [];
+  const providers = getAvailableProviders();
+  const allModels: ModelInfo[] = [];
 
-	for (const provider of providers) {
-		try {
-			const available = await provider.isAvailable();
-			if (!available) continue;
+  for (const provider of providers) {
+    try {
+      const available = await provider.isAvailable();
+      if (!available) continue;
 
-			const models = await provider.getModels();
-			allModels.push(...models);
-			/* v8 ignore next 2 */
-		} catch {
-			// Failed to load models from provider
-		}
-	}
+      const models = await provider.getModels();
+      allModels.push(...models);
+      /* v8 ignore next 2 */
+    } catch {
+      // Failed to load models from provider
+    }
+  }
 
-	return allModels;
+  return allModels;
 }
 
 /**
  * Check if cache is stale (older than CACHE_TTL)
  */
 function isCacheStale(cacheKey: string): boolean {
-	const timestamp = cacheTimestamps.get(cacheKey);
-	if (!timestamp) return true;
-	return Date.now() - timestamp > CACHE_TTL;
+  const timestamp = cacheTimestamps.get(cacheKey);
+  if (!timestamp) return true;
+  return Date.now() - timestamp > CACHE_TTL;
 }
 
 /**
@@ -278,22 +278,22 @@ function isCacheStale(cacheKey: string): boolean {
  * @returns Array of ModelInfo including all available providers
  */
 export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
-	const cachedModels = modelsCache.get(cacheKey);
+  const cachedModels = modelsCache.get(cacheKey);
 
-	if (!cachedModels || cachedModels.length === 0) {
-		// Models not loaded or failed to load - return empty array
-		// Callers should initialize models first via initializeModels()
-		return [];
-	}
+  if (!cachedModels || cachedModels.length === 0) {
+    // Models not loaded or failed to load - return empty array
+    // Callers should initialize models first via initializeModels()
+    return [];
+  }
 
-	// Trigger background refresh if stale (non-blocking)
-	if (isCacheStale(cacheKey)) {
-		triggerBackgroundRefresh(cacheKey).catch(() => {
-			// Ignore errors - we already have cached data
-		});
-	}
+  // Trigger background refresh if stale (non-blocking)
+  if (isCacheStale(cacheKey)) {
+    triggerBackgroundRefresh(cacheKey).catch(() => {
+      // Ignore errors - we already have cached data
+    });
+  }
 
-	return cachedModels;
+  return cachedModels;
 }
 
 /**
@@ -304,33 +304,33 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
  * @throws Error if all providers fail to load models
  */
 export async function initializeModels(): Promise<void> {
-	const cacheKey = 'global';
+  const cacheKey = 'global';
 
-	// Skip if already initialized
-	if (modelsCache.has(cacheKey)) {
-		return;
-	}
+  // Skip if already initialized
+  if (modelsCache.has(cacheKey)) {
+    return;
+  }
 
-	// Initialize the provider system (registers built-in providers)
-	initializeProviders();
+  // Initialize the provider system (registers built-in providers)
+  initializeProviders();
 
-	try {
-		const models = await loadModelsFromProviders();
-		if (models.length > 0) {
-			// Merge provider models with FALLBACK_MODELS to ensure well-known Anthropic
-			// model aliases (opus, sonnet, haiku) are always available for resolution,
-			// even when only non-Anthropic providers are configured
-			const mergedModels = mergeWithFallbackModels(models);
-			modelsCache.set(cacheKey, mergedModels);
-			cacheTimestamps.set(cacheKey, Date.now());
-		} else {
-			throw new Error('No models returned from providers');
-		}
-	} catch {
-		// Failed to load models - use well-known Anthropic models as fallback
-		modelsCache.set(cacheKey, FALLBACK_MODELS);
-		cacheTimestamps.set(cacheKey, Date.now());
-	}
+  try {
+    const models = await loadModelsFromProviders();
+    if (models.length > 0) {
+      // Merge provider models with FALLBACK_MODELS to ensure well-known Anthropic
+      // model aliases (opus, sonnet, haiku) are always available for resolution,
+      // even when only non-Anthropic providers are configured
+      const mergedModels = mergeWithFallbackModels(models);
+      modelsCache.set(cacheKey, mergedModels);
+      cacheTimestamps.set(cacheKey, Date.now());
+    } else {
+      throw new Error('No models returned from providers');
+    }
+  } catch {
+    // Failed to load models - use well-known Anthropic models as fallback
+    modelsCache.set(cacheKey, FALLBACK_MODELS);
+    cacheTimestamps.set(cacheKey, Date.now());
+  }
 }
 
 /**
@@ -338,12 +338,12 @@ export async function initializeModels(): Promise<void> {
  * from each provider's API.
  */
 function clearProviderModelCaches(): void {
-	const registry = getProviderRegistry();
-	for (const provider of registry.getAll()) {
-		if (provider.clearModelCache) {
-			provider.clearModelCache();
-		}
-	}
+  const registry = getProviderRegistry();
+  for (const provider of registry.getAll()) {
+    if (provider.clearModelCache) {
+      provider.clearModelCache();
+    }
+  }
 }
 
 /**
@@ -355,37 +355,37 @@ function clearProviderModelCaches(): void {
  * the cleared cache.
  */
 export function clearModelsCache(cacheKey?: string): void {
-	if (cacheKey) {
-		const hadInFlight = refreshInProgress.has(cacheKey);
-		modelsCache.delete(cacheKey);
-		cacheTimestamps.delete(cacheKey);
-		refreshInProgress.delete(cacheKey);
-		if (hadInFlight || cacheGeneration.has(cacheKey)) {
-			// Bump (or preserve) the generation so any in-flight refresh —
-			// including one invalidated by an earlier clear — drops its result.
-			cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
-		}
-		// If there's no in-flight refresh and no generation history, there's
-		// nothing to invalidate; leave the key absent.
-	} else {
-		const inFlightKeys = new Set(refreshInProgress.keys());
-		modelsCache.clear();
-		cacheTimestamps.clear();
-		refreshInProgress.clear();
-		clearProviderModelCaches();
-		// Bump generation for keys that had in-flight refreshes so any
-		// running background refresh drops its stale result instead of
-		// overwriting the cleared cache.
-		for (const key of inFlightKeys) {
-			cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
-		}
-		// NOTE: We intentionally do NOT prune cacheGeneration here.
-		// A prior global clear may have bumped a generation to cancel an
-		// in-flight refresh; if a second clear arrives before that refresh
-		// resolves, pruning would delete the bump and allow the stale
-		// result to be written.  Keys are cleaned up by
-		// triggerBackgroundRefresh's finally block once the refresh completes.
-	}
+  if (cacheKey) {
+    const hadInFlight = refreshInProgress.has(cacheKey);
+    modelsCache.delete(cacheKey);
+    cacheTimestamps.delete(cacheKey);
+    refreshInProgress.delete(cacheKey);
+    if (hadInFlight || cacheGeneration.has(cacheKey)) {
+      // Bump (or preserve) the generation so any in-flight refresh —
+      // including one invalidated by an earlier clear — drops its result.
+      cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
+    }
+    // If there's no in-flight refresh and no generation history, there's
+    // nothing to invalidate; leave the key absent.
+  } else {
+    const inFlightKeys = new Set(refreshInProgress.keys());
+    modelsCache.clear();
+    cacheTimestamps.clear();
+    refreshInProgress.clear();
+    clearProviderModelCaches();
+    // Bump generation for keys that had in-flight refreshes so any
+    // running background refresh drops its stale result instead of
+    // overwriting the cleared cache.
+    for (const key of inFlightKeys) {
+      cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
+    }
+    // NOTE: We intentionally do NOT prune cacheGeneration here.
+    // A prior global clear may have bumped a generation to cancel an
+    // in-flight refresh; if a second clear arrives before that refresh
+    // resolves, pruning would delete the bump and allow the stale
+    // result to be written.  Keys are cleaned up by
+    // triggerBackgroundRefresh's finally block once the refresh completes.
+  }
 }
 
 /**
@@ -398,63 +398,63 @@ export function clearModelsCache(cacheKey?: string): void {
  * never see a permanently empty catalog.
  */
 export async function refreshModels(): Promise<void> {
-	const cacheKey = 'global';
+  const cacheKey = 'global';
 
-	// Wait for any in-progress background refresh to finish so we don't race
-	const inProgress = refreshInProgress.get(cacheKey);
-	if (inProgress) {
-		await inProgress;
-	}
+  // Wait for any in-progress background refresh to finish so we don't race
+  const inProgress = refreshInProgress.get(cacheKey);
+  if (inProgress) {
+    await inProgress;
+  }
 
-	// If another foreground refresh is already running, wait for it.
-	if (refreshInProgress.has(cacheKey)) {
-		await refreshInProgress.get(cacheKey);
-		return;
-	}
+  // If another foreground refresh is already running, wait for it.
+  if (refreshInProgress.has(cacheKey)) {
+    await refreshInProgress.get(cacheKey);
+    return;
+  }
 
-	const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
-	const previousModels = modelsCache.get(cacheKey);
-	clearProviderModelCaches();
+  const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+  const previousModels = modelsCache.get(cacheKey);
+  clearProviderModelCaches();
 
-	const refreshPromise = (async () => {
-		try {
-			const models = await loadModelsFromProviders();
-			// Only write if the cache wasn't cleared while we were loading.
-			if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
-				return;
-			}
-			if (models.length > 0) {
-				const mergedModels = mergeWithFallbackModels(models);
-				// If the new result has fewer models than the previous cache, at least one
-				// provider likely returned static fallback data instead of live API results
-				// (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
-				// richer cache rather than replacing it with degraded fallback metadata.
-				// Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
-				// don't distort the comparison.
-				if (previousModels && previousModels.length > mergedModels.length) {
-					modelsCache.set(cacheKey, previousModels);
-					cacheTimestamps.set(cacheKey, Date.now());
-					return;
-				}
-				modelsCache.set(cacheKey, mergedModels);
-				cacheTimestamps.set(cacheKey, Date.now());
-			} else if (!previousModels || previousModels.length === 0) {
-				// Cache was cleared or was already empty — restore fallback models
-				// so the UI and model resolution paths always have a baseline catalog.
-				modelsCache.set(cacheKey, FALLBACK_MODELS);
-				cacheTimestamps.set(cacheKey, Date.now());
-			}
-		} finally {
-			refreshInProgress.delete(cacheKey);
-			// Prune generation tracking if the cache key is no longer referenced.
-			if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-				cacheGeneration.delete(cacheKey);
-			}
-		}
-	})();
+  const refreshPromise = (async () => {
+    try {
+      const models = await loadModelsFromProviders();
+      // Only write if the cache wasn't cleared while we were loading.
+      if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+        return;
+      }
+      if (models.length > 0) {
+        const mergedModels = mergeWithFallbackModels(models);
+        // If the new result has fewer models than the previous cache, at least one
+        // provider likely returned static fallback data instead of live API results
+        // (e.g. OpenRouter returns FALLBACK_MODELS on HTTP errors). Keep the old,
+        // richer cache rather than replacing it with degraded fallback metadata.
+        // Compare merged-vs-merged so the fallback entries added by mergeWithFallbackModels
+        // don't distort the comparison.
+        if (previousModels && previousModels.length > mergedModels.length) {
+          modelsCache.set(cacheKey, previousModels);
+          cacheTimestamps.set(cacheKey, Date.now());
+          return;
+        }
+        modelsCache.set(cacheKey, mergedModels);
+        cacheTimestamps.set(cacheKey, Date.now());
+      } else if (!previousModels || previousModels.length === 0) {
+        // Cache was cleared or was already empty — restore fallback models
+        // so the UI and model resolution paths always have a baseline catalog.
+        modelsCache.set(cacheKey, FALLBACK_MODELS);
+        cacheTimestamps.set(cacheKey, Date.now());
+      }
+    } finally {
+      refreshInProgress.delete(cacheKey);
+      // Prune generation tracking if the cache key is no longer referenced.
+      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+        cacheGeneration.delete(cacheKey);
+      }
+    }
+  })();
 
-	refreshInProgress.set(cacheKey, refreshPromise);
-	await refreshPromise;
+  refreshInProgress.set(cacheKey, refreshPromise);
+  await refreshPromise;
 }
 
 /**
@@ -464,7 +464,7 @@ export async function refreshModels(): Promise<void> {
  * @public Exported for testing purposes
  */
 export function getModelsCache(): Map<string, ModelInfo[]> {
-	return new Map(modelsCache);
+  return new Map(modelsCache);
 }
 
 /**
@@ -474,13 +474,13 @@ export function getModelsCache(): Map<string, ModelInfo[]> {
  * @public Exported for testing purposes
  */
 export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
-	modelsCache.clear();
-	cacheTimestamps.clear();
-	const ts = timestamp ?? Date.now();
-	for (const [key, models] of cache.entries()) {
-		modelsCache.set(key, models);
-		cacheTimestamps.set(key, ts);
-	}
+  modelsCache.clear();
+  cacheTimestamps.clear();
+  const ts = timestamp ?? Date.now();
+  for (const [key, models] of cache.entries()) {
+    modelsCache.set(key, models);
+    cacheTimestamps.set(key, ts);
+  }
 }
 
 /**
@@ -490,38 +490,38 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
  * 3. Legacy model mapping
  */
 function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
-	// 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
-	let found = models.find((m) => m.id === idOrAlias);
+  // 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
+  let found = models.find((m) => m.id === idOrAlias);
 
-	// 2. Alias field match
-	if (!found) {
-		found = models.find((m) => m.alias === idOrAlias);
-	}
+  // 2. Alias field match
+  if (!found) {
+    found = models.find((m) => m.alias === idOrAlias);
+  }
 
-	// 3. Legacy model mapping (maps old full IDs to SDK short IDs)
-	if (!found) {
-		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
-		if (legacyMappedId) {
-			found = models.find((m) => m.id === legacyMappedId);
-		}
-	}
+  // 3. Legacy model mapping (maps old full IDs to SDK short IDs)
+  if (!found) {
+    const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
+    if (legacyMappedId) {
+      found = models.find((m) => m.id === legacyMappedId);
+    }
+  }
 
-	return found;
+  return found;
 }
 
 function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
-	const resolvedCodexId =
-		resolveCodexBridgeModelId(model.id) ?? resolveCodexBridgeModelId(model.alias);
-	const staticModel = resolvedCodexId
-		? findInModels(CODEX_STATIC_MODEL_METADATA, resolvedCodexId)
-		: undefined;
-	return staticModel
-		? {
-				...model,
-				contextWindow: staticModel.contextWindow,
-				preferContextWindowMetadata: staticModel.preferContextWindowMetadata,
-			}
-		: model;
+  const resolvedCodexId =
+    resolveCodexBridgeModelId(model.id) ?? resolveCodexBridgeModelId(model.alias);
+  const staticModel = resolvedCodexId
+    ? findInModels(CODEX_STATIC_MODEL_METADATA, resolvedCodexId)
+    : undefined;
+  return staticModel
+    ? {
+        ...model,
+        contextWindow: staticModel.contextWindow,
+        preferContextWindowMetadata: staticModel.preferContextWindowMetadata,
+      }
+    : model;
 }
 
 /**
@@ -534,28 +534,28 @@ function overlayCodexStaticMetadata(model: ModelInfo): ModelInfo {
  * @param providerId - Provider ID to filter by (required)
  */
 export async function getModelInfo(
-	idOrAlias: string,
-	cacheKey: string,
-	providerId: string
+  idOrAlias: string,
+  cacheKey: string,
+  providerId: string
 ): Promise<ModelInfo | null> {
-	const availableModels = getAvailableModels(cacheKey);
-	const providerModels = availableModels.filter((m) => m.provider === providerId);
-	const fromCache = findInModels(providerModels, idOrAlias);
-	if (fromCache) {
-		return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromCache) : fromCache;
-	}
+  const availableModels = getAvailableModels(cacheKey);
+  const providerModels = availableModels.filter((m) => m.provider === providerId);
+  const fromCache = findInModels(providerModels, idOrAlias);
+  if (fromCache) {
+    return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromCache) : fromCache;
+  }
 
-	const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
-	return findInModels(staticProviderModels, idOrAlias) ?? null;
+  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  return findInModels(staticProviderModels, idOrAlias) ?? null;
 }
 
 export async function getSessionModelInfo(
-	session: Pick<Session, 'config'>,
-	cacheKey: string = 'global'
+  session: Pick<Session, 'config'>,
+  cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
-	const providerId = session.config.provider;
-	if (!providerId) return null;
-	return getModelInfo(session.config.model, cacheKey, providerId);
+  const providerId = session.config.provider;
+  if (!providerId) return null;
+  return getModelInfo(session.config.model, cacheKey, providerId);
 }
 
 /**
@@ -572,11 +572,11 @@ export async function getSessionModelInfo(
  * @param cacheKey - Cache key to look up models (defaults to 'global')
  */
 export async function getModelInfoUnfiltered(
-	idOrAlias: string,
-	cacheKey: string = 'global'
+  idOrAlias: string,
+  cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
-	const availableModels = getAvailableModels(cacheKey);
-	return findInModels(availableModels, idOrAlias) ?? null;
+  const availableModels = getAvailableModels(cacheKey);
+  return findInModels(availableModels, idOrAlias) ?? null;
 }
 
 /**
@@ -588,31 +588,31 @@ export async function getModelInfoUnfiltered(
  * @param providerId - Provider ID to filter by (required)
  */
 export async function isValidModel(
-	idOrAlias: string,
-	cacheKey: string,
-	providerId: string
+  idOrAlias: string,
+  cacheKey: string,
+  providerId: string
 ): Promise<boolean> {
-	const availableModels = getAvailableModels(cacheKey);
-	const providerModels = availableModels.filter((m) => m.provider === providerId);
-	if (findInModels(providerModels, idOrAlias)) {
-		return true;
-	}
+  const availableModels = getAvailableModels(cacheKey);
+  const providerModels = availableModels.filter((m) => m.provider === providerId);
+  if (findInModels(providerModels, idOrAlias)) {
+    return true;
+  }
 
-	const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
-	if (!findInModels(staticProviderModels, idOrAlias)) {
-		return false;
-	}
+  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  if (!findInModels(staticProviderModels, idOrAlias)) {
+    return false;
+  }
 
-	const provider = getProviderRegistry().get(providerId);
-	if (!provider) {
-		return false;
-	}
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) {
+    return false;
+  }
 
-	try {
-		return await provider.isAvailable();
-	} catch {
-		return false;
-	}
+  try {
+    return await provider.isAvailable();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -625,16 +625,16 @@ export async function isValidModel(
  * @param providerId - Provider ID to filter by (required)
  */
 export async function resolveModelAlias(
-	idOrAlias: string,
-	cacheKey: string,
-	providerId: string
+  idOrAlias: string,
+  cacheKey: string,
+  providerId: string
 ): Promise<string> {
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
-	if (modelInfo) {
-		return modelInfo.id;
-	}
-	// Return as-is if nothing found
-	return idOrAlias;
+  const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
+  if (modelInfo) {
+    return modelInfo.id;
+  }
+  // Return as-is if nothing found
+  return idOrAlias;
 }
 
 /**
@@ -649,13 +649,13 @@ export async function resolveModelAlias(
  * @param cacheKey - Cache key to look up models (defaults to 'global')
  */
 export async function resolveModelAliasUnfiltered(
-	idOrAlias: string,
-	cacheKey: string = 'global'
+  idOrAlias: string,
+  cacheKey: string = 'global'
 ): Promise<string> {
-	const modelInfo = await getModelInfoUnfiltered(idOrAlias, cacheKey);
-	if (modelInfo) {
-		return modelInfo.id;
-	}
-	// Return as-is if nothing found
-	return idOrAlias;
+  const modelInfo = await getModelInfoUnfiltered(idOrAlias, cacheKey);
+  if (modelInfo) {
+    return modelInfo.id;
+  }
+  // Return as-is if nothing found
+  return idOrAlias;
 }

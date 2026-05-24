@@ -19,9 +19,9 @@ export type ReferenceType = 'task' | 'goal' | 'file' | 'folder';
  * Stored in message content as @ref{type:id}.
  */
 export interface ReferenceMention {
-	type: ReferenceType;
-	id: string;
-	displayText: string;
+  type: ReferenceType;
+  id: string;
+  displayText: string;
 }
 
 /**
@@ -30,36 +30,36 @@ export interface ReferenceMention {
  * useReferenceAutocomplete hook (M2).
  */
 export interface ReferenceSearchResult {
-	type: ReferenceType;
-	id: string;
-	/** Short human-readable ID (e.g. "t-42", "g-7") for tasks and goals */
-	shortId?: string;
-	/** Primary display text shown in the autocomplete menu */
-	displayText: string;
-	/** Secondary text shown below displayText (e.g. task status, file path) */
-	subtitle?: string;
+  type: ReferenceType;
+  id: string;
+  /** Short human-readable ID (e.g. "t-42", "g-7") for tasks and goals */
+  shortId?: string;
+  /** Primary display text shown in the autocomplete menu */
+  displayText: string;
+  /** Secondary text shown below displayText (e.g. task status, file path) */
+  subtitle?: string;
 }
 
 /**
  * A resolved reference with full entity data.
  */
 export interface ResolvedReference {
-	type: ReferenceType;
-	id: string;
-	/** Polymorphic — cast based on `type` */
-	data: unknown;
+  type: ReferenceType;
+  id: string;
+  /** Polymorphic — cast based on `type` */
+  data: unknown;
 }
 
 export interface ResolvedTaskReference extends ResolvedReference {
-	type: 'task';
-	/** Space task payloads are typed; legacy room task payloads are preserved as opaque data. */
-	data: SpaceTask | object;
+  type: 'task';
+  /** Space task payloads are typed; legacy room task payloads are preserved as opaque data. */
+  data: SpaceTask | object;
 }
 
 export interface ResolvedGoalReference extends ResolvedReference {
-	type: 'goal';
-	/** Legacy room goal payloads are preserved as opaque compatibility data. */
-	data: object;
+  type: 'goal';
+  /** Legacy room goal payloads are preserved as opaque compatibility data. */
+  data: object;
 }
 
 /**
@@ -68,37 +68,37 @@ export interface ResolvedGoalReference extends ResolvedReference {
  * packages/daemon/src/lib/rpc-handlers/reference-handlers.ts.
  */
 export interface ResolvedFileData {
-	path: string;
-	/** UTF-8 text content, or null when the file is binary */
-	content: string | null;
-	/** True when the file contains binary (non-text) data; content will be null */
-	binary: boolean;
-	/** True when file content was truncated to stay within payload limits */
-	truncated: boolean;
-	size: number;
-	mtime: string;
+  path: string;
+  /** UTF-8 text content, or null when the file is binary */
+  content: string | null;
+  /** True when the file contains binary (non-text) data; content will be null */
+  binary: boolean;
+  /** True when file content was truncated to stay within payload limits */
+  truncated: boolean;
+  size: number;
+  mtime: string;
 }
 
 /** A single entry in a resolved folder listing. */
 export interface FolderEntry {
-	path: string;
-	name: string;
-	/** 'directory' matches FileManager.FileInfo and the real filesystem API */
-	type: 'file' | 'directory';
+  path: string;
+  name: string;
+  /** 'directory' matches FileManager.FileInfo and the real filesystem API */
+  type: 'file' | 'directory';
 }
 
 /** Resolved file reference — data includes content (possibly truncated or absent for binary files) */
 export interface ResolvedFileReference extends ResolvedReference {
-	type: 'file';
-	data: ResolvedFileData;
+  type: 'file';
+  data: ResolvedFileData;
 }
 
 export interface ResolvedFolderReference extends ResolvedReference {
-	type: 'folder';
-	data: {
-		path: string;
-		entries: FolderEntry[];
-	};
+  type: 'folder';
+  data: {
+    path: string;
+    entries: FolderEntry[];
+  };
 }
 
 /**
@@ -108,8 +108,8 @@ export interface ResolvedFolderReference extends ResolvedReference {
  * Key is the raw @ref{type:id} token string.
  */
 export type ReferenceMetadata = Record<
-	string,
-	{ type: ReferenceType; id: string; displayText: string; status?: string }
+  string,
+  { type: ReferenceType; id: string; displayText: string; status?: string }
 >;
 
 /**

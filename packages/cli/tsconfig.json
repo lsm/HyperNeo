@@ -1,23 +1,23 @@
 {
-	"compilerOptions": {
-		"lib": ["ESNext"],
-		"module": "ESNext",
-		"target": "ESNext",
-		"moduleResolution": "bundler",
-		"strict": true,
-		"skipLibCheck": true,
-		"allowImportingTsExtensions": true,
-		"noEmit": true,
-		"types": ["bun"],
-		"paths": {
-			"@/*": ["./src/*"],
-			"@neokai/shared": ["../shared/src/mod.ts"],
-			"@neokai/shared/*": ["../shared/src/*"],
-			"@neokai/daemon": ["../daemon/main.ts"],
-			"@neokai/daemon/*": ["../daemon/src/*"],
-			"@neokai/neo": ["../neo/src/index.ts"]
-		}
-	},
-	"include": ["src/**/*", "main.ts", "prod-entry.ts"],
-	"exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts", "src/embedded-assets.ts"]
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["bun"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@neokai/shared": ["../shared/src/mod.ts"],
+      "@neokai/shared/*": ["../shared/src/*"],
+      "@neokai/daemon": ["../daemon/main.ts"],
+      "@neokai/daemon/*": ["../daemon/src/*"],
+      "@neokai/neo": ["../neo/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "main.ts", "prod-entry.ts"],
+  "exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts", "src/embedded-assets.ts"]
 }

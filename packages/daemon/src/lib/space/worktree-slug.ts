@@ -17,16 +17,16 @@ import { slugify, resolveCollision } from './slug';
  * @returns A unique, URL-safe slug
  */
 export function worktreeSlug(
-	taskTitle: string,
-	taskNumber: number,
-	existingSlugs: string[] = []
+  taskTitle: string,
+  taskNumber: number,
+  existingSlugs: string[] = []
 ): string {
-	// Detect whether the title contains any usable (alphanumeric) characters
-	// before delegating. This avoids coupling to slug.ts' internal sentinel value
-	// ('unnamed-space') and prevents false positives for titles like "Unnamed Space".
-	if (!/[a-z0-9]/i.test(taskTitle)) {
-		return resolveCollision(`task-${taskNumber}`, existingSlugs);
-	}
+  // Detect whether the title contains any usable (alphanumeric) characters
+  // before delegating. This avoids coupling to slug.ts' internal sentinel value
+  // ('unnamed-space') and prevents false positives for titles like "Unnamed Space".
+  if (!/[a-z0-9]/i.test(taskTitle)) {
+    return resolveCollision(`task-${taskNumber}`, existingSlugs);
+  }
 
-	return slugify(taskTitle, existingSlugs);
+  return slugify(taskTitle, existingSlugs);
 }

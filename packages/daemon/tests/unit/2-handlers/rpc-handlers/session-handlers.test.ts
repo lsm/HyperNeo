@@ -24,140 +24,140 @@ type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
-	hub: MessageHub;
-	handlers: Map<string, RequestHandler>;
+  hub: MessageHub;
+  handlers: Map<string, RequestHandler>;
 } {
-	const handlers = new Map<string, RequestHandler>();
+  const handlers = new Map<string, RequestHandler>();
 
-	const hub = {
-		onRequest: mock((method: string, handler: RequestHandler) => {
-			handlers.set(method, handler);
-			return () => handlers.delete(method);
-		}),
-		onEvent: mock(() => () => {}),
-		request: mock(async () => {}),
-		event: mock(() => {}),
-		joinChannel: mock(async () => {}),
-		leaveChannel: mock(async () => {}),
-		isConnected: mock(() => true),
-		getState: mock(() => 'connected' as const),
-		onConnection: mock(() => () => {}),
-		onMessage: mock(() => () => {}),
-		cleanup: mock(() => {}),
-		registerTransport: mock(() => () => {}),
-		registerRouter: mock(() => {}),
-		getRouter: mock(() => null),
-		getPendingCallCount: mock(() => 0),
-	} as unknown as MessageHub;
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    onEvent: mock(() => () => {}),
+    request: mock(async () => {}),
+    event: mock(() => {}),
+    joinChannel: mock(async () => {}),
+    leaveChannel: mock(async () => {}),
+    isConnected: mock(() => true),
+    getState: mock(() => 'connected' as const),
+    onConnection: mock(() => () => {}),
+    onMessage: mock(() => () => {}),
+    cleanup: mock(() => {}),
+    registerTransport: mock(() => () => {}),
+    registerRouter: mock(() => {}),
+    getRouter: mock(() => null),
+    getPendingCallCount: mock(() => 0),
+  } as unknown as MessageHub;
 
-	return { hub, handlers };
+  return { hub, handlers };
 }
 
 describe('Session RPC Handlers — models.list', () => {
-	let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
 
-	beforeEach(async () => {
-		messageHubData = createMockMessageHub();
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
 
-		// Fully reset provider and cache state so each test is isolated.
-		// setModelsCache(new Map()) empties modelsCache and cacheTimestamps.
-		setModelsCache(new Map());
-		resetProviderRegistry();
-		resetProviderFactory();
+    // Fully reset provider and cache state so each test is isolated.
+    // setModelsCache(new Map()) empties modelsCache and cacheTimestamps.
+    setModelsCache(new Map());
+    resetProviderRegistry();
+    resetProviderFactory();
 
-		// Import and set up handlers after cache is clean
-		const { setupSessionHandlers } = await import(
-			'../../../../src/lib/rpc-handlers/session-handlers'
-		);
-		setupSessionHandlers(
-			messageHubData.hub,
-			{} as SessionManager,
-			{} as DaemonHub,
-			{} as SpaceManager
-		);
-	});
+    // Import and set up handlers after cache is clean
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      {} as SessionManager,
+      {} as DaemonHub,
+      {} as SpaceManager
+    );
+  });
 
-	it('returns cached models when cache is populated', async () => {
-		const testCache = new Map<
-			string,
-			Array<{
-				id: string;
-				name: string;
-				alias: string;
-				family: string;
-				provider: string;
-				contextWindow: number;
-				description: string;
-				releaseDate: string;
-				available: boolean;
-			}>
-		>();
-		testCache.set('global', [
-			{
-				id: 'sonnet',
-				name: 'Claude Sonnet',
-				alias: 'default',
-				family: 'sonnet',
-				provider: 'anthropic',
-				contextWindow: 200000,
-				description: 'Fast model',
-				releaseDate: '2025-01-01',
-				available: true,
-			},
-		]);
-		setModelsCache(testCache);
+  it('returns cached models when cache is populated', async () => {
+    const testCache = new Map<
+      string,
+      Array<{
+        id: string;
+        name: string;
+        alias: string;
+        family: string;
+        provider: string;
+        contextWindow: number;
+        description: string;
+        releaseDate: string;
+        available: boolean;
+      }>
+    >();
+    testCache.set('global', [
+      {
+        id: 'sonnet',
+        name: 'Claude Sonnet',
+        alias: 'default',
+        family: 'sonnet',
+        provider: 'anthropic',
+        contextWindow: 200000,
+        description: 'Fast model',
+        releaseDate: '2025-01-01',
+        available: true,
+      },
+    ]);
+    setModelsCache(testCache);
 
-		const handler = messageHubData.handlers.get('models.list');
-		expect(handler).toBeDefined();
+    const handler = messageHubData.handlers.get('models.list');
+    expect(handler).toBeDefined();
 
-		const result = (await handler!({ useCache: true }, {})) as {
-			models: Array<{ id: string; display_name: string }>;
-			cached: boolean;
-		};
+    const result = (await handler!({ useCache: true }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-		expect(result.models).toHaveLength(1);
-		expect(result.models[0].id).toBe('sonnet');
-		expect(result.cached).toBe(true);
-	});
+    expect(result.models).toHaveLength(1);
+    expect(result.models[0].id).toBe('sonnet');
+    expect(result.cached).toBe(true);
+  });
 
-	it('triggers fallback refresh when cache is empty and useCache is true', async () => {
-		// Cache is empty because beforeEach calls setModelsCache(new Map())
-		const handler = messageHubData.handlers.get('models.list');
+  it('triggers fallback refresh when cache is empty and useCache is true', async () => {
+    // Cache is empty because beforeEach calls setModelsCache(new Map())
+    const handler = messageHubData.handlers.get('models.list');
 
-		const result = (await handler!({ useCache: true }, {})) as {
-			models: Array<{ id: string; display_name: string }>;
-			cached: boolean;
-		};
+    const result = (await handler!({ useCache: true }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-		// refreshModels() restores FALLBACK_MODELS when no providers are available
-		expect(result.models.length).toBeGreaterThan(0);
-		expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
-		expect(result.cached).toBe(false);
-	});
+    // refreshModels() restores FALLBACK_MODELS when no providers are available
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.models.some((m) => m.id === 'sonnet')).toBe(true);
+    expect(result.cached).toBe(false);
+  });
 
-	it('returns models with cached=false when forceRefresh is true', async () => {
-		const handler = messageHubData.handlers.get('models.list');
+  it('returns models with cached=false when forceRefresh is true', async () => {
+    const handler = messageHubData.handlers.get('models.list');
 
-		const result = (await handler!({ forceRefresh: true }, {})) as {
-			models: Array<{ id: string; display_name: string }>;
-			cached: boolean;
-		};
+    const result = (await handler!({ forceRefresh: true }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-		// With no providers, refreshModels() restores FALLBACK_MODELS
-		expect(result.models.length).toBeGreaterThan(0);
-		expect(result.cached).toBe(false);
-	});
+    // With no providers, refreshModels() restores FALLBACK_MODELS
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.cached).toBe(false);
+  });
 
-	it('returns models with cached=false when useCache is false', async () => {
-		const handler = messageHubData.handlers.get('models.list');
+  it('returns models with cached=false when useCache is false', async () => {
+    const handler = messageHubData.handlers.get('models.list');
 
-		const result = (await handler!({ useCache: false }, {})) as {
-			models: Array<{ id: string; display_name: string }>;
-			cached: boolean;
-		};
+    const result = (await handler!({ useCache: false }, {})) as {
+      models: Array<{ id: string; display_name: string }>;
+      cached: boolean;
+    };
 
-		// useCache: false is treated as forceRefresh
-		expect(result.models.length).toBeGreaterThan(0);
-		expect(result.cached).toBe(false);
-	});
+    // useCache: false is treated as forceRefresh
+    expect(result.models.length).toBeGreaterThan(0);
+    expect(result.cached).toBe(false);
+  });
 });

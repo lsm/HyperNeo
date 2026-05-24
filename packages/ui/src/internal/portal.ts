@@ -4,56 +4,56 @@ import { createPortal } from 'preact/compat';
 import { useEffect, useRef, useState } from 'preact/hooks';
 
 interface PortalProps {
-	children: ComponentChildren;
-	enabled?: boolean;
+  children: ComponentChildren;
+  enabled?: boolean;
 }
 
 const PORTAL_ROOT_ID = 'headlessui-portal-root';
 
 function getPortalRoot(): HTMLElement {
-	let root = document.getElementById(PORTAL_ROOT_ID);
-	if (!root) {
-		root = document.createElement('div');
-		root.id = PORTAL_ROOT_ID;
-		document.body.appendChild(root);
-	}
-	return root;
+  let root = document.getElementById(PORTAL_ROOT_ID);
+  if (!root) {
+    root = document.createElement('div');
+    root.id = PORTAL_ROOT_ID;
+    document.body.appendChild(root);
+  }
+  return root;
 }
 
 export function Portal({ children, enabled = true }: PortalProps): VNode | null {
-	const [mounted, setMounted] = useState(false);
-	const containerRef = useRef<HTMLDivElement | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-	useEffect(() => {
-		if (!enabled) return;
+  useEffect(() => {
+    if (!enabled) return;
 
-		const portalRoot = getPortalRoot();
-		const container = document.createElement('div');
-		portalRoot.appendChild(container);
-		containerRef.current = container;
-		setMounted(true);
+    const portalRoot = getPortalRoot();
+    const container = document.createElement('div');
+    portalRoot.appendChild(container);
+    containerRef.current = container;
+    setMounted(true);
 
-		return () => {
-			if (container.parentNode) {
-				container.parentNode.removeChild(container);
-			}
-			containerRef.current = null;
+    return () => {
+      if (container.parentNode) {
+        container.parentNode.removeChild(container);
+      }
+      containerRef.current = null;
 
-			// Clean up portal root if empty
-			const root = document.getElementById(PORTAL_ROOT_ID);
-			if (root && root.children.length === 0) {
-				root.remove();
-			}
-		};
-	}, [enabled]);
+      // Clean up portal root if empty
+      const root = document.getElementById(PORTAL_ROOT_ID);
+      if (root && root.children.length === 0) {
+        root.remove();
+      }
+    };
+  }, [enabled]);
 
-	if (!enabled) {
-		return createElement('span', null, children);
-	}
+  if (!enabled) {
+    return createElement('span', null, children);
+  }
 
-	if (!mounted || !containerRef.current) return null;
+  if (!mounted || !containerRef.current) return null;
 
-	return createPortal(children, containerRef.current) as VNode;
+  return createPortal(children, containerRef.current) as VNode;
 }
 
 Portal.displayName = 'Portal';

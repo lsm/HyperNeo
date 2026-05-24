@@ -16,17 +16,17 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type {
-	SpaceWorkflow,
-	SpaceWorkflowSummary,
-	SpaceAutonomyLevel,
-	WorkflowNode,
-	WorkflowNodeInput,
-	WorkflowNodeAgent,
-	WorkflowChannel,
-	Gate,
-	CreateSpaceWorkflowParams,
-	PostApprovalRoute,
-	UpdateSpaceWorkflowParams,
+  SpaceWorkflow,
+  SpaceWorkflowSummary,
+  SpaceAutonomyLevel,
+  WorkflowNode,
+  WorkflowNodeInput,
+  WorkflowNodeAgent,
+  WorkflowChannel,
+  Gate,
+  CreateSpaceWorkflowParams,
+  PostApprovalRoute,
+  UpdateSpaceWorkflowParams,
 } from '@neokai/shared';
 import { Logger } from '../../lib/logger';
 
@@ -37,57 +37,57 @@ const log = new Logger('space-workflow-repository');
 // ---------------------------------------------------------------------------
 
 interface WorkflowRow {
-	id: string;
-	space_id: string;
-	name: string;
-	description: string;
-	start_node_id: string | null;
-	end_node_id?: string | null;
-	tags: string;
-	channels: string | null;
-	gates: string | null;
-	layout: string | null;
-	template_name: string | null;
-	template_hash: string | null;
-	instructions: string | null;
-	completion_autonomy_level: number;
-	/**
-	 * JSON-encoded legacy workflow-level `PostApprovalRoute` — null when the
-	 * workflow has no legacy route configured. New routes live in node config.
-	 */
-	post_approval?: string | null;
-	disabled: number;
-	handle: string | null;
-	created_at: number;
-	updated_at: number;
+  id: string;
+  space_id: string;
+  name: string;
+  description: string;
+  start_node_id: string | null;
+  end_node_id?: string | null;
+  tags: string;
+  channels: string | null;
+  gates: string | null;
+  layout: string | null;
+  template_name: string | null;
+  template_hash: string | null;
+  instructions: string | null;
+  completion_autonomy_level: number;
+  /**
+   * JSON-encoded legacy workflow-level `PostApprovalRoute` — null when the
+   * workflow has no legacy route configured. New routes live in node config.
+   */
+  post_approval?: string | null;
+  disabled: number;
+  handle: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 interface NodeRow {
-	id: string;
-	workflow_id: string;
-	name: string;
-	description: string;
-	config: string | null;
-	created_at: number;
-	updated_at: number;
+  id: string;
+  workflow_id: string;
+  name: string;
+  description: string;
+  config: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 // JSON stored inside space_workflow_nodes.config
 interface NodeConfigJson {
-	/** Multi-agent array */
-	agents?: WorkflowNodeAgent[];
-	/** Optional post-approval route scoped to this workflow node. */
-	postApproval?: PostApprovalRoute;
-	/**
-	 * Forward-compat: rows persisted before PR 5/5 of the
-	 * task-agent-as-post-approval-executor refactor may carry a legacy
-	 * post-approval action list under this key. The runtime no longer reads it;
-	 * `rowToNode` strips it on load and logs a warning so the row can be
-	 * re-saved cleanly the next time the workflow is updated. The field is
-	 * intentionally untyped (`unknown`) because the action union has been
-	 * deleted from `@neokai/shared`.
-	 */
-	completionActions?: unknown;
+  /** Multi-agent array */
+  agents?: WorkflowNodeAgent[];
+  /** Optional post-approval route scoped to this workflow node. */
+  postApproval?: PostApprovalRoute;
+  /**
+   * Forward-compat: rows persisted before PR 5/5 of the
+   * task-agent-as-post-approval-executor refactor may carry a legacy
+   * post-approval action list under this key. The runtime no longer reads it;
+   * `rowToNode` strips it on load and logs a warning so the row can be
+   * re-saved cleanly the next time the workflow is updated. The field is
+   * intentionally untyped (`unknown`) because the action union has been
+   * deleted from `@neokai/shared`.
+   */
+  completionActions?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,12 +95,12 @@ interface NodeConfigJson {
 // ---------------------------------------------------------------------------
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
-	if (!raw) return fallback;
-	try {
-		return JSON.parse(raw) as T;
-	} catch {
-		return fallback;
-	}
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -110,77 +110,77 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
  * stripped field across all nodes — instead of a noisy per-node warning.
  */
 interface NodeMigrationContext {
-	strippedFields: Set<string>;
+  strippedFields: Set<string>;
 }
 
 function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
-	const cfg = parseJson<NodeConfigJson>(row.config, {});
-	// Ensure agents is always a non-empty array
-	const agents: WorkflowNodeAgent[] =
-		cfg.agents && cfg.agents.length > 0
-			? cfg.agents.map((a: WorkflowNodeAgent) => ({
-					...a,
-					// Backfill name if missing (legacy rows)
-					name: a.name?.trim() ? a.name : a.agentId,
-				}))
-			: [];
+  const cfg = parseJson<NodeConfigJson>(row.config, {});
+  // Ensure agents is always a non-empty array
+  const agents: WorkflowNodeAgent[] =
+    cfg.agents && cfg.agents.length > 0
+      ? cfg.agents.map((a: WorkflowNodeAgent) => ({
+          ...a,
+          // Backfill name if missing (legacy rows)
+          name: a.name?.trim() ? a.name : a.agentId,
+        }))
+      : [];
 
-	// Forward-compat: drop the deprecated `completionActions` key without
-	// failing the load. Older rows persisted before PR 5/5 of the
-	// task-agent-as-post-approval-executor refactor still carry it. The
-	// runtime no longer routes through it — node-level `postApproval` routes
-	// are the supported replacement. We do NOT log here per-node; the
-	// caller aggregates stripped fields and emits a single structured
-	// `workflow.migrated` log line per workflow load. See plan §6.1.
-	if (cfg.completionActions !== undefined && ctx) {
-		ctx.strippedFields.add('completionActions');
-	}
+  // Forward-compat: drop the deprecated `completionActions` key without
+  // failing the load. Older rows persisted before PR 5/5 of the
+  // task-agent-as-post-approval-executor refactor still carry it. The
+  // runtime no longer routes through it — node-level `postApproval` routes
+  // are the supported replacement. We do NOT log here per-node; the
+  // caller aggregates stripped fields and emits a single structured
+  // `workflow.migrated` log line per workflow load. See plan §6.1.
+  if (cfg.completionActions !== undefined && ctx) {
+    ctx.strippedFields.add('completionActions');
+  }
 
-	return {
-		id: row.id,
-		name: row.name,
-		agents,
-		...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
-	};
+  return {
+    id: row.id,
+    name: row.name,
+    agents,
+    ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
+  };
 }
 
 function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
-	const startNodeId = row.start_node_id ?? nodes[0]?.id ?? '';
-	const tags = parseJson<string[]>(row.tags, []);
-	const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
-	const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
-	const gates = parseJson<Gate[] | null>(row.gates, null);
+  const startNodeId = row.start_node_id ?? nodes[0]?.id ?? '';
+  const tags = parseJson<string[]>(row.tags, []);
+  const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
+  const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
+  const gates = parseJson<Gate[] | null>(row.gates, null);
 
-	const wf: SpaceWorkflow = {
-		id: row.id,
-		spaceId: row.space_id,
-		name: row.name,
-		description: row.description || undefined,
-		nodes,
-		startNodeId,
-		tags,
-		completionAutonomyLevel: row.completion_autonomy_level as SpaceAutonomyLevel,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at,
-	};
-	if (row.end_node_id) wf.endNodeId = row.end_node_id;
-	if (channels && channels.length > 0) wf.channels = channels;
-	if (gates && gates.length > 0) wf.gates = gates;
-	if (layout) wf.layout = layout;
-	if (row.template_name) wf.templateName = row.template_name;
-	if (row.template_hash) wf.templateHash = row.template_hash;
-	if (row.instructions) wf.instructions = row.instructions;
-	const postApproval = parseJson<PostApprovalRoute | null>(row.post_approval ?? null, null);
-	if (postApproval && typeof postApproval === 'object') {
-		wf.postApproval = postApproval;
-	}
-	if (row.disabled) {
-		wf.disabled = true;
-	}
-	if (row.handle) {
-		wf.handle = row.handle;
-	}
-	return wf;
+  const wf: SpaceWorkflow = {
+    id: row.id,
+    spaceId: row.space_id,
+    name: row.name,
+    description: row.description || undefined,
+    nodes,
+    startNodeId,
+    tags,
+    completionAutonomyLevel: row.completion_autonomy_level as SpaceAutonomyLevel,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+  if (row.end_node_id) wf.endNodeId = row.end_node_id;
+  if (channels && channels.length > 0) wf.channels = channels;
+  if (gates && gates.length > 0) wf.gates = gates;
+  if (layout) wf.layout = layout;
+  if (row.template_name) wf.templateName = row.template_name;
+  if (row.template_hash) wf.templateHash = row.template_hash;
+  if (row.instructions) wf.instructions = row.instructions;
+  const postApproval = parseJson<PostApprovalRoute | null>(row.post_approval ?? null, null);
+  if (postApproval && typeof postApproval === 'object') {
+    wf.postApproval = postApproval;
+  }
+  if (row.disabled) {
+    wf.disabled = true;
+  }
+  if (row.handle) {
+    wf.handle = row.handle;
+  }
+  return wf;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,526 +188,526 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 // ---------------------------------------------------------------------------
 
 export class SpaceWorkflowRepository {
-	constructor(private db: BunDatabase) {}
+  constructor(private db: BunDatabase) {}
 
-	// -------------------------------------------------------------------------
-	// Create
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Create
+  // -------------------------------------------------------------------------
 
-	createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
-		const workflowId = generateUUID();
-		const now = Date.now();
+  createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
+    const workflowId = generateUUID();
+    const now = Date.now();
 
-		// Default completionAutonomyLevel to 3 (supervised) when not provided.
-		// The DB column has NOT NULL DEFAULT 3; we mirror that here so callers
-		// (e.g. the visual editor) do not need to pass an explicit value.
-		const completionAutonomyLevel: SpaceAutonomyLevel =
-			params.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel);
+    // Default completionAutonomyLevel to 3 (supervised) when not provided.
+    // The DB column has NOT NULL DEFAULT 3; we mirror that here so callers
+    // (e.g. the visual editor) do not need to pass an explicit value.
+    const completionAutonomyLevel: SpaceAutonomyLevel =
+      params.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel);
 
-		// Pre-resolve node IDs so channels can reference them
-		const nodeInputs = params.nodes ?? [];
-		const resolvedNodes: Array<{ id: string; input: WorkflowNodeInput }> = nodeInputs.map(
-			(input) => ({
-				id: input.id ?? generateUUID(),
-				input,
-			})
-		);
+    // Pre-resolve node IDs so channels can reference them
+    const nodeInputs = params.nodes ?? [];
+    const resolvedNodes: Array<{ id: string; input: WorkflowNodeInput }> = nodeInputs.map(
+      (input) => ({
+        id: input.id ?? generateUUID(),
+        input,
+      })
+    );
 
-		const startNodeId = params.startNodeId ?? resolvedNodes[0]?.id ?? null;
-		const endNodeId = params.endNodeId ?? null;
+    const startNodeId = params.startNodeId ?? resolvedNodes[0]?.id ?? null;
+    const endNodeId = params.endNodeId ?? null;
 
-		const channelsJson =
-			params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
-		const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
-		const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
-		const postApprovalJson = params.postApproval ? JSON.stringify(params.postApproval) : null;
+    const channelsJson =
+      params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
+    const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
+    const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
+    const postApprovalJson = params.postApproval ? JSON.stringify(params.postApproval) : null;
 
-		this.db
-			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
+    this.db
+      .prepare(
+        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
 	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-			)
-			.run(
-				workflowId,
-				params.spaceId,
-				params.name.trim(),
-				params.description ?? '',
-				startNodeId,
-				endNodeId,
-				JSON.stringify(params.tags ?? []),
-				channelsJson,
-				gatesJson,
-				layoutJson,
-				params.templateName ?? null,
-				params.templateHash ?? null,
-				params.instructions ?? null,
-				completionAutonomyLevel,
-				postApprovalJson,
-				params.disabled ? 1 : 0,
-				params.handle ?? null,
-				now,
-				now
-			);
+      )
+      .run(
+        workflowId,
+        params.spaceId,
+        params.name.trim(),
+        params.description ?? '',
+        startNodeId,
+        endNodeId,
+        JSON.stringify(params.tags ?? []),
+        channelsJson,
+        gatesJson,
+        layoutJson,
+        params.templateName ?? null,
+        params.templateHash ?? null,
+        params.instructions ?? null,
+        completionAutonomyLevel,
+        postApprovalJson,
+        params.disabled ? 1 : 0,
+        params.handle ?? null,
+        now,
+        now
+      );
 
-		// Insert node rows
-		for (let i = 0; i < resolvedNodes.length; i++) {
-			const { id, input } = resolvedNodes[i];
-			this.insertNode(workflowId, input, id, i, now);
-		}
+    // Insert node rows
+    for (let i = 0; i < resolvedNodes.length; i++) {
+      const { id, input } = resolvedNodes[i];
+      this.insertNode(workflowId, input, id, i, now);
+    }
 
-		return this.getWorkflow(workflowId)!;
-	}
+    return this.getWorkflow(workflowId)!;
+  }
 
-	// -------------------------------------------------------------------------
-	// Read
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Read
+  // -------------------------------------------------------------------------
 
-	getWorkflow(id: string): SpaceWorkflow | null {
-		const row = this.db.prepare(`SELECT * FROM space_workflows WHERE id = ?`).get(id) as
-			| WorkflowRow
-			| undefined;
-		if (!row) return null;
-		const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
-		const nodes = this.fetchNodes(id, ctx);
-		this.emitMigrationLog(row, ctx);
-		return rowToWorkflow(row, nodes);
-	}
+  getWorkflow(id: string): SpaceWorkflow | null {
+    const row = this.db.prepare(`SELECT * FROM space_workflows WHERE id = ?`).get(id) as
+      | WorkflowRow
+      | undefined;
+    if (!row) return null;
+    const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
+    const nodes = this.fetchNodes(id, ctx);
+    this.emitMigrationLog(row, ctx);
+    return rowToWorkflow(row, nodes);
+  }
 
-	listWorkflows(spaceId: string): SpaceWorkflow[] {
-		const rows = this.db
-			.prepare(
-				`SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC, rowid ASC`
-			)
-			.all(spaceId) as WorkflowRow[];
-		return rows.map((r) => {
-			const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
-			const nodes = this.fetchNodes(r.id, ctx);
-			this.emitMigrationLog(r, ctx);
-			return rowToWorkflow(r, nodes);
-		});
-	}
+  listWorkflows(spaceId: string): SpaceWorkflow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC, rowid ASC`
+      )
+      .all(spaceId) as WorkflowRow[];
+    return rows.map((r) => {
+      const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
+      const nodes = this.fetchNodes(r.id, ctx);
+      this.emitMigrationLog(r, ctx);
+      return rowToWorkflow(r, nodes);
+    });
+  }
 
-	listWorkflowSummaries(spaceId: string): SpaceWorkflowSummary[] {
-		const rows = this.db
-			.prepare(
-				`SELECT id, space_id, name, description, tags, template_name, template_hash, disabled, handle, completion_autonomy_level, created_at, updated_at
+  listWorkflowSummaries(spaceId: string): SpaceWorkflowSummary[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, space_id, name, description, tags, template_name, template_hash, disabled, handle, completion_autonomy_level, created_at, updated_at
 				 FROM space_workflows
 				 WHERE space_id = ?
 				 ORDER BY created_at ASC, rowid ASC`
-			)
-			.all(spaceId) as Array<
-			Pick<
-				WorkflowRow,
-				| 'id'
-				| 'space_id'
-				| 'name'
-				| 'description'
-				| 'tags'
-				| 'template_name'
-				| 'template_hash'
-				| 'disabled'
-				| 'handle'
-				| 'completion_autonomy_level'
-				| 'created_at'
-				| 'updated_at'
-			>
-		>;
+      )
+      .all(spaceId) as Array<
+      Pick<
+        WorkflowRow,
+        | 'id'
+        | 'space_id'
+        | 'name'
+        | 'description'
+        | 'tags'
+        | 'template_name'
+        | 'template_hash'
+        | 'disabled'
+        | 'handle'
+        | 'completion_autonomy_level'
+        | 'created_at'
+        | 'updated_at'
+      >
+    >;
 
-		const nodeCounts = this.db
-			.prepare(
-				`SELECT workflow_id, COUNT(*) as count
+    const nodeCounts = this.db
+      .prepare(
+        `SELECT workflow_id, COUNT(*) as count
 				 FROM space_workflow_nodes
 				 WHERE workflow_id IN (SELECT id FROM space_workflows WHERE space_id = ?)
 				 GROUP BY workflow_id`
-			)
-			.all(spaceId) as Array<{ workflow_id: string; count: number }>;
-		const countByWorkflowId = new Map<string, number>();
-		for (const nc of nodeCounts) {
-			countByWorkflowId.set(nc.workflow_id, nc.count);
-		}
+      )
+      .all(spaceId) as Array<{ workflow_id: string; count: number }>;
+    const countByWorkflowId = new Map<string, number>();
+    for (const nc of nodeCounts) {
+      countByWorkflowId.set(nc.workflow_id, nc.count);
+    }
 
-		return rows.map((r) => ({
-			id: r.id,
-			spaceId: r.space_id,
-			name: r.name,
-			description: r.description || undefined,
-			tags: parseJson<string[]>(r.tags, []),
-			templateName: r.template_name ?? undefined,
-			templateHash: r.template_hash ?? null,
-			disabled: !!r.disabled,
-			handle: r.handle ?? undefined,
-			nodeCount: countByWorkflowId.get(r.id) ?? 0,
-			completionAutonomyLevel:
-				(r.completion_autonomy_level as SpaceAutonomyLevel) ?? (3 as SpaceAutonomyLevel),
-			createdAt: r.created_at,
-			updatedAt: r.updated_at,
-		}));
-	}
+    return rows.map((r) => ({
+      id: r.id,
+      spaceId: r.space_id,
+      name: r.name,
+      description: r.description || undefined,
+      tags: parseJson<string[]>(r.tags, []),
+      templateName: r.template_name ?? undefined,
+      templateHash: r.template_hash ?? null,
+      disabled: !!r.disabled,
+      handle: r.handle ?? undefined,
+      nodeCount: countByWorkflowId.get(r.id) ?? 0,
+      completionAutonomyLevel:
+        (r.completion_autonomy_level as SpaceAutonomyLevel) ?? (3 as SpaceAutonomyLevel),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
 
-	/**
-	 * Emit the structured `workflow.migrated` log line when a load stripped
-	 * deprecated fields. Format is fixed by plan §6.1 so operators / log
-	 * aggregators can grep / parse it reliably:
-	 *
-	 *   `workflow.migrated: workflowId=<id> workflowName=<name> strippedFields=[<csv>]`
-	 *
-	 * The DB row is intentionally NOT rewritten — re-saving the workflow via
-	 * the editor is the documented way to clear persisted legacy fields.
-	 */
-	private emitMigrationLog(row: WorkflowRow, ctx: NodeMigrationContext): void {
-		if (ctx.strippedFields.size === 0) return;
-		const stripped = [...ctx.strippedFields].sort().join(',');
-		log.warn(
-			`workflow.migrated: workflowId=${row.id} workflowName=${row.name} ` +
-				`strippedFields=[${stripped}]`
-		);
-	}
+  /**
+   * Emit the structured `workflow.migrated` log line when a load stripped
+   * deprecated fields. Format is fixed by plan §6.1 so operators / log
+   * aggregators can grep / parse it reliably:
+   *
+   *   `workflow.migrated: workflowId=<id> workflowName=<name> strippedFields=[<csv>]`
+   *
+   * The DB row is intentionally NOT rewritten — re-saving the workflow via
+   * the editor is the documented way to clear persisted legacy fields.
+   */
+  private emitMigrationLog(row: WorkflowRow, ctx: NodeMigrationContext): void {
+    if (ctx.strippedFields.size === 0) return;
+    const stripped = [...ctx.strippedFields].sort().join(',');
+    log.warn(
+      `workflow.migrated: workflowId=${row.id} workflowName=${row.name} ` +
+        `strippedFields=[${stripped}]`
+    );
+  }
 
-	// -------------------------------------------------------------------------
-	// Update
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Update
+  // -------------------------------------------------------------------------
 
-	updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null {
-		const row = this.db.prepare(`SELECT * FROM space_workflows WHERE id = ?`).get(id) as
-			| WorkflowRow
-			| undefined;
-		if (!row) return null;
+  updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null {
+    const row = this.db.prepare(`SELECT * FROM space_workflows WHERE id = ?`).get(id) as
+      | WorkflowRow
+      | undefined;
+    if (!row) return null;
 
-		const now = Date.now();
-		const fields: string[] = [];
-		const values: (string | number | null)[] = [];
+    const now = Date.now();
+    const fields: string[] = [];
+    const values: (string | number | null)[] = [];
 
-		if (params.name !== undefined) {
-			fields.push('name = ?');
-			values.push(params.name.trim());
-		}
-		if (params.description !== undefined) {
-			fields.push('description = ?');
-			values.push(params.description ?? '');
-		}
-		if (params.startNodeId !== undefined) {
-			fields.push('start_node_id = ?');
-			values.push(params.startNodeId ?? null);
-		}
-		if (params.endNodeId !== undefined) {
-			fields.push('end_node_id = ?');
-			values.push(params.endNodeId ?? null);
-		}
-		if (params.tags !== undefined) {
-			fields.push('tags = ?');
-			values.push(JSON.stringify(params.tags ?? []));
-		}
+    if (params.name !== undefined) {
+      fields.push('name = ?');
+      values.push(params.name.trim());
+    }
+    if (params.description !== undefined) {
+      fields.push('description = ?');
+      values.push(params.description ?? '');
+    }
+    if (params.startNodeId !== undefined) {
+      fields.push('start_node_id = ?');
+      values.push(params.startNodeId ?? null);
+    }
+    if (params.endNodeId !== undefined) {
+      fields.push('end_node_id = ?');
+      values.push(params.endNodeId ?? null);
+    }
+    if (params.tags !== undefined) {
+      fields.push('tags = ?');
+      values.push(JSON.stringify(params.tags ?? []));
+    }
 
-		if (params.channels !== undefined) {
-			fields.push('channels = ?');
-			values.push(
-				params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
-			);
-		}
+    if (params.channels !== undefined) {
+      fields.push('channels = ?');
+      values.push(
+        params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null
+      );
+    }
 
-		if (params.gates !== undefined) {
-			fields.push('gates = ?');
-			values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
-		}
+    if (params.gates !== undefined) {
+      fields.push('gates = ?');
+      values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
+    }
 
-		if (params.layout !== undefined) {
-			fields.push('layout = ?');
-			values.push(params.layout ? JSON.stringify(params.layout) : null);
-		}
+    if (params.layout !== undefined) {
+      fields.push('layout = ?');
+      values.push(params.layout ? JSON.stringify(params.layout) : null);
+    }
 
-		if (params.templateName !== undefined) {
-			fields.push('template_name = ?');
-			values.push(params.templateName ?? null);
-		}
-		if (params.templateHash !== undefined) {
-			fields.push('template_hash = ?');
-			values.push(params.templateHash ?? null);
-		}
-		if (params.instructions !== undefined) {
-			fields.push('instructions = ?');
-			values.push(params.instructions ?? null);
-		}
-		if (params.completionAutonomyLevel !== undefined) {
-			fields.push('completion_autonomy_level = ?');
-			values.push(params.completionAutonomyLevel);
-		}
+    if (params.templateName !== undefined) {
+      fields.push('template_name = ?');
+      values.push(params.templateName ?? null);
+    }
+    if (params.templateHash !== undefined) {
+      fields.push('template_hash = ?');
+      values.push(params.templateHash ?? null);
+    }
+    if (params.instructions !== undefined) {
+      fields.push('instructions = ?');
+      values.push(params.instructions ?? null);
+    }
+    if (params.completionAutonomyLevel !== undefined) {
+      fields.push('completion_autonomy_level = ?');
+      values.push(params.completionAutonomyLevel);
+    }
 
-		if (params.postApproval !== undefined) {
-			fields.push('post_approval = ?');
-			values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
-		}
-		if (params.disabled !== undefined && params.disabled !== null) {
-			fields.push('disabled = ?');
-			values.push(params.disabled ? 1 : 0);
-		}
-		if (params.handle !== undefined) {
-			fields.push('handle = ?');
-			values.push(params.handle ?? null);
-		}
+    if (params.postApproval !== undefined) {
+      fields.push('post_approval = ?');
+      values.push(params.postApproval ? JSON.stringify(params.postApproval) : null);
+    }
+    if (params.disabled !== undefined && params.disabled !== null) {
+      fields.push('disabled = ?');
+      values.push(params.disabled ? 1 : 0);
+    }
+    if (params.handle !== undefined) {
+      fields.push('handle = ?');
+      values.push(params.handle ?? null);
+    }
 
-		const hasNodeReplacement = params.nodes !== undefined;
+    const hasNodeReplacement = params.nodes !== undefined;
 
-		if (fields.length > 0 || hasNodeReplacement) {
-			fields.push('updated_at = ?');
-			values.push(now, id);
-			if (fields.length > 0) {
-				this.db
-					.prepare(`UPDATE space_workflows SET ${fields.join(', ')} WHERE id = ?`)
-					.run(...values);
-			}
-		}
+    if (fields.length > 0 || hasNodeReplacement) {
+      fields.push('updated_at = ?');
+      values.push(now, id);
+      if (fields.length > 0) {
+        this.db
+          .prepare(`UPDATE space_workflows SET ${fields.join(', ')} WHERE id = ?`)
+          .run(...values);
+      }
+    }
 
-		if (hasNodeReplacement) {
-			const nodes = params.nodes ?? [];
-			this.updateWorkflowNodesInPlace(id, nodes as WorkflowNodeInput[], now);
-		}
+    if (hasNodeReplacement) {
+      const nodes = params.nodes ?? [];
+      this.updateWorkflowNodesInPlace(id, nodes as WorkflowNodeInput[], now);
+    }
 
-		return this.getWorkflow(id)!;
-	}
+    return this.getWorkflow(id)!;
+  }
 
-	/**
-	 * Update only persisted node-agent toolGuards for existing workflow nodes.
-	 *
-	 * This intentionally avoids replacing rows in `space_workflow_nodes`: workflow
-	 * IDs, node IDs, and node-agent slots are stable identifiers referenced by
-	 * in-flight workflow runs. Nodes are matched by stable node ID and only the
-	 * JSON config for that node is rewritten.
-	 */
-	updateWorkflowNodeToolGuards(workflowId: string, nodes: WorkflowNode[]): void {
-		const now = Date.now();
-		const updateNode = this.db.prepare(
-			`UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
-		);
+  /**
+   * Update only persisted node-agent toolGuards for existing workflow nodes.
+   *
+   * This intentionally avoids replacing rows in `space_workflow_nodes`: workflow
+   * IDs, node IDs, and node-agent slots are stable identifiers referenced by
+   * in-flight workflow runs. Nodes are matched by stable node ID and only the
+   * JSON config for that node is rewritten.
+   */
+  updateWorkflowNodeToolGuards(workflowId: string, nodes: WorkflowNode[]): void {
+    const now = Date.now();
+    const updateNode = this.db.prepare(
+      `UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+    );
 
-		for (const node of nodes) {
-			const cfg: NodeConfigJson = {
-				agents: node.agents,
-				...(node.postApproval ? { postApproval: node.postApproval } : {}),
-			};
-			const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
-			if (result.changes === 0) {
-				log.error(
-					`workflow.nodeToolGuards.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`
-				);
-			}
-		}
+    for (const node of nodes) {
+      const cfg: NodeConfigJson = {
+        agents: node.agents,
+        ...(node.postApproval ? { postApproval: node.postApproval } : {}),
+      };
+      const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
+      if (result.changes === 0) {
+        log.error(
+          `workflow.nodeToolGuards.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`
+        );
+      }
+    }
 
-		this.db.prepare(`UPDATE space_workflows SET updated_at = ? WHERE id = ?`).run(now, workflowId);
-	}
+    this.db.prepare(`UPDATE space_workflows SET updated_at = ? WHERE id = ?`).run(now, workflowId);
+  }
 
-	// -------------------------------------------------------------------------
-	// Delete
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Delete
+  // -------------------------------------------------------------------------
 
-	deleteWorkflow(id: string): boolean {
-		const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
-		return result.changes > 0;
-	}
+  deleteWorkflow(id: string): boolean {
+    const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
+    return result.changes > 0;
+  }
 
-	// -------------------------------------------------------------------------
-	// Handle lookup
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Handle lookup
+  // -------------------------------------------------------------------------
 
-	/**
-	 * Get a workflow by its handle within a specific space.
-	 */
-	getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
-		const row = this.db
-			.prepare(`SELECT * FROM space_workflows WHERE space_id = ? AND handle = ?`)
-			.get(spaceId, handle) as WorkflowRow | undefined;
-		if (!row) return null;
-		const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
-		const nodes = this.fetchNodes(row.id, ctx);
-		this.emitMigrationLog(row, ctx);
-		return rowToWorkflow(row, nodes);
-	}
+  /**
+   * Get a workflow by its handle within a specific space.
+   */
+  getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
+    const row = this.db
+      .prepare(`SELECT * FROM space_workflows WHERE space_id = ? AND handle = ?`)
+      .get(spaceId, handle) as WorkflowRow | undefined;
+    if (!row) return null;
+    const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
+    const nodes = this.fetchNodes(row.id, ctx);
+    this.emitMigrationLog(row, ctx);
+    return rowToWorkflow(row, nodes);
+  }
 
-	/**
-	 * Get all handles currently in use for a space (for collision detection).
-	 */
-	getHandlesForSpace(spaceId: string): string[] {
-		const rows = this.db
-			.prepare(`SELECT handle FROM space_workflows WHERE space_id = ? AND handle IS NOT NULL`)
-			.all(spaceId) as Array<{ handle: string }>;
-		return rows.map((r) => r.handle);
-	}
+  /**
+   * Get all handles currently in use for a space (for collision detection).
+   */
+  getHandlesForSpace(spaceId: string): string[] {
+    const rows = this.db
+      .prepare(`SELECT handle FROM space_workflows WHERE space_id = ? AND handle IS NOT NULL`)
+      .all(spaceId) as Array<{ handle: string }>;
+    return rows.map((r) => r.handle);
+  }
 
-	// -------------------------------------------------------------------------
-	// Agent reference queries
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Agent reference queries
+  // -------------------------------------------------------------------------
 
-	/**
-	 * Find all workflows in a space whose nodes reference the given custom SpaceAgent ID.
-	 * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
-	 *
-	 * Checks the `config` JSON column for multi-agent nodes (agents[] format).
-	 */
-	getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
-		const nodeRows = this.db
-			.prepare(
-				`SELECT DISTINCT workflow_id FROM space_workflow_nodes
+  /**
+   * Find all workflows in a space whose nodes reference the given custom SpaceAgent ID.
+   * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
+   *
+   * Checks the `config` JSON column for multi-agent nodes (agents[] format).
+   */
+  getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
+    const nodeRows = this.db
+      .prepare(
+        `SELECT DISTINCT workflow_id FROM space_workflow_nodes
 	         WHERE config LIKE '%' || ? || '%'`
-			)
-			.all(agentId) as Array<{ workflow_id: string }>;
+      )
+      .all(agentId) as Array<{ workflow_id: string }>;
 
-		const workflows: SpaceWorkflow[] = [];
-		for (const { workflow_id } of nodeRows) {
-			const wf = this.getWorkflow(workflow_id);
-			if (wf) workflows.push(wf);
-		}
-		return workflows;
-	}
+    const workflows: SpaceWorkflow[] = [];
+    for (const { workflow_id } of nodeRows) {
+      const wf = this.getWorkflow(workflow_id);
+      if (wf) workflows.push(wf);
+    }
+    return workflows;
+  }
 
-	// -------------------------------------------------------------------------
-	// Private helpers
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Private helpers
+  // -------------------------------------------------------------------------
 
-	private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
-		const rows = this.db
-			.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
-			.all(workflowId) as NodeRow[];
-		return rows.map((r) => rowToNode(r, ctx));
-	}
+  private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+      .all(workflowId) as NodeRow[];
+    return rows.map((r) => rowToNode(r, ctx));
+  }
 
-	private updateWorkflowNodesInPlace(
-		workflowId: string,
-		nodes: WorkflowNodeInput[],
-		now: number
-	): void {
-		const existingRows = this.db
-			.prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
-			.all(workflowId) as Array<{ id: string }>;
-		const existingNodeIds = new Set(existingRows.map((row) => row.id));
-		const incomingNodeIds = new Set(
-			nodes.map((node) => node.id).filter((id): id is string => !!id)
-		);
-		const updateNode = this.db.prepare(
-			`UPDATE space_workflow_nodes SET name = ?, config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
-		);
-		const insertNodeRow = this.db.prepare(
-			`INSERT INTO space_workflow_nodes
+  private updateWorkflowNodesInPlace(
+    workflowId: string,
+    nodes: WorkflowNodeInput[],
+    now: number
+  ): void {
+    const existingRows = this.db
+      .prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+      .all(workflowId) as Array<{ id: string }>;
+    const existingNodeIds = new Set(existingRows.map((row) => row.id));
+    const incomingNodeIds = new Set(
+      nodes.map((node) => node.id).filter((id): id is string => !!id)
+    );
+    const updateNode = this.db.prepare(
+      `UPDATE space_workflow_nodes SET name = ?, config = ?, updated_at = ? WHERE workflow_id = ? AND id = ?`
+    );
+    const insertNodeRow = this.db.prepare(
+      `INSERT INTO space_workflow_nodes
 				(id, workflow_id, name, description, config, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`
-		);
-		const rowOrderByNodeId = new Map<string, number>();
+    );
+    const rowOrderByNodeId = new Map<string, number>();
 
-		for (let i = 0; i < nodes.length; i++) {
-			const node = nodes[i];
-			if (!node.id) {
-				log.error(`workflow.node.update.missingStableId: workflowId=${workflowId}`);
-				continue;
-			}
-			rowOrderByNodeId.set(node.id, i + 1);
-			const configJson = JSON.stringify(this.buildNodeConfig(node));
-			if (existingNodeIds.has(node.id)) {
-				const result = updateNode.run(node.name, configJson, now, workflowId, node.id);
-				if (result.changes === 0) {
-					log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
-				}
-			} else {
-				insertNodeRow.run(node.id, workflowId, node.name, '', configJson, now, now);
-			}
-		}
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (!node.id) {
+        log.error(`workflow.node.update.missingStableId: workflowId=${workflowId}`);
+        continue;
+      }
+      rowOrderByNodeId.set(node.id, i + 1);
+      const configJson = JSON.stringify(this.buildNodeConfig(node));
+      if (existingNodeIds.has(node.id)) {
+        const result = updateNode.run(node.name, configJson, now, workflowId, node.id);
+        if (result.changes === 0) {
+          log.error(`workflow.node.update.missingNode: workflowId=${workflowId} nodeId=${node.id}`);
+        }
+      } else {
+        insertNodeRow.run(node.id, workflowId, node.name, '', configJson, now, now);
+      }
+    }
 
-		for (const nodeId of existingNodeIds) {
-			if (!incomingNodeIds.has(nodeId)) {
-				this.db
-					.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ? AND id = ?`)
-					.run(workflowId, nodeId);
-			}
-		}
+    for (const nodeId of existingNodeIds) {
+      if (!incomingNodeIds.has(nodeId)) {
+        this.db
+          .prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ? AND id = ?`)
+          .run(workflowId, nodeId);
+      }
+    }
 
-		this.reorderWorkflowNodeRows(workflowId, rowOrderByNodeId);
-	}
+    this.reorderWorkflowNodeRows(workflowId, rowOrderByNodeId);
+  }
 
-	private reorderWorkflowNodeRows(workflowId: string, rowOrderByNodeId: Map<string, number>): void {
-		if (rowOrderByNodeId.size === 0) return;
+  private reorderWorkflowNodeRows(workflowId: string, rowOrderByNodeId: Map<string, number>): void {
+    if (rowOrderByNodeId.size === 0) return;
 
-		const existingRows = this.db
-			.prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
-			.all(workflowId) as Array<{ id: string }>;
-		const sortedIds = [...existingRows]
-			.sort((a, b) => {
-				const aOrder = rowOrderByNodeId.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-				const bOrder = rowOrderByNodeId.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-				return aOrder - bOrder;
-			})
-			.map((row) => row.id);
-		if (sortedIds.every((id, index) => id === existingRows[index]?.id)) return;
+    const existingRows = this.db
+      .prepare(`SELECT id FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
+      .all(workflowId) as Array<{ id: string }>;
+    const sortedIds = [...existingRows]
+      .sort((a, b) => {
+        const aOrder = rowOrderByNodeId.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const bOrder = rowOrderByNodeId.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return aOrder - bOrder;
+      })
+      .map((row) => row.id);
+    if (sortedIds.every((id, index) => id === existingRows[index]?.id)) return;
 
-		const rowsById = new Map<string, NodeRow>();
-		for (const row of this.db
-			.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`)
-			.all(workflowId) as NodeRow[]) {
-			rowsById.set(row.id, row);
-		}
+    const rowsById = new Map<string, NodeRow>();
+    for (const row of this.db
+      .prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`)
+      .all(workflowId) as NodeRow[]) {
+      rowsById.set(row.id, row);
+    }
 
-		this.db.transaction(() => {
-			this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(workflowId);
-			const insertNodeRow = this.db.prepare(
-				`INSERT INTO space_workflow_nodes
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM space_workflow_nodes WHERE workflow_id = ?`).run(workflowId);
+      const insertNodeRow = this.db.prepare(
+        `INSERT INTO space_workflow_nodes
 					(id, workflow_id, name, description, config, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?)`
-			);
-			for (const nodeId of sortedIds) {
-				const row = rowsById.get(nodeId);
-				if (!row) continue;
-				insertNodeRow.run(
-					row.id,
-					row.workflow_id,
-					row.name,
-					row.description,
-					row.config,
-					row.created_at,
-					row.updated_at
-				);
-			}
-		})();
-	}
+      );
+      for (const nodeId of sortedIds) {
+        const row = rowsById.get(nodeId);
+        if (!row) continue;
+        insertNodeRow.run(
+          row.id,
+          row.workflow_id,
+          row.name,
+          row.description,
+          row.config,
+          row.created_at,
+          row.updated_at
+        );
+      }
+    })();
+  }
 
-	private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
-		const nodeCfg: NodeConfigJson = {};
+  private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
+    const nodeCfg: NodeConfigJson = {};
 
-		// Normalize agents: use `agents` array if present, otherwise fall back to legacy
-		// `agentId` shorthand (still used in tests and older call-sites).
-		const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
-			| string
-			| undefined;
-		let resolvedAgents = input.agents && input.agents.length > 0 ? input.agents : undefined;
-		if (!resolvedAgents && legacyAgentId) {
-			resolvedAgents = [{ agentId: legacyAgentId, name: input.name }];
-		}
-		if (resolvedAgents && resolvedAgents.length > 0) {
-			nodeCfg.agents = resolvedAgents;
-		}
-		if (input.postApproval) {
-			nodeCfg.postApproval = input.postApproval;
-		}
+    // Normalize agents: use `agents` array if present, otherwise fall back to legacy
+    // `agentId` shorthand (still used in tests and older call-sites).
+    const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
+      | string
+      | undefined;
+    let resolvedAgents = input.agents && input.agents.length > 0 ? input.agents : undefined;
+    if (!resolvedAgents && legacyAgentId) {
+      resolvedAgents = [{ agentId: legacyAgentId, name: input.name }];
+    }
+    if (resolvedAgents && resolvedAgents.length > 0) {
+      nodeCfg.agents = resolvedAgents;
+    }
+    if (input.postApproval) {
+      nodeCfg.postApproval = input.postApproval;
+    }
 
-		return nodeCfg;
-	}
+    return nodeCfg;
+  }
 
-	private insertNode(
-		workflowId: string,
-		input: WorkflowNodeInput,
-		nodeId: string,
-		_index: number,
-		now: number
-	): void {
-		this.db
-			.prepare(
-				`INSERT INTO space_workflow_nodes
+  private insertNode(
+    workflowId: string,
+    input: WorkflowNodeInput,
+    nodeId: string,
+    _index: number,
+    now: number
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO space_workflow_nodes
 		           (id, workflow_id, name, description, config, created_at, updated_at)
 		         VALUES (?, ?, ?, ?, ?, ?, ?)`
-			)
-			.run(
-				nodeId,
-				workflowId,
-				input.name,
-				'',
-				JSON.stringify(this.buildNodeConfig(input)),
-				now,
-				now
-			);
-	}
+      )
+      .run(
+        nodeId,
+        workflowId,
+        input.name,
+        '',
+        JSON.stringify(this.buildNodeConfig(input)),
+        now,
+        now
+      );
+  }
 }

@@ -3,10 +3,10 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-	plugins: [preact(), tailwindcss()],
-	root: 'demo',
-	server: {
-		port: 4173,
-		open: true,
-	},
+  plugins: [preact(), tailwindcss()],
+  root: 'demo',
+  server: {
+    port: 4173,
+    open: true,
+  },
 });

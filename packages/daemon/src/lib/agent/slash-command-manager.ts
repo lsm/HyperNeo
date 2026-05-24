@@ -23,125 +23,125 @@ import { getBuiltInCommandNames } from '../built-in-commands';
  * Using interface instead of importing AgentSession to avoid circular deps
  */
 export interface SlashCommandManagerContext {
-	readonly session: Session;
-	readonly db: Database;
-	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-	readonly logger: Logger;
+  readonly session: Session;
+  readonly db: Database;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+  readonly logger: Logger;
 
-	// SDK state
-	readonly queryObject: Query | null;
+  // SDK state
+  readonly queryObject: Query | null;
 }
 
 /**
  * Manages slash command fetching and caching
  */
 export class SlashCommandManager {
-	private slashCommands: string[] = [];
-	private commandsFetchedFromSDK = false;
+  private slashCommands: string[] = [];
+  private commandsFetchedFromSDK = false;
 
-	constructor(private ctx: SlashCommandManagerContext) {
-		// Restore from session if available — validate it's a real array, not a
-		// corrupted string (old sessions may have "merge-session" stored as a
-		// JSON-encoded string rather than a JSON-encoded array).
-		const stored = ctx.session.availableCommands;
-		if (Array.isArray(stored) && stored.length > 0) {
-			this.slashCommands = stored;
-		}
-	}
+  constructor(private ctx: SlashCommandManagerContext) {
+    // Restore from session if available — validate it's a real array, not a
+    // corrupted string (old sessions may have "merge-session" stored as a
+    // JSON-encoded string rather than a JSON-encoded array).
+    const stored = ctx.session.availableCommands;
+    if (Array.isArray(stored) && stored.length > 0) {
+      this.slashCommands = stored;
+    }
+  }
 
-	/**
-	 * Get available slash commands
-	 */
-	async getSlashCommands(): Promise<string[]> {
-		const { logger, queryObject } = this.ctx;
+  /**
+   * Get available slash commands
+   */
+  async getSlashCommands(): Promise<string[]> {
+    const { logger, queryObject } = this.ctx;
 
-		// Return cached commands if available
-		if (this.slashCommands.length > 0) {
-			// Fire-and-forget: refresh from SDK in background
-			if (!this.commandsFetchedFromSDK && queryObject) {
-				this.fetchAndCache().catch((e) => {
-					logger.warn('Background refresh of slash commands failed:', e);
-				});
-			}
-			return this.slashCommands;
-		}
+    // Return cached commands if available
+    if (this.slashCommands.length > 0) {
+      // Fire-and-forget: refresh from SDK in background
+      if (!this.commandsFetchedFromSDK && queryObject) {
+        this.fetchAndCache().catch((e) => {
+          logger.warn('Background refresh of slash commands failed:', e);
+        });
+      }
+      return this.slashCommands;
+    }
 
-		// Try to fetch from SDK
-		await this.fetchAndCache();
+    // Try to fetch from SDK
+    await this.fetchAndCache();
 
-		// Fallback to built-in commands
-		if (this.slashCommands.length === 0) {
-			this.slashCommands = getBuiltInCommandNames();
-		}
+    // Fallback to built-in commands
+    if (this.slashCommands.length === 0) {
+      this.slashCommands = getBuiltInCommandNames();
+    }
 
-		return this.slashCommands;
-	}
+    return this.slashCommands;
+  }
 
-	/**
-	 * Update commands from the SDK system init message.
-	 * This is the most reliable source — fires immediately on every query start
-	 * and contains all built-in commands plus custom skills.
-	 */
-	async updateFromInit(sdkCommands: string[]): Promise<void> {
-		if (this.commandsFetchedFromSDK) return;
+  /**
+   * Update commands from the SDK system init message.
+   * This is the most reliable source — fires immediately on every query start
+   * and contains all built-in commands plus custom skills.
+   */
+  async updateFromInit(sdkCommands: string[]): Promise<void> {
+    if (this.commandsFetchedFromSDK) return;
 
-		const { session, db, internalEventBus } = this.ctx;
+    const { session, db, internalEventBus } = this.ctx;
 
-		const kaiBuiltInCommands = getBuiltInCommandNames();
-		const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
+    const kaiBuiltInCommands = getBuiltInCommandNames();
+    const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
 
-		this.slashCommands = allCommands;
-		this.commandsFetchedFromSDK = true;
+    this.slashCommands = allCommands;
+    this.commandsFetchedFromSDK = true;
 
-		session.availableCommands = this.slashCommands;
-		db.updateSession(session.id, { availableCommands: this.slashCommands });
+    session.availableCommands = this.slashCommands;
+    db.updateSession(session.id, { availableCommands: this.slashCommands });
 
-		await internalEventBus.publish('commands.updated', {
-			sessionId: session.id,
-			commands: this.slashCommands,
-		});
-	}
+    await internalEventBus.publish('commands.updated', {
+      sessionId: session.id,
+      commands: this.slashCommands,
+    });
+  }
 
-	/**
-	 * Fetch and cache slash commands from SDK
-	 */
-	async fetchAndCache(): Promise<void> {
-		const { session, db, internalEventBus, logger, queryObject } = this.ctx;
+  /**
+   * Fetch and cache slash commands from SDK
+   */
+  async fetchAndCache(): Promise<void> {
+    const { session, db, internalEventBus, logger, queryObject } = this.ctx;
 
-		if (!queryObject || typeof queryObject.supportedCommands !== 'function') {
-			return;
-		}
+    if (!queryObject || typeof queryObject.supportedCommands !== 'function') {
+      return;
+    }
 
-		if (this.commandsFetchedFromSDK) {
-			return;
-		}
+    if (this.commandsFetchedFromSDK) {
+      return;
+    }
 
-		try {
-			const commands = await queryObject.supportedCommands();
-			const commandNames = commands.map((cmd: SlashCommand) => cmd.name);
+    try {
+      const commands = await queryObject.supportedCommands();
+      const commandNames = commands.map((cmd: SlashCommand) => cmd.name);
 
-			// Add SDK built-in commands
-			const sdkBuiltInCommands = ['clear', 'help'];
-			// Add NeoKai built-in commands
-			const kaiBuiltInCommands = getBuiltInCommandNames();
-			const allCommands = [
-				...new Set([...commandNames, ...sdkBuiltInCommands, ...kaiBuiltInCommands]),
-			];
+      // Add SDK built-in commands
+      const sdkBuiltInCommands = ['clear', 'help'];
+      // Add NeoKai built-in commands
+      const kaiBuiltInCommands = getBuiltInCommandNames();
+      const allCommands = [
+        ...new Set([...commandNames, ...sdkBuiltInCommands, ...kaiBuiltInCommands]),
+      ];
 
-			this.slashCommands = allCommands;
-			this.commandsFetchedFromSDK = true;
+      this.slashCommands = allCommands;
+      this.commandsFetchedFromSDK = true;
 
-			// Save to database
-			session.availableCommands = this.slashCommands;
-			db.updateSession(session.id, { availableCommands: this.slashCommands });
+      // Save to database
+      session.availableCommands = this.slashCommands;
+      db.updateSession(session.id, { availableCommands: this.slashCommands });
 
-			// Emit event
-			await internalEventBus.publish('commands.updated', {
-				sessionId: session.id,
-				commands: this.slashCommands,
-			});
-		} catch (error) {
-			logger.warn('Failed to fetch slash commands:', error);
-		}
-	}
+      // Emit event
+      await internalEventBus.publish('commands.updated', {
+        sessionId: session.id,
+        commands: this.slashCommands,
+      });
+    } catch (error) {
+      logger.warn('Failed to fetch slash commands:', error);
+    }
+  }
 }

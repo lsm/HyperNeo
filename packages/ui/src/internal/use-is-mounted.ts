@@ -25,15 +25,15 @@ import { useIsoMorphicEffect } from './use-iso-morphic-effect.ts';
  * ```
  */
 export function useIsMounted(): { readonly current: boolean } {
-	const mounted = useRef(false);
+  const mounted = useRef(false);
 
-	useIsoMorphicEffect(() => {
-		mounted.current = true;
+  useIsoMorphicEffect(() => {
+    mounted.current = true;
 
-		return () => {
-			mounted.current = false;
-		};
-	}, []);
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
-	return mounted;
+  return mounted;
 }

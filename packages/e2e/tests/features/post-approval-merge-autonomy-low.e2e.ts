@@ -28,23 +28,23 @@
 import { test, expect } from '../../fixtures';
 
 test.describe
-	.skip('Post-approval merge at autonomy level 1 — requires human approval (PENDING infra)', () => {
-		test('reviewer session requests human input before merging, then completes', async ({
-			page,
-		}) => {
-			// 1. Create a space with `autonomyLevel: 1`.
-			// 2. Seed a PR fixture via mock `gh`.
-			// 3. Start a Coding workflow run; drive gates + agents via LLM mock.
-			// 4. Assert: task transitions to `approved` after the Reviewer calls
-			//    approve_task (or submit_for_approval + human approves review).
-			// 5. Assert: reviewer post-approval session spawns; the scripted
-			//    reply calls `request_human_input` with question mentioning
-			//    "Approve merging PR".
-			// 6. UI step: post a reply "yes" via the task composer.
-			// 7. Assert: reviewer resumes, calls `gh pr merge --squash`, then
-			//    `mark_complete`. Task ends at `done`.
-			// 8. Assert UI: `PendingTaskCompletionBanner` was visible during
-			//    the `request_human_input` pause, then disappeared.
-			expect(page).toBeTruthy();
-		});
-	});
+  .skip('Post-approval merge at autonomy level 1 — requires human approval (PENDING infra)', () => {
+    test('reviewer session requests human input before merging, then completes', async ({
+      page,
+    }) => {
+      // 1. Create a space with `autonomyLevel: 1`.
+      // 2. Seed a PR fixture via mock `gh`.
+      // 3. Start a Coding workflow run; drive gates + agents via LLM mock.
+      // 4. Assert: task transitions to `approved` after the Reviewer calls
+      //    approve_task (or submit_for_approval + human approves review).
+      // 5. Assert: reviewer post-approval session spawns; the scripted
+      //    reply calls `request_human_input` with question mentioning
+      //    "Approve merging PR".
+      // 6. UI step: post a reply "yes" via the task composer.
+      // 7. Assert: reviewer resumes, calls `gh pr merge --squash`, then
+      //    `mark_complete`. Task ends at `done`.
+      // 8. Assert UI: `PendingTaskCompletionBanner` was visible during
+      //    the `request_human_input` pause, then disappeared.
+      expect(page).toBeTruthy();
+    });
+  });

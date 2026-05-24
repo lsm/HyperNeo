@@ -26,28 +26,28 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import {
-	createTables,
-	runMigration122,
-	runMigrations,
+  createTables,
+  runMigration122,
+  runMigrations,
 } from '../../../../../src/storage/schema/index.ts';
 
 function columnNames(db: BunDatabase, table: string): string[] {
-	const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
-	return rows.map((r) => r.name);
+  const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+  return rows.map((r) => r.name);
 }
 
 function tableExists(db: BunDatabase, table: string): boolean {
-	const row = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
-		.get(table) as { name?: string } | undefined;
-	return !!row?.name;
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(table) as { name?: string } | undefined;
+  return !!row?.name;
 }
 
 function indexExists(db: BunDatabase, name: string): boolean {
-	const row = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
-		.get(name) as { name?: string } | undefined;
-	return !!row?.name;
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
+    .get(name) as { name?: string } | undefined;
+  return !!row?.name;
 }
 
 /**
@@ -57,8 +57,8 @@ function indexExists(db: BunDatabase, name: string): boolean {
  * reads to backfill `sdk_messages.task_id`.
  */
 function seedPreM122Schema(db: BunDatabase): void {
-	db.exec('PRAGMA foreign_keys = OFF');
-	db.exec(`
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`
 		CREATE TABLE sessions (
 			id TEXT PRIMARY KEY,
 			type TEXT NOT NULL DEFAULT 'worker',
@@ -71,7 +71,7 @@ function seedPreM122Schema(db: BunDatabase): void {
 			session_context TEXT
 		)
 	`);
-	db.exec(`
+  db.exec(`
 		CREATE TABLE sdk_messages (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
@@ -83,279 +83,279 @@ function seedPreM122Schema(db: BunDatabase): void {
 			origin TEXT
 		)
 	`);
-	db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA foreign_keys = ON');
 }
 
 describe('Migration 122: derived columns + task_id on sdk_messages', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(
-			process.cwd(),
-			'tmp',
-			'test-migration-122',
-			`test-${Date.now()}-${Math.random()}`
-		);
-		mkdirSync(testDir, { recursive: true });
-		db = new BunDatabase(join(testDir, 'test.db'));
-		db.exec('PRAGMA foreign_keys = ON');
-	}, 10_000);
+  beforeEach(() => {
+    testDir = join(
+      process.cwd(),
+      'tmp',
+      'test-migration-122',
+      `test-${Date.now()}-${Math.random()}`
+    );
+    mkdirSync(testDir, { recursive: true });
+    db = new BunDatabase(join(testDir, 'test.db'));
+    db.exec('PRAGMA foreign_keys = ON');
+  }, 10_000);
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	}, 10_000);
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }, 10_000);
 
-	describe('fresh DB (all migrations applied)', () => {
-		beforeEach(async () => {
-			runMigrations(db, () => {});
-			createTables(db);
-		}, 30_000);
+  describe('fresh DB (all migrations applied)', () => {
+    beforeEach(async () => {
+      runMigrations(db, () => {});
+      createTables(db);
+    }, 30_000);
 
-		test('sdk_messages has the new derived columns plus task_id', () => {
-			const columns = columnNames(db, 'sdk_messages');
-			expect(columns).toContain('is_renderable');
-			expect(columns).toContain('is_terminal');
-			expect(columns).toContain('parent_tool_use_id');
-			expect(columns).toContain('task_id');
-		});
+    test('sdk_messages has the new derived columns plus task_id', () => {
+      const columns = columnNames(db, 'sdk_messages');
+      expect(columns).toContain('is_renderable');
+      expect(columns).toContain('is_terminal');
+      expect(columns).toContain('parent_tool_use_id');
+      expect(columns).toContain('task_id');
+    });
 
-		test('sdk_messages task_id index exists', () => {
-			expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
-		});
+    test('sdk_messages task_id index exists', () => {
+      expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
+    });
 
-		test('sdk_messages (task_id, session_id) composite index exists', () => {
-			expect(indexExists(db, 'idx_sdk_messages_task_session')).toBe(true);
-		});
+    test('sdk_messages (task_id, session_id) composite index exists', () => {
+      expect(indexExists(db, 'idx_sdk_messages_task_session')).toBe(true);
+    });
 
-		test('sdk_messages new derived-column indexes exist', () => {
-			expect(indexExists(db, 'idx_sdk_messages_parent_tool_use_id')).toBe(true);
-			expect(indexExists(db, 'idx_sdk_messages_renderable_terminal')).toBe(true);
-		});
+    test('sdk_messages new derived-column indexes exist', () => {
+      expect(indexExists(db, 'idx_sdk_messages_parent_tool_use_id')).toBe(true);
+      expect(indexExists(db, 'idx_sdk_messages_renderable_terminal')).toBe(true);
+    });
 
-		test('legacy task_session_map table has been dropped', () => {
-			expect(tableExists(db, 'task_session_map')).toBe(false);
-		});
-	});
+    test('legacy task_session_map table has been dropped', () => {
+      expect(tableExists(db, 'task_session_map')).toBe(false);
+    });
+  });
 
-	describe('backfill from pre-122 schema', () => {
-		beforeEach(() => {
-			seedPreM122Schema(db);
-			const now = Date.now();
-			const ts = new Date(now).toISOString();
+  describe('backfill from pre-122 schema', () => {
+    beforeEach(() => {
+      seedPreM122Schema(db);
+      const now = Date.now();
+      const ts = new Date(now).toISOString();
 
-			// Two task-bound sessions and one un-bound (worker) session. The
-			// task-bound rows carry `taskId` in their `session_context`, exactly
-			// the way Task Agent + node-agent sessions stamp it at creation.
-			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
-			).run('sess-task-agent', 'space_task_agent', ts, ts, JSON.stringify({ taskId: 'task-1' }));
-			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
-			).run('sess-coder', 'worker', ts, ts, JSON.stringify({ taskId: 'task-1' }));
-			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
-			).run('sess-orphan', 'worker', ts, ts, null);
-			db.prepare(
-				`INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
-			).run('sess-malformed', 'worker', ts, ts, '{not-json');
+      // Two task-bound sessions and one un-bound (worker) session. The
+      // task-bound rows carry `taskId` in their `session_context`, exactly
+      // the way Task Agent + node-agent sessions stamp it at creation.
+      db.prepare(
+        `INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+      ).run('sess-task-agent', 'space_task_agent', ts, ts, JSON.stringify({ taskId: 'task-1' }));
+      db.prepare(
+        `INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+      ).run('sess-coder', 'worker', ts, ts, JSON.stringify({ taskId: 'task-1' }));
+      db.prepare(
+        `INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+      ).run('sess-orphan', 'worker', ts, ts, null);
+      db.prepare(
+        `INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
+      ).run('sess-malformed', 'worker', ts, ts, '{not-json');
 
-			// SDK messages spanning all renderability classes, plus rows on the
-			// task-bound and unbound sessions so we can assert task_id backfill.
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      // SDK messages spanning all renderability classes, plus rows on the
+      // task-bound and unbound sessions so we can assert task_id backfill.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-result',
-				'sess-coder',
-				'result',
-				JSON.stringify({ type: 'result', subtype: 'success' }),
-				ts
-			);
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-result',
+        'sess-coder',
+        'result',
+        JSON.stringify({ type: 'result', subtype: 'success' }),
+        ts
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-user-tool-result',
-				'sess-coder',
-				'user',
-				JSON.stringify({
-					type: 'user',
-					message: { content: [{ type: 'tool_result', tool_use_id: 'abc', content: 'ok' }] },
-				}),
-				ts
-			);
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-user-tool-result',
+        'sess-coder',
+        'user',
+        JSON.stringify({
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'abc', content: 'ok' }] },
+        }),
+        ts
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-user-text',
-				'sess-task-agent',
-				'user',
-				JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'hi' }] } }),
-				ts
-			);
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-user-text',
+        'sess-task-agent',
+        'user',
+        JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'hi' }] } }),
+        ts
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-assistant-text',
-				'sess-coder',
-				'assistant',
-				JSON.stringify({
-					type: 'assistant',
-					message: { content: [{ type: 'text', text: 'response' }] },
-				}),
-				ts
-			);
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-assistant-text',
+        'sess-coder',
+        'assistant',
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'response' }] },
+        }),
+        ts
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-assistant-empty',
-				'sess-coder',
-				'assistant',
-				JSON.stringify({
-					type: 'assistant',
-					message: { content: [{ type: 'text', text: '   ' }] },
-				}),
-				ts
-			);
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-assistant-empty',
+        'sess-coder',
+        'assistant',
+        JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: '   ' }] },
+        }),
+        ts
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-subagent',
-				'sess-coder',
-				'assistant',
-				JSON.stringify({
-					type: 'assistant',
-					parent_tool_use_id: 'parent-tu-1',
-					message: { content: [{ type: 'text', text: 'sub' }] },
-				}),
-				ts
-			);
-			// Un-bound session: should backfill to NULL (no taskId in context).
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-subagent',
+        'sess-coder',
+        'assistant',
+        JSON.stringify({
+          type: 'assistant',
+          parent_tool_use_id: 'parent-tu-1',
+          message: { content: [{ type: 'text', text: 'sub' }] },
+        }),
+        ts
+      );
+      // Un-bound session: should backfill to NULL (no taskId in context).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-orphan',
-				'sess-orphan',
-				'assistant',
-				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
-				ts
-			);
-			// Malformed JSON in session_context: must NOT throw or corrupt the row.
-			db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+      ).run(
+        'msg-orphan',
+        'sess-orphan',
+        'assistant',
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
+        ts
+      );
+      // Malformed JSON in session_context: must NOT throw or corrupt the row.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
-			).run(
-				'msg-malformed-context',
-				'sess-malformed',
-				'assistant',
-				JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
-				ts
-			);
-		}, 30_000);
+      ).run(
+        'msg-malformed-context',
+        'sess-malformed',
+        'assistant',
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
+        ts
+      );
+    }, 30_000);
 
-		test('is_terminal is set to 1 for result messages and 0 elsewhere', () => {
-			runMigration122(db);
-			const rows = db
-				.prepare(`SELECT id, is_terminal FROM sdk_messages ORDER BY id`)
-				.all() as Array<{ id: string; is_terminal: number }>;
-			const map = new Map(rows.map((r) => [r.id, r.is_terminal]));
-			expect(map.get('msg-result')).toBe(1);
-			expect(map.get('msg-user-text')).toBe(0);
-			expect(map.get('msg-assistant-text')).toBe(0);
-		});
+    test('is_terminal is set to 1 for result messages and 0 elsewhere', () => {
+      runMigration122(db);
+      const rows = db
+        .prepare(`SELECT id, is_terminal FROM sdk_messages ORDER BY id`)
+        .all() as Array<{ id: string; is_terminal: number }>;
+      const map = new Map(rows.map((r) => [r.id, r.is_terminal]));
+      expect(map.get('msg-result')).toBe(1);
+      expect(map.get('msg-user-text')).toBe(0);
+      expect(map.get('msg-assistant-text')).toBe(0);
+    });
 
-		test('parent_tool_use_id is extracted from JSON', () => {
-			runMigration122(db);
-			const subagent = db
-				.prepare(`SELECT parent_tool_use_id FROM sdk_messages WHERE id = ?`)
-				.get('msg-subagent') as { parent_tool_use_id: string | null };
-			expect(subagent.parent_tool_use_id).toBe('parent-tu-1');
-			const plain = db
-				.prepare(`SELECT parent_tool_use_id FROM sdk_messages WHERE id = ?`)
-				.get('msg-user-text') as { parent_tool_use_id: string | null };
-			expect(plain.parent_tool_use_id).toBeNull();
-		});
+    test('parent_tool_use_id is extracted from JSON', () => {
+      runMigration122(db);
+      const subagent = db
+        .prepare(`SELECT parent_tool_use_id FROM sdk_messages WHERE id = ?`)
+        .get('msg-subagent') as { parent_tool_use_id: string | null };
+      expect(subagent.parent_tool_use_id).toBe('parent-tu-1');
+      const plain = db
+        .prepare(`SELECT parent_tool_use_id FROM sdk_messages WHERE id = ?`)
+        .get('msg-user-text') as { parent_tool_use_id: string | null };
+      expect(plain.parent_tool_use_id).toBeNull();
+    });
 
-		test('is_renderable=0 for user rows with tool_result content', () => {
-			runMigration122(db);
-			const row = db
-				.prepare(`SELECT is_renderable FROM sdk_messages WHERE id = ?`)
-				.get('msg-user-tool-result') as { is_renderable: number };
-			expect(row.is_renderable).toBe(0);
-		});
+    test('is_renderable=0 for user rows with tool_result content', () => {
+      runMigration122(db);
+      const row = db
+        .prepare(`SELECT is_renderable FROM sdk_messages WHERE id = ?`)
+        .get('msg-user-tool-result') as { is_renderable: number };
+      expect(row.is_renderable).toBe(0);
+    });
 
-		test('is_renderable=0 for assistant rows with no renderable content', () => {
-			runMigration122(db);
-			const row = db
-				.prepare(`SELECT is_renderable FROM sdk_messages WHERE id = ?`)
-				.get('msg-assistant-empty') as { is_renderable: number };
-			expect(row.is_renderable).toBe(0);
-		});
+    test('is_renderable=0 for assistant rows with no renderable content', () => {
+      runMigration122(db);
+      const row = db
+        .prepare(`SELECT is_renderable FROM sdk_messages WHERE id = ?`)
+        .get('msg-assistant-empty') as { is_renderable: number };
+      expect(row.is_renderable).toBe(0);
+    });
 
-		test('is_renderable=1 for normal user/assistant rows and result rows', () => {
-			runMigration122(db);
-			const ids = ['msg-user-text', 'msg-assistant-text', 'msg-result'];
-			const placeholders = ids.map(() => '?').join(',');
-			const rows = db
-				.prepare(`SELECT id, is_renderable FROM sdk_messages WHERE id IN (${placeholders})`)
-				.all(...ids) as Array<{ id: string; is_renderable: number }>;
-			for (const row of rows) {
-				expect(row.is_renderable).toBe(1);
-			}
-		});
+    test('is_renderable=1 for normal user/assistant rows and result rows', () => {
+      runMigration122(db);
+      const ids = ['msg-user-text', 'msg-assistant-text', 'msg-result'];
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = db
+        .prepare(`SELECT id, is_renderable FROM sdk_messages WHERE id IN (${placeholders})`)
+        .all(...ids) as Array<{ id: string; is_renderable: number }>;
+      for (const row of rows) {
+        expect(row.is_renderable).toBe(1);
+      }
+    });
 
-		test('task_id is backfilled from sessions.session_context.taskId', () => {
-			runMigration122(db);
-			const rows = db.prepare(`SELECT id, task_id FROM sdk_messages ORDER BY id`).all() as Array<{
-				id: string;
-				task_id: string | null;
-			}>;
-			const map = new Map(rows.map((r) => [r.id, r.task_id]));
-			expect(map.get('msg-result')).toBe('task-1');
-			expect(map.get('msg-user-tool-result')).toBe('task-1');
-			expect(map.get('msg-user-text')).toBe('task-1');
-			expect(map.get('msg-assistant-text')).toBe('task-1');
-			expect(map.get('msg-subagent')).toBe('task-1');
-		});
+    test('task_id is backfilled from sessions.session_context.taskId', () => {
+      runMigration122(db);
+      const rows = db.prepare(`SELECT id, task_id FROM sdk_messages ORDER BY id`).all() as Array<{
+        id: string;
+        task_id: string | null;
+      }>;
+      const map = new Map(rows.map((r) => [r.id, r.task_id]));
+      expect(map.get('msg-result')).toBe('task-1');
+      expect(map.get('msg-user-tool-result')).toBe('task-1');
+      expect(map.get('msg-user-text')).toBe('task-1');
+      expect(map.get('msg-assistant-text')).toBe('task-1');
+      expect(map.get('msg-subagent')).toBe('task-1');
+    });
 
-		test('task_id is null for sessions without a task context', () => {
-			runMigration122(db);
-			const orphan = db
-				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
-				.get('msg-orphan') as { task_id: string | null };
-			expect(orphan.task_id).toBeNull();
-		});
+    test('task_id is null for sessions without a task context', () => {
+      runMigration122(db);
+      const orphan = db
+        .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+        .get('msg-orphan') as { task_id: string | null };
+      expect(orphan.task_id).toBeNull();
+    });
 
-		test('task_id is null for sessions with malformed session_context JSON', () => {
-			// Migration must tolerate broken rows — the json_valid guard prevents
-			// json_extract from aborting the UPDATE.
-			runMigration122(db);
-			const malformed = db
-				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
-				.get('msg-malformed-context') as { task_id: string | null };
-			expect(malformed.task_id).toBeNull();
-		});
+    test('task_id is null for sessions with malformed session_context JSON', () => {
+      // Migration must tolerate broken rows — the json_valid guard prevents
+      // json_extract from aborting the UPDATE.
+      runMigration122(db);
+      const malformed = db
+        .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+        .get('msg-malformed-context') as { task_id: string | null };
+      expect(malformed.task_id).toBeNull();
+    });
 
-		test('drops the legacy task_session_map table', () => {
-			// Pre-existing task_session_map rows must not survive the migration —
-			// the read path no longer reads from it, so leaving stale rows around
-			// would just be dead bytes plus a misleading source of truth.
-			db.exec(`
+    test('drops the legacy task_session_map table', () => {
+      // Pre-existing task_session_map rows must not survive the migration —
+      // the read path no longer reads from it, so leaving stale rows around
+      // would just be dead bytes plus a misleading source of truth.
+      db.exec(`
 				CREATE TABLE task_session_map (
 					task_id TEXT NOT NULL,
 					session_id TEXT NOT NULL,
@@ -367,100 +367,100 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 					PRIMARY KEY (task_id, session_id)
 				)
 			`);
-			runMigration122(db);
-			expect(tableExists(db, 'task_session_map')).toBe(false);
-		});
+      runMigration122(db);
+      expect(tableExists(db, 'task_session_map')).toBe(false);
+    });
 
-		test('is idempotent — running a second time produces the same state', () => {
-			runMigration122(db);
-			const sdkBefore = db
-				.prepare(
-					`SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
-				)
-				.get() as { n: number };
-			const taskIdBefore = (
-				db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE task_id = 'task-1'`).get() as {
-					n: number;
-				}
-			).n;
+    test('is idempotent — running a second time produces the same state', () => {
+      runMigration122(db);
+      const sdkBefore = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
+        )
+        .get() as { n: number };
+      const taskIdBefore = (
+        db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE task_id = 'task-1'`).get() as {
+          n: number;
+        }
+      ).n;
 
-			expect(() => runMigration122(db)).not.toThrow();
+      expect(() => runMigration122(db)).not.toThrow();
 
-			const sdkAfter = db
-				.prepare(
-					`SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
-				)
-				.get() as { n: number };
-			const taskIdAfter = (
-				db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE task_id = 'task-1'`).get() as {
-					n: number;
-				}
-			).n;
+      const sdkAfter = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE is_renderable IS NOT NULL AND is_terminal IS NOT NULL`
+        )
+        .get() as { n: number };
+      const taskIdAfter = (
+        db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE task_id = 'task-1'`).get() as {
+          n: number;
+        }
+      ).n;
 
-			expect(sdkAfter.n).toBe(sdkBefore.n);
-			expect(taskIdAfter).toBe(taskIdBefore);
-			expect(tableExists(db, 'task_session_map')).toBe(false);
-		});
+      expect(sdkAfter.n).toBe(sdkBefore.n);
+      expect(taskIdAfter).toBe(taskIdBefore);
+      expect(tableExists(db, 'task_session_map')).toBe(false);
+    });
 
-		test('second run does not rewrite already-correct derived rows', () => {
-			runMigration122(db);
-			// All derived columns are now correct. Capture the exact values.
-			const before = db
-				.prepare(
-					`SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
-				)
-				.all() as Array<{
-				id: string;
-				is_renderable: number;
-				is_terminal: number;
-				parent_tool_use_id: string | null;
-			}>;
+    test('second run does not rewrite already-correct derived rows', () => {
+      runMigration122(db);
+      // All derived columns are now correct. Capture the exact values.
+      const before = db
+        .prepare(
+          `SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
+        )
+        .all() as Array<{
+        id: string;
+        is_renderable: number;
+        is_terminal: number;
+        parent_tool_use_id: string | null;
+      }>;
 
-			// Force a mutation by running again. If the WHERE clause is too
-			// broad, rows will be "updated" to the same values but SQLite
-			// will still bump change counters.
-			runMigration122(db);
+      // Force a mutation by running again. If the WHERE clause is too
+      // broad, rows will be "updated" to the same values but SQLite
+      // will still bump change counters.
+      runMigration122(db);
 
-			const after = db
-				.prepare(
-					`SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
-				)
-				.all() as Array<{
-				id: string;
-				is_renderable: number;
-				is_terminal: number;
-				parent_tool_use_id: string | null;
-			}>;
-			expect(after).toEqual(before);
-		});
+      const after = db
+        .prepare(
+          `SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
+        )
+        .all() as Array<{
+        id: string;
+        is_renderable: number;
+        is_terminal: number;
+        parent_tool_use_id: string | null;
+      }>;
+      expect(after).toEqual(before);
+    });
 
-		test('task_id backfill skips worker sessions with no taskId in context', () => {
-			// sess-orphan is a worker with NULL session_context — its rows
-			// should stay NULL and not be rescanned on every boot.
-			runMigration122(db);
-			const orphan = db
-				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
-				.get('msg-orphan') as { task_id: string | null };
-			expect(orphan.task_id).toBeNull();
+    test('task_id backfill skips worker sessions with no taskId in context', () => {
+      // sess-orphan is a worker with NULL session_context — its rows
+      // should stay NULL and not be rescanned on every boot.
+      runMigration122(db);
+      const orphan = db
+        .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+        .get('msg-orphan') as { task_id: string | null };
+      expect(orphan.task_id).toBeNull();
 
-			// Running again should not throw and should leave the row untouched.
-			expect(() => runMigration122(db)).not.toThrow();
-			const orphan2 = db
-				.prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
-				.get('msg-orphan') as { task_id: string | null };
-			expect(orphan2.task_id).toBeNull();
-		});
-	});
+      // Running again should not throw and should leave the row untouched.
+      expect(() => runMigration122(db)).not.toThrow();
+      const orphan2 = db
+        .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
+        .get('msg-orphan') as { task_id: string | null };
+      expect(orphan2.task_id).toBeNull();
+    });
+  });
 
-	describe('missing tables — no-op guards', () => {
-		test('runMigration122 on an empty DB does not throw', () => {
-			expect(() => runMigration122(db)).not.toThrow();
-			expect(tableExists(db, 'sdk_messages')).toBe(false);
-			expect(tableExists(db, 'task_session_map')).toBe(false);
-		});
+  describe('missing tables — no-op guards', () => {
+    test('runMigration122 on an empty DB does not throw', () => {
+      expect(() => runMigration122(db)).not.toThrow();
+      expect(tableExists(db, 'sdk_messages')).toBe(false);
+      expect(tableExists(db, 'task_session_map')).toBe(false);
+    });
 
-		test('runMigration122 with only sdk_messages adds derived columns including task_id', () => {
-			db.exec(`
+    test('runMigration122 with only sdk_messages adds derived columns including task_id', () => {
+      db.exec(`
 				CREATE TABLE sdk_messages (
 					id TEXT PRIMARY KEY,
 					session_id TEXT NOT NULL,
@@ -470,14 +470,14 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 					timestamp TEXT NOT NULL
 				)
 			`);
-			expect(() => runMigration122(db)).not.toThrow();
-			const cols = columnNames(db, 'sdk_messages');
-			expect(cols).toContain('is_renderable');
-			expect(cols).toContain('is_terminal');
-			expect(cols).toContain('parent_tool_use_id');
-			expect(cols).toContain('task_id');
-			expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
-			expect(indexExists(db, 'idx_sdk_messages_task_session')).toBe(true);
-		});
-	});
+      expect(() => runMigration122(db)).not.toThrow();
+      const cols = columnNames(db, 'sdk_messages');
+      expect(cols).toContain('is_renderable');
+      expect(cols).toContain('is_terminal');
+      expect(cols).toContain('parent_tool_use_id');
+      expect(cols).toContain('task_id');
+      expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
+      expect(indexExists(db, 'idx_sdk_messages_task_session')).toBe(true);
+    });
+  });
 });

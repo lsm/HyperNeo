@@ -21,728 +21,728 @@ const uuid4 = '00000000-0000-0000-0000-000000000004';
 const uuid5 = '00000000-0000-0000-0000-000000000005';
 
 describe('useMessageMaps', () => {
-	describe('toolResultsMap', () => {
-		it('should create empty map when no tool results exist', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: 'Hello',
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Hi there!' }],
-					},
-				},
-			] as unknown as SDKMessage[];
+  describe('toolResultsMap', () => {
+    it('should create empty map when no tool results exist', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: 'Hello',
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Hi there!' }],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			expect(result.current.toolResultsMap.size).toBe(0);
-		});
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.toolResultsMap.size).toBe(0);
+    });
 
-		it('should map tool_use_id to tool result data', () => {
-			const messages = [
-				{
-					type: 'assistant',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-use-123',
-								name: 'Read',
-								input: { file_path: '/test.txt' },
-							},
-						],
-					},
-				},
-				{
-					type: 'user',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_result',
-								tool_use_id: 'tool-use-123',
-								content: 'File contents here',
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should map tool_use_id to tool result data', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-use-123',
+                name: 'Read',
+                input: { file_path: '/test.txt' },
+              },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-use-123',
+                content: 'File contents here',
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.toolResultsMap.size).toBe(1);
-			const toolResult = result.current.toolResultsMap.get('tool-use-123');
-			expect(toolResult).toBeDefined();
-			expect(toolResult?.messageUuid).toBe(uuid2);
-			expect(toolResult?.sessionId).toBe('session-1');
-			expect(toolResult?.isOutputRemoved).toBe(false);
-		});
+      expect(result.current.toolResultsMap.size).toBe(1);
+      const toolResult = result.current.toolResultsMap.get('tool-use-123');
+      expect(toolResult).toBeDefined();
+      expect(toolResult?.messageUuid).toBe(uuid2);
+      expect(toolResult?.sessionId).toBe('session-1');
+      expect(toolResult?.isOutputRemoved).toBe(false);
+    });
 
-		it('should mark tool result as removed when in removedOutputs', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_result',
-								tool_use_id: 'tool-use-123',
-								content: 'Result content',
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should mark tool result as removed when in removedOutputs', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-use-123',
+                content: 'Result content',
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1', [uuid1]));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1', [uuid1]));
 
-			const toolResult = result.current.toolResultsMap.get('tool-use-123');
-			expect(toolResult?.isOutputRemoved).toBe(true);
-		});
+      const toolResult = result.current.toolResultsMap.get('tool-use-123');
+      expect(toolResult?.isOutputRemoved).toBe(true);
+    });
 
-		it('should handle multiple tool results in the same message', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_result',
-								tool_use_id: 'tool-1',
-								content: 'Result 1',
-							},
-							{
-								type: 'tool_result',
-								tool_use_id: 'tool-2',
-								content: 'Result 2',
-							},
-							{
-								type: 'tool_result',
-								tool_use_id: 'tool-3',
-								content: 'Result 3',
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should handle multiple tool results in the same message', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-1',
+                content: 'Result 1',
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-2',
+                content: 'Result 2',
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-3',
+                content: 'Result 3',
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.toolResultsMap.size).toBe(3);
-			expect(result.current.toolResultsMap.has('tool-1')).toBe(true);
-			expect(result.current.toolResultsMap.has('tool-2')).toBe(true);
-			expect(result.current.toolResultsMap.has('tool-3')).toBe(true);
-		});
+      expect(result.current.toolResultsMap.size).toBe(3);
+      expect(result.current.toolResultsMap.has('tool-1')).toBe(true);
+      expect(result.current.toolResultsMap.has('tool-2')).toBe(true);
+      expect(result.current.toolResultsMap.has('tool-3')).toBe(true);
+    });
 
-		it('should include full content block in result', () => {
-			const toolResultBlock = {
-				type: 'tool_result',
-				tool_use_id: 'tool-use-123',
-				content: 'Full result content',
-				is_error: false,
-			};
+    it('should include full content block in result', () => {
+      const toolResultBlock = {
+        type: 'tool_result',
+        tool_use_id: 'tool-use-123',
+        content: 'Full result content',
+        is_error: false,
+      };
 
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [toolResultBlock],
-					},
-				},
-			] as unknown as SDKMessage[];
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [toolResultBlock],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			const toolResult = result.current.toolResultsMap.get('tool-use-123');
-			expect(toolResult?.content).toEqual(toolResultBlock);
-		});
-	});
+      const toolResult = result.current.toolResultsMap.get('tool-use-123');
+      expect(toolResult?.content).toEqual(toolResultBlock);
+    });
+  });
 
-	describe('toolInputsMap', () => {
-		it('should create empty map when no tool uses exist', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: 'Hello',
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Hi!' }],
-					},
-				},
-			] as unknown as SDKMessage[];
+  describe('toolInputsMap', () => {
+    it('should create empty map when no tool uses exist', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: 'Hello',
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Hi!' }],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			expect(result.current.toolInputsMap.size).toBe(0);
-		});
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.toolInputsMap.size).toBe(0);
+    });
 
-		it('should map tool_use id to input data', () => {
-			const toolInput = { file_path: '/test.txt', limit: 100 };
-			const messages = [
-				{
-					type: 'assistant',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-use-abc',
-								name: 'Read',
-								input: toolInput,
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should map tool_use id to input data', () => {
+      const toolInput = { file_path: '/test.txt', limit: 100 };
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-use-abc',
+                name: 'Read',
+                input: toolInput,
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.toolInputsMap.size).toBe(1);
-			expect(result.current.toolInputsMap.get('tool-use-abc')).toEqual(toolInput);
-		});
+      expect(result.current.toolInputsMap.size).toBe(1);
+      expect(result.current.toolInputsMap.get('tool-use-abc')).toEqual(toolInput);
+    });
 
-		it('should handle multiple tool uses in the same message', () => {
-			const messages = [
-				{
-					type: 'assistant',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-1',
-								name: 'Read',
-								input: { file: 'a.txt' },
-							},
-							{
-								type: 'text',
-								text: 'Some text in between',
-							},
-							{
-								type: 'tool_use',
-								id: 'tool-2',
-								name: 'Write',
-								input: { file: 'b.txt', content: 'data' },
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should handle multiple tool uses in the same message', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-1',
+                name: 'Read',
+                input: { file: 'a.txt' },
+              },
+              {
+                type: 'text',
+                text: 'Some text in between',
+              },
+              {
+                type: 'tool_use',
+                id: 'tool-2',
+                name: 'Write',
+                input: { file: 'b.txt', content: 'data' },
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.toolInputsMap.size).toBe(2);
-			expect(result.current.toolInputsMap.get('tool-1')).toEqual({ file: 'a.txt' });
-			expect(result.current.toolInputsMap.get('tool-2')).toEqual({
-				file: 'b.txt',
-				content: 'data',
-			});
-		});
+      expect(result.current.toolInputsMap.size).toBe(2);
+      expect(result.current.toolInputsMap.get('tool-1')).toEqual({ file: 'a.txt' });
+      expect(result.current.toolInputsMap.get('tool-2')).toEqual({
+        file: 'b.txt',
+        content: 'data',
+      });
+    });
 
-		it('should handle tool uses across multiple messages', () => {
-			const messages = [
-				{
-					type: 'assistant',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-1',
-								name: 'Read',
-								input: { path: '/a' },
-							},
-						],
-					},
-				},
-				{
-					type: 'user',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_result',
-								tool_use_id: 'tool-1',
-								content: 'result',
-							},
-						],
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid3,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-2',
-								name: 'Write',
-								input: { path: '/b' },
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should handle tool uses across multiple messages', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-1',
+                name: 'Read',
+                input: { path: '/a' },
+              },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-1',
+                content: 'result',
+              },
+            ],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid3,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-2',
+                name: 'Write',
+                input: { path: '/b' },
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.toolInputsMap.size).toBe(2);
-			expect(result.current.toolInputsMap.get('tool-1')).toEqual({ path: '/a' });
-			expect(result.current.toolInputsMap.get('tool-2')).toEqual({ path: '/b' });
-		});
+      expect(result.current.toolInputsMap.size).toBe(2);
+      expect(result.current.toolInputsMap.get('tool-1')).toEqual({ path: '/a' });
+      expect(result.current.toolInputsMap.get('tool-2')).toEqual({ path: '/b' });
+    });
 
-		it('should ignore non-assistant messages', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_use', // This shouldn't happen but should be ignored
-								id: 'fake-tool',
-								name: 'Fake',
-								input: {},
-							},
-						],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should ignore non-assistant messages', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_use', // This shouldn't happen but should be ignored
+                id: 'fake-tool',
+                name: 'Fake',
+                input: {},
+              },
+            ],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			expect(result.current.toolInputsMap.size).toBe(0);
-		});
-	});
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.toolInputsMap.size).toBe(0);
+    });
+  });
 
-	describe('sessionInfoMap', () => {
-		it('should create empty map when no system:init messages exist', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: 'Hello',
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Hi!' }],
-					},
-				},
-			] as unknown as SDKMessage[];
+  describe('sessionInfoMap', () => {
+    it('should create empty map when no system:init messages exist', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: 'Hello',
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Hi!' }],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			expect(result.current.sessionInfoMap.size).toBe(0);
-		});
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.sessionInfoMap.size).toBe(0);
+    });
 
-		it('should attach system:init to preceding user message', () => {
-			const systemInitMessage = {
-				type: 'system',
-				subtype: 'init',
-				uuid: uuid2,
-				session_id: 'session-1',
-				message: {
-					cwd: '/workspace',
-					model: 'claude-sonnet-4',
-				},
-			};
+    it('should attach system:init to preceding user message', () => {
+      const systemInitMessage = {
+        type: 'system',
+        subtype: 'init',
+        uuid: uuid2,
+        session_id: 'session-1',
+        message: {
+          cwd: '/workspace',
+          model: 'claude-sonnet-4',
+        },
+      };
 
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: 'Hello',
-					},
-				},
-				systemInitMessage,
-			] as unknown as SDKMessage[];
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: 'Hello',
+          },
+        },
+        systemInitMessage,
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.sessionInfoMap.size).toBe(1);
-			expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInitMessage);
-		});
+      expect(result.current.sessionInfoMap.size).toBe(1);
+      expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInitMessage);
+    });
 
-		it('should attach system:init to following user message when no preceding user message', () => {
-			const systemInitMessage = {
-				type: 'system',
-				subtype: 'init',
-				uuid: uuid1,
-				session_id: 'session-1',
-				message: {
-					cwd: '/workspace',
-					model: 'claude-sonnet-4',
-				},
-			};
+    it('should attach system:init to following user message when no preceding user message', () => {
+      const systemInitMessage = {
+        type: 'system',
+        subtype: 'init',
+        uuid: uuid1,
+        session_id: 'session-1',
+        message: {
+          cwd: '/workspace',
+          model: 'claude-sonnet-4',
+        },
+      };
 
-			const messages = [
-				systemInitMessage,
-				{
-					type: 'user',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: 'Hello',
-					},
-				},
-			] as unknown as SDKMessage[];
+      const messages = [
+        systemInitMessage,
+        {
+          type: 'user',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: 'Hello',
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.sessionInfoMap.size).toBe(1);
-			expect(result.current.sessionInfoMap.get(uuid2)).toBe(systemInitMessage);
-		});
+      expect(result.current.sessionInfoMap.size).toBe(1);
+      expect(result.current.sessionInfoMap.get(uuid2)).toBe(systemInitMessage);
+    });
 
-		it('should handle multiple system:init messages', () => {
-			const systemInit1 = {
-				type: 'system',
-				subtype: 'init',
-				uuid: uuid2,
-				session_id: 'session-1',
-				message: { cwd: '/workspace1' },
-			};
+    it('should handle multiple system:init messages', () => {
+      const systemInit1 = {
+        type: 'system',
+        subtype: 'init',
+        uuid: uuid2,
+        session_id: 'session-1',
+        message: { cwd: '/workspace1' },
+      };
 
-			const systemInit2 = {
-				type: 'system',
-				subtype: 'init',
-				uuid: uuid5,
-				session_id: 'session-1',
-				message: { cwd: '/workspace2' },
-			};
+      const systemInit2 = {
+        type: 'system',
+        subtype: 'init',
+        uuid: uuid5,
+        session_id: 'session-1',
+        message: { cwd: '/workspace2' },
+      };
 
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: { role: 'user', content: 'First message' },
-				},
-				systemInit1,
-				{
-					type: 'assistant',
-					uuid: uuid3,
-					session_id: 'session-1',
-					message: { role: 'assistant', content: [{ type: 'text', text: 'Response' }] },
-				},
-				{
-					type: 'user',
-					uuid: uuid4,
-					session_id: 'session-1',
-					message: { role: 'user', content: 'Second message' },
-				},
-				systemInit2,
-			] as unknown as SDKMessage[];
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: { role: 'user', content: 'First message' },
+        },
+        systemInit1,
+        {
+          type: 'assistant',
+          uuid: uuid3,
+          session_id: 'session-1',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Response' }] },
+        },
+        {
+          type: 'user',
+          uuid: uuid4,
+          session_id: 'session-1',
+          message: { role: 'user', content: 'Second message' },
+        },
+        systemInit2,
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.sessionInfoMap.size).toBe(2);
-			expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInit1);
-			expect(result.current.sessionInfoMap.get(uuid4)).toBe(systemInit2);
-		});
+      expect(result.current.sessionInfoMap.size).toBe(2);
+      expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInit1);
+      expect(result.current.sessionInfoMap.get(uuid4)).toBe(systemInit2);
+    });
 
-		it('should ignore non-init system messages', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: { role: 'user', content: 'Hello' },
-				},
-				{
-					type: 'system',
-					subtype: 'result', // Not 'init'
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: { summary: 'Task completed' },
-				},
-			] as unknown as SDKMessage[];
+    it('should ignore non-init system messages', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: { role: 'user', content: 'Hello' },
+        },
+        {
+          type: 'system',
+          subtype: 'result', // Not 'init'
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: { summary: 'Task completed' },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			expect(result.current.sessionInfoMap.size).toBe(0);
-		});
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.sessionInfoMap.size).toBe(0);
+    });
 
-		it('should skip assistant messages when finding preceding user message', () => {
-			const systemInit = {
-				type: 'system',
-				subtype: 'init',
-				uuid: uuid4,
-				session_id: 'session-1',
-				message: { cwd: '/workspace' },
-			};
+    it('should skip assistant messages when finding preceding user message', () => {
+      const systemInit = {
+        type: 'system',
+        subtype: 'init',
+        uuid: uuid4,
+        session_id: 'session-1',
+        message: { cwd: '/workspace' },
+      };
 
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: { role: 'user', content: 'User message' },
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					message: { role: 'assistant', content: [{ type: 'text', text: 'Response' }] },
-				},
-				{
-					type: 'assistant',
-					uuid: uuid3,
-					session_id: 'session-1',
-					message: { role: 'assistant', content: [{ type: 'text', text: 'More' }] },
-				},
-				systemInit,
-			] as unknown as SDKMessage[];
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: { role: 'user', content: 'User message' },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Response' }] },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid3,
+          session_id: 'session-1',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'More' }] },
+        },
+        systemInit,
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			// Should attach to user message (uuid1), not assistant messages
-			expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInit);
-		});
-	});
+      // Should attach to user message (uuid1), not assistant messages
+      expect(result.current.sessionInfoMap.get(uuid1)).toBe(systemInit);
+    });
+  });
 
-	describe('subagentMessagesMap', () => {
-		it('should create empty map when no messages have parent_tool_use_id', () => {
-			const messages = [
-				{
-					type: 'user',
-					uuid: uuid1,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: 'Hello',
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					parent_tool_use_id: null,
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Hi there!' }],
-					},
-				},
-			] as unknown as SDKMessage[];
+  describe('subagentMessagesMap', () => {
+    it('should create empty map when no messages have parent_tool_use_id', () => {
+      const messages = [
+        {
+          type: 'user',
+          uuid: uuid1,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: 'Hello',
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Hi there!' }],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			expect(result.current.subagentMessagesMap.size).toBe(0);
-		});
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      expect(result.current.subagentMessagesMap.size).toBe(0);
+    });
 
-		it('should group messages by parent_tool_use_id', () => {
-			const messages = [
-				{
-					type: 'assistant',
-					uuid: uuid1,
-					session_id: 'session-1',
-					parent_tool_use_id: null,
-					message: {
-						role: 'assistant',
-						content: [
-							{
-								type: 'tool_use',
-								id: 'tool-1',
-								name: 'Task',
-								input: {
-									subagent_type: 'explore',
-									description: 'Test',
-									prompt: 'Do something',
-								},
-							},
-						],
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					parent_tool_use_id: 'tool-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Exploring...' }],
-					},
-				},
-				{
-					type: 'user',
-					uuid: uuid3,
-					session_id: 'session-1',
-					parent_tool_use_id: 'tool-1',
-					message: {
-						role: 'user',
-						content: [
-							{
-								type: 'tool_result',
-								tool_use_id: 'sub-tool-1',
-								content: 'Result',
-							},
-						],
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid4,
-					session_id: 'session-1',
-					parent_tool_use_id: 'tool-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Done!' }],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should group messages by parent_tool_use_id', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool-1',
+                name: 'Task',
+                input: {
+                  subagent_type: 'explore',
+                  description: 'Test',
+                  prompt: 'Do something',
+                },
+              },
+            ],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Exploring...' }],
+          },
+        },
+        {
+          type: 'user',
+          uuid: uuid3,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-1',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'sub-tool-1',
+                content: 'Result',
+              },
+            ],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid4,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Done!' }],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
-			const subagentMessages = result.current.subagentMessagesMap.get('tool-1');
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const subagentMessages = result.current.subagentMessagesMap.get('tool-1');
 
-			expect(subagentMessages).toBeDefined();
-			expect(subagentMessages?.length).toBe(3);
-			expect(subagentMessages?.[0].uuid).toBe(uuid2);
-			expect(subagentMessages?.[1].uuid).toBe(uuid3);
-			expect(subagentMessages?.[2].uuid).toBe(uuid4);
-		});
+      expect(subagentMessages).toBeDefined();
+      expect(subagentMessages?.length).toBe(3);
+      expect(subagentMessages?.[0].uuid).toBe(uuid2);
+      expect(subagentMessages?.[1].uuid).toBe(uuid3);
+      expect(subagentMessages?.[2].uuid).toBe(uuid4);
+    });
 
-		it('should handle multiple parent tool use IDs', () => {
-			const messages = [
-				{
-					type: 'assistant',
-					uuid: uuid1,
-					session_id: 'session-1',
-					parent_tool_use_id: 'tool-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Agent 1 message' }],
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid2,
-					session_id: 'session-1',
-					parent_tool_use_id: 'tool-2',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Agent 2 message' }],
-					},
-				},
-				{
-					type: 'assistant',
-					uuid: uuid3,
-					session_id: 'session-1',
-					parent_tool_use_id: 'tool-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'text', text: 'Agent 1 second message' }],
-					},
-				},
-			] as unknown as SDKMessage[];
+    it('should handle multiple parent tool use IDs', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          uuid: uuid1,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Agent 1 message' }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid2,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-2',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Agent 2 message' }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: uuid3,
+          session_id: 'session-1',
+          parent_tool_use_id: 'tool-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Agent 1 second message' }],
+          },
+        },
+      ] as unknown as SDKMessage[];
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			const agent1Messages = result.current.subagentMessagesMap.get('tool-1');
-			const agent2Messages = result.current.subagentMessagesMap.get('tool-2');
+      const agent1Messages = result.current.subagentMessagesMap.get('tool-1');
+      const agent2Messages = result.current.subagentMessagesMap.get('tool-2');
 
-			expect(agent1Messages?.length).toBe(2);
-			expect(agent2Messages?.length).toBe(1);
-			expect(agent1Messages?.[0].uuid).toBe(uuid1);
-			expect(agent1Messages?.[1].uuid).toBe(uuid3);
-			expect(agent2Messages?.[0].uuid).toBe(uuid2);
-		});
-	});
+      expect(agent1Messages?.length).toBe(2);
+      expect(agent2Messages?.length).toBe(1);
+      expect(agent1Messages?.[0].uuid).toBe(uuid1);
+      expect(agent1Messages?.[1].uuid).toBe(uuid3);
+      expect(agent2Messages?.[0].uuid).toBe(uuid2);
+    });
+  });
 
-	describe('performance characteristics', () => {
-		it('keeps session init mapping linear for large tool-heavy threads', () => {
-			const messages: SDKMessage[] = [];
-			for (let i = 0; i < 250; i++) {
-				messages.push({
-					type: 'user',
-					uuid: `user-${i}`,
-					session_id: 'session-1',
-					message: { role: 'user', content: `prompt ${i}` },
-				} as unknown as SDKMessage);
-				messages.push({
-					type: 'system',
-					subtype: 'init',
-					uuid: `init-${i}`,
-					session_id: 'session-1',
-					tools: ['Read', 'Bash'],
-				} as unknown as SDKMessage);
-				messages.push({
-					type: 'assistant',
-					uuid: `assistant-${i}`,
-					session_id: 'session-1',
-					message: {
-						role: 'assistant',
-						content: [{ type: 'tool_use', id: `tool-${i}`, name: 'Read', input: {} }],
-					},
-				} as unknown as SDKMessage);
-				messages.push({
-					type: 'user',
-					uuid: `result-${i}`,
-					session_id: 'session-1',
-					message: {
-						role: 'user',
-						content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: 'ok' }],
-					},
-				} as unknown as SDKMessage);
-			}
+  describe('performance characteristics', () => {
+    it('keeps session init mapping linear for large tool-heavy threads', () => {
+      const messages: SDKMessage[] = [];
+      for (let i = 0; i < 250; i++) {
+        messages.push({
+          type: 'user',
+          uuid: `user-${i}`,
+          session_id: 'session-1',
+          message: { role: 'user', content: `prompt ${i}` },
+        } as unknown as SDKMessage);
+        messages.push({
+          type: 'system',
+          subtype: 'init',
+          uuid: `init-${i}`,
+          session_id: 'session-1',
+          tools: ['Read', 'Bash'],
+        } as unknown as SDKMessage);
+        messages.push({
+          type: 'assistant',
+          uuid: `assistant-${i}`,
+          session_id: 'session-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: `tool-${i}`, name: 'Read', input: {} }],
+          },
+        } as unknown as SDKMessage);
+        messages.push({
+          type: 'user',
+          uuid: `result-${i}`,
+          session_id: 'session-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: 'ok' }],
+          },
+        } as unknown as SDKMessage);
+      }
 
-			const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
+      const { result } = renderHook(() => useMessageMaps(messages, 'session-1'));
 
-			expect(result.current.sessionInfoMap.size).toBe(250);
-			expect(result.current.toolInputsMap.size).toBe(250);
-			expect(result.current.toolResultsMap.size).toBe(250);
-			expect(result.current.sessionInfoMap.get('user-249')?.uuid).toBe('init-249');
-		});
-	});
+      expect(result.current.sessionInfoMap.size).toBe(250);
+      expect(result.current.toolInputsMap.size).toBe(250);
+      expect(result.current.toolResultsMap.size).toBe(250);
+      expect(result.current.sessionInfoMap.get('user-249')?.uuid).toBe('init-249');
+    });
+  });
 });

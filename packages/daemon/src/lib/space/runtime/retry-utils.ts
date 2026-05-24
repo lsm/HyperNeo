@@ -28,28 +28,28 @@ const log = new Logger('retry-utils');
 // ---------------------------------------------------------------------------
 
 export interface RetryOptions {
-	/**
-	 * Maximum number of retry attempts (not counting the initial attempt).
-	 * Default: MAX_NETWORK_RETRIES (3).
-	 */
-	maxRetries?: number;
-	/**
-	 * Delay in milliseconds before each retry attempt.
-	 * Index 0 = before attempt 2, index 1 = before attempt 3, etc.
-	 * The last entry is reused if there are more retries than entries.
-	 * Default: NETWORK_RETRY_DELAYS_MS ([5000, 10000, 20000]).
-	 */
-	delaysMs?: readonly number[];
-	/**
-	 * Optional callback called before each retry attempt.
-	 * Receives the 1-based retry number and the error that triggered the retry.
-	 */
-	onRetry?: (attempt: number, error: unknown) => void;
-	/**
-	 * Optional predicate to decide if an error is retryable.
-	 * If not provided, all errors are retried.
-	 */
-	isRetryable?: (error: unknown) => boolean;
+  /**
+   * Maximum number of retry attempts (not counting the initial attempt).
+   * Default: MAX_NETWORK_RETRIES (3).
+   */
+  maxRetries?: number;
+  /**
+   * Delay in milliseconds before each retry attempt.
+   * Index 0 = before attempt 2, index 1 = before attempt 3, etc.
+   * The last entry is reused if there are more retries than entries.
+   * Default: NETWORK_RETRY_DELAYS_MS ([5000, 10000, 20000]).
+   */
+  delaysMs?: readonly number[];
+  /**
+   * Optional callback called before each retry attempt.
+   * Receives the 1-based retry number and the error that triggered the retry.
+   */
+  onRetry?: (attempt: number, error: unknown) => void;
+  /**
+   * Optional predicate to decide if an error is retryable.
+   * If not provided, all errors are retried.
+   */
+  isRetryable?: (error: unknown) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,42 +69,42 @@ export interface RetryOptions {
  * @throws            The last error if all attempts fail.
  */
 export async function retryWithBackoff<T>(
-	fn: () => Promise<T>,
-	options?: RetryOptions
+  fn: () => Promise<T>,
+  options?: RetryOptions
 ): Promise<T> {
-	const maxRetries = options?.maxRetries ?? MAX_NETWORK_RETRIES;
-	const delays = options?.delaysMs ?? NETWORK_RETRY_DELAYS_MS;
-	const isRetryable = options?.isRetryable ?? (() => true);
-	let lastError: unknown;
+  const maxRetries = options?.maxRetries ?? MAX_NETWORK_RETRIES;
+  const delays = options?.delaysMs ?? NETWORK_RETRY_DELAYS_MS;
+  const isRetryable = options?.isRetryable ?? (() => true);
+  let lastError: unknown;
 
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		try {
-			return await fn();
-		} catch (err) {
-			lastError = err;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
 
-			const isLast = attempt >= maxRetries;
-			const shouldRetry = isRetryable(err);
+      const isLast = attempt >= maxRetries;
+      const shouldRetry = isRetryable(err);
 
-			if (isLast || !shouldRetry) {
-				// Exhausted retries or non-retryable error — propagate immediately.
-				throw err;
-			}
+      if (isLast || !shouldRetry) {
+        // Exhausted retries or non-retryable error — propagate immediately.
+        throw err;
+      }
 
-			const delayMs = delays[attempt] ?? delays[delays.length - 1] ?? 5_000;
+      const delayMs = delays[attempt] ?? delays[delays.length - 1] ?? 5_000;
 
-			log.warn(
-				`retryWithBackoff: attempt ${attempt + 1} failed (${err instanceof Error ? err.message : String(err)}). ` +
-					`Retrying in ${delayMs}ms (${maxRetries - attempt} attempt(s) left)`
-			);
+      log.warn(
+        `retryWithBackoff: attempt ${attempt + 1} failed (${err instanceof Error ? err.message : String(err)}). ` +
+          `Retrying in ${delayMs}ms (${maxRetries - attempt} attempt(s) left)`
+      );
 
-			options?.onRetry?.(attempt + 1, err);
-			await sleep(delayMs);
-		}
-	}
+      options?.onRetry?.(attempt + 1, err);
+      await sleep(delayMs);
+    }
+  }
 
-	// Unreachable: loop always exits via return or throw above.
-	throw lastError;
+  // Unreachable: loop always exits via return or throw above.
+  throw lastError;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,28 +125,28 @@ export async function retryWithBackoff<T>(
  * @param headers  Header map — keys may be any case (`retry-after` or `Retry-After`).
  */
 export function parseRetryAfter(
-	headers: Record<string, string | string[] | undefined>
+  headers: Record<string, string | string[] | undefined>
 ): number | null {
-	// Header lookup is case-insensitive — check both common cases.
-	const raw = headers['retry-after'] ?? headers['Retry-After'];
-	if (!raw) return null;
+  // Header lookup is case-insensitive — check both common cases.
+  const raw = headers['retry-after'] ?? headers['Retry-After'];
+  if (!raw) return null;
 
-	const value = Array.isArray(raw) ? raw[0] : raw;
-	if (!value) return null;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
 
-	// Try integer seconds first.
-	const seconds = parseInt(value, 10);
-	if (!isNaN(seconds) && seconds >= 0 && String(seconds) === value.trim()) {
-		return seconds * 1_000;
-	}
+  // Try integer seconds first.
+  const seconds = parseInt(value, 10);
+  if (!isNaN(seconds) && seconds >= 0 && String(seconds) === value.trim()) {
+    return seconds * 1_000;
+  }
 
-	// Try HTTP date format.
-	const date = new Date(value).getTime();
-	if (!isNaN(date)) {
-		return Math.max(0, date - Date.now());
-	}
+  // Try HTTP date format.
+  const date = new Date(value).getTime();
+  if (!isNaN(date)) {
+    return Math.max(0, date - Date.now());
+  }
 
-	return null;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,5 +154,5 @@ export function parseRetryAfter(
 // ---------------------------------------------------------------------------
 
 function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

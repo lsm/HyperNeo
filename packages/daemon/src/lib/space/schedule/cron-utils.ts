@@ -17,13 +17,13 @@ import { Cron } from 'croner';
  * Returns false for any expression that croner cannot parse.
  */
 export function isValidCronExpression(expr: string): boolean {
-	try {
-		// dry-run with a sentinel date so croner parses but never actually schedules
-		new Cron(expr, { timezone: 'UTC', startAt: new Date(0), stopAt: new Date(0) });
-		return true;
-	} catch {
-		return false;
-	}
+  try {
+    // dry-run with a sentinel date so croner parses but never actually schedules
+    new Cron(expr, { timezone: 'UTC', startAt: new Date(0), stopAt: new Date(0) });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -36,12 +36,12 @@ export function isValidCronExpression(expr: string): boolean {
  *                   has no future occurrence (e.g. stopped)
  */
 export function getNextRunAt(expr: string, tz = 'UTC', afterMs?: number): number | null {
-	const after = afterMs !== undefined ? new Date(afterMs) : new Date();
-	try {
-		const job = new Cron(expr, { timezone: tz, startAt: after });
-		const next = job.nextRun(after);
-		return next ? next.getTime() : null;
-	} catch {
-		return null;
-	}
+  const after = afterMs !== undefined ? new Date(afterMs) : new Date();
+  try {
+    const job = new Cron(expr, { timezone: tz, startAt: after });
+    const next = job.nextRun(after);
+    return next ? next.getTime() : null;
+  } catch {
+    return null;
+  }
 }

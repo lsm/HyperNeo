@@ -35,32 +35,32 @@ import type { ElementType } from '../../internal/types.ts';
  * @see https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html
  */
 interface TouchTargetProps {
-	as?: ElementType;
-	children?: ComponentChildren;
-	class?: string;
-	[key: string]: unknown;
+  as?: ElementType;
+  children?: ComponentChildren;
+  class?: string;
+  [key: string]: unknown;
 }
 
 function TouchTargetFn({
-	as: Tag = 'span',
-	children,
-	class: className,
-	...rest
+  as: Tag = 'span',
+  children,
+  class: className,
+  ...rest
 }: TouchTargetProps) {
-	const ourProps: Record<string, unknown> = {
-		'aria-hidden': 'true',
-		className,
-		style: {
-			position: 'absolute',
-			inset: '0',
-		},
-	};
+  const ourProps: Record<string, unknown> = {
+    'aria-hidden': 'true',
+    className,
+    style: {
+      position: 'absolute',
+      inset: '0',
+    },
+  };
 
-	return (
-		<Tag {...ourProps} {...rest}>
-			{children}
-		</Tag>
-	);
+  return (
+    <Tag {...ourProps} {...rest}>
+      {children}
+    </Tag>
+  );
 }
 
 TouchTargetFn.displayName = 'TouchTarget';

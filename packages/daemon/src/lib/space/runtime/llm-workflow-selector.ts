@@ -41,8 +41,8 @@ const MAX_WORKFLOW_DESC_CHARS = 240;
  * deterministic fallback.
  */
 export type SelectWorkflowWithLlm = (
-	task: SpaceTask,
-	workflows: SpaceWorkflow[]
+  task: SpaceTask,
+  workflows: SpaceWorkflow[]
 ) => Promise<string | null>;
 
 /**
@@ -53,99 +53,99 @@ export type SelectWorkflowWithLlm = (
  * deterministic choice without surfacing errors.
  */
 export async function selectWorkflowWithLlmDefault(
-	task: SpaceTask,
-	workflows: SpaceWorkflow[]
+  task: SpaceTask,
+  workflows: SpaceWorkflow[]
 ): Promise<string | null> {
-	if (workflows.length === 0) return null;
-	if (workflows.length === 1) return workflows[0].id;
+  if (workflows.length === 0) return null;
+  if (workflows.length === 1) return workflows[0].id;
 
-	const providerService = getProviderService();
-	let provider: string;
-	try {
-		provider = await providerService.getDefaultProvider();
-	} catch (err) {
-		log.warn('Failed to resolve default provider for workflow selection:', err);
-		return null;
-	}
+  const providerService = getProviderService();
+  let provider: string;
+  try {
+    provider = await providerService.getDefaultProvider();
+  } catch (err) {
+    log.warn('Failed to resolve default provider for workflow selection:', err);
+    return null;
+  }
 
-	let modelId: string;
-	try {
-		const cfg = await providerService.getTitleGenerationConfig(provider);
-		modelId = cfg.modelId;
-	} catch (err) {
-		log.warn('Failed to resolve title-generation model for workflow selection:', err);
-		return null;
-	}
+  let modelId: string;
+  try {
+    const cfg = await providerService.getTitleGenerationConfig(provider);
+    modelId = cfg.modelId;
+  } catch (err) {
+    log.warn('Failed to resolve title-generation model for workflow selection:', err);
+    return null;
+  }
 
-	const prompt = buildSelectionPrompt(task, workflows);
+  const prompt = buildSelectionPrompt(task, workflows);
 
-	let originalEnv: ReturnType<typeof providerService.applyEnvVarsToProcessForProvider>;
-	try {
-		originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
-	} catch (err) {
-		log.warn('Failed to apply provider env vars for workflow selection:', err);
-		return null;
-	}
+  let originalEnv: ReturnType<typeof providerService.applyEnvVarsToProcessForProvider>;
+  try {
+    originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
+  } catch (err) {
+    log.warn('Failed to apply provider env vars for workflow selection:', err);
+    return null;
+  }
 
-	try {
-		const { query } = await import('@anthropic-ai/claude-agent-sdk');
-		const providerEnvVars = providerService.getEnvVarsForModel(modelId, provider);
-		const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
-		const cliPath = resolveSDKCliPath();
+  try {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const providerEnvVars = providerService.getEnvVarsForModel(modelId, provider);
+    const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
+    const cliPath = resolveSDKCliPath();
 
-		const agentQuery = query({
-			prompt,
-			options: {
-				model: provider === 'glm' ? 'haiku' : modelId,
-				maxTurns: 1,
-				permissionMode: 'acceptEdits',
-				allowDangerouslySkipPermissions: false,
-				mcpServers: {},
-				settingSources: [],
-				tools: [],
-				pathToClaudeCodeExecutable: cliPath,
-				executable: isRunningUnderBun() ? 'bun' : undefined,
-				env: mergedEnv,
-				// We only need a short text response; adaptive-thinking models can
-				// otherwise return only thinking blocks with no text payload.
-				thinking: { type: 'disabled' },
-			},
-		});
+    const agentQuery = query({
+      prompt,
+      options: {
+        model: provider === 'glm' ? 'haiku' : modelId,
+        maxTurns: 1,
+        permissionMode: 'acceptEdits',
+        allowDangerouslySkipPermissions: false,
+        mcpServers: {},
+        settingSources: [],
+        tools: [],
+        pathToClaudeCodeExecutable: cliPath,
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        env: mergedEnv,
+        // We only need a short text response; adaptive-thinking models can
+        // otherwise return only thinking blocks with no text payload.
+        thinking: { type: 'disabled' },
+      },
+    });
 
-		const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
-		let raw = '';
-		for await (const message of agentQuery) {
-			if (isSDKAssistantMessage(message)) {
-				const textBlocks = message.message.content.filter(
-					(b: { type: string }) => b.type === 'text'
-				) as Array<{ text?: string }>;
-				raw = textBlocks
-					.map((b) => b.text ?? '')
-					.join(' ')
-					.trim();
-				if (raw) break;
-			}
-		}
+    const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
+    let raw = '';
+    for await (const message of agentQuery) {
+      if (isSDKAssistantMessage(message)) {
+        const textBlocks = message.message.content.filter(
+          (b: { type: string }) => b.type === 'text'
+        ) as Array<{ text?: string }>;
+        raw = textBlocks
+          .map((b) => b.text ?? '')
+          .join(' ')
+          .trim();
+        if (raw) break;
+      }
+    }
 
-		if (!raw) return null;
+    if (!raw) return null;
 
-		const cleaned = cleanIdResponse(raw);
-		if (!cleaned) return null;
+    const cleaned = cleanIdResponse(raw);
+    if (!cleaned) return null;
 
-		// Match exact ID first; if the LLM echoed `none` or anything outside the
-		// candidate set, return null so the caller can pick a deterministic fallback.
-		const hit = workflows.find((w) => w.id === cleaned);
-		return hit ? hit.id : null;
-	} catch (err) {
-		log.warn('LLM workflow selection failed:', err);
-		return null;
-	} finally {
-		try {
-			providerService.restoreEnvVars(originalEnv);
-		} catch {
-			/* ignore env restore failures */
-		}
-	}
+    // Match exact ID first; if the LLM echoed `none` or anything outside the
+    // candidate set, return null so the caller can pick a deterministic fallback.
+    const hit = workflows.find((w) => w.id === cleaned);
+    return hit ? hit.id : null;
+  } catch (err) {
+    log.warn('LLM workflow selection failed:', err);
+    return null;
+  } finally {
+    try {
+      providerService.restoreEnvVars(originalEnv);
+    } catch {
+      /* ignore env restore failures */
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,25 +153,25 @@ export async function selectWorkflowWithLlmDefault(
 // ---------------------------------------------------------------------------
 
 function truncate(value: string, max: number): string {
-	if (value.length <= max) return value;
-	return `${value.slice(0, max - 1)}…`;
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1)}…`;
 }
 
 export function buildSelectionPrompt(task: SpaceTask, workflows: SpaceWorkflow[]): string {
-	const title = truncate(task.title ?? '', MAX_TASK_INPUT_CHARS);
-	const description = truncate(task.description ?? '', MAX_TASK_INPUT_CHARS);
-	const taskBlock = `Task title: ${title}\nTask description: ${description || '(empty)'}`;
+  const title = truncate(task.title ?? '', MAX_TASK_INPUT_CHARS);
+  const description = truncate(task.description ?? '', MAX_TASK_INPUT_CHARS);
+  const taskBlock = `Task title: ${title}\nTask description: ${description || '(empty)'}`;
 
-	const list = workflows
-		.map((w) => {
-			const name = truncate(w.name ?? '(unnamed)', 120);
-			const desc = truncate(w.description ?? '', MAX_WORKFLOW_DESC_CHARS) || '(no description)';
-			const tags = (w.tags ?? []).slice(0, 8).join(', ') || '(none)';
-			return `- id: ${w.id}\n  name: ${name}\n  description: ${desc}\n  tags: ${tags}`;
-		})
-		.join('\n');
+  const list = workflows
+    .map((w) => {
+      const name = truncate(w.name ?? '(unnamed)', 120);
+      const desc = truncate(w.description ?? '', MAX_WORKFLOW_DESC_CHARS) || '(no description)';
+      const tags = (w.tags ?? []).slice(0, 8).join(', ') || '(none)';
+      return `- id: ${w.id}\n  name: ${name}\n  description: ${desc}\n  tags: ${tags}`;
+    })
+    .join('\n');
 
-	return `You are selecting the best workflow to execute a task.
+  return `You are selecting the best workflow to execute a task.
 
 ${taskBlock}
 
@@ -186,14 +186,14 @@ Instructions:
 }
 
 function cleanIdResponse(raw: string): string | null {
-	let value = raw.trim();
-	// Strip wrapping quotes / backticks if the model ignored the instructions.
-	value = value.replace(/^[`"']+|[`"']+$/g, '').trim();
-	// If the model prefixed with "id:" or "Workflow:" take the final token.
-	if (/[\s:]/.test(value)) {
-		const tokens = value.split(/[\s:]+/).filter(Boolean);
-		if (tokens.length > 0) value = tokens[tokens.length - 1];
-	}
-	if (!value || value.toLowerCase() === 'none') return null;
-	return value;
+  let value = raw.trim();
+  // Strip wrapping quotes / backticks if the model ignored the instructions.
+  value = value.replace(/^[`"']+|[`"']+$/g, '').trim();
+  // If the model prefixed with "id:" or "Workflow:" take the final token.
+  if (/[\s:]/.test(value)) {
+    const tokens = value.split(/[\s:]+/).filter(Boolean);
+    if (tokens.length > 0) value = tokens[tokens.length - 1];
+  }
+  if (!value || value.toLowerCase() === 'none') return null;
+  return value;
 }

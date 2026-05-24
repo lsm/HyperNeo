@@ -15,231 +15,231 @@ import { initializeApplicationState } from './lib/state.ts';
 // commandRegistry singleton so the palette has commands before first render.
 import './lib/default-commands.ts';
 import {
-	currentSessionIdSignal,
-	currentSpaceIdSignal,
-	currentSpaceSessionIdSignal,
-	currentSpaceTaskIdSignal,
-	currentSpaceViewModeSignal,
-	currentSpaceConfigureTabSignal,
-	currentSpaceTasksFilterTabSignal,
-	currentSpaceTaskViewTabSignal,
-	navSectionSignal,
+  currentSessionIdSignal,
+  currentSpaceIdSignal,
+  currentSpaceSessionIdSignal,
+  currentSpaceTaskIdSignal,
+  currentSpaceViewModeSignal,
+  currentSpaceConfigureTabSignal,
+  currentSpaceTasksFilterTabSignal,
+  currentSpaceTaskViewTabSignal,
+  navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
 import {
-	initializeRouter,
-	navigateToSession,
-	navigateToHome,
-	navigateToSessions,
-	navigateToSpacesPage,
-	navigateToSpace,
-	navigateToSpaceConfigure,
-	navigateToSpaceSessions,
-	navigateToSpaceGoals,
-	navigateToSpaceForge,
-	navigateToSpaceTasks,
-	navigateToSpaceAgent,
-	navigateToSpaceSession,
-	navigateToSpaceTask,
-	navigateToSettings,
-	createSessionPath,
-	createSpacePath,
-	createSpaceConfigurePath,
-	createSpaceSessionsPath,
-	createSpaceGoalsPath,
-	createSpaceForgePath,
-	createSpaceTasksPath,
-	createSpaceAgentPath,
-	createSpaceSessionPath,
-	createSpaceTaskPath,
+  initializeRouter,
+  navigateToSession,
+  navigateToHome,
+  navigateToSessions,
+  navigateToSpacesPage,
+  navigateToSpace,
+  navigateToSpaceConfigure,
+  navigateToSpaceSessions,
+  navigateToSpaceGoals,
+  navigateToSpaceForge,
+  navigateToSpaceTasks,
+  navigateToSpaceAgent,
+  navigateToSpaceSession,
+  navigateToSpaceTask,
+  navigateToSettings,
+  createSessionPath,
+  createSpacePath,
+  createSpaceConfigurePath,
+  createSpaceSessionsPath,
+  createSpaceGoalsPath,
+  createSpaceForgePath,
+  createSpaceTasksPath,
+  createSpaceAgentPath,
+  createSpaceSessionPath,
+  createSpaceTaskPath,
 } from './lib/router.ts';
 
 export function App() {
-	// Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
-	useViewportSafety();
+  // Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
+  useViewportSafety();
 
-	// Cmd+K command palette + any other registered shortcuts.
-	useGlobalShortcuts();
+  // Cmd+K command palette + any other registered shortcuts.
+  useGlobalShortcuts();
 
-	useEffect(() => {
-		const isTauriRuntime = '__TAURI_INTERNALS__' in window || 'isTauri' in window;
-		document.documentElement.classList.toggle('tauri-desktop', isTauriRuntime);
+  useEffect(() => {
+    const isTauriRuntime = '__TAURI_INTERNALS__' in window || 'isTauri' in window;
+    document.documentElement.classList.toggle('tauri-desktop', isTauriRuntime);
 
-		return () => {
-			document.documentElement.classList.remove('tauri-desktop');
-		};
-	}, []);
+    return () => {
+      document.documentElement.classList.remove('tauri-desktop');
+    };
+  }, []);
 
-	useEffect(() => {
-		// STEP 1: Initialize URL-based router BEFORE any state management
-		// This ensures we read the session ID from URL on page load
-		const initialSessionId = initializeRouter();
+  useEffect(() => {
+    // STEP 1: Initialize URL-based router BEFORE any state management
+    // This ensures we read the session ID from URL on page load
+    const initialSessionId = initializeRouter();
 
-		// STEP 2: Initialize state management when app mounts
-		const init = async () => {
-			try {
-				// Wait for MessageHub connection to be ready
-				const hub = await connectionManager.getHub();
+    // STEP 2: Initialize state management when app mounts
+    const init = async () => {
+      try {
+        // Wait for MessageHub connection to be ready
+        const hub = await connectionManager.getHub();
 
-				// Initialize new unified stores (Phase 3 migration)
-				await globalStore.initialize();
+        // Initialize new unified stores (Phase 3 migration)
+        await globalStore.initialize();
 
-				// Initialize legacy state channels (will be removed in Phase 5)
-				// Pass initialSessionId so state channels know the URL state
-				await initializeApplicationState(hub, currentSessionIdSignal);
+        // Initialize legacy state channels (will be removed in Phase 5)
+        // Pass initialSessionId so state channels know the URL state
+        await initializeApplicationState(hub, currentSessionIdSignal);
 
-				// Initialize session status tracking for sidebar live indicators
-				initSessionStatusTracking();
+        // Initialize session status tracking for sidebar live indicators
+        initSessionStatusTracking();
 
-				// Sync currentSessionIdSignal with sessionStore.select()
-				// This bridges the old signal-based approach with the new store
-				effect(() => {
-					const sessionId = currentSessionIdSignal.value;
-					const spaceSessionId = currentSpaceSessionIdSignal.value;
-					// Don't clobber sessions managed by space routes
-					// (ChatContainer calls sessionStore.select directly in that case)
-					if (spaceSessionId) return;
-					sessionStore.select(sessionId);
-				});
+        // Sync currentSessionIdSignal with sessionStore.select()
+        // This bridges the old signal-based approach with the new store
+        effect(() => {
+          const sessionId = currentSessionIdSignal.value;
+          const spaceSessionId = currentSpaceSessionIdSignal.value;
+          // Don't clobber sessions managed by space routes
+          // (ChatContainer calls sessionStore.select directly in that case)
+          if (spaceSessionId) return;
+          sessionStore.select(sessionId);
+        });
 
-				// STEP 3: After connection is ready, restore session from URL
-				// If the URL has a session ID, set it in the signal
-				// This is done AFTER state is initialized to ensure proper syncing
-				if (initialSessionId) {
-					batch(() => {
-						currentSessionIdSignal.value = initialSessionId;
-					});
-				}
-			} catch {
-				// State initialization failed - app will use default state
-			}
-		};
+        // STEP 3: After connection is ready, restore session from URL
+        // If the URL has a session ID, set it in the signal
+        // This is done AFTER state is initialized to ensure proper syncing
+        if (initialSessionId) {
+          batch(() => {
+            currentSessionIdSignal.value = initialSessionId;
+          });
+        }
+      } catch {
+        // State initialization failed - app will use default state
+      }
+    };
 
-		init();
+    init();
 
-		// STEP 4: Sync URL when session/space changes from external sources
-		// (e.g., session created/deleted in another tab)
-		// This effect watches for signal changes and updates the URL
-		return effect(() => {
-			const sessionId = currentSessionIdSignal.value;
-			const spaceId = currentSpaceIdSignal.value;
-			const spaceSessionId = currentSpaceSessionIdSignal.value;
-			const spaceTaskId = currentSpaceTaskIdSignal.value;
-			const spaceViewMode = currentSpaceViewModeSignal.value;
-			const spaceConfigureTab = currentSpaceConfigureTabSignal.value;
-			const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
-			const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
-			const navSection = navSectionSignal.value;
-			const currentPath = window.location.pathname;
-			const isSpaceAgentRoute = !!(
-				spaceSessionId &&
-				spaceId &&
-				spaceSessionId === `space:chat:${spaceId}`
-			);
-			const expectedPath = sessionId
-				? createSessionPath(sessionId)
-				: spaceTaskId && spaceId
-					? createSpaceTaskPath(
-							spaceId,
-							spaceTaskId,
-							spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
-						)
-					: isSpaceAgentRoute
-						? createSpaceAgentPath(spaceId)
-						: spaceSessionId && spaceId
-							? createSpaceSessionPath(spaceId, spaceSessionId)
-							: spaceId && spaceViewMode === 'sessions'
-								? createSpaceSessionsPath(spaceId)
-								: spaceId && spaceViewMode === 'goals'
-									? createSpaceGoalsPath(spaceId)
-									: spaceId && spaceViewMode === 'forge'
-										? createSpaceForgePath(spaceId)
-										: spaceId && spaceViewMode === 'tasks'
-											? createSpaceTasksPath(
-													spaceId,
-													spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
-												)
-											: spaceId && spaceViewMode === 'configure'
-												? createSpaceConfigurePath(
-														spaceId,
-														spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
-													)
-												: spaceId
-													? createSpacePath(spaceId)
-													: navSection === 'chats'
-														? '/sessions'
-														: navSection === 'settings'
-															? '/settings'
-															: '/spaces';
+    // STEP 4: Sync URL when session/space changes from external sources
+    // (e.g., session created/deleted in another tab)
+    // This effect watches for signal changes and updates the URL
+    return effect(() => {
+      const sessionId = currentSessionIdSignal.value;
+      const spaceId = currentSpaceIdSignal.value;
+      const spaceSessionId = currentSpaceSessionIdSignal.value;
+      const spaceTaskId = currentSpaceTaskIdSignal.value;
+      const spaceViewMode = currentSpaceViewModeSignal.value;
+      const spaceConfigureTab = currentSpaceConfigureTabSignal.value;
+      const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
+      const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
+      const navSection = navSectionSignal.value;
+      const currentPath = window.location.pathname;
+      const isSpaceAgentRoute = !!(
+        spaceSessionId &&
+        spaceId &&
+        spaceSessionId === `space:chat:${spaceId}`
+      );
+      const expectedPath = sessionId
+        ? createSessionPath(sessionId)
+        : spaceTaskId && spaceId
+          ? createSpaceTaskPath(
+              spaceId,
+              spaceTaskId,
+              spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
+            )
+          : isSpaceAgentRoute
+            ? createSpaceAgentPath(spaceId)
+            : spaceSessionId && spaceId
+              ? createSpaceSessionPath(spaceId, spaceSessionId)
+              : spaceId && spaceViewMode === 'sessions'
+                ? createSpaceSessionsPath(spaceId)
+                : spaceId && spaceViewMode === 'goals'
+                  ? createSpaceGoalsPath(spaceId)
+                  : spaceId && spaceViewMode === 'forge'
+                    ? createSpaceForgePath(spaceId)
+                    : spaceId && spaceViewMode === 'tasks'
+                      ? createSpaceTasksPath(
+                          spaceId,
+                          spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
+                        )
+                      : spaceId && spaceViewMode === 'configure'
+                        ? createSpaceConfigurePath(
+                            spaceId,
+                            spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
+                          )
+                        : spaceId
+                          ? createSpacePath(spaceId)
+                          : navSection === 'chats'
+                            ? '/sessions'
+                            : navSection === 'settings'
+                              ? '/settings'
+                              : '/spaces';
 
-			// Only update URL if it's out of sync
-			// This prevents unnecessary history updates and loops
-			if (currentPath !== expectedPath) {
-				if (sessionId) {
-					navigateToSession(sessionId, true); // replace=true to avoid polluting history
-				} else if (spaceTaskId && spaceId) {
-					navigateToSpaceTask(
-						spaceId,
-						spaceTaskId,
-						spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined,
-						true
-					);
-				} else if (isSpaceAgentRoute) {
-					navigateToSpaceAgent(spaceId, true);
-				} else if (spaceSessionId && spaceId) {
-					navigateToSpaceSession(spaceId, spaceSessionId, true);
-				} else if (spaceId && spaceViewMode === 'sessions') {
-					navigateToSpaceSessions(spaceId, true);
-				} else if (spaceId && spaceViewMode === 'goals') {
-					navigateToSpaceGoals(spaceId, true);
-				} else if (spaceId && spaceViewMode === 'forge') {
-					navigateToSpaceForge(spaceId, true);
-				} else if (spaceId && spaceViewMode === 'tasks') {
-					navigateToSpaceTasks(spaceId, undefined, true);
-				} else if (spaceId && spaceViewMode === 'configure') {
-					navigateToSpaceConfigure(spaceId, undefined, true);
-				} else if (spaceId) {
-					navigateToSpace(spaceId, true);
-				} else if (navSection === 'spaces') {
-					navigateToSpacesPage(true);
-				} else if (navSection === 'chats') {
-					navigateToSessions(true);
-				} else if (navSection === 'settings') {
-					navigateToSettings(true);
-				} else {
-					navigateToHome(true);
-				}
-			}
-		});
-	}, []);
+      // Only update URL if it's out of sync
+      // This prevents unnecessary history updates and loops
+      if (currentPath !== expectedPath) {
+        if (sessionId) {
+          navigateToSession(sessionId, true); // replace=true to avoid polluting history
+        } else if (spaceTaskId && spaceId) {
+          navigateToSpaceTask(
+            spaceId,
+            spaceTaskId,
+            spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined,
+            true
+          );
+        } else if (isSpaceAgentRoute) {
+          navigateToSpaceAgent(spaceId, true);
+        } else if (spaceSessionId && spaceId) {
+          navigateToSpaceSession(spaceId, spaceSessionId, true);
+        } else if (spaceId && spaceViewMode === 'sessions') {
+          navigateToSpaceSessions(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'goals') {
+          navigateToSpaceGoals(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'forge') {
+          navigateToSpaceForge(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'tasks') {
+          navigateToSpaceTasks(spaceId, undefined, true);
+        } else if (spaceId && spaceViewMode === 'configure') {
+          navigateToSpaceConfigure(spaceId, undefined, true);
+        } else if (spaceId) {
+          navigateToSpace(spaceId, true);
+        } else if (navSection === 'spaces') {
+          navigateToSpacesPage(true);
+        } else if (navSection === 'chats') {
+          navigateToSessions(true);
+        } else if (navSection === 'settings') {
+          navigateToSettings(true);
+        } else {
+          navigateToHome(true);
+        }
+      }
+    });
+  }, []);
 
-	return (
-		<>
-			<div class="desktop-window-shell flex h-dvh overflow-hidden bg-app-sidebar relative pt-safe">
-				{/* Sidebar — section switcher, section content, settings */}
-				<ContextPanel />
+  return (
+    <>
+      <div class="desktop-window-shell flex h-dvh overflow-hidden bg-app-sidebar relative pt-safe">
+        {/* Sidebar — section switcher, section content, settings */}
+        <ContextPanel />
 
-				{/* Main Content — rounded-left "card" on desktop; the sidebar shell
+        {/* Main Content — rounded-left "card" on desktop; the sidebar shell
 				    behind shows through the corners to separate it from the panels.
 				    BottomTabBar is inline (flex-shrink-0) so no extra padding needed. */}
-				<div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">
-					<MainContent />
-				</div>
+        <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">
+          <MainContent />
+        </div>
 
-				<RightPanel />
-				<RightPanelToggle />
-			</div>
+        <RightPanel />
+        <RightPanelToggle />
+      </div>
 
-			{/* Global Toast Container */}
-			<ToastContainer />
+      {/* Global Toast Container */}
+      <ToastContainer />
 
-			{/* Command palette (Cmd+K) */}
-			<CommandPalette />
+      {/* Command palette (Cmd+K) */}
+      <CommandPalette />
 
-			{/* Connection Overlay - blocks UI when disconnected */}
-			<ConnectionOverlay />
-		</>
-	);
+      {/* Connection Overlay - blocks UI when disconnected */}
+      <ConnectionOverlay />
+    </>
+  );
 }

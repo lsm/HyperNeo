@@ -1,688 +1,688 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import {
-	Logger,
-	createLogger,
-	configureLogger,
-	getLoggerConfig,
-	LogLevel,
-	clearStructuredLogSubscribers,
-	installConsoleLogCapture,
-	subscribeToStructuredLogs,
-	withConsoleLogCaptureSuppressed,
+  Logger,
+  createLogger,
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+  clearStructuredLogSubscribers,
+  installConsoleLogCapture,
+  subscribeToStructuredLogs,
+  withConsoleLogCaptureSuppressed,
 } from '../src/logger.ts';
 
 describe('Logger', () => {
-	let originalEnv: Record<string, string | undefined>;
-	let consoleErrorMock: ReturnType<typeof mock>;
-	let consoleWarnMock: ReturnType<typeof mock>;
-	let consoleInfoMock: ReturnType<typeof mock>;
-	let consoleLogMock: ReturnType<typeof mock>;
-	let consoleDebugMock: ReturnType<typeof mock>;
-
-	beforeEach(() => {
-		// Save original environment
-		originalEnv = { ...process.env };
-
-		// Mock all console methods to prevent output during tests
-		consoleErrorMock = mock(() => {});
-		consoleWarnMock = mock(() => {});
-		consoleInfoMock = mock(() => {});
-		consoleLogMock = mock(() => {});
-		consoleDebugMock = mock(() => {});
-
-		console.error = consoleErrorMock;
-		console.warn = consoleWarnMock;
-		console.info = consoleInfoMock;
-		console.log = consoleLogMock;
-		console.debug = consoleDebugMock;
-
-		// Reset logger config to defaults
-		configureLogger({
-			level: LogLevel.INFO,
-			filter: ['*'],
-			excludeFilter: [],
-			timestamps: false,
-		});
-	});
-
-	afterEach(() => {
-		clearStructuredLogSubscribers();
-		// Restore environment
-		process.env = originalEnv;
-
-		// Reset logger config
-		configureLogger({
-			level: LogLevel.INFO,
-			filter: ['*'],
-			excludeFilter: [],
-			timestamps: false,
-		});
-	});
-
-	describe('structured log events', () => {
-		test('emits structured events for logger output', () => {
-			const events: unknown[] = [];
-			subscribeToStructuredLogs((event) => events.push(event));
-			const logger = createLogger('test:structured');
-
-			logger.warn('warning happened', { spaceId: 'space-1' });
-
-			expect(events).toHaveLength(1);
-			expect(events[0]).toMatchObject({
-				level: 'warn',
-				message: 'warning happened {"spaceId":"space-1"}',
-				module: 'test:structured',
-				source: 'logger',
-				context: { spaceId: 'space-1' },
-			});
-		});
-
-		test('does not emit for filtered logger output', () => {
-			configureLogger({ level: LogLevel.ERROR });
-			const events: unknown[] = [];
-			subscribeToStructuredLogs((event) => events.push(event));
-
-			createLogger('test:structured').warn('hidden warning');
-
-			expect(events).toHaveLength(0);
-		});
-
-		test('captures direct console calls without double-capturing logger calls', () => {
-			const events: unknown[] = [];
-			subscribeToStructuredLogs((event) => events.push(event));
-			const restore = installConsoleLogCapture();
-			try {
-				console.error('raw console failure');
-				createLogger('test:structured').error('logger failure');
-			} finally {
-				restore();
-			}
-
-			expect(events).toHaveLength(2);
-			expect(events[0]).toMatchObject({ source: 'console', level: 'error' });
-			expect(events[1]).toMatchObject({ source: 'logger', level: 'error' });
-		});
-
-		test('can suppress console capture around already-structured output', () => {
-			const events: unknown[] = [];
-			subscribeToStructuredLogs((event) => events.push(event));
-			const restore = installConsoleLogCapture();
-			try {
-				withConsoleLogCaptureSuppressed(() => console.error('already captured'));
-			} finally {
-				restore();
-			}
-
-			expect(events).toHaveLength(0);
-		});
-
-		test('keeps console capture installed until every owner restores it', () => {
-			const events: unknown[] = [];
-			subscribeToStructuredLogs((event) => events.push(event));
-			const restoreFirst = installConsoleLogCapture();
-			const restoreSecond = installConsoleLogCapture();
-
-			restoreFirst();
-			console.warn('still captured');
-			restoreSecond();
-			console.warn('not captured');
-			restoreSecond();
-
-			expect(events).toHaveLength(1);
-			expect(events[0]).toMatchObject({
-				source: 'console',
-				level: 'warn',
-				message: 'still captured',
-			});
-		});
-	});
-
-	describe('configureLogger', () => {
-		test('should update global logger configuration', () => {
-			const config = getLoggerConfig();
-			expect(config.level).toBe(LogLevel.INFO);
-			expect(config.filter).toEqual(['*']);
-			expect(config.excludeFilter).toEqual([]);
-			expect(config.timestamps).toBe(false);
-
-			configureLogger({
-				level: LogLevel.DEBUG,
-				timestamps: true,
-			});
-
-			const newConfig = getLoggerConfig();
-			expect(newConfig.level).toBe(LogLevel.DEBUG);
-			expect(newConfig.timestamps).toBe(true);
-			// filter and excludeFilter should remain
-			expect(newConfig.filter).toEqual(['*']);
-			expect(newConfig.excludeFilter).toEqual([]);
-		});
-
-		test('should merge partial config with existing config', () => {
-			configureLogger({
-				level: LogLevel.WARN,
-				filter: ['test:*'],
-				excludeFilter: ['test:internal'],
-			});
-
-			const config = getLoggerConfig();
-			expect(config.level).toBe(LogLevel.WARN);
-			expect(config.filter).toEqual(['test:*']);
-			expect(config.excludeFilter).toEqual(['test:internal']);
-			expect(config.timestamps).toBe(false);
-		});
-
-		test('should update filter patterns', () => {
-			configureLogger({
-				filter: ['app:*', 'lib:*'],
-				excludeFilter: ['app:verbose'],
-			});
-
-			const config = getLoggerConfig();
-			expect(config.filter).toEqual(['app:*', 'lib:*']);
-			expect(config.excludeFilter).toEqual(['app:verbose']);
-		});
-	});
-
-	describe('getLoggerConfig', () => {
-		test('should return a copy of the config', () => {
-			const config1 = getLoggerConfig();
-			config1.level = LogLevel.SILENT;
-
-			const config2 = getLoggerConfig();
-			expect(config2.level).not.toBe(LogLevel.SILENT);
-		});
-
-		test('should return current configuration', () => {
-			configureLogger({
-				level: LogLevel.TRACE,
-				filter: ['foo:*'],
-				excludeFilter: ['foo:bar'],
-				timestamps: true,
-			});
-
-			const config = getLoggerConfig();
-			expect(config.level).toBe(LogLevel.TRACE);
-			expect(config.filter).toEqual(['foo:*']);
-			expect(config.excludeFilter).toEqual(['foo:bar']);
-			expect(config.timestamps).toBe(true);
-		});
-	});
-
-	describe('createLogger', () => {
-		test('should create logger with namespace', () => {
-			const logger = createLogger('test:namespace');
-			expect(logger.getNamespace()).toBe('test:namespace');
-		});
-
-		test('should create default logger without namespace', () => {
-			const logger = new Logger();
-			expect(logger.getNamespace()).toBe('kai');
-		});
-
-		test('should create logger with empty namespace', () => {
-			const logger = new Logger('');
-			expect(logger.getNamespace()).toBe('');
-		});
-	});
-
-	describe('log levels', () => {
-		test('should respect SILENT level', () => {
-			configureLogger({ level: LogLevel.SILENT });
-
-			const logger = createLogger('test');
-			consoleInfoMock.mockClear();
-
-			logger.info('should not log');
-			logger.error('should not log');
-			logger.warn('should not log');
-			logger.debug('should not log');
-			logger.trace('should not log');
-			logger.log('should not log');
-
-			expect(consoleInfoMock).not.toHaveBeenCalled();
-			// Mock cleared in beforeEach
-		});
-
-		test('should respect ERROR level', () => {
-			configureLogger({ level: LogLevel.ERROR });
-
-			const logger = createLogger('test');
-			consoleErrorMock.mockClear();
-			consoleWarnMock.mockClear();
-
-			logger.error('error message');
-			logger.warn('warn message');
-			logger.info('info message');
-
-			expect(consoleErrorMock).toHaveBeenCalled();
-			expect(consoleWarnMock).not.toHaveBeenCalled();
-
-			// Mock cleared in beforeEach
-			// Mock cleared in beforeEach
-		});
-
-		test('should respect WARN level', () => {
-			configureLogger({ level: LogLevel.WARN });
-
-			const logger = createLogger('test');
-			consoleWarnMock.mockClear();
-			consoleInfoMock.mockClear();
-
-			logger.warn('warn message');
-			logger.info('info message');
-
-			expect(consoleWarnMock).toHaveBeenCalled();
-			expect(consoleInfoMock).not.toHaveBeenCalled();
-
-			// Mock cleared in beforeEach
-			// Mock cleared in beforeEach
-		});
-
-		test('should respect INFO level', () => {
-			configureLogger({ level: LogLevel.INFO });
-
-			const logger = createLogger('test');
-			consoleInfoMock.mockClear();
-			consoleDebugMock.mockClear();
-
-			logger.info('info message');
-			logger.debug('debug message');
-
-			expect(consoleInfoMock).toHaveBeenCalled();
-			expect(consoleDebugMock).not.toHaveBeenCalled();
-
-			// Mock cleared in beforeEach
-			// Mock cleared in beforeEach
-		});
-
-		test('should respect DEBUG level', () => {
-			configureLogger({ level: LogLevel.DEBUG });
-
-			const logger = createLogger('test');
-			consoleDebugMock.mockClear();
-
-			logger.debug('debug message');
-			expect(consoleDebugMock).toHaveBeenCalled();
+  let originalEnv: Record<string, string | undefined>;
+  let consoleErrorMock: ReturnType<typeof mock>;
+  let consoleWarnMock: ReturnType<typeof mock>;
+  let consoleInfoMock: ReturnType<typeof mock>;
+  let consoleLogMock: ReturnType<typeof mock>;
+  let consoleDebugMock: ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    // Save original environment
+    originalEnv = { ...process.env };
+
+    // Mock all console methods to prevent output during tests
+    consoleErrorMock = mock(() => {});
+    consoleWarnMock = mock(() => {});
+    consoleInfoMock = mock(() => {});
+    consoleLogMock = mock(() => {});
+    consoleDebugMock = mock(() => {});
+
+    console.error = consoleErrorMock;
+    console.warn = consoleWarnMock;
+    console.info = consoleInfoMock;
+    console.log = consoleLogMock;
+    console.debug = consoleDebugMock;
+
+    // Reset logger config to defaults
+    configureLogger({
+      level: LogLevel.INFO,
+      filter: ['*'],
+      excludeFilter: [],
+      timestamps: false,
+    });
+  });
+
+  afterEach(() => {
+    clearStructuredLogSubscribers();
+    // Restore environment
+    process.env = originalEnv;
+
+    // Reset logger config
+    configureLogger({
+      level: LogLevel.INFO,
+      filter: ['*'],
+      excludeFilter: [],
+      timestamps: false,
+    });
+  });
+
+  describe('structured log events', () => {
+    test('emits structured events for logger output', () => {
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+      const logger = createLogger('test:structured');
+
+      logger.warn('warning happened', { spaceId: 'space-1' });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        level: 'warn',
+        message: 'warning happened {"spaceId":"space-1"}',
+        module: 'test:structured',
+        source: 'logger',
+        context: { spaceId: 'space-1' },
+      });
+    });
+
+    test('does not emit for filtered logger output', () => {
+      configureLogger({ level: LogLevel.ERROR });
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+
+      createLogger('test:structured').warn('hidden warning');
+
+      expect(events).toHaveLength(0);
+    });
+
+    test('captures direct console calls without double-capturing logger calls', () => {
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+      const restore = installConsoleLogCapture();
+      try {
+        console.error('raw console failure');
+        createLogger('test:structured').error('logger failure');
+      } finally {
+        restore();
+      }
+
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({ source: 'console', level: 'error' });
+      expect(events[1]).toMatchObject({ source: 'logger', level: 'error' });
+    });
+
+    test('can suppress console capture around already-structured output', () => {
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+      const restore = installConsoleLogCapture();
+      try {
+        withConsoleLogCaptureSuppressed(() => console.error('already captured'));
+      } finally {
+        restore();
+      }
+
+      expect(events).toHaveLength(0);
+    });
+
+    test('keeps console capture installed until every owner restores it', () => {
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+      const restoreFirst = installConsoleLogCapture();
+      const restoreSecond = installConsoleLogCapture();
+
+      restoreFirst();
+      console.warn('still captured');
+      restoreSecond();
+      console.warn('not captured');
+      restoreSecond();
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        source: 'console',
+        level: 'warn',
+        message: 'still captured',
+      });
+    });
+  });
+
+  describe('configureLogger', () => {
+    test('should update global logger configuration', () => {
+      const config = getLoggerConfig();
+      expect(config.level).toBe(LogLevel.INFO);
+      expect(config.filter).toEqual(['*']);
+      expect(config.excludeFilter).toEqual([]);
+      expect(config.timestamps).toBe(false);
+
+      configureLogger({
+        level: LogLevel.DEBUG,
+        timestamps: true,
+      });
+
+      const newConfig = getLoggerConfig();
+      expect(newConfig.level).toBe(LogLevel.DEBUG);
+      expect(newConfig.timestamps).toBe(true);
+      // filter and excludeFilter should remain
+      expect(newConfig.filter).toEqual(['*']);
+      expect(newConfig.excludeFilter).toEqual([]);
+    });
+
+    test('should merge partial config with existing config', () => {
+      configureLogger({
+        level: LogLevel.WARN,
+        filter: ['test:*'],
+        excludeFilter: ['test:internal'],
+      });
+
+      const config = getLoggerConfig();
+      expect(config.level).toBe(LogLevel.WARN);
+      expect(config.filter).toEqual(['test:*']);
+      expect(config.excludeFilter).toEqual(['test:internal']);
+      expect(config.timestamps).toBe(false);
+    });
+
+    test('should update filter patterns', () => {
+      configureLogger({
+        filter: ['app:*', 'lib:*'],
+        excludeFilter: ['app:verbose'],
+      });
+
+      const config = getLoggerConfig();
+      expect(config.filter).toEqual(['app:*', 'lib:*']);
+      expect(config.excludeFilter).toEqual(['app:verbose']);
+    });
+  });
+
+  describe('getLoggerConfig', () => {
+    test('should return a copy of the config', () => {
+      const config1 = getLoggerConfig();
+      config1.level = LogLevel.SILENT;
+
+      const config2 = getLoggerConfig();
+      expect(config2.level).not.toBe(LogLevel.SILENT);
+    });
+
+    test('should return current configuration', () => {
+      configureLogger({
+        level: LogLevel.TRACE,
+        filter: ['foo:*'],
+        excludeFilter: ['foo:bar'],
+        timestamps: true,
+      });
+
+      const config = getLoggerConfig();
+      expect(config.level).toBe(LogLevel.TRACE);
+      expect(config.filter).toEqual(['foo:*']);
+      expect(config.excludeFilter).toEqual(['foo:bar']);
+      expect(config.timestamps).toBe(true);
+    });
+  });
+
+  describe('createLogger', () => {
+    test('should create logger with namespace', () => {
+      const logger = createLogger('test:namespace');
+      expect(logger.getNamespace()).toBe('test:namespace');
+    });
+
+    test('should create default logger without namespace', () => {
+      const logger = new Logger();
+      expect(logger.getNamespace()).toBe('kai');
+    });
+
+    test('should create logger with empty namespace', () => {
+      const logger = new Logger('');
+      expect(logger.getNamespace()).toBe('');
+    });
+  });
+
+  describe('log levels', () => {
+    test('should respect SILENT level', () => {
+      configureLogger({ level: LogLevel.SILENT });
+
+      const logger = createLogger('test');
+      consoleInfoMock.mockClear();
+
+      logger.info('should not log');
+      logger.error('should not log');
+      logger.warn('should not log');
+      logger.debug('should not log');
+      logger.trace('should not log');
+      logger.log('should not log');
+
+      expect(consoleInfoMock).not.toHaveBeenCalled();
+      // Mock cleared in beforeEach
+    });
+
+    test('should respect ERROR level', () => {
+      configureLogger({ level: LogLevel.ERROR });
+
+      const logger = createLogger('test');
+      consoleErrorMock.mockClear();
+      consoleWarnMock.mockClear();
+
+      logger.error('error message');
+      logger.warn('warn message');
+      logger.info('info message');
+
+      expect(consoleErrorMock).toHaveBeenCalled();
+      expect(consoleWarnMock).not.toHaveBeenCalled();
+
+      // Mock cleared in beforeEach
+      // Mock cleared in beforeEach
+    });
+
+    test('should respect WARN level', () => {
+      configureLogger({ level: LogLevel.WARN });
+
+      const logger = createLogger('test');
+      consoleWarnMock.mockClear();
+      consoleInfoMock.mockClear();
+
+      logger.warn('warn message');
+      logger.info('info message');
+
+      expect(consoleWarnMock).toHaveBeenCalled();
+      expect(consoleInfoMock).not.toHaveBeenCalled();
+
+      // Mock cleared in beforeEach
+      // Mock cleared in beforeEach
+    });
+
+    test('should respect INFO level', () => {
+      configureLogger({ level: LogLevel.INFO });
+
+      const logger = createLogger('test');
+      consoleInfoMock.mockClear();
+      consoleDebugMock.mockClear();
+
+      logger.info('info message');
+      logger.debug('debug message');
+
+      expect(consoleInfoMock).toHaveBeenCalled();
+      expect(consoleDebugMock).not.toHaveBeenCalled();
+
+      // Mock cleared in beforeEach
+      // Mock cleared in beforeEach
+    });
+
+    test('should respect DEBUG level', () => {
+      configureLogger({ level: LogLevel.DEBUG });
+
+      const logger = createLogger('test');
+      consoleDebugMock.mockClear();
+
+      logger.debug('debug message');
+      expect(consoleDebugMock).toHaveBeenCalled();
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should respect TRACE level', () => {
-			configureLogger({ level: LogLevel.TRACE });
-
-			const logger = createLogger('test');
-			consoleDebugMock.mockClear();
-
-			logger.trace('trace message');
-			expect(consoleDebugMock).toHaveBeenCalled();
+    test('should respect TRACE level', () => {
+      configureLogger({ level: LogLevel.TRACE });
+
+      const logger = createLogger('test');
+      consoleDebugMock.mockClear();
+
+      logger.trace('trace message');
+      expect(consoleDebugMock).toHaveBeenCalled();
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should show level indicator in DEBUG mode for non-INFO levels', () => {
-			configureLogger({ level: LogLevel.DEBUG });
+    test('should show level indicator in DEBUG mode for non-INFO levels', () => {
+      configureLogger({ level: LogLevel.DEBUG });
 
-			const logger = createLogger('test');
-			consoleDebugMock.mockClear();
+      const logger = createLogger('test');
+      consoleDebugMock.mockClear();
 
-			logger.debug('debug message');
-			expect(consoleDebugMock).toHaveBeenCalled();
-			const callArgs = consoleDebugMock.mock.calls[0];
-			expect(callArgs).toContainEqual('[DEBUG]');
+      logger.debug('debug message');
+      expect(consoleDebugMock).toHaveBeenCalled();
+      const callArgs = consoleDebugMock.mock.calls[0];
+      expect(callArgs).toContainEqual('[DEBUG]');
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('namespace filtering', () => {
-		test('should filter by exact namespace match', () => {
-			configureLogger({ filter: ['test:allowed'] });
+  describe('namespace filtering', () => {
+    test('should filter by exact namespace match', () => {
+      configureLogger({ filter: ['test:allowed'] });
 
-			const allowedLogger = createLogger('test:allowed');
-			const blockedLogger = createLogger('test:blocked');
+      const allowedLogger = createLogger('test:allowed');
+      const blockedLogger = createLogger('test:blocked');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			allowedLogger.info('allowed message');
-			blockedLogger.info('blocked message');
+      allowedLogger.info('allowed message');
+      blockedLogger.info('blocked message');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(1);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(1);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should filter by wildcard namespace prefix', () => {
-			configureLogger({ filter: ['test:*'] });
+    test('should filter by wildcard namespace prefix', () => {
+      configureLogger({ filter: ['test:*'] });
 
-			const logger1 = createLogger('test:foo');
-			const logger2 = createLogger('test:bar');
-			const logger3 = createLogger('other:baz');
+      const logger1 = createLogger('test:foo');
+      const logger2 = createLogger('test:bar');
+      const logger3 = createLogger('other:baz');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			logger1.info('message 1');
-			logger2.info('message 2');
-			logger3.info('message 3');
+      logger1.info('message 1');
+      logger2.info('message 2');
+      logger3.info('message 3');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(2);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(2);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should allow all with wildcard', () => {
-			configureLogger({ filter: ['*'] });
+    test('should allow all with wildcard', () => {
+      configureLogger({ filter: ['*'] });
 
-			const logger1 = createLogger('foo:bar');
-			const logger2 = createLogger('baz:qux');
+      const logger1 = createLogger('foo:bar');
+      const logger2 = createLogger('baz:qux');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			logger1.info('message 1');
-			logger2.info('message 2');
+      logger1.info('message 1');
+      logger2.info('message 2');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(2);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(2);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should exclude specific namespaces', () => {
-			configureLogger({
-				filter: ['*'],
-				excludeFilter: ['test:verbose'],
-			});
+    test('should exclude specific namespaces', () => {
+      configureLogger({
+        filter: ['*'],
+        excludeFilter: ['test:verbose'],
+      });
 
-			const normalLogger = createLogger('test:normal');
-			const verboseLogger = createLogger('test:verbose');
+      const normalLogger = createLogger('test:normal');
+      const verboseLogger = createLogger('test:verbose');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			normalLogger.info('normal message');
-			verboseLogger.info('verbose message');
+      normalLogger.info('normal message');
+      verboseLogger.info('verbose message');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(1);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(1);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should exclude wildcard namespace prefixes', () => {
-			configureLogger({
-				filter: ['*'],
-				excludeFilter: ['test:internal:*'],
-			});
+    test('should exclude wildcard namespace prefixes', () => {
+      configureLogger({
+        filter: ['*'],
+        excludeFilter: ['test:internal:*'],
+      });
 
-			const normalLogger = createLogger('test:normal');
-			const internalLogger = createLogger('test:internal:debug');
+      const normalLogger = createLogger('test:normal');
+      const internalLogger = createLogger('test:internal:debug');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			normalLogger.info('normal message');
-			internalLogger.info('internal message');
+      normalLogger.info('normal message');
+      internalLogger.info('internal message');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(1);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(1);
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('child logger', () => {
-		test('should create child logger with extended namespace', () => {
-			const parent = createLogger('parent');
-			const child = parent.child('child');
+  describe('child logger', () => {
+    test('should create child logger with extended namespace', () => {
+      const parent = createLogger('parent');
+      const child = parent.child('child');
 
-			expect(parent.getNamespace()).toBe('parent');
-			expect(child.getNamespace()).toBe('parent:child');
-		});
+      expect(parent.getNamespace()).toBe('parent');
+      expect(child.getNamespace()).toBe('parent:child');
+    });
 
-		test('should create child from child logger', () => {
-			const parent = createLogger('parent');
-			const child = parent.child('child');
-			const grandchild = child.child('grandchild');
+    test('should create child from child logger', () => {
+      const parent = createLogger('parent');
+      const child = parent.child('child');
+      const grandchild = child.child('grandchild');
 
-			expect(grandchild.getNamespace()).toBe('parent:child:grandchild');
-		});
+      expect(grandchild.getNamespace()).toBe('parent:child:grandchild');
+    });
 
-		test('should create child from empty namespace logger', () => {
-			const parent = new Logger('');
-			const child = parent.child('child');
+    test('should create child from empty namespace logger', () => {
+      const parent = new Logger('');
+      const child = parent.child('child');
 
-			expect(child.getNamespace()).toBe('child');
-		});
+      expect(child.getNamespace()).toBe('child');
+    });
 
-		test('child should respect parent filter settings', () => {
-			configureLogger({
-				filter: ['parent:*'],
-			});
+    test('child should respect parent filter settings', () => {
+      configureLogger({
+        filter: ['parent:*'],
+      });
 
-			const parent = createLogger('parent');
-			const child = parent.child('child');
+      const parent = createLogger('parent');
+      const child = parent.child('child');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			child.info('child message');
-			expect(consoleInfoMock).toHaveBeenCalledTimes(1);
+      child.info('child message');
+      expect(consoleInfoMock).toHaveBeenCalledTimes(1);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('child should be filtered out when namespace does not match', () => {
-			configureLogger({
-				filter: ['parent:*'],
-				excludeFilter: ['parent:child:*'],
-			});
+    test('child should be filtered out when namespace does not match', () => {
+      configureLogger({
+        filter: ['parent:*'],
+        excludeFilter: ['parent:child:*'],
+      });
 
-			const parent = createLogger('parent');
-			const child = parent.child('child');
+      const parent = createLogger('parent');
+      const child = parent.child('child');
 
-			consoleInfoMock.mockClear();
+      consoleInfoMock.mockClear();
 
-			parent.info('parent message');
-			child.info('child message');
+      parent.info('parent message');
+      child.info('child message');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(1);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(1);
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('clearCache', () => {
-		test('should clear cached enabled state', () => {
-			configureLogger({
-				filter: ['test:*'],
-			});
+  describe('clearCache', () => {
+    test('should clear cached enabled state', () => {
+      configureLogger({
+        filter: ['test:*'],
+      });
 
-			const logger = createLogger('test:namespace');
+      const logger = createLogger('test:namespace');
 
-			// First call caches the enabled state
-			consoleInfoMock.mockClear();
-			logger.info('first message');
+      // First call caches the enabled state
+      consoleInfoMock.mockClear();
+      logger.info('first message');
 
-			// Change filter to exclude this namespace
-			configureLogger({
-				filter: ['other:*'],
-			});
+      // Change filter to exclude this namespace
+      configureLogger({
+        filter: ['other:*'],
+      });
 
-			// Without clearCache, the cached state would still say it's enabled
-			logger.info('second message');
+      // Without clearCache, the cached state would still say it's enabled
+      logger.info('second message');
 
-			// Now clear cache and log again
-			logger.clearCache();
-			logger.info('third message');
+      // Now clear cache and log again
+      logger.clearCache();
+      logger.info('third message');
 
-			// First two messages should have been logged (before filter change)
-			expect(consoleInfoMock).toHaveBeenCalledTimes(2);
+      // First two messages should have been logged (before filter change)
+      expect(consoleInfoMock).toHaveBeenCalledTimes(2);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should re-evaluate enabled state after cache clear', () => {
-			configureLogger({
-				filter: ['test:*'],
-			});
+    test('should re-evaluate enabled state after cache clear', () => {
+      configureLogger({
+        filter: ['test:*'],
+      });
 
-			const logger = createLogger('test:namespace');
+      const logger = createLogger('test:namespace');
 
-			// Initial state: enabled
-			let enabled = logger['isEnabled']();
-			expect(enabled).toBe(true);
+      // Initial state: enabled
+      let enabled = logger['isEnabled']();
+      expect(enabled).toBe(true);
 
-			// Change filter to exclude
-			configureLogger({
-				filter: ['other:*'],
-			});
+      // Change filter to exclude
+      configureLogger({
+        filter: ['other:*'],
+      });
 
-			// Still cached as enabled
-			enabled = logger['isEnabled']();
-			expect(enabled).toBe(true);
+      // Still cached as enabled
+      enabled = logger['isEnabled']();
+      expect(enabled).toBe(true);
 
-			// Clear cache
-			logger.clearCache();
+      // Clear cache
+      logger.clearCache();
 
-			// Now re-evaluates to disabled
-			enabled = logger['isEnabled']();
-			expect(enabled).toBe(false);
-		});
-	});
+      // Now re-evaluates to disabled
+      enabled = logger['isEnabled']();
+      expect(enabled).toBe(false);
+    });
+  });
 
-	describe('log method (alias for info)', () => {
-		test('should be an alias for info', () => {
-			configureLogger({ level: LogLevel.INFO });
+  describe('log method (alias for info)', () => {
+    test('should be an alias for info', () => {
+      configureLogger({ level: LogLevel.INFO });
 
-			const logger = createLogger('test');
-			consoleInfoMock.mockClear();
+      const logger = createLogger('test');
+      consoleInfoMock.mockClear();
 
-			logger.log('log method message');
-			logger.info('info method message');
+      logger.log('log method message');
+      logger.info('info method message');
 
-			expect(consoleInfoMock).toHaveBeenCalledTimes(2);
+      expect(consoleInfoMock).toHaveBeenCalledTimes(2);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should respect log level', () => {
-			configureLogger({ level: LogLevel.WARN });
+    test('should respect log level', () => {
+      configureLogger({ level: LogLevel.WARN });
 
-			const logger = createLogger('test');
-			consoleInfoMock.mockClear();
+      const logger = createLogger('test');
+      consoleInfoMock.mockClear();
 
-			logger.log('should not log');
-			expect(consoleInfoMock).not.toHaveBeenCalled();
+      logger.log('should not log');
+      expect(consoleInfoMock).not.toHaveBeenCalled();
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('trace method', () => {
-		test('should log at TRACE level', () => {
-			configureLogger({ level: LogLevel.TRACE });
+  describe('trace method', () => {
+    test('should log at TRACE level', () => {
+      configureLogger({ level: LogLevel.TRACE });
 
-			const logger = createLogger('test');
-			consoleDebugMock.mockClear();
+      const logger = createLogger('test');
+      consoleDebugMock.mockClear();
 
-			logger.trace('trace message');
-			expect(consoleDebugMock).toHaveBeenCalled();
+      logger.trace('trace message');
+      expect(consoleDebugMock).toHaveBeenCalled();
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should not log when level is above TRACE', () => {
-			configureLogger({ level: LogLevel.DEBUG });
+    test('should not log when level is above TRACE', () => {
+      configureLogger({ level: LogLevel.DEBUG });
 
-			const logger = createLogger('test');
-			consoleDebugMock.mockClear();
+      const logger = createLogger('test');
+      consoleDebugMock.mockClear();
 
-			logger.trace('trace message');
-			expect(consoleDebugMock).not.toHaveBeenCalled();
+      logger.trace('trace message');
+      expect(consoleDebugMock).not.toHaveBeenCalled();
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should show level indicator in DEBUG mode', () => {
-			configureLogger({ level: LogLevel.TRACE });
+    test('should show level indicator in DEBUG mode', () => {
+      configureLogger({ level: LogLevel.TRACE });
 
-			const logger = createLogger('test');
-			consoleDebugMock.mockClear();
+      const logger = createLogger('test');
+      consoleDebugMock.mockClear();
 
-			logger.trace('trace message');
-			const callArgs = consoleDebugMock.mock.calls[0];
-			expect(callArgs).toContainEqual('[TRACE]');
+      logger.trace('trace message');
+      const callArgs = consoleDebugMock.mock.calls[0];
+      expect(callArgs).toContainEqual('[TRACE]');
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('timestamps', () => {
-		test('should include timestamps when enabled', () => {
-			configureLogger({ timestamps: true });
+  describe('timestamps', () => {
+    test('should include timestamps when enabled', () => {
+      configureLogger({ timestamps: true });
 
-			const logger = createLogger('test');
-			consoleInfoMock.mockClear();
+      const logger = createLogger('test');
+      consoleInfoMock.mockClear();
 
-			logger.info('message with timestamp');
+      logger.info('message with timestamp');
 
-			const callArgs = consoleInfoMock.mock.calls[0];
-			// First arg should be an ISO date string
-			expect(callArgs[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      const callArgs = consoleInfoMock.mock.calls[0];
+      // First arg should be an ISO date string
+      expect(callArgs[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should not include timestamps when disabled', () => {
-			configureLogger({ timestamps: false });
+    test('should not include timestamps when disabled', () => {
+      configureLogger({ timestamps: false });
 
-			const logger = createLogger('test');
-			consoleInfoMock.mockClear();
+      const logger = createLogger('test');
+      consoleInfoMock.mockClear();
 
-			logger.info('message without timestamp');
+      logger.info('message without timestamp');
 
-			const callArgs = consoleInfoMock.mock.calls[0];
-			// First arg should be namespace prefix, not timestamp
-			if (callArgs.length > 0) {
-				expect(callArgs[0]).not.toMatch(/^\d{4}-\d{2}-\d{2}T/);
-			}
+      const callArgs = consoleInfoMock.mock.calls[0];
+      // First arg should be namespace prefix, not timestamp
+      if (callArgs.length > 0) {
+        expect(callArgs[0]).not.toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      }
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('namespace prefix', () => {
-		test('should include namespace in output', () => {
-			configureLogger({ level: LogLevel.INFO });
+  describe('namespace prefix', () => {
+    test('should include namespace in output', () => {
+      configureLogger({ level: LogLevel.INFO });
 
-			const logger = createLogger('test:namespace');
-			consoleInfoMock.mockClear();
+      const logger = createLogger('test:namespace');
+      consoleInfoMock.mockClear();
 
-			logger.info('message');
+      logger.info('message');
 
-			const callArgs = consoleInfoMock.mock.calls[0];
-			expect(callArgs).toContainEqual('[test:namespace]');
+      const callArgs = consoleInfoMock.mock.calls[0];
+      expect(callArgs).toContainEqual('[test:namespace]');
 
-			// Mock cleared in beforeEach
-		});
+      // Mock cleared in beforeEach
+    });
 
-		test('should not include prefix for empty namespace', () => {
-			configureLogger({ level: LogLevel.INFO });
+    test('should not include prefix for empty namespace', () => {
+      configureLogger({ level: LogLevel.INFO });
 
-			const logger = new Logger('');
-			consoleInfoMock.mockClear();
+      const logger = new Logger('');
+      consoleInfoMock.mockClear();
 
-			logger.info('message');
+      logger.info('message');
 
-			const callArgs = consoleInfoMock.mock.calls[0];
-			// Should not have [namespace] prefix
-			const hasPrefix = callArgs.some(
-				(arg) => typeof arg === 'string' && arg.startsWith('[') && arg.endsWith(']')
-			);
-			expect(hasPrefix).toBe(false);
+      const callArgs = consoleInfoMock.mock.calls[0];
+      // Should not have [namespace] prefix
+      const hasPrefix = callArgs.some(
+        (arg) => typeof arg === 'string' && arg.startsWith('[') && arg.endsWith(']')
+      );
+      expect(hasPrefix).toBe(false);
 
-			// Mock cleared in beforeEach
-		});
-	});
+      // Mock cleared in beforeEach
+    });
+  });
 
-	describe('getNamespace', () => {
-		test('should return the logger namespace', () => {
-			const logger = createLogger('my:app:module');
-			expect(logger.getNamespace()).toBe('my:app:module');
-		});
-	});
+  describe('getNamespace', () => {
+    test('should return the logger namespace', () => {
+      const logger = createLogger('my:app:module');
+      expect(logger.getNamespace()).toBe('my:app:module');
+    });
+  });
 });

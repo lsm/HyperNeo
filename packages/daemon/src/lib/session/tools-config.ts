@@ -14,19 +14,19 @@
 import type { Database } from '../../storage/database';
 
 export class ToolsConfigManager {
-	constructor(private db: Database) {}
+  constructor(private db: Database) {}
 
-	/**
-	 * Get the global tools configuration
-	 */
-	getGlobal() {
-		return this.db.getGlobalToolsConfig();
-	}
+  /**
+   * Get the global tools configuration
+   */
+  getGlobal() {
+    return this.db.getGlobalToolsConfig();
+  }
 
-	/**
-	 * Save the global tools configuration
-	 */
-	saveGlobal(config: ReturnType<typeof this.db.getGlobalToolsConfig>) {
-		this.db.saveGlobalToolsConfig(config);
-	}
+  /**
+   * Save the global tools configuration
+   */
+  saveGlobal(config: ReturnType<typeof this.db.getGlobalToolsConfig>) {
+    this.db.saveGlobalToolsConfig(config);
+  }
 }

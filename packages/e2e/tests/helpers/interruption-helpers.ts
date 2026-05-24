@@ -12,12 +12,12 @@ import { closeWebSocket, restoreWebSocket } from './connection-helpers';
  * Simulate network failure by closing WebSocket connection
  */
 export async function simulateNetworkFailure(page: Page): Promise<void> {
-	await closeWebSocket(page);
+  await closeWebSocket(page);
 }
 
 /**
  * Restore network by allowing WebSocket to reconnect
  */
 export async function restoreNetwork(page: Page): Promise<void> {
-	await restoreWebSocket(page);
+  await restoreWebSocket(page);
 }

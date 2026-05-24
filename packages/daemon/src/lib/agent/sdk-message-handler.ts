@@ -23,16 +23,16 @@ import { generateUUID } from '@neokai/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
-	isSDKAPIRetryMessage,
-	isSDKAssistantMessage,
-	isSDKCompactBoundary,
-	isSDKResultMessage,
-	isSDKResultSuccess,
-	isSDKStatusMessage,
-	isSDKSystemInit,
-	isSDKSystemMessage,
-	isSDKUserMessage,
-	isToolUseBlock,
+  isSDKAPIRetryMessage,
+  isSDKAssistantMessage,
+  isSDKCompactBoundary,
+  isSDKResultMessage,
+  isSDKResultSuccess,
+  isSDKStatusMessage,
+  isSDKSystemInit,
+  isSDKSystemMessage,
+  isSDKUserMessage,
+  isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
@@ -57,846 +57,846 @@ const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
  * Using interface instead of importing AgentSession to avoid circular deps
  */
 export interface SDKMessageHandlerContext {
-	readonly session: Session;
-	readonly db: Database;
-	readonly messageHub: MessageHub;
-	readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-	readonly stateManager: ProcessingStateManager;
-	readonly contextTracker: ContextTracker;
-	readonly messageQueue: MessageQueue;
+  readonly session: Session;
+  readonly db: Database;
+  readonly messageHub: MessageHub;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+  readonly stateManager: ProcessingStateManager;
+  readonly contextTracker: ContextTracker;
+  readonly messageQueue: MessageQueue;
 
-	// Dependencies for circuit breaker trip handling
-	readonly errorManager: ErrorManager;
-	readonly lifecycleManager: QueryLifecycleManager;
+  // Dependencies for circuit breaker trip handling
+  readonly errorManager: ErrorManager;
+  readonly lifecycleManager: QueryLifecycleManager;
 
-	// Mutable query state (needed to check if query is running and to call getContextUsage())
-	queryObject: Query | null;
-	queryPromise: Promise<void> | null;
+  // Mutable query state (needed to check if query is running and to call getContextUsage())
+  queryObject: Query | null;
+  queryPromise: Promise<void> | null;
 
-	// Called when the SDK init message provides the full slash commands list
-	onInitSlashCommands: (commands: string[]) => Promise<void>;
+  // Called when the SDK init message provides the full slash commands list
+  onInitSlashCommands: (commands: string[]) => Promise<void>;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
 
 export class SDKMessageHandler {
-	private sdkMessageDeltaVersion: number = 0;
-	private logger: Logger;
-	private contextFetcher: ContextFetcher;
-	private circuitBreaker: ApiErrorCircuitBreaker;
-	private acknowledgedPersistedUserThisTurn: boolean = false;
-
-	// Count of SDK stream events seen since the last context-usage refresh.
-	// Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
-	// or compaction) so that back-to-back triggers don't double-fetch.
-	private eventsSinceContextRefresh: number = 0;
-
-	// In-flight context refresh (deduped across event/turn-end/compact triggers)
-	private pendingContextRefresh: Promise<void> | null = null;
-
-	constructor(private ctx: SDKMessageHandlerContext) {
-		const { session } = ctx;
-		this.logger = new Logger(`SDKMessageHandler ${session.id}`);
-		this.contextFetcher = new ContextFetcher(session.id);
-		this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
-
-		// Set up circuit breaker callback - fully internalized
-		this.circuitBreaker.setOnTripCallback(async (reason, _errorCount) => {
-			const userMessage = this.circuitBreaker.getTripMessage();
-			await this.handleCircuitBreakerTrip(reason, userMessage);
-		});
-
-		// Set up message yield callback - fires when generator yields to SDK
-		// This is the CORRECT moment to broadcast steered messages to UI
-		// and update their DB timestamp (T_consumed, not T_end)
-		ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
-			this.handleMessageYielded(messageId, consumedAt);
-		};
-	}
-
-	/**
-	 * Reset the circuit breaker (after manual reset or successful recovery)
-	 */
-	resetCircuitBreaker(): void {
-		this.circuitBreaker.reset();
-	}
-
-	/**
-	 * Mark successful API interaction (resets error tracking)
-	 */
-	markApiSuccess(): void {
-		this.circuitBreaker.markSuccess();
-	}
-
-	/**
-	 * Handle circuit breaker trip (error loop detected)
-	 *
-	 * This is called when the circuit breaker detects repeated API errors.
-	 * It stops the session and displays an error message to the user.
-	 * Unlike normal reset, this does NOT:
-	 * - Preserve cost tracking
-	 * - Restart the query
-	 * - Publish session.reset notification
-	 */
-	private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
-		const {
-			session,
-			stateManager,
-			messageQueue,
-			internalEventBus,
-			errorManager,
-			lifecycleManager,
-		} = this.ctx;
-
-		try {
-			// Clear state before stopping
-			messageQueue.clear();
-			this.resetCircuitBreaker();
-			await internalEventBus.publish('session.errorClear', {
-				sessionId: session.id,
-			});
-
-			// Stop the query (if running)
-			if (this.ctx.queryObject || this.ctx.queryPromise) {
-				await lifecycleManager.stop({ catchQueryErrors: true });
-			}
-
-			// Reset to idle state
-			await stateManager.setIdle();
-
-			// Display error message as assistant message
-			await this.displayErrorAsAssistantMessage(
-				`⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
-					`The agent has been automatically stopped to prevent further errors.`
-			);
-
-			// Report to error manager
-			await errorManager.handleError(
-				session.id,
-				new Error(`Circuit breaker tripped: ${reason}`),
-				ErrorCategory.SYSTEM,
-				userMessage,
-				stateManager.getState(),
-				{ circuitBreakerReason: reason }
-			);
-		} catch (error) {
-			this.logger.error('Error handling circuit breaker trip:', error);
-			await stateManager.setIdle();
-		}
-	}
-
-	/**
-	 * Display error as synthetic assistant message
-	 *
-	 * Creates and persists an assistant message to show errors in the chat UI.
-	 */
-	private async displayErrorAsAssistantMessage(text: string): Promise<void> {
-		const { session, db, messageHub } = this.ctx;
-
-		const assistantMessage: SDKMessage = {
-			type: 'assistant' as const,
-			uuid: generateUUID() as UUID,
-			session_id: session.id,
-			parent_tool_use_id: null,
-			message: {
-				role: 'assistant' as const,
-				content: [{ type: 'text' as const, text }],
-			},
-		};
-
-		db.saveSDKMessage(session.id, assistantMessage);
-
-		messageHub.event(
-			'state.sdkMessages.delta',
-			{ added: [assistantMessage], timestamp: Date.now() },
-			{ channel: `session:${session.id}` }
-		);
-	}
-
-	private withDbChangeBatch<T>(operation: () => T): T {
-		const { db } = this.ctx;
-		if (!db.beginTransaction || !db.commitTransaction || !db.abortTransaction) {
-			return operation();
-		}
-
-		db.beginTransaction();
-		try {
-			const result = operation();
-			db.commitTransaction();
-			return result;
-		} catch (error) {
-			db.abortTransaction();
-			throw error;
-		}
-	}
-
-	/**
-	 * Acknowledge a persisted user message when SDK replays it.
-	 *
-	 * For user messages already persisted in sdk_messages with send_status
-	 * (enqueued/deferred), we should:
-	 * 1) transition send_status -> consumed
-	 * 2) publish the user message to transcript
-	 * 3) avoid inserting a duplicate SDK message row
-	 */
-	private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
-		const { session, db } = this.ctx;
-		if (message.type !== 'user' || !message.uuid) {
-			return false;
-		}
-
-		const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid);
-		if (enqueuedMessage) {
-			await this.consumePersistedUserMessage(enqueuedMessage, message);
-			return true;
-		}
-
-		const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid);
-		if (deferredMessage) {
-			await this.consumePersistedUserMessage(deferredMessage, message);
-			return true;
-		}
-
-		const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
-		if (consumedMessage) {
-			this.acknowledgedPersistedUserThisTurn = true;
-			return true;
-		}
-
-		return false;
-	}
-
-	private async consumePersistedUserMessage(
-		persistedMessage: PersistedUserMessage,
-		sdkReplayMessage: SDKMessage
-	): Promise<void> {
-		const { session, db, internalEventBus, messageHub } = this.ctx;
-
-		this.withDbChangeBatch(() => {
-			db.updateMessageStatus([persistedMessage.dbId], 'consumed');
-			// Update DB timestamp to now so the message's position in the DB matches
-			// where the SDK placed it in the conversation (after already-streamed
-			// assistant messages), not when the user originally typed it.
-			db.updateMessageTimestamp(persistedMessage.dbId);
-		});
-
-		await internalEventBus.publish('messages.statusChanged', {
-			sessionId: session.id,
-			messageIds: [persistedMessage.dbId],
-			status: 'consumed',
-		});
-		this.acknowledgedPersistedUserThisTurn = true;
-
-		messageHub.event(
-			'state.sdkMessages.delta',
-			{
-				added: [sdkReplayMessage],
-				timestamp: Date.now(),
-				version: ++this.sdkMessageDeltaVersion,
-			},
-			{ channel: `session:${session.id}` }
-		);
-
-		// Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
-		// so pre-persisted user messages appear in the group timeline.
-		await internalEventBus.publish('sdk.message', {
-			sessionId: session.id,
-			message: sdkReplayMessage,
-		});
-		await this.publishToolResultConsumedEvents(sdkReplayMessage);
-	}
-
-	/**
-	 * Fallback acknowledgment when SDK doesn't replay user messages.
-	 * Marks ALL remaining enqueued user messages as consumed at turn end.
-	 *
-	 * This is a safety net — ideally handleMessageYielded already handled
-	 * these at yield time. But if the generator didn't fire the callback
-	 * (e.g., internal messages, edge cases), this ensures messages don't
-	 * stay stuck in 'enqueued' status forever.
-	 */
-	private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
-		const { session, db, internalEventBus, messageHub } = this.ctx;
-		const enqueuedUsers = db
-			.getMessagesByStatus(session.id, 'enqueued')
-			.filter((enqueued) => isSDKUserMessage(enqueued));
-
-		for (const enqueuedUser of enqueuedUsers) {
-			db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
-			// Don't update timestamp here — keep the original T1 timestamp
-			// since we don't know the exact T_consumed for these edge cases.
-			// The original timestamp (when user consumed it) is a better approximation
-			// than turn-end time.
-			await internalEventBus.publish('messages.statusChanged', {
-				sessionId: session.id,
-				messageIds: [enqueuedUser.dbId],
-				status: 'consumed',
-			});
-
-			const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
-			const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
-			messageHub.event(
-				'state.sdkMessages.delta',
-				{
-					added: [replayedMessage],
-					timestamp: Date.now(),
-					version: ++this.sdkMessageDeltaVersion,
-				},
-				{ channel: `session:${session.id}` }
-			);
-			await this.publishToolResultConsumedEvents(replayedMessage);
-		}
-	}
-
-	/**
-	 * Handle message yielded by the generator to the SDK.
-	 *
-	 * This fires at the EXACT moment the SDK receives a enqueued user message
-	 * (T_consumed). We update the DB and broadcast to UI here, so the message
-	 * appears at the correct position in the conversation — after any assistant
-	 * messages that were already streamed, and before the assistant's response
-	 * to the steering.
-	 */
-	private handleMessageYielded(messageId: string, consumedAt: number): void {
-		const { session, db, internalEventBus, messageHub } = this.ctx;
-
-		// Find the persisted message in DB by UUID without scanning every queued row.
-		const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
-		if (!enqueuedMessage) {
-			// Could be a 'deferred' message being replayed
-			const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);
-			if (!deferredMessage) {
-				return; // Not a persisted user message (e.g., already consumed)
-			}
-			// Handle deferred message the same way
-			this.withDbChangeBatch(() => {
-				db.updateMessageStatus([deferredMessage.dbId], 'consumed');
-				db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
-			});
-			internalEventBus
-				.publish('messages.statusChanged', {
-					sessionId: session.id,
-					messageIds: [deferredMessage.dbId],
-					status: 'consumed',
-				})
-				.catch(() => {});
-			this.acknowledgedPersistedUserThisTurn = true;
-
-			const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = deferredMessage;
-			messageHub.event(
-				'state.sdkMessages.delta',
-				{
-					added: [{ ...sdkMessage, timestamp: consumedAt }],
-					timestamp: consumedAt,
-					version: ++this.sdkMessageDeltaVersion,
-				},
-				{ channel: `session:${session.id}` }
-			);
-			internalEventBus
-				.publish('sdk.message', {
-					sessionId: session.id,
-					// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
-					message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
-				})
-				.catch(() => {});
-			this.publishToolResultConsumedEvents({
-				...sdkMessage,
-				timestamp: consumedAt,
-			} as unknown as SDKMessage).catch(() => {});
-			return;
-		}
-
-		// Update status and timestamp in DB
-		this.withDbChangeBatch(() => {
-			db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
-			db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
-		});
-
-		// Emit status change event (for queue overlay polling)
-		internalEventBus
-			.publish('messages.statusChanged', {
-				sessionId: session.id,
-				messageIds: [enqueuedMessage.dbId],
-				status: 'consumed',
-			})
-			.catch(() => {});
-
-		// Mark as acknowledged so fallback path doesn't fire again
-		this.acknowledgedPersistedUserThisTurn = true;
-
-		// Broadcast to UI with the correct timestamp
-		// Strip DB-only fields before broadcasting
-		const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = enqueuedMessage;
-		messageHub.event(
-			'state.sdkMessages.delta',
-			{
-				added: [{ ...sdkMessage, timestamp: consumedAt }],
-				timestamp: consumedAt,
-				version: ++this.sdkMessageDeltaVersion,
-			},
-			{ channel: `session:${session.id}` }
-		);
-
-		// Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
-		// so injected user messages (like leader envelope) appear in the group timeline.
-		internalEventBus
-			.publish('sdk.message', {
-				sessionId: session.id,
-				// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
-				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
-			})
-			.catch(() => {});
-		this.publishToolResultConsumedEvents({
-			...sdkMessage,
-			timestamp: consumedAt,
-		} as unknown as SDKMessage).catch(() => {});
-	}
-
-	/**
-	 * Main entry point - handle incoming SDK message
-	 *
-	 * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
-	 * complete messages, not incremental stream_event tokens.
-	 */
-	async handleMessage(message: SDKMessage): Promise<void> {
-		const { session, db, messageHub, stateManager } = this.ctx;
-
-		// Check for API error patterns that indicate an infinite loop
-		// This MUST happen BEFORE any other processing to catch errors early
-		const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
-		if (circuitBreakerTripped) {
-			// Circuit breaker tripped - skip normal processing
-			// The callback will handle stopping the query and notifying the user
-			return;
-		}
-
-		// Handle API retry messages: emit event for UI to display retry progress, but do not save to DB.
-		// These carry operational metadata (attempt count, delay, error) that is useful for
-		// debugging and user feedback but should not appear in the transcript.
-		if (isSDKAPIRetryMessage(message)) {
-			this.logger.warn(
-				`API retry: attempt ${message.attempt}/${message.max_retries}, ` +
-					`delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +
-					`error ${message.error}`
-			);
-			// Emit event for UI to show retry progress
-			await this.ctx.internalEventBus.publish('session.retryAttempt', {
-				sessionId: session.id,
-				attempt: message.attempt,
-				max_retries: message.max_retries,
-				delay_ms: message.retry_delay_ms,
-				error_status: message.error_status,
-				error: message.error,
-			});
-			return;
-		}
-
-		// Automatically update phase based on message type
-		await stateManager.detectPhaseFromMessage(message);
-
-		// For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
-		if (await this.acknowledgePersistedUserMessage(message)) {
-			this.maybeRefreshContextOnEvent(message);
-			return;
-		}
-
-		// Mark unmatched SDK user messages as synthetic.
-		if (message.type === 'user') {
-			(message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
-		}
-
-		// Ensure messages with a nested BetaMessage have a usage object to
-		// prevent SDK crashes. The Claude Agent SDK's internal functions
-		// access message.usage.input_tokens without null-checking. When the
-		// SDK subprocess is restarted and reloads conversation history from
-		// the daemon, messages without usage cause:
-		//   "undefined is not an object (evaluating 'K.input_tokens')"
-		if (
-			'message' in message &&
-			message.message &&
-			!(message.message as Record<string, unknown>).usage
-		) {
-			(message.message as Record<string, unknown>).usage = {
-				input_tokens: 0,
-				output_tokens: 0,
-				cache_creation_input_tokens: 0,
-				cache_read_input_tokens: 0,
-			};
-		}
-
-		// Save to DB FIRST before broadcasting to clients
-		// This ensures we only broadcast messages that are successfully persisted
-		const deferredSuccessfully = this.withDbChangeBatch(() =>
-			db.saveSDKMessage(session.id, message)
-		);
-
-		if (!deferredSuccessfully) {
-			// Log warning but continue - message is already in SDK's memory
-			this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
-			// Don't broadcast to clients if DB save failed
-			return;
-		}
-
-		// Broadcast SDK message delta to frontend clients
-		messageHub.event(
-			'state.sdkMessages.delta',
-			{
-				added: [message],
-				timestamp: Date.now(),
-				version: ++this.sdkMessageDeltaVersion,
-			},
-			{ channel: `session:${session.id}` }
-		);
-
-		// Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. conversation session mirroring)
-		await this.ctx.internalEventBus.publish('sdk.message', {
-			sessionId: session.id,
-			message,
-		});
-
-		// Handle specific message types
-		if (isSDKUserMessage(message)) {
-			await this.handleUserMessage(message);
-		}
-
-		if (isSDKSystemMessage(message)) {
-			await this.handleSystemMessage(message);
-		}
-
-		if (isSDKResultSuccess(message)) {
-			await this.handleResultMessage(message);
-		}
-
-		if (isSDKAssistantMessage(message)) {
-			await this.handleAssistantMessage(message);
-		}
-
-		if (isSDKStatusMessage(message)) {
-			await this.handleStatusMessage(message);
-		}
-
-		if (isSDKCompactBoundary(message)) {
-			await this.handleCompactBoundary(message);
-		}
-
-		// Turn-end context refresh: any result message (success or error
-		// termination — error_during_execution, error_max_turns, etc.)
-		// triggers a fetch, so short turns still update context once.
-		// The 5-event tick below is deduped via pendingContextRefresh.
-		if (isSDKResultMessage(message)) {
-			void this.refreshContextUsage('turn-end');
-			return;
-		}
-
-		// Stream-event cadence for context refresh: every N events we've seen
-		// in this session (user/assistant/tool-use/tool-result etc.).
-		this.maybeRefreshContextOnEvent(message);
-	}
-
-	/**
-	 * Handle system message (capture SDK session ID and slash commands)
-	 */
-	private async handleSystemMessage(message: SDKMessage): Promise<void> {
-		const { session, db, internalEventBus } = this.ctx;
-
-		if (!isSDKSystemMessage(message)) return;
-
-		// Capture SDK's internal session ID if we don't have it yet
-		// This enables session resumption after daemon restart
-		// Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
-		// that also carry session_id cannot accidentally overwrite this field.
-		if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id) {
-			// Update in-memory session
-			session.sdkSessionId = message.session_id;
-
-			// Record the workspace path used as CWD when this SDK session was created.
-			// The SDK stores conversation files at:
-			//   ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl
-			// Persisting this "origin path" allows the daemon to locate and migrate the
-			// session file on resume even when the effective CWD changes (e.g. a worktree
-			// is added or removed between daemon restarts).
-			const sdkOriginPath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
-			session.sdkOriginPath = sdkOriginPath;
-
-			// Persist to database
-			db.updateSession(session.id, {
-				sdkSessionId: message.session_id,
-				sdkOriginPath,
-			});
-
-			// Emit session.updated event so StateManager broadcasts the change
-			// Include data for decoupled state management
-			await internalEventBus.publish('session.updated', {
-				sessionId: session.id,
-				source: 'sdk-session',
-				session: { sdkSessionId: message.session_id, sdkOriginPath },
-			});
-		}
-
-		// Capture the full slash commands list from the init message.
-		// This is the authoritative source — it includes all SDK built-ins plus
-		// any custom skills, and fires immediately when a query starts.
-		// Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
-		if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
-			await this.ctx.onInitSlashCommands(message.slash_commands);
-		}
-	}
-
-	/**
-	 * Handle result message (end of turn)
-	 */
-	private async handleResultMessage(message: SDKMessage): Promise<void> {
-		const { session, db, internalEventBus, stateManager } = this.ctx;
-
-		// Type guard to ensure this is a successful result
-		if (!isSDKResultSuccess(message)) return;
-
-		// Update session metadata with token usage and costs
-		// Guard: SDK may produce result messages without usage (e.g. bridge providers
-		// like anthropic-copilot where the upstream SDK fails to populate usage).
-		const usage = message.usage ?? {
-			input_tokens: 0,
-			output_tokens: 0,
-			cache_creation_input_tokens: 0,
-			cache_read_input_tokens: 0,
-		};
-		const totalTokens = usage.input_tokens + usage.output_tokens;
-
-		// SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
-		// (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
-		// Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
-		const sdkCost = message.total_cost_usd || 0;
-		const lastSdkCost = session.metadata?.lastSdkCost || 0;
-		const costBaseline = session.metadata?.costBaseline || 0;
-
-		// Detect SDK reset: if current cost < last cost, SDK was restarted
-		// Save previous cumulative cost as new baseline
-		let newCostBaseline = costBaseline;
-		if (sdkCost < lastSdkCost && lastSdkCost > 0) {
-			// SDK reset detected - add previous SDK cost to baseline
-			newCostBaseline = costBaseline + lastSdkCost;
-		}
-
-		// Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
-		const totalCost = newCostBaseline + sdkCost;
-
-		session.lastActiveAt = new Date().toISOString();
-		session.metadata = {
-			...session.metadata,
-			messageCount: (session.metadata?.messageCount || 0) + 1,
-			totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
-			inputTokens: (session.metadata?.inputTokens || 0) + usage.input_tokens,
-			outputTokens: (session.metadata?.outputTokens || 0) + usage.output_tokens,
-			// Total cost across all runs (baseline + current SDK cumulative)
-			totalCost,
-			toolCallCount: session.metadata?.toolCallCount || 0,
-			// Track SDK state for reset detection
-			lastSdkCost: sdkCost,
-			costBaseline: newCostBaseline,
-		};
-
-		db.updateSession(session.id, {
-			lastActiveAt: session.lastActiveAt,
-			metadata: session.metadata,
-		});
-
-		// Emit session.updated event so StateManager broadcasts the change
-		// Include data for decoupled state management
-		await internalEventBus.publish('session.updated', {
-			sessionId: session.id,
-			source: 'metadata',
-			session: {
-				lastActiveAt: session.lastActiveAt,
-				metadata: session.metadata,
-			},
-		});
-
-		// NOTE: Turn-end context refresh is triggered for all `result`
-		// messages (success + error) at the end of handleMessage(), before
-		// this success-only branch runs. No need to re-fetch here.
-
-		// Mark successful API interaction - resets circuit breaker error tracking
-		// Only reset when actual tokens were consumed (indicating a real API call)
-		// Zero-token results happen when SDK processes synthetic error messages without
-		// making an API call - these should NOT reset the circuit breaker
-		if (usage.input_tokens > 0 || usage.output_tokens > 0) {
-			this.circuitBreaker.markSuccess();
-		}
-
-		// If SDK didn't replay the enqueued user message this turn, acknowledge one
-		// enqueued user message at turn end to keep status and transcript in sync.
-		if (!this.acknowledgedPersistedUserThisTurn) {
-			await this.acknowledgeOldestQueuedUserOnTurnEnd();
-		}
-		this.acknowledgedPersistedUserThisTurn = false;
-
-		// Clear any session errors since we successfully completed a turn
-		// This resolves persistent error banners that weren't being cleared
-		await internalEventBus.publish('session.errorClear', {
-			sessionId: session.id,
-		});
-
-		// Set state back to idle
-		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
-		await stateManager.setIdle();
-
-		// Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
-		if (session.config.queryMode !== 'manual') {
-			try {
-				await internalEventBus.publish('query.trigger', { sessionId: session.id });
-			} catch (error) {
-				this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
-			}
-		}
-	}
-
-	private async handleUserMessage(message: SDKMessage): Promise<void> {
-		await this.publishToolResultConsumedEvents(message);
-	}
-
-	private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
-		const { internalEventBus } = this.ctx;
-
-		if (!isSDKUserMessage(message)) return;
-		const content = Array.isArray(message.message.content) ? message.message.content : [];
-		for (const block of content) {
-			if (block.type !== 'tool_result') continue;
-			await internalEventBus.publish('sdk.toolUse.consumed', {
-				sessionId: message.session_id ?? this.ctx.session.id,
-				toolUseId: block.tool_use_id,
-				timestamp: Date.now(),
-			});
-		}
-	}
-
-	/**
-	 * Handle assistant message (track tool calls)
-	 *
-	 * NOTE: AskUserQuestion is now handled via the canUseTool callback in
-	 * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
-	 */
-	private async handleAssistantMessage(message: SDKMessage): Promise<void> {
-		const { session, db, internalEventBus } = this.ctx;
-
-		if (!isSDKAssistantMessage(message)) return;
-
-		const toolCalls = message.message.content.filter(isToolUseBlock);
-		for (const toolCall of toolCalls) {
-			await internalEventBus.publish('sdk.toolUse.created', {
-				sessionId: session.id,
-				toolUseId: toolCall.id,
-				toolName: toolCall.name,
-				timestamp: Date.now(),
-			});
-		}
-		if (toolCalls.length > 0) {
-			session.metadata = {
-				...session.metadata,
-				toolCallCount: (session.metadata?.toolCallCount || 0) + toolCalls.length,
-			};
-			db.updateSession(session.id, {
-				metadata: session.metadata,
-			});
-
-			// Emit session.updated event so StateManager broadcasts the change
-			// Include data for decoupled state management
-			await internalEventBus.publish('session.updated', {
-				sessionId: session.id,
-				source: 'metadata',
-				session: { metadata: session.metadata },
-			});
-		}
-	}
-
-	/**
-	 * Handle status message (detect compaction start)
-	 */
-	private async handleStatusMessage(message: SDKMessage): Promise<void> {
-		const { stateManager } = this.ctx;
-
-		if (!isSDKStatusMessage(message)) return;
-
-		const statusMsg = message as { status: string | null };
-		if (statusMsg.status === 'compacting') {
-			// Set isCompacting flag on processing state (flows through state.session)
-			await stateManager.setCompacting(true);
-		}
-	}
-
-	/**
-	 * Handle compact boundary message (compaction completed)
-	 */
-	private async handleCompactBoundary(message: SDKMessage): Promise<void> {
-		const { stateManager } = this.ctx;
-
-		if (!isSDKCompactBoundary(message)) return;
-
-		// Clear isCompacting flag on processing state (flows through state.session)
-		await stateManager.setCompacting(false);
-
-		// Immediately refresh context usage after compaction so the UI reflects
-		// the new post-compact numbers without waiting for the next turn.
-		void this.refreshContextUsage('compact-boundary');
-	}
-
-	/**
-	 * Stream-event cadence: refresh context usage every
-	 * `CONTEXT_REFRESH_EVENT_INTERVAL` SDK stream events. We count every
-	 * processed message (user replays, assistant turns, tool uses, tool results),
-	 * skipping only purely-internal events (api_retry, which returns early
-	 * before this is ever called).
-	 */
-	private maybeRefreshContextOnEvent(_message: SDKMessage): void {
-		this.eventsSinceContextRefresh += 1;
-		if (this.eventsSinceContextRefresh >= CONTEXT_REFRESH_EVENT_INTERVAL) {
-			void this.refreshContextUsage('event-tick');
-		}
-	}
-
-	/**
-	 * Refresh context usage via the SDK's `query.getContextUsage()`.
-	 *
-	 * Dedupes via `pendingContextRefresh`, so multiple triggers (5-event tick,
-	 * turn end, compaction) collapse to a single in-flight fetch. Resets the
-	 * event counter so a turn-end refresh also zeroes the stream tick.
-	 */
-	private refreshContextUsage(
-		reason: 'event-tick' | 'turn-end' | 'compact-boundary'
-	): Promise<void> {
-		// Reset the event counter regardless of whether we actually fetch —
-		// a dedup-skipped refresh still represents the same informational
-		// moment for the tick window.
-		this.eventsSinceContextRefresh = 0;
-
-		if (this.pendingContextRefresh) {
-			return this.pendingContextRefresh;
-		}
-
-		const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
-		// If there's no live query yet (or anymore), skip silently — context
-		// info is a best-effort side effect.
-		if (!queryObject) return Promise.resolve();
-
-		const promise = (async () => {
-			try {
-				const modelInfo = await getSessionModelInfo(session);
-				const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
-					queryObject,
-					modelInfo
-				);
-				if (!contextInfo) return;
-				contextTracker.updateWithDetailedBreakdown(contextInfo);
-				await internalEventBus.publish('context.updated', {
-					sessionId: session.id,
-					contextInfo,
-				});
-			} catch (error) {
-				this.logger.warn(`context refresh (${reason}) failed:`, error);
-			} finally {
-				this.pendingContextRefresh = null;
-			}
-		})();
-		this.pendingContextRefresh = promise;
-		return promise;
-	}
+  private sdkMessageDeltaVersion: number = 0;
+  private logger: Logger;
+  private contextFetcher: ContextFetcher;
+  private circuitBreaker: ApiErrorCircuitBreaker;
+  private acknowledgedPersistedUserThisTurn: boolean = false;
+
+  // Count of SDK stream events seen since the last context-usage refresh.
+  // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
+  // or compaction) so that back-to-back triggers don't double-fetch.
+  private eventsSinceContextRefresh: number = 0;
+
+  // In-flight context refresh (deduped across event/turn-end/compact triggers)
+  private pendingContextRefresh: Promise<void> | null = null;
+
+  constructor(private ctx: SDKMessageHandlerContext) {
+    const { session } = ctx;
+    this.logger = new Logger(`SDKMessageHandler ${session.id}`);
+    this.contextFetcher = new ContextFetcher(session.id);
+    this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
+
+    // Set up circuit breaker callback - fully internalized
+    this.circuitBreaker.setOnTripCallback(async (reason, _errorCount) => {
+      const userMessage = this.circuitBreaker.getTripMessage();
+      await this.handleCircuitBreakerTrip(reason, userMessage);
+    });
+
+    // Set up message yield callback - fires when generator yields to SDK
+    // This is the CORRECT moment to broadcast steered messages to UI
+    // and update their DB timestamp (T_consumed, not T_end)
+    ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
+      this.handleMessageYielded(messageId, consumedAt);
+    };
+  }
+
+  /**
+   * Reset the circuit breaker (after manual reset or successful recovery)
+   */
+  resetCircuitBreaker(): void {
+    this.circuitBreaker.reset();
+  }
+
+  /**
+   * Mark successful API interaction (resets error tracking)
+   */
+  markApiSuccess(): void {
+    this.circuitBreaker.markSuccess();
+  }
+
+  /**
+   * Handle circuit breaker trip (error loop detected)
+   *
+   * This is called when the circuit breaker detects repeated API errors.
+   * It stops the session and displays an error message to the user.
+   * Unlike normal reset, this does NOT:
+   * - Preserve cost tracking
+   * - Restart the query
+   * - Publish session.reset notification
+   */
+  private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
+    const {
+      session,
+      stateManager,
+      messageQueue,
+      internalEventBus,
+      errorManager,
+      lifecycleManager,
+    } = this.ctx;
+
+    try {
+      // Clear state before stopping
+      messageQueue.clear();
+      this.resetCircuitBreaker();
+      await internalEventBus.publish('session.errorClear', {
+        sessionId: session.id,
+      });
+
+      // Stop the query (if running)
+      if (this.ctx.queryObject || this.ctx.queryPromise) {
+        await lifecycleManager.stop({ catchQueryErrors: true });
+      }
+
+      // Reset to idle state
+      await stateManager.setIdle();
+
+      // Display error message as assistant message
+      await this.displayErrorAsAssistantMessage(
+        `⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
+          `The agent has been automatically stopped to prevent further errors.`
+      );
+
+      // Report to error manager
+      await errorManager.handleError(
+        session.id,
+        new Error(`Circuit breaker tripped: ${reason}`),
+        ErrorCategory.SYSTEM,
+        userMessage,
+        stateManager.getState(),
+        { circuitBreakerReason: reason }
+      );
+    } catch (error) {
+      this.logger.error('Error handling circuit breaker trip:', error);
+      await stateManager.setIdle();
+    }
+  }
+
+  /**
+   * Display error as synthetic assistant message
+   *
+   * Creates and persists an assistant message to show errors in the chat UI.
+   */
+  private async displayErrorAsAssistantMessage(text: string): Promise<void> {
+    const { session, db, messageHub } = this.ctx;
+
+    const assistantMessage: SDKMessage = {
+      type: 'assistant' as const,
+      uuid: generateUUID() as UUID,
+      session_id: session.id,
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text }],
+      },
+    };
+
+    db.saveSDKMessage(session.id, assistantMessage);
+
+    messageHub.event(
+      'state.sdkMessages.delta',
+      { added: [assistantMessage], timestamp: Date.now() },
+      { channel: `session:${session.id}` }
+    );
+  }
+
+  private withDbChangeBatch<T>(operation: () => T): T {
+    const { db } = this.ctx;
+    if (!db.beginTransaction || !db.commitTransaction || !db.abortTransaction) {
+      return operation();
+    }
+
+    db.beginTransaction();
+    try {
+      const result = operation();
+      db.commitTransaction();
+      return result;
+    } catch (error) {
+      db.abortTransaction();
+      throw error;
+    }
+  }
+
+  /**
+   * Acknowledge a persisted user message when SDK replays it.
+   *
+   * For user messages already persisted in sdk_messages with send_status
+   * (enqueued/deferred), we should:
+   * 1) transition send_status -> consumed
+   * 2) publish the user message to transcript
+   * 3) avoid inserting a duplicate SDK message row
+   */
+  private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
+    const { session, db } = this.ctx;
+    if (message.type !== 'user' || !message.uuid) {
+      return false;
+    }
+
+    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid);
+    if (enqueuedMessage) {
+      await this.consumePersistedUserMessage(enqueuedMessage, message);
+      return true;
+    }
+
+    const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid);
+    if (deferredMessage) {
+      await this.consumePersistedUserMessage(deferredMessage, message);
+      return true;
+    }
+
+    const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
+    if (consumedMessage) {
+      this.acknowledgedPersistedUserThisTurn = true;
+      return true;
+    }
+
+    return false;
+  }
+
+  private async consumePersistedUserMessage(
+    persistedMessage: PersistedUserMessage,
+    sdkReplayMessage: SDKMessage
+  ): Promise<void> {
+    const { session, db, internalEventBus, messageHub } = this.ctx;
+
+    this.withDbChangeBatch(() => {
+      db.updateMessageStatus([persistedMessage.dbId], 'consumed');
+      // Update DB timestamp to now so the message's position in the DB matches
+      // where the SDK placed it in the conversation (after already-streamed
+      // assistant messages), not when the user originally typed it.
+      db.updateMessageTimestamp(persistedMessage.dbId);
+    });
+
+    await internalEventBus.publish('messages.statusChanged', {
+      sessionId: session.id,
+      messageIds: [persistedMessage.dbId],
+      status: 'consumed',
+    });
+    this.acknowledgedPersistedUserThisTurn = true;
+
+    messageHub.event(
+      'state.sdkMessages.delta',
+      {
+        added: [sdkReplayMessage],
+        timestamp: Date.now(),
+        version: ++this.sdkMessageDeltaVersion,
+      },
+      { channel: `session:${session.id}` }
+    );
+
+    // Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
+    // so pre-persisted user messages appear in the group timeline.
+    await internalEventBus.publish('sdk.message', {
+      sessionId: session.id,
+      message: sdkReplayMessage,
+    });
+    await this.publishToolResultConsumedEvents(sdkReplayMessage);
+  }
+
+  /**
+   * Fallback acknowledgment when SDK doesn't replay user messages.
+   * Marks ALL remaining enqueued user messages as consumed at turn end.
+   *
+   * This is a safety net — ideally handleMessageYielded already handled
+   * these at yield time. But if the generator didn't fire the callback
+   * (e.g., internal messages, edge cases), this ensures messages don't
+   * stay stuck in 'enqueued' status forever.
+   */
+  private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
+    const { session, db, internalEventBus, messageHub } = this.ctx;
+    const enqueuedUsers = db
+      .getMessagesByStatus(session.id, 'enqueued')
+      .filter((enqueued) => isSDKUserMessage(enqueued));
+
+    for (const enqueuedUser of enqueuedUsers) {
+      db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
+      // Don't update timestamp here — keep the original T1 timestamp
+      // since we don't know the exact T_consumed for these edge cases.
+      // The original timestamp (when user consumed it) is a better approximation
+      // than turn-end time.
+      await internalEventBus.publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [enqueuedUser.dbId],
+        status: 'consumed',
+      });
+
+      const { dbId: _dbId, timestamp, ...sdkUserMessage } = enqueuedUser;
+      const replayedMessage = { ...sdkUserMessage, timestamp } as SDKMessage;
+      messageHub.event(
+        'state.sdkMessages.delta',
+        {
+          added: [replayedMessage],
+          timestamp: Date.now(),
+          version: ++this.sdkMessageDeltaVersion,
+        },
+        { channel: `session:${session.id}` }
+      );
+      await this.publishToolResultConsumedEvents(replayedMessage);
+    }
+  }
+
+  /**
+   * Handle message yielded by the generator to the SDK.
+   *
+   * This fires at the EXACT moment the SDK receives a enqueued user message
+   * (T_consumed). We update the DB and broadcast to UI here, so the message
+   * appears at the correct position in the conversation — after any assistant
+   * messages that were already streamed, and before the assistant's response
+   * to the steering.
+   */
+  private handleMessageYielded(messageId: string, consumedAt: number): void {
+    const { session, db, internalEventBus, messageHub } = this.ctx;
+
+    // Find the persisted message in DB by UUID without scanning every queued row.
+    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
+    if (!enqueuedMessage) {
+      // Could be a 'deferred' message being replayed
+      const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);
+      if (!deferredMessage) {
+        return; // Not a persisted user message (e.g., already consumed)
+      }
+      // Handle deferred message the same way
+      this.withDbChangeBatch(() => {
+        db.updateMessageStatus([deferredMessage.dbId], 'consumed');
+        db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
+      });
+      internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: session.id,
+          messageIds: [deferredMessage.dbId],
+          status: 'consumed',
+        })
+        .catch(() => {});
+      this.acknowledgedPersistedUserThisTurn = true;
+
+      const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = deferredMessage;
+      messageHub.event(
+        'state.sdkMessages.delta',
+        {
+          added: [{ ...sdkMessage, timestamp: consumedAt }],
+          timestamp: consumedAt,
+          version: ++this.sdkMessageDeltaVersion,
+        },
+        { channel: `session:${session.id}` }
+      );
+      internalEventBus
+        .publish('sdk.message', {
+          sessionId: session.id,
+          // Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+          message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
+        })
+        .catch(() => {});
+      this.publishToolResultConsumedEvents({
+        ...sdkMessage,
+        timestamp: consumedAt,
+      } as unknown as SDKMessage).catch(() => {});
+      return;
+    }
+
+    // Update status and timestamp in DB
+    this.withDbChangeBatch(() => {
+      db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
+      db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
+    });
+
+    // Emit status change event (for queue overlay polling)
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [enqueuedMessage.dbId],
+        status: 'consumed',
+      })
+      .catch(() => {});
+
+    // Mark as acknowledged so fallback path doesn't fire again
+    this.acknowledgedPersistedUserThisTurn = true;
+
+    // Broadcast to UI with the correct timestamp
+    // Strip DB-only fields before broadcasting
+    const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = enqueuedMessage;
+    messageHub.event(
+      'state.sdkMessages.delta',
+      {
+        added: [{ ...sdkMessage, timestamp: consumedAt }],
+        timestamp: consumedAt,
+        version: ++this.sdkMessageDeltaVersion,
+      },
+      { channel: `session:${session.id}` }
+    );
+
+    // Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
+    // so injected user messages (like leader envelope) appear in the group timeline.
+    internalEventBus
+      .publish('sdk.message', {
+        sessionId: session.id,
+        // Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+        message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
+      })
+      .catch(() => {});
+    this.publishToolResultConsumedEvents({
+      ...sdkMessage,
+      timestamp: consumedAt,
+    } as unknown as SDKMessage).catch(() => {});
+  }
+
+  /**
+   * Main entry point - handle incoming SDK message
+   *
+   * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
+   * complete messages, not incremental stream_event tokens.
+   */
+  async handleMessage(message: SDKMessage): Promise<void> {
+    const { session, db, messageHub, stateManager } = this.ctx;
+
+    // Check for API error patterns that indicate an infinite loop
+    // This MUST happen BEFORE any other processing to catch errors early
+    const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
+    if (circuitBreakerTripped) {
+      // Circuit breaker tripped - skip normal processing
+      // The callback will handle stopping the query and notifying the user
+      return;
+    }
+
+    // Handle API retry messages: emit event for UI to display retry progress, but do not save to DB.
+    // These carry operational metadata (attempt count, delay, error) that is useful for
+    // debugging and user feedback but should not appear in the transcript.
+    if (isSDKAPIRetryMessage(message)) {
+      this.logger.warn(
+        `API retry: attempt ${message.attempt}/${message.max_retries}, ` +
+          `delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +
+          `error ${message.error}`
+      );
+      // Emit event for UI to show retry progress
+      await this.ctx.internalEventBus.publish('session.retryAttempt', {
+        sessionId: session.id,
+        attempt: message.attempt,
+        max_retries: message.max_retries,
+        delay_ms: message.retry_delay_ms,
+        error_status: message.error_status,
+        error: message.error,
+      });
+      return;
+    }
+
+    // Automatically update phase based on message type
+    await stateManager.detectPhaseFromMessage(message);
+
+    // For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
+    if (await this.acknowledgePersistedUserMessage(message)) {
+      this.maybeRefreshContextOnEvent(message);
+      return;
+    }
+
+    // Mark unmatched SDK user messages as synthetic.
+    if (message.type === 'user') {
+      (message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
+    }
+
+    // Ensure messages with a nested BetaMessage have a usage object to
+    // prevent SDK crashes. The Claude Agent SDK's internal functions
+    // access message.usage.input_tokens without null-checking. When the
+    // SDK subprocess is restarted and reloads conversation history from
+    // the daemon, messages without usage cause:
+    //   "undefined is not an object (evaluating 'K.input_tokens')"
+    if (
+      'message' in message &&
+      message.message &&
+      !(message.message as Record<string, unknown>).usage
+    ) {
+      (message.message as Record<string, unknown>).usage = {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      };
+    }
+
+    // Save to DB FIRST before broadcasting to clients
+    // This ensures we only broadcast messages that are successfully persisted
+    const deferredSuccessfully = this.withDbChangeBatch(() =>
+      db.saveSDKMessage(session.id, message)
+    );
+
+    if (!deferredSuccessfully) {
+      // Log warning but continue - message is already in SDK's memory
+      this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+      // Don't broadcast to clients if DB save failed
+      return;
+    }
+
+    // Broadcast SDK message delta to frontend clients
+    messageHub.event(
+      'state.sdkMessages.delta',
+      {
+        added: [message],
+        timestamp: Date.now(),
+        version: ++this.sdkMessageDeltaVersion,
+      },
+      { channel: `session:${session.id}` }
+    );
+
+    // Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. conversation session mirroring)
+    await this.ctx.internalEventBus.publish('sdk.message', {
+      sessionId: session.id,
+      message,
+    });
+
+    // Handle specific message types
+    if (isSDKUserMessage(message)) {
+      await this.handleUserMessage(message);
+    }
+
+    if (isSDKSystemMessage(message)) {
+      await this.handleSystemMessage(message);
+    }
+
+    if (isSDKResultSuccess(message)) {
+      await this.handleResultMessage(message);
+    }
+
+    if (isSDKAssistantMessage(message)) {
+      await this.handleAssistantMessage(message);
+    }
+
+    if (isSDKStatusMessage(message)) {
+      await this.handleStatusMessage(message);
+    }
+
+    if (isSDKCompactBoundary(message)) {
+      await this.handleCompactBoundary(message);
+    }
+
+    // Turn-end context refresh: any result message (success or error
+    // termination — error_during_execution, error_max_turns, etc.)
+    // triggers a fetch, so short turns still update context once.
+    // The 5-event tick below is deduped via pendingContextRefresh.
+    if (isSDKResultMessage(message)) {
+      void this.refreshContextUsage('turn-end');
+      return;
+    }
+
+    // Stream-event cadence for context refresh: every N events we've seen
+    // in this session (user/assistant/tool-use/tool-result etc.).
+    this.maybeRefreshContextOnEvent(message);
+  }
+
+  /**
+   * Handle system message (capture SDK session ID and slash commands)
+   */
+  private async handleSystemMessage(message: SDKMessage): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+
+    if (!isSDKSystemMessage(message)) return;
+
+    // Capture SDK's internal session ID if we don't have it yet
+    // This enables session resumption after daemon restart
+    // Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
+    // that also carry session_id cannot accidentally overwrite this field.
+    if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id) {
+      // Update in-memory session
+      session.sdkSessionId = message.session_id;
+
+      // Record the workspace path used as CWD when this SDK session was created.
+      // The SDK stores conversation files at:
+      //   ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl
+      // Persisting this "origin path" allows the daemon to locate and migrate the
+      // session file on resume even when the effective CWD changes (e.g. a worktree
+      // is added or removed between daemon restarts).
+      const sdkOriginPath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
+      session.sdkOriginPath = sdkOriginPath;
+
+      // Persist to database
+      db.updateSession(session.id, {
+        sdkSessionId: message.session_id,
+        sdkOriginPath,
+      });
+
+      // Emit session.updated event so StateManager broadcasts the change
+      // Include data for decoupled state management
+      await internalEventBus.publish('session.updated', {
+        sessionId: session.id,
+        source: 'sdk-session',
+        session: { sdkSessionId: message.session_id, sdkOriginPath },
+      });
+    }
+
+    // Capture the full slash commands list from the init message.
+    // This is the authoritative source — it includes all SDK built-ins plus
+    // any custom skills, and fires immediately when a query starts.
+    // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
+    if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
+      await this.ctx.onInitSlashCommands(message.slash_commands);
+    }
+  }
+
+  /**
+   * Handle result message (end of turn)
+   */
+  private async handleResultMessage(message: SDKMessage): Promise<void> {
+    const { session, db, internalEventBus, stateManager } = this.ctx;
+
+    // Type guard to ensure this is a successful result
+    if (!isSDKResultSuccess(message)) return;
+
+    // Update session metadata with token usage and costs
+    // Guard: SDK may produce result messages without usage (e.g. bridge providers
+    // like anthropic-copilot where the upstream SDK fails to populate usage).
+    const usage = message.usage ?? {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    const totalTokens = usage.input_tokens + usage.output_tokens;
+
+    // SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
+    // (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
+    // Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
+    const sdkCost = message.total_cost_usd || 0;
+    const lastSdkCost = session.metadata?.lastSdkCost || 0;
+    const costBaseline = session.metadata?.costBaseline || 0;
+
+    // Detect SDK reset: if current cost < last cost, SDK was restarted
+    // Save previous cumulative cost as new baseline
+    let newCostBaseline = costBaseline;
+    if (sdkCost < lastSdkCost && lastSdkCost > 0) {
+      // SDK reset detected - add previous SDK cost to baseline
+      newCostBaseline = costBaseline + lastSdkCost;
+    }
+
+    // Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
+    const totalCost = newCostBaseline + sdkCost;
+
+    session.lastActiveAt = new Date().toISOString();
+    session.metadata = {
+      ...session.metadata,
+      messageCount: (session.metadata?.messageCount || 0) + 1,
+      totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
+      inputTokens: (session.metadata?.inputTokens || 0) + usage.input_tokens,
+      outputTokens: (session.metadata?.outputTokens || 0) + usage.output_tokens,
+      // Total cost across all runs (baseline + current SDK cumulative)
+      totalCost,
+      toolCallCount: session.metadata?.toolCallCount || 0,
+      // Track SDK state for reset detection
+      lastSdkCost: sdkCost,
+      costBaseline: newCostBaseline,
+    };
+
+    db.updateSession(session.id, {
+      lastActiveAt: session.lastActiveAt,
+      metadata: session.metadata,
+    });
+
+    // Emit session.updated event so StateManager broadcasts the change
+    // Include data for decoupled state management
+    await internalEventBus.publish('session.updated', {
+      sessionId: session.id,
+      source: 'metadata',
+      session: {
+        lastActiveAt: session.lastActiveAt,
+        metadata: session.metadata,
+      },
+    });
+
+    // NOTE: Turn-end context refresh is triggered for all `result`
+    // messages (success + error) at the end of handleMessage(), before
+    // this success-only branch runs. No need to re-fetch here.
+
+    // Mark successful API interaction - resets circuit breaker error tracking
+    // Only reset when actual tokens were consumed (indicating a real API call)
+    // Zero-token results happen when SDK processes synthetic error messages without
+    // making an API call - these should NOT reset the circuit breaker
+    if (usage.input_tokens > 0 || usage.output_tokens > 0) {
+      this.circuitBreaker.markSuccess();
+    }
+
+    // If SDK didn't replay the enqueued user message this turn, acknowledge one
+    // enqueued user message at turn end to keep status and transcript in sync.
+    if (!this.acknowledgedPersistedUserThisTurn) {
+      await this.acknowledgeOldestQueuedUserOnTurnEnd();
+    }
+    this.acknowledgedPersistedUserThisTurn = false;
+
+    // Clear any session errors since we successfully completed a turn
+    // This resolves persistent error banners that weren't being cleared
+    await internalEventBus.publish('session.errorClear', {
+      sessionId: session.id,
+    });
+
+    // Set state back to idle
+    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
+    await stateManager.setIdle();
+
+    // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
+    if (session.config.queryMode !== 'manual') {
+      try {
+        await internalEventBus.publish('query.trigger', { sessionId: session.id });
+      } catch (error) {
+        this.logger.warn('Failed to dispatch deferred messages on turn end:', error);
+      }
+    }
+  }
+
+  private async handleUserMessage(message: SDKMessage): Promise<void> {
+    await this.publishToolResultConsumedEvents(message);
+  }
+
+  private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {
+    const { internalEventBus } = this.ctx;
+
+    if (!isSDKUserMessage(message)) return;
+    const content = Array.isArray(message.message.content) ? message.message.content : [];
+    for (const block of content) {
+      if (block.type !== 'tool_result') continue;
+      await internalEventBus.publish('sdk.toolUse.consumed', {
+        sessionId: message.session_id ?? this.ctx.session.id,
+        toolUseId: block.tool_use_id,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * Handle assistant message (track tool calls)
+   *
+   * NOTE: AskUserQuestion is now handled via the canUseTool callback in
+   * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
+   */
+  private async handleAssistantMessage(message: SDKMessage): Promise<void> {
+    const { session, db, internalEventBus } = this.ctx;
+
+    if (!isSDKAssistantMessage(message)) return;
+
+    const toolCalls = message.message.content.filter(isToolUseBlock);
+    for (const toolCall of toolCalls) {
+      await internalEventBus.publish('sdk.toolUse.created', {
+        sessionId: session.id,
+        toolUseId: toolCall.id,
+        toolName: toolCall.name,
+        timestamp: Date.now(),
+      });
+    }
+    if (toolCalls.length > 0) {
+      session.metadata = {
+        ...session.metadata,
+        toolCallCount: (session.metadata?.toolCallCount || 0) + toolCalls.length,
+      };
+      db.updateSession(session.id, {
+        metadata: session.metadata,
+      });
+
+      // Emit session.updated event so StateManager broadcasts the change
+      // Include data for decoupled state management
+      await internalEventBus.publish('session.updated', {
+        sessionId: session.id,
+        source: 'metadata',
+        session: { metadata: session.metadata },
+      });
+    }
+  }
+
+  /**
+   * Handle status message (detect compaction start)
+   */
+  private async handleStatusMessage(message: SDKMessage): Promise<void> {
+    const { stateManager } = this.ctx;
+
+    if (!isSDKStatusMessage(message)) return;
+
+    const statusMsg = message as { status: string | null };
+    if (statusMsg.status === 'compacting') {
+      // Set isCompacting flag on processing state (flows through state.session)
+      await stateManager.setCompacting(true);
+    }
+  }
+
+  /**
+   * Handle compact boundary message (compaction completed)
+   */
+  private async handleCompactBoundary(message: SDKMessage): Promise<void> {
+    const { stateManager } = this.ctx;
+
+    if (!isSDKCompactBoundary(message)) return;
+
+    // Clear isCompacting flag on processing state (flows through state.session)
+    await stateManager.setCompacting(false);
+
+    // Immediately refresh context usage after compaction so the UI reflects
+    // the new post-compact numbers without waiting for the next turn.
+    void this.refreshContextUsage('compact-boundary');
+  }
+
+  /**
+   * Stream-event cadence: refresh context usage every
+   * `CONTEXT_REFRESH_EVENT_INTERVAL` SDK stream events. We count every
+   * processed message (user replays, assistant turns, tool uses, tool results),
+   * skipping only purely-internal events (api_retry, which returns early
+   * before this is ever called).
+   */
+  private maybeRefreshContextOnEvent(_message: SDKMessage): void {
+    this.eventsSinceContextRefresh += 1;
+    if (this.eventsSinceContextRefresh >= CONTEXT_REFRESH_EVENT_INTERVAL) {
+      void this.refreshContextUsage('event-tick');
+    }
+  }
+
+  /**
+   * Refresh context usage via the SDK's `query.getContextUsage()`.
+   *
+   * Dedupes via `pendingContextRefresh`, so multiple triggers (5-event tick,
+   * turn end, compaction) collapse to a single in-flight fetch. Resets the
+   * event counter so a turn-end refresh also zeroes the stream tick.
+   */
+  private refreshContextUsage(
+    reason: 'event-tick' | 'turn-end' | 'compact-boundary'
+  ): Promise<void> {
+    // Reset the event counter regardless of whether we actually fetch —
+    // a dedup-skipped refresh still represents the same informational
+    // moment for the tick window.
+    this.eventsSinceContextRefresh = 0;
+
+    if (this.pendingContextRefresh) {
+      return this.pendingContextRefresh;
+    }
+
+    const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
+    // If there's no live query yet (or anymore), skip silently — context
+    // info is a best-effort side effect.
+    if (!queryObject) return Promise.resolve();
+
+    const promise = (async () => {
+      try {
+        const modelInfo = await getSessionModelInfo(session);
+        const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
+          queryObject,
+          modelInfo
+        );
+        if (!contextInfo) return;
+        contextTracker.updateWithDetailedBreakdown(contextInfo);
+        await internalEventBus.publish('context.updated', {
+          sessionId: session.id,
+          contextInfo,
+        });
+      } catch (error) {
+        this.logger.warn(`context refresh (${reason}) failed:`, error);
+      } finally {
+        this.pendingContextRefresh = null;
+      }
+    })();
+    this.pendingContextRefresh = promise;
+    return promise;
+  }
 }

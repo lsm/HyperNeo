@@ -20,294 +20,294 @@ const execAsync = promisify(exec);
 const log = new Logger('SpaceManager');
 
 export class SpaceManager {
-	private spaceRepo: SpaceRepository;
-	private onSpaceResumed: ((spaceId: string) => void) | null = null;
+  private spaceRepo: SpaceRepository;
+  private onSpaceResumed: ((spaceId: string) => void) | null = null;
 
-	constructor(private db: BunDatabase) {
-		this.spaceRepo = new SpaceRepository(db);
-	}
+  constructor(private db: BunDatabase) {
+    this.spaceRepo = new SpaceRepository(db);
+  }
 
-	/**
-	 * Register a callback invoked after a space transitions back to an active
-	 * runtime (resume from paused or start from stopped). Used to re-seed task
-	 * schedules whose fire jobs were skipped during the inactive window so they
-	 * can resume firing without a daemon restart.
-	 */
-	onSpaceResumedRegister(cb: (spaceId: string) => void): void {
-		this.onSpaceResumed = cb;
-	}
+  /**
+   * Register a callback invoked after a space transitions back to an active
+   * runtime (resume from paused or start from stopped). Used to re-seed task
+   * schedules whose fire jobs were skipped during the inactive window so they
+   * can resume firing without a daemon restart.
+   */
+  onSpaceResumedRegister(cb: (spaceId: string) => void): void {
+    this.onSpaceResumed = cb;
+  }
 
-	/**
-	 * Create a new space.
-	 * Validates the workspace path: resolves symlinks, checks existence, ensures uniqueness.
-	 * Warns (but does not fail) if the path is not a git repository.
-	 */
-	async createSpace(params: CreateSpaceParams): Promise<Space> {
-		const resolvedPath = await this.resolveAndValidatePath(params.workspacePath);
+  /**
+   * Create a new space.
+   * Validates the workspace path: resolves symlinks, checks existence, ensures uniqueness.
+   * Warns (but does not fail) if the path is not a git repository.
+   */
+  async createSpace(params: CreateSpaceParams): Promise<Space> {
+    const resolvedPath = await this.resolveAndValidatePath(params.workspacePath);
 
-		// Check uniqueness across active spaces
-		const existing = this.spaceRepo.getSpaceByPath(resolvedPath);
-		if (existing) {
-			throw new Error(
-				`A space already exists for workspace path: ${resolvedPath} (space id: ${existing.id})`
-			);
-		}
+    // Check uniqueness across active spaces
+    const existing = this.spaceRepo.getSpaceByPath(resolvedPath);
+    if (existing) {
+      throw new Error(
+        `A space already exists for workspace path: ${resolvedPath} (space id: ${existing.id})`
+      );
+    }
 
-		// Warn if not a git repository (non-fatal)
-		const isGit = await this.isGitRepository(resolvedPath);
-		if (!isGit) {
-			log.warn(`workspace path is not a git repository: ${resolvedPath}`);
-		}
+    // Warn if not a git repository (non-fatal)
+    const isGit = await this.isGitRepository(resolvedPath);
+    if (!isGit) {
+      log.warn(`workspace path is not a git repository: ${resolvedPath}`);
+    }
 
-		// Auto-generate slug from space name
-		const existingSlugs = this.spaceRepo.getAllSlugs();
-		const slug = slugify(params.name, existingSlugs);
+    // Auto-generate slug from space name
+    const existingSlugs = this.spaceRepo.getAllSlugs();
+    const slug = slugify(params.name, existingSlugs);
 
-		return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath, slug });
-	}
+    return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath, slug });
+  }
 
-	/**
-	 * Get a space by ID
-	 */
-	async getSpace(id: string): Promise<Space | null> {
-		return this.spaceRepo.getSpace(id);
-	}
+  /**
+   * Get a space by ID
+   */
+  async getSpace(id: string): Promise<Space | null> {
+    return this.spaceRepo.getSpace(id);
+  }
 
-	/**
-	 * List spaces
-	 */
-	async listSpaces(includeArchived = false): Promise<Space[]> {
-		return this.spaceRepo.listSpaces(includeArchived);
-	}
+  /**
+   * List spaces
+   */
+  async listSpaces(includeArchived = false): Promise<Space[]> {
+    return this.spaceRepo.listSpaces(includeArchived);
+  }
 
-	/**
-	 * Update a space
-	 */
-	async updateSpace(id: string, params: UpdateSpaceParams): Promise<Space> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			throw new Error(`Space not found: ${id}`);
-		}
+  /**
+   * Update a space
+   */
+  async updateSpace(id: string, params: UpdateSpaceParams): Promise<Space> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      throw new Error(`Space not found: ${id}`);
+    }
 
-		const updated = this.spaceRepo.updateSpace(id, params);
-		if (!updated) {
-			throw new Error(`Failed to update space: ${id}`);
-		}
+    const updated = this.spaceRepo.updateSpace(id, params);
+    if (!updated) {
+      throw new Error(`Failed to update space: ${id}`);
+    }
 
-		return updated;
-	}
+    return updated;
+  }
 
-	/**
-	 * Pause a space (stops runtime task scheduling without archiving)
-	 */
-	async pauseSpace(id: string): Promise<Space> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			throw new Error(`Space not found: ${id}`);
-		}
-		if (space.paused) return space;
+  /**
+   * Pause a space (stops runtime task scheduling without archiving)
+   */
+  async pauseSpace(id: string): Promise<Space> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      throw new Error(`Space not found: ${id}`);
+    }
+    if (space.paused) return space;
 
-		const paused = this.spaceRepo.pauseSpace(id);
-		if (!paused) {
-			throw new Error(`Failed to pause space: ${id}`);
-		}
+    const paused = this.spaceRepo.pauseSpace(id);
+    if (!paused) {
+      throw new Error(`Failed to pause space: ${id}`);
+    }
 
-		return paused;
-	}
+    return paused;
+  }
 
-	/**
-	 * Resume a paused space
-	 */
-	async resumeSpace(id: string): Promise<Space> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			throw new Error(`Space not found: ${id}`);
-		}
-		if (!space.paused) return space;
+  /**
+   * Resume a paused space
+   */
+  async resumeSpace(id: string): Promise<Space> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      throw new Error(`Space not found: ${id}`);
+    }
+    if (!space.paused) return space;
 
-		const resumed = this.spaceRepo.resumeSpace(id);
-		if (!resumed) {
-			throw new Error(`Failed to resume space: ${id}`);
-		}
+    const resumed = this.spaceRepo.resumeSpace(id);
+    if (!resumed) {
+      throw new Error(`Failed to resume space: ${id}`);
+    }
 
-		// Re-seed any active schedules whose fire jobs were skipped while the
-		// space was paused so they pick up forward progress.
-		try {
-			this.onSpaceResumed?.(id);
-		} catch (err) {
-			log.error('resumeSpace: schedule recovery hook failed (non-fatal)', err);
-		}
+    // Re-seed any active schedules whose fire jobs were skipped while the
+    // space was paused so they pick up forward progress.
+    try {
+      this.onSpaceResumed?.(id);
+    } catch (err) {
+      log.error('resumeSpace: schedule recovery hook failed (non-fatal)', err);
+    }
 
-		return resumed;
-	}
+    return resumed;
+  }
 
-	/**
-	 * Stop a space (marks stopped=true; kills active work; no auto-start on daemon restart)
-	 */
-	async stopSpace(id: string): Promise<Space> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			throw new Error(`Space not found: ${id}`);
-		}
-		if (space.stopped) return space;
+  /**
+   * Stop a space (marks stopped=true; kills active work; no auto-start on daemon restart)
+   */
+  async stopSpace(id: string): Promise<Space> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      throw new Error(`Space not found: ${id}`);
+    }
+    if (space.stopped) return space;
 
-		const stopped = this.spaceRepo.stopSpace(id);
-		if (!stopped) {
-			throw new Error(`Failed to stop space: ${id}`);
-		}
+    const stopped = this.spaceRepo.stopSpace(id);
+    if (!stopped) {
+      throw new Error(`Failed to stop space: ${id}`);
+    }
 
-		return stopped;
-	}
+    return stopped;
+  }
 
-	/**
-	 * Start (or restart) a stopped space
-	 */
-	async startSpace(id: string): Promise<Space> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			throw new Error(`Space not found: ${id}`);
-		}
-		if (!space.stopped) return space;
+  /**
+   * Start (or restart) a stopped space
+   */
+  async startSpace(id: string): Promise<Space> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      throw new Error(`Space not found: ${id}`);
+    }
+    if (!space.stopped) return space;
 
-		const started = this.spaceRepo.startSpace(id);
-		if (!started) {
-			throw new Error(`Failed to start space: ${id}`);
-		}
+    const started = this.spaceRepo.startSpace(id);
+    if (!started) {
+      throw new Error(`Failed to start space: ${id}`);
+    }
 
-		try {
-			this.onSpaceResumed?.(id);
-		} catch (err) {
-			log.error('startSpace: schedule recovery hook failed (non-fatal)', err);
-		}
+    try {
+      this.onSpaceResumed?.(id);
+    } catch (err) {
+      log.error('startSpace: schedule recovery hook failed (non-fatal)', err);
+    }
 
-		return started;
-	}
+    return started;
+  }
 
-	/**
-	 * Archive a space
-	 */
-	async archiveSpace(id: string): Promise<Space> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			throw new Error(`Space not found: ${id}`);
-		}
+  /**
+   * Archive a space
+   */
+  async archiveSpace(id: string): Promise<Space> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      throw new Error(`Space not found: ${id}`);
+    }
 
-		const archived = this.spaceRepo.archiveSpace(id);
-		if (!archived) {
-			throw new Error(`Failed to archive space: ${id}`);
-		}
+    const archived = this.spaceRepo.archiveSpace(id);
+    if (!archived) {
+      throw new Error(`Failed to archive space: ${id}`);
+    }
 
-		return archived;
-	}
+    return archived;
+  }
 
-	/**
-	 * Delete a space by ID
-	 */
-	async deleteSpace(id: string): Promise<boolean> {
-		const space = this.spaceRepo.getSpace(id);
-		if (!space) {
-			return false;
-		}
+  /**
+   * Delete a space by ID
+   */
+  async deleteSpace(id: string): Promise<boolean> {
+    const space = this.spaceRepo.getSpace(id);
+    if (!space) {
+      return false;
+    }
 
-		return this.spaceRepo.deleteSpace(id);
-	}
+    return this.spaceRepo.deleteSpace(id);
+  }
 
-	/**
-	 * Add a session to a space
-	 */
-	async addSession(spaceId: string, sessionId: string): Promise<Space> {
-		const updated = this.spaceRepo.addSessionToSpace(spaceId, sessionId);
-		if (!updated) {
-			throw new Error(`Space not found: ${spaceId}`);
-		}
-		return updated;
-	}
+  /**
+   * Add a session to a space
+   */
+  async addSession(spaceId: string, sessionId: string): Promise<Space> {
+    const updated = this.spaceRepo.addSessionToSpace(spaceId, sessionId);
+    if (!updated) {
+      throw new Error(`Space not found: ${spaceId}`);
+    }
+    return updated;
+  }
 
-	/**
-	 * Remove a session from a space
-	 */
-	async removeSession(spaceId: string, sessionId: string): Promise<Space> {
-		const updated = this.spaceRepo.removeSessionFromSpace(spaceId, sessionId);
-		if (!updated) {
-			throw new Error(`Space not found: ${spaceId}`);
-		}
-		return updated;
-	}
+  /**
+   * Remove a session from a space
+   */
+  async removeSession(spaceId: string, sessionId: string): Promise<Space> {
+    const updated = this.spaceRepo.removeSessionFromSpace(spaceId, sessionId);
+    if (!updated) {
+      throw new Error(`Space not found: ${spaceId}`);
+    }
+    return updated;
+  }
 
-	/**
-	 * Get a space by slug
-	 */
-	async getSpaceBySlug(slug: string): Promise<Space | null> {
-		return this.spaceRepo.getSpaceBySlug(slug);
-	}
+  /**
+   * Get a space by slug
+   */
+  async getSpaceBySlug(slug: string): Promise<Space | null> {
+    return this.spaceRepo.getSpaceBySlug(slug);
+  }
 
-	/**
-	 * Update a space's slug with validation and uniqueness check.
-	 */
-	async updateSlug(spaceId: string, newSlug: string): Promise<Space> {
-		const space = this.spaceRepo.getSpace(spaceId);
-		if (!space) {
-			throw new Error(`Space not found: ${spaceId}`);
-		}
+  /**
+   * Update a space's slug with validation and uniqueness check.
+   */
+  async updateSlug(spaceId: string, newSlug: string): Promise<Space> {
+    const space = this.spaceRepo.getSpace(spaceId);
+    if (!space) {
+      throw new Error(`Space not found: ${spaceId}`);
+    }
 
-		// Validate slug format
-		const validationError = validateSlug(newSlug);
-		if (validationError) {
-			throw new Error(`Invalid slug: ${validationError}`);
-		}
+    // Validate slug format
+    const validationError = validateSlug(newSlug);
+    if (validationError) {
+      throw new Error(`Invalid slug: ${validationError}`);
+    }
 
-		// Check uniqueness (allow the space to keep its own slug)
-		const existing = this.spaceRepo.getSpaceBySlug(newSlug);
-		if (existing && existing.id !== spaceId) {
-			throw new Error(`Slug already in use: ${newSlug}`);
-		}
+    // Check uniqueness (allow the space to keep its own slug)
+    const existing = this.spaceRepo.getSpaceBySlug(newSlug);
+    if (existing && existing.id !== spaceId) {
+      throw new Error(`Slug already in use: ${newSlug}`);
+    }
 
-		const updated = this.spaceRepo.updateSlug(spaceId, newSlug);
-		if (!updated) {
-			throw new Error(`Failed to update slug for space: ${spaceId}`);
-		}
+    const updated = this.spaceRepo.updateSlug(spaceId, newSlug);
+    if (!updated) {
+      throw new Error(`Failed to update slug for space: ${spaceId}`);
+    }
 
-		return updated;
-	}
+    return updated;
+  }
 
-	/**
-	 * Resolve symlinks and validate the workspace path exists and is a directory.
-	 * Returns the real (resolved) absolute path.
-	 */
-	private async resolveAndValidatePath(workspacePath: string): Promise<string> {
-		// Resolve symlinks to get the canonical real path
-		let realPath: string;
-		try {
-			realPath = await fs.realpath(workspacePath);
-		} catch {
-			throw new Error(`Workspace path does not exist: ${workspacePath}`);
-		}
+  /**
+   * Resolve symlinks and validate the workspace path exists and is a directory.
+   * Returns the real (resolved) absolute path.
+   */
+  private async resolveAndValidatePath(workspacePath: string): Promise<string> {
+    // Resolve symlinks to get the canonical real path
+    let realPath: string;
+    try {
+      realPath = await fs.realpath(workspacePath);
+    } catch {
+      throw new Error(`Workspace path does not exist: ${workspacePath}`);
+    }
 
-		// Verify it is accessible and is a directory
-		try {
-			const stat = await fs.stat(realPath);
-			if (!stat.isDirectory()) {
-				throw new Error(`Workspace path is not a directory: ${realPath}`);
-			}
-		} catch (err) {
-			if (err instanceof Error && err.message.includes('not a directory')) {
-				throw err;
-			}
-			throw new Error(`Cannot access workspace path: ${realPath}`);
-		}
+    // Verify it is accessible and is a directory
+    try {
+      const stat = await fs.stat(realPath);
+      if (!stat.isDirectory()) {
+        throw new Error(`Workspace path is not a directory: ${realPath}`);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not a directory')) {
+        throw err;
+      }
+      throw new Error(`Cannot access workspace path: ${realPath}`);
+    }
 
-		return realPath;
-	}
+    return realPath;
+  }
 
-	/**
-	 * Check if the given path is inside a git repository (non-fatal check)
-	 */
-	private async isGitRepository(dirPath: string): Promise<boolean> {
-		try {
-			await execAsync('git rev-parse --git-dir', { cwd: dirPath });
-			return true;
-		} catch {
-			return false;
-		}
-	}
+  /**
+   * Check if the given path is inside a git repository (non-fatal check)
+   */
+  private async isGitRepository(dirPath: string): Promise<boolean> {
+    try {
+      await execAsync('git rev-parse --git-dir', { cwd: dirPath });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

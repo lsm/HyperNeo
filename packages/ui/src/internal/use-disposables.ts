@@ -24,8 +24,8 @@ import { disposables, type Disposables } from './disposables.ts';
  * ```
  */
 export function useDisposables(): Disposables {
-	// Using useState instead of useRef so that we can use the initializer function.
-	const [d] = useState(disposables);
-	useEffect(() => () => d.dispose(), [d]);
-	return d;
+  // Using useState instead of useRef so that we can use the initializer function.
+  const [d] = useState(disposables);
+  useEffect(() => () => d.dispose(), [d]);
+  return d;
 }

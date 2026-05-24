@@ -11,16 +11,16 @@
  */
 
 import {
-	Logger as SharedLogger,
-	createLogger,
-	LogLevel,
-	configureLogger,
-	getLoggerConfig,
-	subscribeToStructuredLogs,
-	clearStructuredLogSubscribers,
-	emitStructuredLogEvent,
-	installConsoleLogCapture,
-	withConsoleLogCaptureSuppressed,
+  Logger as SharedLogger,
+  createLogger,
+  LogLevel,
+  configureLogger,
+  getLoggerConfig,
+  subscribeToStructuredLogs,
+  clearStructuredLogSubscribers,
+  emitStructuredLogEvent,
+  installConsoleLogCapture,
+  withConsoleLogCaptureSuppressed,
 } from '@neokai/shared';
 
 /**
@@ -31,54 +31,54 @@ import {
  *   logger.info('Session created');
  */
 export class Logger {
-	private sharedLogger: SharedLogger;
+  private sharedLogger: SharedLogger;
 
-	constructor(prefix: string) {
-		// Create a shared logger with the daemon namespace prefix
-		this.sharedLogger = createLogger(`kai:daemon:${prefix.toLowerCase()}`);
-	}
+  constructor(prefix: string) {
+    // Create a shared logger with the daemon namespace prefix
+    this.sharedLogger = createLogger(`kai:daemon:${prefix.toLowerCase()}`);
+  }
 
-	log(...args: unknown[]): void {
-		this.sharedLogger.info(...args);
-	}
+  log(...args: unknown[]): void {
+    this.sharedLogger.info(...args);
+  }
 
-	error(...args: unknown[]): void {
-		this.sharedLogger.error(...args);
-	}
+  error(...args: unknown[]): void {
+    this.sharedLogger.error(...args);
+  }
 
-	warn(...args: unknown[]): void {
-		this.sharedLogger.warn(...args);
-	}
+  warn(...args: unknown[]): void {
+    this.sharedLogger.warn(...args);
+  }
 
-	info(...args: unknown[]): void {
-		this.sharedLogger.info(...args);
-	}
+  info(...args: unknown[]): void {
+    this.sharedLogger.info(...args);
+  }
 
-	debug(...args: unknown[]): void {
-		this.sharedLogger.debug(...args);
-	}
+  debug(...args: unknown[]): void {
+    this.sharedLogger.debug(...args);
+  }
 
-	trace(...args: unknown[]): void {
-		this.sharedLogger.trace(...args);
-	}
+  trace(...args: unknown[]): void {
+    this.sharedLogger.trace(...args);
+  }
 }
 
 // Re-export shared logger utilities for direct usage
 export {
-	LogLevel,
-	configureLogger,
-	getLoggerConfig,
-	subscribeToStructuredLogs,
-	clearStructuredLogSubscribers,
-	emitStructuredLogEvent,
-	installConsoleLogCapture,
-	withConsoleLogCaptureSuppressed,
+  LogLevel,
+  configureLogger,
+  getLoggerConfig,
+  subscribeToStructuredLogs,
+  clearStructuredLogSubscribers,
+  emitStructuredLogEvent,
+  installConsoleLogCapture,
+  withConsoleLogCaptureSuppressed,
 };
 export type {
-	StructuredLogContext,
-	StructuredLogEvent,
-	StructuredLogLevel,
-	StructuredLogProcessMetadata,
-	StructuredLogSource,
-	StructuredLogSubscriber,
+  StructuredLogContext,
+  StructuredLogEvent,
+  StructuredLogLevel,
+  StructuredLogProcessMetadata,
+  StructuredLogSource,
+  StructuredLogSubscriber,
 } from '@neokai/shared';

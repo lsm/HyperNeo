@@ -18,103 +18,103 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations, createTables } from '../../../../../src/storage/schema/index.ts';
 
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
-	const result = db
-		.prepare(`SELECT name FROM pragma_table_info('${table}') WHERE name = ?`)
-		.get(column);
-	return !!result;
+  const result = db
+    .prepare(`SELECT name FROM pragma_table_info('${table}') WHERE name = ?`)
+    .get(column);
+  return !!result;
 }
 
 function tableExists(db: BunDatabase, tableName: string): boolean {
-	const result = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
-		.get(tableName);
-	return !!result;
+  const result = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(tableName);
+  return !!result;
 }
 
 function getIndexes(db: BunDatabase, table: string): string[] {
-	const rows = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? ORDER BY name`)
-		.all(table) as Array<{ name: string }>;
-	return rows.map((r) => r.name);
+  const rows = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? ORDER BY name`)
+    .all(table) as Array<{ name: string }>;
+  return rows.map((r) => r.name);
 }
 
 describe('Migration 45: rename step to node in workflow tables', () => {
-	let testDir: string;
-	let db: BunDatabase;
+  let testDir: string;
+  let db: BunDatabase;
 
-	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-45', `test-${Date.now()}`);
-		mkdirSync(testDir, { recursive: true });
+  beforeEach(() => {
+    testDir = join(process.cwd(), 'tmp', 'test-migration-45', `test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
 
-		const dbPath = join(testDir, 'test.db');
-		db = new BunDatabase(dbPath);
-		db.exec('PRAGMA foreign_keys = ON');
-	});
+    const dbPath = join(testDir, 'test.db');
+    db = new BunDatabase(dbPath);
+    db.exec('PRAGMA foreign_keys = ON');
+  });
 
-	afterEach(() => {
-		try {
-			db.close();
-		} catch {
-			// ignore
-		}
-		try {
-			rmSync(testDir, { recursive: true, force: true });
-		} catch {
-			// ignore
-		}
-	});
+  afterEach(() => {
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
-	test('fresh DB has node column names (not step)', () => {
-		runMigrations(db, () => {});
-		createTables(db);
+  test('fresh DB has node column names (not step)', () => {
+    runMigrations(db, () => {});
+    createTables(db);
 
-		// space_workflow_nodes table exists (not space_workflow_steps)
-		expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
-		expect(tableExists(db, 'space_workflow_steps')).toBe(false);
+    // space_workflow_nodes table exists (not space_workflow_steps)
+    expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
+    expect(tableExists(db, 'space_workflow_steps')).toBe(false);
 
-		// space_workflows has start_node_id (not start_step_id)
-		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(false);
+    // space_workflows has start_node_id (not start_step_id)
+    expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
+    expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(false);
 
-		// space_tasks.workflow_node_id was added by M45 but removed by M71.
-		// After running all migrations, workflow_node_id does not exist.
-		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
-		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
+    // space_tasks.workflow_node_id was added by M45 but removed by M71.
+    // After running all migrations, workflow_node_id does not exist.
+    expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
+    expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
 
-		// space_workflow_runs: current_node_id was present after M45 but was later dropped by M60.
-		// After running all migrations, current_node_id does not exist.
-		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
-		expect(columnExists(db, 'space_workflow_runs', 'current_step_id')).toBe(false);
+    // space_workflow_runs: current_node_id was present after M45 but was later dropped by M60.
+    // After running all migrations, current_node_id does not exist.
+    expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
+    expect(columnExists(db, 'space_workflow_runs', 'current_step_id')).toBe(false);
 
-		// space_session_groups was dropped by migration 60 — table should not exist.
-		// (No assertions needed; covered by migration-60_test.ts.)
-	});
+    // space_session_groups was dropped by migration 60 — table should not exist.
+    // (No assertions needed; covered by migration-60_test.ts.)
+  });
 
-	test('fresh DB has correct indexes', () => {
-		runMigrations(db, () => {});
-		createTables(db);
+  test('fresh DB has correct indexes', () => {
+    runMigrations(db, () => {});
+    createTables(db);
 
-		const nodeIndexes = getIndexes(db, 'space_workflow_nodes');
-		// M74 drops order_index column, so this index no longer exists
-		expect(nodeIndexes).not.toContain('idx_space_workflow_nodes_order');
-		expect(nodeIndexes).toContain('idx_space_workflow_nodes_workflow_id');
+    const nodeIndexes = getIndexes(db, 'space_workflow_nodes');
+    // M74 drops order_index column, so this index no longer exists
+    expect(nodeIndexes).not.toContain('idx_space_workflow_nodes_order');
+    expect(nodeIndexes).toContain('idx_space_workflow_nodes_workflow_id');
 
-		const taskIndexes = getIndexes(db, 'space_tasks');
-		// Post-M71: workflow_node_id column was removed, so no index on it
-		expect(taskIndexes).not.toContain('idx_space_tasks_workflow_node_id');
-		// M131 re-adds goal_id to space_tasks for space-native goals
-		expect(taskIndexes).toContain('idx_space_tasks_goal_id');
-		// These indexes do exist post-M71
-		expect(taskIndexes).toContain('idx_space_tasks_space_id');
-		expect(taskIndexes).toContain('idx_space_tasks_workflow_run_id');
+    const taskIndexes = getIndexes(db, 'space_tasks');
+    // Post-M71: workflow_node_id column was removed, so no index on it
+    expect(taskIndexes).not.toContain('idx_space_tasks_workflow_node_id');
+    // M131 re-adds goal_id to space_tasks for space-native goals
+    expect(taskIndexes).toContain('idx_space_tasks_goal_id');
+    // These indexes do exist post-M71
+    expect(taskIndexes).toContain('idx_space_tasks_space_id');
+    expect(taskIndexes).toContain('idx_space_tasks_workflow_run_id');
 
-		// Note: idx_space_workflow_runs_goal_id was removed when M60 rebuilt the table
-		// without current_node_id — it no longer exists after the full migration chain.
-	});
+    // Note: idx_space_workflow_runs_goal_id was removed when M60 rebuilt the table
+    // without current_node_id — it no longer exists after the full migration chain.
+  });
 
-	test('existing DB with old schema gets migrated correctly', () => {
-		// Create a pre-migration-45 schema with step column names
-		db.exec(`
+  test('existing DB with old schema gets migrated correctly', () => {
+    // Create a pre-migration-45 schema with step column names
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -134,7 +134,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflows (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -150,7 +150,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_steps (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -165,7 +165,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_transitions (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -182,7 +182,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -205,7 +205,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -247,7 +247,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_session_groups (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -264,78 +264,78 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		// Insert test data
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/test', 'Test Space', now, now);
-		db.prepare(
-			`INSERT INTO space_workflows (id, space_id, name, start_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('wf-1', 'space-1', 'Test Workflow', 'step-1', now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('step-1', 'wf-1', 'Step 1', 0, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('step-2', 'wf-1', 'Step 2', 1, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_transitions (id, workflow_id, from_step_id, to_step_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('trans-1', 'wf-1', 'step-1', 'step-2', 0, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, current_step_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('run-1', 'space-1', 'wf-1', 'Test Run', 'step-1', 'in_progress', now, now);
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, workflow_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('task-1', 'space-1', 'Test Task', 'step-1', now, now);
-		db.prepare(
-			`INSERT INTO space_session_groups (id, space_id, name, current_step_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('group-1', 'space-1', 'Test Group', 'step-1', 'active', now, now);
+    // Insert test data
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('space-1', '/workspace/test', 'Test Space', now, now);
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, start_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('wf-1', 'space-1', 'Test Workflow', 'step-1', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('step-1', 'wf-1', 'Step 1', 0, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('step-2', 'wf-1', 'Step 2', 1, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_transitions (id, workflow_id, from_step_id, to_step_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('trans-1', 'wf-1', 'step-1', 'step-2', 0, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, current_step_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('run-1', 'space-1', 'wf-1', 'Test Run', 'step-1', 'in_progress', now, now);
+    db.prepare(
+      `INSERT INTO space_tasks (id, space_id, title, workflow_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('task-1', 'space-1', 'Test Task', 'step-1', now, now);
+    db.prepare(
+      `INSERT INTO space_session_groups (id, space_id, name, current_step_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('group-1', 'space-1', 'Test Group', 'step-1', 'active', now, now);
 
-		// Run migrations
-		runMigrations(db, () => {});
+    // Run migrations
+    runMigrations(db, () => {});
 
-		// Verify table rename
-		expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
-		expect(tableExists(db, 'space_workflow_steps')).toBe(false);
+    // Verify table rename
+    expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
+    expect(tableExists(db, 'space_workflow_steps')).toBe(false);
 
-		// Verify column renames in space_workflows
-		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
-		expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(false);
+    // Verify column renames in space_workflows
+    expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
+    expect(columnExists(db, 'space_workflows', 'start_step_id')).toBe(false);
 
-		// Verify data preserved in space_workflows
-		const wf = db
-			.prepare(`SELECT id, start_node_id FROM space_workflows WHERE id='wf-1'`)
-			.get() as {
-			id: string;
-			start_node_id: string | null;
-		};
-		expect(wf.start_node_id).toBe('step-1');
+    // Verify data preserved in space_workflows
+    const wf = db
+      .prepare(`SELECT id, start_node_id FROM space_workflows WHERE id='wf-1'`)
+      .get() as {
+      id: string;
+      start_node_id: string | null;
+    };
+    expect(wf.start_node_id).toBe('step-1');
 
-		// space_workflow_transitions was dropped by M59 — column checks are skipped.
-		// space_workflow_runs: M45 renamed current_step_id -> current_node_id, then M60 dropped it.
-		// After the full migration chain neither column exists.
-		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
-		expect(columnExists(db, 'space_workflow_runs', 'current_step_id')).toBe(false);
+    // space_workflow_transitions was dropped by M59 — column checks are skipped.
+    // space_workflow_runs: M45 renamed current_step_id -> current_node_id, then M60 dropped it.
+    // After the full migration chain neither column exists.
+    expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
+    expect(columnExists(db, 'space_workflow_runs', 'current_step_id')).toBe(false);
 
-		// space_tasks.workflow_node_id: M45 renamed workflow_step_id → workflow_node_id,
-		// but M71 later removed workflow_node_id entirely via table rebuild.
-		// After the full migration chain neither column exists.
-		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
-		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
+    // space_tasks.workflow_node_id: M45 renamed workflow_step_id → workflow_node_id,
+    // but M71 later removed workflow_node_id entirely via table rebuild.
+    // After the full migration chain neither column exists.
+    expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
+    expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
 
-		// Verify task row still exists (data preserved through rebuild)
-		const task = db.prepare(`SELECT id FROM space_tasks WHERE id='task-1'`).get() as {
-			id: string;
-		} | null;
-		expect(task).toBeTruthy();
-		expect(task!.id).toBe('task-1');
+    // Verify task row still exists (data preserved through rebuild)
+    const task = db.prepare(`SELECT id FROM space_tasks WHERE id='task-1'`).get() as {
+      id: string;
+    } | null;
+    expect(task).toBeTruthy();
+    expect(task!.id).toBe('task-1');
 
-		// space_session_groups was dropped by M60 — table does not exist after full migration.
-	});
+    // space_session_groups was dropped by M60 — table does not exist after full migration.
+  });
 
-	test('migration is idempotent - re-running does not change anything', () => {
-		// Create pre-migration schema with step names
-		db.exec(`
+  test('migration is idempotent - re-running does not change anything', () => {
+    // Create pre-migration schema with step names
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -355,7 +355,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflows (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -371,7 +371,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_steps (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -386,7 +386,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_transitions (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -403,7 +403,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -426,7 +426,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -468,7 +468,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_session_groups (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -485,41 +485,41 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/test', 'Test Space', now, now);
-		db.prepare(
-			`INSERT INTO space_workflows (id, space_id, name, start_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('wf-1', 'space-1', 'Test Workflow', 'step-1', now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('step-1', 'wf-1', 'Step 1', 0, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, current_step_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('run-1', 'space-1', 'wf-1', 'Test Run', 'step-1', 'in_progress', now, now);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('space-1', '/workspace/test', 'Test Space', now, now);
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, start_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('wf-1', 'space-1', 'Test Workflow', 'step-1', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('step-1', 'wf-1', 'Step 1', 0, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, current_step_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('run-1', 'space-1', 'wf-1', 'Test Run', 'step-1', 'in_progress', now, now);
 
-		// Run migrations twice
-		runMigrations(db, () => {});
-		runMigrations(db, () => {});
+    // Run migrations twice
+    runMigrations(db, () => {});
+    runMigrations(db, () => {});
 
-		// Should still have node columns
-		expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
-		expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
-		// space_workflow_transitions was dropped by M59 — skipped.
-		// current_node_id was dropped by M60 — should not exist after full migration chain.
-		expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
+    // Should still have node columns
+    expect(tableExists(db, 'space_workflow_nodes')).toBe(true);
+    expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
+    // space_workflow_transitions was dropped by M59 — skipped.
+    // current_node_id was dropped by M60 — should not exist after full migration chain.
+    expect(columnExists(db, 'space_workflow_runs', 'current_node_id')).toBe(false);
 
-		// Data should still be intact
-		const wf = db.prepare(`SELECT start_node_id FROM space_workflows WHERE id='wf-1'`).get() as {
-			start_node_id: string | null;
-		};
-		expect(wf.start_node_id).toBe('step-1');
-	});
+    // Data should still be intact
+    const wf = db.prepare(`SELECT start_node_id FROM space_workflows WHERE id='wf-1'`).get() as {
+      start_node_id: string | null;
+    };
+    expect(wf.start_node_id).toBe('step-1');
+  });
 
-	test('foreign key relationships are preserved after migration', () => {
-		// Create pre-migration schema
-		db.exec(`
+  test('foreign key relationships are preserved after migration', () => {
+    // Create pre-migration schema
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -539,7 +539,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflows (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -555,7 +555,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_steps (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -570,7 +570,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_transitions (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -587,7 +587,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -610,7 +610,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -652,41 +652,41 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/test', 'Test Space', now, now);
-		db.prepare(
-			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('wf-1', 'space-1', 'Test Workflow', now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('step-1', 'wf-1', 'Step 1', 0, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('run-1', 'space-1', 'wf-1', 'Test Run', 'in_progress', now, now);
-		db.prepare(
-			`INSERT INTO space_tasks (id, space_id, title, workflow_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('task-1', 'space-1', 'Test Task', 'step-1', now, now);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('space-1', '/workspace/test', 'Test Space', now, now);
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('wf-1', 'space-1', 'Test Workflow', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('step-1', 'wf-1', 'Step 1', 0, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('run-1', 'space-1', 'wf-1', 'Test Run', 'in_progress', now, now);
+    db.prepare(
+      `INSERT INTO space_tasks (id, space_id, title, workflow_step_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('task-1', 'space-1', 'Test Task', 'step-1', now, now);
 
-		// Run migration
-		runMigrations(db, () => {});
+    // Run migration
+    runMigrations(db, () => {});
 
-		// space_tasks.workflow_node_id was renamed from workflow_step_id by M45, then removed by M71.
-		// After the full migration chain, neither column exists.
-		expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
-		expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
+    // space_tasks.workflow_node_id was renamed from workflow_step_id by M45, then removed by M71.
+    // After the full migration chain, neither column exists.
+    expect(columnExists(db, 'space_tasks', 'workflow_node_id')).toBe(false);
+    expect(columnExists(db, 'space_tasks', 'workflow_step_id')).toBe(false);
 
-		// Verify the task row itself still exists
-		const task = db.prepare(`SELECT id FROM space_tasks WHERE id='task-1'`).get() as {
-			id: string;
-		} | null;
-		expect(task).toBeTruthy();
-	});
+    // Verify the task row itself still exists
+    const task = db.prepare(`SELECT id FROM space_tasks WHERE id='task-1'`).get() as {
+      id: string;
+    } | null;
+    expect(task).toBeTruthy();
+  });
 
-	test('preserves columns added by earlier migrations', () => {
-		// Create pre-migration schema with M30/M35/M36/M37/M38/M40 columns
-		db.exec(`
+  test('preserves columns added by earlier migrations', () => {
+    // Create pre-migration schema with M30/M35/M36/M37/M38/M40 columns
+    db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
 				workspace_path TEXT NOT NULL UNIQUE,
@@ -706,7 +706,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflows (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -722,7 +722,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_steps (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -737,7 +737,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_transitions (
 				id TEXT PRIMARY KEY,
 				workflow_id TEXT NOT NULL,
@@ -754,7 +754,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_workflow_runs (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -777,7 +777,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -819,7 +819,7 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		db.exec(`
+    db.exec(`
 			CREATE TABLE space_session_groups (
 				id TEXT PRIMARY KEY,
 				space_id TEXT NOT NULL,
@@ -836,43 +836,43 @@ describe('Migration 45: rename step to node in workflow tables', () => {
 			)
 		`);
 
-		const now = Date.now();
-		db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-		).run('space-1', '/workspace/test', 'Test Space', now, now);
-		db.prepare(
-			`INSERT INTO space_workflows (id, space_id, name, layout, max_iterations, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('wf-1', 'space-1', 'Test Workflow', '{"nodes":{}}', 10, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('step-1', 'wf-1', 'Step 1', 0, now, now);
-		db.prepare(
-			`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, iteration_count, max_iterations, goal_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-		).run('run-1', 'space-1', 'wf-1', 'Test Run', 3, 10, 'goal-1', now, now);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    ).run('space-1', '/workspace/test', 'Test Space', now, now);
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, layout, max_iterations, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('wf-1', 'space-1', 'Test Workflow', '{"nodes":{}}', 10, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('step-1', 'wf-1', 'Step 1', 0, now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, iteration_count, max_iterations, goal_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run('run-1', 'space-1', 'wf-1', 'Test Run', 3, 10, 'goal-1', now, now);
 
-		// Run migration
-		runMigrations(db, () => {});
+    // Run migration
+    runMigrations(db, () => {});
 
-		// Verify M30 column (layout) preserved; max_iterations dropped by M74
-		const wf = db.prepare(`SELECT layout FROM space_workflows WHERE id='wf-1'`).get() as {
-			layout: string | null;
-		};
-		expect(wf.layout).toBe('{"nodes":{}}');
+    // Verify M30 column (layout) preserved; max_iterations dropped by M74
+    const wf = db.prepare(`SELECT layout FROM space_workflows WHERE id='wf-1'`).get() as {
+      layout: string | null;
+    };
+    expect(wf.layout).toBe('{"nodes":{}}');
 
-		// M35 added iteration_count, max_iterations, goal_id to space_workflow_runs.
-		// M71 later removed all three columns via table rebuild.
-		// After the full migration chain, none of these columns exist.
-		expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(false);
-		expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(false);
-		expect(columnExists(db, 'space_workflow_runs', 'goal_id')).toBe(false);
+    // M35 added iteration_count, max_iterations, goal_id to space_workflow_runs.
+    // M71 later removed all three columns via table rebuild.
+    // After the full migration chain, none of these columns exist.
+    expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(false);
+    expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(false);
+    expect(columnExists(db, 'space_workflow_runs', 'goal_id')).toBe(false);
 
-		// Verify run row still exists (data preserved through table rebuild where applicable)
-		const run = db.prepare(`SELECT id FROM space_workflow_runs WHERE id='run-1'`).get() as {
-			id: string;
-		} | null;
-		expect(run).toBeTruthy();
+    // Verify run row still exists (data preserved through table rebuild where applicable)
+    const run = db.prepare(`SELECT id FROM space_workflow_runs WHERE id='run-1'`).get() as {
+      id: string;
+    } | null;
+    expect(run).toBeTruthy();
 
-		// Note: space_workflow_transitions was dropped by M59 — no M38 is_cyclic check here.
-		// Note: space_session_groups was dropped by M60 — no M40 status check here.
-	});
+    // Note: space_workflow_transitions was dropped by M59 — no M38 is_cyclic check here.
+    // Note: space_session_groups was dropped by M60 — no M40 status check here.
+  });
 });

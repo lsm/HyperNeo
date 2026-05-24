@@ -5,48 +5,48 @@ import type { DeclarativeToolGuard } from './types/space.ts';
 
 // Re-export new provider types (note: Provider and ProviderInfo excluded to avoid conflicts with legacy types)
 export type {
-	ModelTier,
-	ProviderCapabilities,
-	ProviderContext,
-	ProviderId,
-	ProviderSdkConfig,
-	ProviderSessionConfig,
+  ModelTier,
+  ProviderCapabilities,
+  ProviderContext,
+  ProviderId,
+  ProviderSdkConfig,
+  ProviderSessionConfig,
 } from './provider/types';
 export type {
-	AppMcpServer,
-	AppMcpServerSourceType,
-	CreateAppMcpServerRequest,
-	UpdateAppMcpServerRequest,
+  AppMcpServer,
+  AppMcpServerSourceType,
+  CreateAppMcpServerRequest,
+  UpdateAppMcpServerRequest,
 } from './types/app-mcp-server.ts';
 // Re-export SDK config types for convenience
 export type {
-	AgentDefinition,
-	AgentMcpServerSpec,
-	AgentModel,
-	AgentsConfig,
-	ClaudeCodePreset,
-	ConfigUpdateResult,
-	EnvironmentSettings,
-	McpHttpServerConfig,
-	McpServerConfig,
-	McpSettings,
-	McpSSEServerConfig,
-	McpStdioServerConfig,
-	ModelSettings,
-	NetworkSandboxSettings,
-	OutputFormatConfig,
-	PluginConfig,
-	SandboxIgnoreViolations,
-	SandboxSettings,
-	SDKConfig,
-	SdkBeta,
-	SessionResumptionSettings,
-	SystemPromptConfig,
-	ThinkingConfig,
-	ToolsPreset,
-	ToolsPresetConfig,
-	ToolsSettings,
-	ValidationResult,
+  AgentDefinition,
+  AgentMcpServerSpec,
+  AgentModel,
+  AgentsConfig,
+  ClaudeCodePreset,
+  ConfigUpdateResult,
+  EnvironmentSettings,
+  McpHttpServerConfig,
+  McpServerConfig,
+  McpSettings,
+  McpSSEServerConfig,
+  McpStdioServerConfig,
+  ModelSettings,
+  NetworkSandboxSettings,
+  OutputFormatConfig,
+  PluginConfig,
+  SandboxIgnoreViolations,
+  SandboxSettings,
+  SDKConfig,
+  SdkBeta,
+  SessionResumptionSettings,
+  SystemPromptConfig,
+  ThinkingConfig,
+  ToolsPreset,
+  ToolsPresetConfig,
+  ToolsSettings,
+  ValidationResult,
 } from './types/sdk-config.ts';
 
 // ============================================================================
@@ -66,12 +66,12 @@ export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat'
  * Context for lobby/space sessions.
  */
 export interface SessionContext {
-	roomId?: string; // Deprecated: legacy DB compatibility only
-	lobbyId?: string;
-	/** Space ID for Space system sessions */
-	spaceId?: string;
-	/** Task ID for Space Task Agent sessions */
-	taskId?: string;
+  roomId?: string; // Deprecated: legacy DB compatibility only
+  lobbyId?: string;
+  /** Space ID for Space system sessions */
+  spaceId?: string;
+  /** Task ID for Space Task Agent sessions */
+  taskId?: string;
 }
 
 /**
@@ -79,16 +79,16 @@ export interface SessionContext {
  * Controls which features are available in ChatContainer
  */
 export interface SessionFeatures {
-	/** Enable rewind/checkpoint functionality */
-	rewind: boolean;
-	/** Enable worktree mode toggle */
-	worktree: boolean;
-	/** Enable coordinator mode toggle */
-	coordinator: boolean;
-	/** Enable archive/delete buttons */
-	archive: boolean;
-	/** Enable session info panel */
-	sessionInfo: boolean;
+  /** Enable rewind/checkpoint functionality */
+  rewind: boolean;
+  /** Enable worktree mode toggle */
+  worktree: boolean;
+  /** Enable coordinator mode toggle */
+  coordinator: boolean;
+  /** Enable archive/delete buttons */
+  archive: boolean;
+  /** Enable session info panel */
+  sessionInfo: boolean;
 }
 
 /**
@@ -96,11 +96,11 @@ export interface SessionFeatures {
  * Workers use full Claude Code system prompt for coding tasks
  */
 export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
-	rewind: true,
-	worktree: true,
-	coordinator: true,
-	archive: true,
-	sessionInfo: true,
+  rewind: true,
+  worktree: true,
+  coordinator: true,
+  archive: true,
+  sessionInfo: true,
 };
 
 /**
@@ -108,64 +108,64 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
  * @public
  */
 export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
-	rewind: false,
-	worktree: false,
-	coordinator: false,
-	archive: false,
-	sessionInfo: false,
+  rewind: false,
+  worktree: false,
+  coordinator: false,
+  archive: false,
+  sessionInfo: false,
 };
 
 // Core session types
 export interface SessionInfo {
-	id: string;
-	title: string;
-	workspacePath: string | null;
-	createdAt: string;
-	lastActiveAt: string;
-	status: SessionStatus;
-	config: SessionConfig;
-	metadata: SessionMetadata;
-	worktree?: WorktreeMetadata;
-	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
-	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
-	/**
-	 * The workspace path (resolved) that was used as CWD when the SDK session was first
-	 * created. The SDK stores conversation files under
-	 * ~/.claude/projects/{encoded-sdkOriginPath}/{sdkSessionId}.jsonl
-	 * Persisting this allows reliable resume even when the session's effective CWD
-	 * changes (e.g., worktree is added/removed between daemon restarts).
-	 */
-	sdkOriginPath?: string;
-	availableCommands?: string[]; // Available slash commands for this session (persisted)
-	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
-	archivedAt?: string; // ISO timestamp when session was archived
-	/** Session type - defaults to 'worker' for existing sessions */
-	type?: SessionType;
-	/** Context for room/lobby sessions */
-	context?: SessionContext;
+  id: string;
+  title: string;
+  workspacePath: string | null;
+  createdAt: string;
+  lastActiveAt: string;
+  status: SessionStatus;
+  config: SessionConfig;
+  metadata: SessionMetadata;
+  worktree?: WorktreeMetadata;
+  gitBranch?: string; // Current git branch for non-worktree sessions in git repos
+  sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+  /**
+   * The workspace path (resolved) that was used as CWD when the SDK session was first
+   * created. The SDK stores conversation files under
+   * ~/.claude/projects/{encoded-sdkOriginPath}/{sdkSessionId}.jsonl
+   * Persisting this allows reliable resume even when the session's effective CWD
+   * changes (e.g., worktree is added/removed between daemon restarts).
+   */
+  sdkOriginPath?: string;
+  availableCommands?: string[]; // Available slash commands for this session (persisted)
+  processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
+  archivedAt?: string; // ISO timestamp when session was archived
+  /** Session type - defaults to 'worker' for existing sessions */
+  type?: SessionType;
+  /** Context for room/lobby sessions */
+  context?: SessionContext;
 }
 
 // Backward compatibility alias (use SessionInfo in new code)
 export type Session = SessionInfo;
 
 export interface WorktreeMetadata {
-	isWorktree: true;
-	worktreePath: string;
-	mainRepoPath: string;
-	branch: string;
+  isWorktree: true;
+  worktreePath: string;
+  mainRepoPath: string;
+  branch: string;
 }
 
 export interface CommitInfo {
-	hash: string;
-	message: string;
-	author: string;
-	date: string;
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
 }
 
 export interface WorktreeCommitStatus {
-	hasCommitsAhead: boolean;
-	commits: CommitInfo[];
-	baseBranch: string;
+  hasCommitsAhead: boolean;
+  commits: CommitInfo[];
+  baseBranch: string;
 }
 
 export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'ended' | 'archived';
@@ -188,43 +188,43 @@ export type { RuntimeState } from './types/neo';
  * - 'anthropic-codex': Anthropic-compatible HTTP bridge backed by OpenAI Responses
  */
 export type Provider =
-	| 'anthropic'
-	| 'glm'
-	| 'minimax'
-	| 'kimi'
-	| 'openrouter'
-	| 'ollama'
-	| 'ollama-cloud'
-	| 'anthropic-copilot'
-	| 'anthropic-codex';
+  | 'anthropic'
+  | 'glm'
+  | 'minimax'
+  | 'kimi'
+  | 'openrouter'
+  | 'ollama'
+  | 'ollama-cloud'
+  | 'anthropic-copilot'
+  | 'anthropic-codex';
 
 /**
  * Provider-specific configuration
  * Allows per-session API key overrides
  */
 export interface ProviderConfig {
-	/** Provider-specific API key (optional, uses global env var if not set) */
-	apiKey?: string;
-	/** Custom base URL override (optional, uses provider default if not set) */
-	baseUrl?: string;
-	/** Additional provider-specific options */
-	[key: string]: unknown;
+  /** Provider-specific API key (optional, uses global env var if not set) */
+  apiKey?: string;
+  /** Custom base URL override (optional, uses provider default if not set) */
+  baseUrl?: string;
+  /** Additional provider-specific options */
+  [key: string]: unknown;
 }
 
 /**
  * Information about an available provider
  */
 export interface ProviderInfo {
-	/** Provider identifier */
-	id: Provider;
-	/** Display name */
-	name: string;
-	/** API base URL (undefined for default Anthropic) */
-	baseUrl?: string;
-	/** Available model IDs for this provider */
-	models: string[];
-	/** Whether this provider is configured (has API key) */
-	available: boolean;
+  /** Provider identifier */
+  id: Provider;
+  /** Display name */
+  name: string;
+  /** API base URL (undefined for default Anthropic) */
+  baseUrl?: string;
+  /** Available model IDs for this provider */
+  models: string[];
+  /** Whether this provider is configured (has API key) */
+  available: boolean;
 }
 
 /**
@@ -245,22 +245,22 @@ export type ThinkingLevel = 'off' | 'think8k' | 'think16k' | 'think24k' | 'think
  * Mapping from ThinkingLevel to maxThinkingTokens value
  */
 export const THINKING_LEVEL_TOKENS: Record<ThinkingLevel, number | undefined> = {
-	off: undefined,
-	think8k: 8000,
-	think16k: 16000,
-	think24k: 24000,
-	think32k: 31999,
+  off: undefined,
+  think8k: 8000,
+  think16k: 16000,
+  think24k: 24000,
+  think32k: 31999,
 };
 
 /**
  * Human-readable labels for thinking levels
  */
 export const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-	off: 'Off',
-	think8k: 'Think 8k',
-	think16k: 'Think 16k',
-	think24k: 'Think 24k',
-	think32k: 'Think 32k',
+  off: 'Off',
+  think8k: 'Think 8k',
+  think16k: 'Think 16k',
+  think24k: 'Think 24k',
+  think32k: 'Think 32k',
 };
 
 /**
@@ -270,15 +270,15 @@ export const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
  * - 'granular': Provider supports token-budget thinking levels
  */
 export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'> = {
-	anthropic: 'granular',
-	glm: 'granular',
-	kimi: 'on',
-	minimax: 'off',
-	openrouter: 'granular',
-	ollama: 'off',
-	'ollama-cloud': 'off',
-	'anthropic-copilot': 'off',
-	'anthropic-codex': 'granular',
+  anthropic: 'granular',
+  glm: 'granular',
+  kimi: 'on',
+  minimax: 'off',
+  openrouter: 'granular',
+  ollama: 'off',
+  'ollama-cloud': 'off',
+  'anthropic-copilot': 'off',
+  'anthropic-codex': 'granular',
 };
 
 /**
@@ -286,10 +286,10 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
  * and validating against known levels.
  */
 export function normalizeThinkingLevel(level: string | undefined | null): ThinkingLevel {
-	if (level === 'auto') return 'off';
-	const valid: ThinkingLevel[] = ['off', 'think8k', 'think16k', 'think24k', 'think32k'];
-	if (valid.includes(level as ThinkingLevel)) return level as ThinkingLevel;
-	return 'off';
+  if (level === 'auto') return 'off';
+  const valid: ThinkingLevel[] = ['off', 'think8k', 'think16k', 'think24k', 'think32k'];
+  if (valid.includes(level as ThinkingLevel)) return level as ThinkingLevel;
+  return 'off';
 }
 
 /**
@@ -297,27 +297,27 @@ export function normalizeThinkingLevel(level: string | undefined | null): Thinki
  * Returns an empty array for providers that don't support thinking.
  */
 export function getThinkingOptionsForProvider(
-	provider: string | undefined,
-	mode?: 'off' | 'on' | 'granular'
+  provider: string | undefined,
+  mode?: 'off' | 'on' | 'granular'
 ): Array<{ value: ThinkingLevel; label: string }> {
-	const resolvedMode = mode ?? PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
-	switch (resolvedMode) {
-		case 'off':
-			return [];
-		case 'on':
-			return [
-				{ value: 'off', label: 'Off' },
-				{ value: 'think32k', label: 'On' },
-			];
-		case 'granular':
-			return [
-				{ value: 'off', label: 'Off' },
-				{ value: 'think8k', label: 'Think 8k' },
-				{ value: 'think16k', label: 'Think 16k' },
-				{ value: 'think24k', label: 'Think 24k' },
-				{ value: 'think32k', label: 'Think 32k' },
-			];
-	}
+  const resolvedMode = mode ?? PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
+  switch (resolvedMode) {
+    case 'off':
+      return [];
+    case 'on':
+      return [
+        { value: 'off', label: 'Off' },
+        { value: 'think32k', label: 'On' },
+      ];
+    case 'granular':
+      return [
+        { value: 'off', label: 'Off' },
+        { value: 'think8k', label: 'Think 8k' },
+        { value: 'think16k', label: 'Think 16k' },
+        { value: 'think24k', label: 'Think 24k' },
+        { value: 'think32k', label: 'Think 32k' },
+      ];
+  }
 }
 
 /**
@@ -332,150 +332,150 @@ export function getThinkingOptionsForProvider(
  * - Other SDKConfig properties like `allowedTools`, `disallowedTools` are inherited directly
  */
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
-	/**
-	 * AI provider to use for this session
-	 * @default 'anthropic'
-	 */
-	provider?: Provider;
+  /**
+   * AI provider to use for this session
+   * @default 'anthropic'
+   */
+  provider?: Provider;
 
-	/**
-	 * Provider-specific configuration (optional)
-	 * Allows per-session API key overrides
-	 */
-	providerConfig?: ProviderConfig;
+  /**
+   * Provider-specific configuration (optional)
+   * Allows per-session API key overrides
+   */
+  providerConfig?: ProviderConfig;
 
-	/**
-	 * Model ID (required)
-	 * @example 'claude-sonnet-4-5-20250929'
-	 */
-	model: string;
+  /**
+   * Model ID (required)
+   * @example 'claude-sonnet-4-5-20250929'
+   */
+  model: string;
 
-	/**
-	 * Maximum output tokens (legacy, not currently passed to SDK)
-	 * @deprecated Use SDK's default token limits
-	 */
-	maxTokens: number;
+  /**
+   * Maximum output tokens (legacy, not currently passed to SDK)
+   * @deprecated Use SDK's default token limits
+   */
+  maxTokens: number;
 
-	/**
-	 * Temperature for model responses (legacy, not currently passed to SDK)
-	 * @deprecated SDK manages temperature internally
-	 */
-	temperature: number;
+  /**
+   * Temperature for model responses (legacy, not currently passed to SDK)
+   * @deprecated SDK manages temperature internally
+   */
+  temperature: number;
 
-	/**
-	 * Auto-scroll to bottom when new messages arrive (UI-only)
-	 * @default true
-	 */
-	autoScroll?: boolean;
+  /**
+   * Auto-scroll to bottom when new messages arrive (UI-only)
+   * @default true
+   */
+  autoScroll?: boolean;
 
-	/**
-	 * Coordinator mode - main agent delegates all work to specialist subagents
-	 * When enabled, the main agent can only use Task, TodoWrite, AskUserQuestion
-	 * @default false
-	 */
-	coordinatorMode?: boolean;
+  /**
+   * Coordinator mode - main agent delegates all work to specialist subagents
+   * When enabled, the main agent can only use Task, TodoWrite, AskUserQuestion
+   * @default false
+   */
+  coordinatorMode?: boolean;
 
-	/**
-	 * Thinking level for extended thinking
-	 * Maps to maxThinkingTokens in SDK options
-	 * @default 'off'
-	 */
-	thinkingLevel?: ThinkingLevel;
+  /**
+   * Thinking level for extended thinking
+   * Maps to maxThinkingTokens in SDK options
+   * @default 'off'
+   */
+  thinkingLevel?: ThinkingLevel;
 
-	/**
-	 * Query mode for message sending behavior
-	 * - 'immediate': Messages are enqueued for immediate delivery (default)
-	 * - 'manual': Messages are deferred until explicitly triggered
-	 *
-	 * Note: auto-defer behavior (messages enqueued during active processing)
-	 * is automatic and doesn't require a separate mode setting.
-	 * @default 'immediate'
-	 */
-	queryMode?: 'immediate' | 'manual';
+  /**
+   * Query mode for message sending behavior
+   * - 'immediate': Messages are enqueued for immediate delivery (default)
+   * - 'manual': Messages are deferred until explicitly triggered
+   *
+   * Note: auto-defer behavior (messages enqueued during active processing)
+   * is automatic and doesn't require a separate mode setting.
+   * @default 'immediate'
+   */
+  queryMode?: 'immediate' | 'manual';
 
-	/**
-	 * Legacy tools configuration for session (NeoKai-specific UI settings)
-	 * Controls system prompt preset, setting sources, MCP tools, and NeoKai tools
-	 *
-	 * This is different from SDK's tool selection. For SDK tool selection, use:
-	 * - sdkToolsPreset: Select which tools to enable (array or preset)
-	 * - allowedTools: Auto-allow specific tools without permission prompts
-	 * - disallowedTools: Disable specific tools entirely
-	 */
-	tools?: ToolsConfig;
+  /**
+   * Legacy tools configuration for session (NeoKai-specific UI settings)
+   * Controls system prompt preset, setting sources, MCP tools, and NeoKai tools
+   *
+   * This is different from SDK's tool selection. For SDK tool selection, use:
+   * - sdkToolsPreset: Select which tools to enable (array or preset)
+   * - allowedTools: Auto-allow specific tools without permission prompts
+   * - disallowedTools: Disable specific tools entirely
+   */
+  tools?: ToolsConfig;
 
-	/**
-	 * SDK tool selection configuration
-	 * Specifies which tools are available for the agent
-	 *
-	 * @example
-	 * // Use Claude Code preset (all default tools)
-	 * sdkToolsPreset: { type: 'preset', preset: 'claude_code' }
-	 *
-	 * @example
-	 * // Use specific tools only
-	 * sdkToolsPreset: ['Read', 'Write', 'Bash']
-	 */
-	sdkToolsPreset?: ToolsPresetConfig;
+  /**
+   * SDK tool selection configuration
+   * Specifies which tools are available for the agent
+   *
+   * @example
+   * // Use Claude Code preset (all default tools)
+   * sdkToolsPreset: { type: 'preset', preset: 'claude_code' }
+   *
+   * @example
+   * // Use specific tools only
+   * sdkToolsPreset: ['Read', 'Write', 'Bash']
+   */
+  sdkToolsPreset?: ToolsPresetConfig;
 
-	/**
-	 * Custom function to spawn the Claude Code process.
-	 * Used for testing to track SDK subprocess PID.
-	 * This is a runtime-only callback, not persisted to database.
-	 * @internal
-	 * @remarks Uses 'any' type to match SDK's SpawnOptions and SpawnedProcess
-	 * interfaces which are not directly exported from the SDK package.
-	 */
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	spawnClaudeCodeProcess?: (options: any) => any;
+  /**
+   * Custom function to spawn the Claude Code process.
+   * Used for testing to track SDK subprocess PID.
+   * This is a runtime-only callback, not persisted to database.
+   * @internal
+   * @remarks Uses 'any' type to match SDK's SpawnOptions and SpawnedProcess
+   * interfaces which are not directly exported from the SDK package.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  spawnClaudeCodeProcess?: (options: any) => any;
 
-	// Note: The following are inherited from SDKConfig and available:
-	// - systemPrompt: Custom system prompt or Claude Code preset
-	// - allowedTools: Auto-allow specific tools without permission prompts
-	// - disallowedTools: Disable specific tools entirely
-	// - agents: Custom subagent definitions
-	// - sandbox: Sandbox configuration
-	// - mcpServers: MCP server configuration
-	// - outputFormat: Structured output JSON schema
-	// - plugins: Plugin configurations
-	// - betas: Beta feature flags
-	// - settingSources: Setting file sources
-	// - env: Environment variables
-	// - maxTurns: Maximum conversation turns
-	// - maxBudgetUsd: Cost limit
-	// - fallbackModel: Fallback model ID
-	// - permissionMode: Permission mode for SDK operations
+  // Note: The following are inherited from SDKConfig and available:
+  // - systemPrompt: Custom system prompt or Claude Code preset
+  // - allowedTools: Auto-allow specific tools without permission prompts
+  // - disallowedTools: Disable specific tools entirely
+  // - agents: Custom subagent definitions
+  // - sandbox: Sandbox configuration
+  // - mcpServers: MCP server configuration
+  // - outputFormat: Structured output JSON schema
+  // - plugins: Plugin configurations
+  // - betas: Beta feature flags
+  // - settingSources: Setting file sources
+  // - env: Environment variables
+  // - maxTurns: Maximum conversation turns
+  // - maxBudgetUsd: Cost limit
+  // - fallbackModel: Fallback model ID
+  // - permissionMode: Permission mode for SDK operations
 
-	// ============================================================================
-	// Unified Session Architecture Fields
-	// ============================================================================
+  // ============================================================================
+  // Unified Session Architecture Fields
+  // ============================================================================
 
-	/**
-	 * Session type for unified architecture
-	 * @default 'worker'
-	 */
-	type?: SessionType;
+  /**
+   * Session type for unified architecture
+   * @default 'worker'
+   */
+  type?: SessionType;
 
-	/**
-	 * Context for room/lobby sessions
-	 */
-	context?: SessionContext;
+  /**
+   * Context for room/lobby sessions
+   */
+  context?: SessionContext;
 
-	/**
-	 * Feature flags controlling UI capabilities
-	 * Defaults based on session type:
-	 * - worker: all features enabled
-	 * - room/lobby: all features disabled
-	 */
-	features?: SessionFeatures;
+  /**
+   * Feature flags controlling UI capabilities
+   * Defaults based on session type:
+   * - worker: all features enabled
+   * - room/lobby: all features disabled
+   */
+  features?: SessionFeatures;
 
-	/**
-	 * Declarative tool guards from the workflow node agent definition.
-	 * Persisted in session config so they survive daemon restart and
-	 * session restore without needing the workflow definition at hand.
-	 * Compiled into SDK hooks at runtime by the query options builder.
-	 */
-	toolGuards?: DeclarativeToolGuard[];
+  /**
+   * Declarative tool guards from the workflow node agent definition.
+   * Persisted in session config so they survive daemon restart and
+   * session restore without needing the workflow definition at hand.
+   * Compiled into SDK hooks at runtime by the query options builder.
+   */
+  toolGuards?: DeclarativeToolGuard[];
 }
 
 /**
@@ -491,33 +491,33 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
  * `disabledMcpServers` field was removed in M5.
  */
 export interface ToolsConfig {
-	// System Prompt: Use Claude Code preset (default: true)
-	// SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
-	// When false, uses empty/minimal system prompt
-	useClaudeCodePreset?: boolean;
-	// Setting Sources: retained for forward compatibility only.
-	// `QueryOptionsBuilder` always emits `settingSources: []` so the SDK never
-	// auto-loads `.mcp.json` / `settings.json` MCPs — the registry is the only
-	// source of truth.
-	settingSources?: SettingSource[];
-	// Legacy field - deprecated, use settingSources instead
-	loadSettingSources?: boolean;
-	/**
-	 * Session-scoped skill disable list.
-	 *
-	 * IDs of `app_skills` rows that the user has disabled for *this session
-	 * only*. Acts as an additive filter on top of the global `enabled` flag and
-	 * any room-level overrides — a skill is injected into the SDK build only if:
-	 *   - the global registry row has `enabled === true`, AND
-	 *   - no room-level override sets `enabled === false`, AND
-	 *   - the skill ID is not in this list.
-	 *
-	 * Empty / undefined means "no session-level skill overrides", which is the
-	 * default and matches the pre-existing behaviour. Used by the session
-	 * Tools modal so users can opt skills out for this session without mutating
-	 * the global app-level registry.
-	 */
-	disabledSkills?: string[];
+  // System Prompt: Use Claude Code preset (default: true)
+  // SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
+  // When false, uses empty/minimal system prompt
+  useClaudeCodePreset?: boolean;
+  // Setting Sources: retained for forward compatibility only.
+  // `QueryOptionsBuilder` always emits `settingSources: []` so the SDK never
+  // auto-loads `.mcp.json` / `settings.json` MCPs — the registry is the only
+  // source of truth.
+  settingSources?: SettingSource[];
+  // Legacy field - deprecated, use settingSources instead
+  loadSettingSources?: boolean;
+  /**
+   * Session-scoped skill disable list.
+   *
+   * IDs of `app_skills` rows that the user has disabled for *this session
+   * only*. Acts as an additive filter on top of the global `enabled` flag and
+   * any room-level overrides — a skill is injected into the SDK build only if:
+   *   - the global registry row has `enabled === true`, AND
+   *   - no room-level override sets `enabled === false`, AND
+   *   - the skill ID is not in this list.
+   *
+   * Empty / undefined means "no session-level skill overrides", which is the
+   * default and matches the pre-existing behaviour. Used by the session
+   * Tools modal so users can opt skills out for this session without mutating
+   * the global app-level registry.
+   */
+  disabledSkills?: string[];
 }
 
 /**
@@ -530,31 +530,31 @@ export interface ToolsConfig {
  * - settingSources: ['project', 'local', 'user'] - Which config files to load
  */
 export interface GlobalToolsConfig {
-	// System Prompt settings
-	systemPrompt: {
-		// Claude Code preset: Use the official Claude Code system prompt
-		// SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
-		claudeCodePreset: {
-			allowed: boolean;
-			defaultEnabled: boolean;
-		};
-	};
-	// Setting Sources settings
-	settingSources: {
-		// Project settings: Load from settingSources: ['project', 'local']
-		// Controls CLAUDE.md, .claude/settings.json, .claude/settings.local.json loading
-		project: {
-			allowed: boolean;
-			defaultEnabled: boolean;
-		};
-	};
-	// MCP tools settings
-	mcp: {
-		// Is loading project MCP allowed?
-		allowProjectMcp: boolean;
-		// Default for new sessions
-		defaultProjectMcp: boolean;
-	};
+  // System Prompt settings
+  systemPrompt: {
+    // Claude Code preset: Use the official Claude Code system prompt
+    // SDK option: systemPrompt: { type: 'preset', preset: 'claude_code' }
+    claudeCodePreset: {
+      allowed: boolean;
+      defaultEnabled: boolean;
+    };
+  };
+  // Setting Sources settings
+  settingSources: {
+    // Project settings: Load from settingSources: ['project', 'local']
+    // Controls CLAUDE.md, .claude/settings.json, .claude/settings.local.json loading
+    project: {
+      allowed: boolean;
+      defaultEnabled: boolean;
+    };
+  };
+  // MCP tools settings
+  mcp: {
+    // Is loading project MCP allowed?
+    allowProjectMcp: boolean;
+    // Default for new sessions
+    defaultProjectMcp: boolean;
+  };
 }
 
 /**
@@ -562,95 +562,95 @@ export interface GlobalToolsConfig {
  * All features enabled by default, MCP disabled by default
  */
 export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
-	systemPrompt: {
-		claudeCodePreset: {
-			allowed: true,
-			defaultEnabled: true, // Use Claude Code preset by default
-		},
-	},
-	settingSources: {
-		project: {
-			allowed: true,
-			defaultEnabled: true, // Load project settings by default
-		},
-	},
-	mcp: {
-		allowProjectMcp: true, // Allow but don't enable by default
-		defaultProjectMcp: false,
-	},
+  systemPrompt: {
+    claudeCodePreset: {
+      allowed: true,
+      defaultEnabled: true, // Use Claude Code preset by default
+    },
+  },
+  settingSources: {
+    project: {
+      allowed: true,
+      defaultEnabled: true, // Load project settings by default
+    },
+  },
+  mcp: {
+    allowProjectMcp: true, // Allow but don't enable by default
+    defaultProjectMcp: false,
+  },
 };
 
 export interface SessionMetadata {
-	messageCount: number;
-	totalTokens: number;
-	inputTokens: number;
-	outputTokens: number;
-	totalCost: number;
-	toolCallCount: number;
-	titleGenerated?: boolean; // Flag to track if title has been auto-generated
-	workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
-	lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
-	inputDraft?: string | null; // Draft input text (null to clear; persisted across sessions and devices)
-	removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
-	resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
-	// Cost tracking: SDK reports cumulative cost per run, but resets on agent restart
-	// We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
-	lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
-	costBaseline?: number; // Accumulated cost from previous runs before last reset
-	worktreeChoice?: {
-		status: 'pending' | 'completed';
-		choice?: 'worktree' | 'direct';
-		createdAt?: string;
-		completedAt?: string;
-	};
-	archivedWorktree?: {
-		mainRepoPath: string;
-		worktreePath: string;
-		branch: string;
-	};
-	// Session architecture fields
-	/** Type of session in architecture context */
-	sessionType?: SessionType;
-	/** For manager/worker: ID of the paired session */
-	pairedSessionId?: string;
-	/** For manager/worker: ID of the parent session */
-	parentSessionId?: string;
-	/** Current task being managed/executed */
-	currentTaskId?: string;
-	/** Crash recovery context */
-	recoveryContext?: {
-		lastKnownState: string;
-		pendingInstruction?: string;
-		retryCount: number;
-	};
-	/** Non-secret provenance for the configured system prompt used when a session was spawned. */
-	promptProvenance?: {
-		source: string;
-		hash: string;
-		agentId?: string;
-		agentName?: string;
-		workflowRunId?: string;
-		workflowId?: string;
-		nodeId?: string;
-		nodeName?: string;
-	};
+  messageCount: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalCost: number;
+  toolCallCount: number;
+  titleGenerated?: boolean; // Flag to track if title has been auto-generated
+  workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
+  lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
+  inputDraft?: string | null; // Draft input text (null to clear; persisted across sessions and devices)
+  removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
+  resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
+  // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart
+  // We track lastSdkCost to detect resets and costBaseline to preserve pre-reset totals
+  lastSdkCost?: number; // Last SDK-reported total_cost_usd (resets when agent restarts)
+  costBaseline?: number; // Accumulated cost from previous runs before last reset
+  worktreeChoice?: {
+    status: 'pending' | 'completed';
+    choice?: 'worktree' | 'direct';
+    createdAt?: string;
+    completedAt?: string;
+  };
+  archivedWorktree?: {
+    mainRepoPath: string;
+    worktreePath: string;
+    branch: string;
+  };
+  // Session architecture fields
+  /** Type of session in architecture context */
+  sessionType?: SessionType;
+  /** For manager/worker: ID of the paired session */
+  pairedSessionId?: string;
+  /** For manager/worker: ID of the parent session */
+  parentSessionId?: string;
+  /** Current task being managed/executed */
+  currentTaskId?: string;
+  /** Crash recovery context */
+  recoveryContext?: {
+    lastKnownState: string;
+    pendingInstruction?: string;
+    retryCount: number;
+  };
+  /** Non-secret provenance for the configured system prompt used when a session was spawned. */
+  promptProvenance?: {
+    source: string;
+    hash: string;
+    agentId?: string;
+    agentName?: string;
+    workflowRunId?: string;
+    workflowId?: string;
+    nodeId?: string;
+    nodeName?: string;
+  };
 }
 
 // Message content types for streaming input (supports images and tool results)
 export type MessageContent = TextContent | ImageContent | ToolResultContent;
 
 export interface TextContent {
-	type: 'text';
-	text: string;
+  type: 'text';
+  text: string;
 }
 
 export interface ImageContent {
-	type: 'image';
-	source: {
-		type: 'base64';
-		media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
-		data: string; // base64 encoded
-	};
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+    data: string; // base64 encoded
+  };
 }
 
 /**
@@ -658,9 +658,9 @@ export interface ImageContent {
  * Used when sending tool results through the streaming input queue
  */
 export interface ToolResultContent {
-	type: 'tool_result';
-	tool_use_id: string;
-	content: string;
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
 }
 
 /**
@@ -668,15 +668,15 @@ export interface ToolResultContent {
  * Represents an image that can be sent with a message
  */
 export interface MessageImage {
-	/**
-	 * Base64 encoded image data
-	 */
-	data: string;
+  /**
+   * Base64 encoded image data
+   */
+  data: string;
 
-	/**
-	 * MIME type of the image
-	 */
-	media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  /**
+   * MIME type of the image
+   */
+  media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 }
 
 export type MessageDeliveryMode = 'immediate' | 'defer';
@@ -700,209 +700,209 @@ export type MessageOrigin = 'human' | 'system';
  * the frontend can identify and route it without ambiguity.
  */
 export type NeokaiActionMessage = {
-	type: 'neokai_action';
-	uuid: string;
-	session_id: string;
-	action: 'sdk_resume_choice';
-	resolved: boolean;
-	chosenOption?: 'start_fresh' | 'leave_as_is';
-	timestamp: number;
+  type: 'neokai_action';
+  uuid: string;
+  session_id: string;
+  action: 'sdk_resume_choice';
+  resolved: boolean;
+  chosenOption?: 'start_fresh' | 'leave_as_is';
+  timestamp: number;
 };
 
 // Tool types
 export interface Tool {
-	name: string;
-	description: string;
-	category: string;
-	parameters: unknown; // JSON Schema
+  name: string;
+  description: string;
+  category: string;
+  parameters: unknown; // JSON Schema
 }
 
 export interface ToolBundle {
-	name: string;
-	tools: string[];
-	description: string;
+  name: string;
+  tools: string[];
+  description: string;
 }
 
 // Event types
 export interface Event {
-	id: string;
-	sessionId: string;
-	type: EventType;
-	data: unknown;
-	timestamp: string;
+  id: string;
+  sessionId: string;
+  type: EventType;
+  data: unknown;
+  timestamp: string;
 }
 
 export type EventType =
-	// Server → Client events (broadcasts)
-	| 'sdk.message'
-	| 'context.updated'
-	| 'context.compacting' // Compaction started (lock UI)
-	| 'context.compacted' // Compaction finished (unlock UI)
-	| 'tools.loaded'
-	| 'tools.unloaded'
-	| 'session.created'
-	| 'session.updated'
-	| 'session.deleted'
-	| 'session.ended'
-	| 'session.interrupted'
-	| 'message.queued'
-	| 'message.processing'
-	| 'error'
-	// Client → Server request events
-	| 'session.create.request'
-	| 'session.list.request'
-	| 'session.get.request'
-	| 'session.update.request'
-	| 'session.delete.request'
-	| 'message.send' // Already exists
-	| 'message.list.request'
-	| 'message.sdkMessages.request'
-	| 'file.read.request'
-	| 'file.list.request'
-	| 'file.tree.request'
-	| 'system.health.request'
-	| 'system.config.request'
-	| 'auth.status.request'
-	// Server → Client response events
-	| 'session.create.response'
-	| 'session.list.response'
-	| 'session.get.response'
-	| 'session.update.response'
-	| 'session.delete.response'
-	| 'message.list.response'
-	| 'message.sdkMessages.response'
-	| 'file.read.response'
-	| 'file.list.response'
-	| 'file.tree.response'
-	| 'system.health.response'
-	| 'system.config.response'
-	| 'auth.status.response'
-	// Client presence/interaction events
-	| 'message.cancel'
-	| 'client.typing'
-	| 'client.presence'
-	| 'client.cursor'
-	| 'client.action'
-	| 'client.interrupt'
-	| 'client.ack'
-	// WebSocket heartbeat events (internal)
-	| 'ping'
-	| 'pong';
+  // Server → Client events (broadcasts)
+  | 'sdk.message'
+  | 'context.updated'
+  | 'context.compacting' // Compaction started (lock UI)
+  | 'context.compacted' // Compaction finished (unlock UI)
+  | 'tools.loaded'
+  | 'tools.unloaded'
+  | 'session.created'
+  | 'session.updated'
+  | 'session.deleted'
+  | 'session.ended'
+  | 'session.interrupted'
+  | 'message.queued'
+  | 'message.processing'
+  | 'error'
+  // Client → Server request events
+  | 'session.create.request'
+  | 'session.list.request'
+  | 'session.get.request'
+  | 'session.update.request'
+  | 'session.delete.request'
+  | 'message.send' // Already exists
+  | 'message.list.request'
+  | 'message.sdkMessages.request'
+  | 'file.read.request'
+  | 'file.list.request'
+  | 'file.tree.request'
+  | 'system.health.request'
+  | 'system.config.request'
+  | 'auth.status.request'
+  // Server → Client response events
+  | 'session.create.response'
+  | 'session.list.response'
+  | 'session.get.response'
+  | 'session.update.response'
+  | 'session.delete.response'
+  | 'message.list.response'
+  | 'message.sdkMessages.response'
+  | 'file.read.response'
+  | 'file.list.response'
+  | 'file.tree.response'
+  | 'system.health.response'
+  | 'system.config.response'
+  | 'auth.status.response'
+  // Client presence/interaction events
+  | 'message.cancel'
+  | 'client.typing'
+  | 'client.presence'
+  | 'client.cursor'
+  | 'client.action'
+  | 'client.interrupt'
+  | 'client.ack'
+  // WebSocket heartbeat events (internal)
+  | 'ping'
+  | 'pong';
 
 // File system types
 export interface FileInfo {
-	path: string;
-	type: 'file' | 'directory';
-	size: number;
-	mtime: string;
+  path: string;
+  type: 'file' | 'directory';
+  size: number;
+  mtime: string;
 }
 
 export interface FileTree {
-	name: string;
-	path: string;
-	type: 'file' | 'directory';
-	children?: FileTree[];
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: FileTree[];
 }
 
 export interface FileSnapshot {
-	sessionId: string;
-	timestamp: string;
-	files: {
-		path: string;
-		content: string;
-		hash: string;
-	}[];
+  sessionId: string;
+  timestamp: string;
+  files: {
+    path: string;
+    content: string;
+    hash: string;
+  }[];
 }
 
 // Sub-agent types
 export interface SubAgent {
-	id: string;
-	sessionId: string;
-	parentId?: string;
-	task: string;
-	tools: string[];
-	status: 'running' | 'completed' | 'error';
-	result?: unknown;
-	error?: string;
-	createdAt: string;
-	completedAt?: string;
+  id: string;
+  sessionId: string;
+  parentId?: string;
+  task: string;
+  tools: string[];
+  status: 'running' | 'completed' | 'error';
+  result?: unknown;
+  error?: string;
+  createdAt: string;
+  completedAt?: string;
 }
 
 // Health check
 export interface HealthStatus {
-	status: 'ok' | 'error';
-	version: string;
-	uptime: number;
-	sessions: {
-		active: number;
-		total: number;
-	};
+  status: 'ok' | 'error';
+  version: string;
+  uptime: number;
+  sessions: {
+    active: number;
+    total: number;
+  };
 }
 
 // Authentication types
 export type AuthMethod = 'oauth' | 'oauth_token' | 'api_key' | 'none';
 
 export interface OAuthTokens {
-	accessToken: string;
-	refreshToken: string;
-	expiresAt: number; // Unix timestamp in milliseconds
-	scopes: string[];
-	isMax?: boolean;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number; // Unix timestamp in milliseconds
+  scopes: string[];
+  isMax?: boolean;
 }
 
 export interface AuthStatus {
-	method: AuthMethod;
-	isAuthenticated: boolean;
-	user?: {
-		email?: string;
-		name?: string;
-	};
-	expiresAt?: number;
-	source?: 'env' | 'database'; // Where the credentials come from
+  method: AuthMethod;
+  isAuthenticated: boolean;
+  user?: {
+    email?: string;
+    name?: string;
+  };
+  expiresAt?: number;
+  source?: 'env' | 'database'; // Where the credentials come from
 }
 
 // Configuration
 export interface DaemonConfig {
-	version: string;
-	claudeSDKVersion: string;
-	defaultModel: string;
-	maxSessions: number;
-	storageLocation: string;
-	authMethod: AuthMethod;
-	authStatus: AuthStatus;
+  version: string;
+  claudeSDKVersion: string;
+  defaultModel: string;
+  maxSessions: number;
+  storageLocation: string;
+  authMethod: AuthMethod;
+  authStatus: AuthStatus;
 }
 
 // Slash Command types
 export interface SlashCommand {
-	name: string;
-	description: string;
-	usage?: string;
-	aliases?: string[];
-	category?: 'chat' | 'session' | 'system' | 'debug';
-	requiresConfirmation?: boolean;
-	parameters?: CommandParameter[];
+  name: string;
+  description: string;
+  usage?: string;
+  aliases?: string[];
+  category?: 'chat' | 'session' | 'system' | 'debug';
+  requiresConfirmation?: boolean;
+  parameters?: CommandParameter[];
 }
 
 export interface CommandParameter {
-	name: string;
-	description: string;
-	type: 'string' | 'number' | 'boolean';
-	required?: boolean;
-	default?: unknown;
+  name: string;
+  description: string;
+  type: 'string' | 'number' | 'boolean';
+  required?: boolean;
+  default?: unknown;
 }
 
 export interface CommandExecutionRequest {
-	command: string;
-	args?: string[];
-	rawInput: string;
+  command: string;
+  args?: string[];
+  rawInput: string;
 }
 
 export interface CommandExecutionResult {
-	success: boolean;
-	message?: string;
-	data?: unknown;
-	error?: string;
-	displayType?: 'text' | 'markdown' | 'json' | 'component';
+  success: boolean;
+  message?: string;
+  data?: unknown;
+  error?: string;
+  displayType?: 'text' | 'markdown' | 'json' | 'component';
 }
 
 // Context information types
@@ -911,43 +911,43 @@ export interface CommandExecutionResult {
  * Category breakdown for context usage
  */
 export interface ContextCategoryBreakdown {
-	tokens: number;
-	percent: number | null;
+  tokens: number;
+  percent: number | null;
 }
 
 /**
  * API usage statistics from Claude response
  */
 export interface ContextAPIUsage {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheCreationTokens: number;
-	webSearchRequests?: number; // SDK 0.1.69+
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  webSearchRequests?: number; // SDK 0.1.69+
 }
 
 /**
  * Per-message-type token breakdown (SDK `getContextUsage()` messageBreakdown)
  */
 export interface ContextMessageBreakdown {
-	toolCallTokens: number;
-	toolResultTokens: number;
-	attachmentTokens: number;
-	assistantMessageTokens: number;
-	userMessageTokens: number;
-	/**
-	 * Tokens consumed by content redirected into the conversation
-	 * (e.g. sub-agent outputs). Exposed by the SDK alongside other
-	 * per-category totals.
-	 */
-	redirectedContextTokens?: number;
-	/**
-	 * Tokens the SDK couldn't attribute to any single category —
-	 * useful for detecting breakdown drift over time.
-	 */
-	unattributedTokens?: number;
-	toolCallsByType?: Array<{ name: string; callTokens: number; resultTokens: number }>;
-	attachmentsByType?: Array<{ name: string; tokens: number }>;
+  toolCallTokens: number;
+  toolResultTokens: number;
+  attachmentTokens: number;
+  assistantMessageTokens: number;
+  userMessageTokens: number;
+  /**
+   * Tokens consumed by content redirected into the conversation
+   * (e.g. sub-agent outputs). Exposed by the SDK alongside other
+   * per-category totals.
+   */
+  redirectedContextTokens?: number;
+  /**
+   * Tokens the SDK couldn't attribute to any single category —
+   * useful for detecting breakdown drift over time.
+   */
+  unattributedTokens?: number;
+  toolCallsByType?: Array<{ name: string; callTokens: number; resultTokens: number }>;
+  attachmentsByType?: Array<{ name: string; tokens: number }>;
 }
 
 /**
@@ -957,21 +957,21 @@ export interface ContextMessageBreakdown {
  * details (per-message breakdown).
  */
 export interface ContextInfo {
-	model: string | null;
-	// Token usage
-	totalUsed: number;
-	totalCapacity: number;
-	percentUsed: number;
-	// Category breakdown
-	breakdown: Record<string, ContextCategoryBreakdown>;
-	// Optional additional info
-	apiUsage?: ContextAPIUsage;
-	// Auto-compaction (from SDK getContextUsage())
-	autoCompactThreshold?: number;
-	isAutoCompactEnabled?: boolean;
-	// Per-message-type breakdown for debugging heavy sessions
-	messageBreakdown?: ContextMessageBreakdown;
-	// Metadata
-	lastUpdated?: number; // Timestamp of last update
-	source?: 'stream' | 'context-command' | 'sdk-get-context-usage' | 'merged'; // Source of context data
+  model: string | null;
+  // Token usage
+  totalUsed: number;
+  totalCapacity: number;
+  percentUsed: number;
+  // Category breakdown
+  breakdown: Record<string, ContextCategoryBreakdown>;
+  // Optional additional info
+  apiUsage?: ContextAPIUsage;
+  // Auto-compaction (from SDK getContextUsage())
+  autoCompactThreshold?: number;
+  isAutoCompactEnabled?: boolean;
+  // Per-message-type breakdown for debugging heavy sessions
+  messageBreakdown?: ContextMessageBreakdown;
+  // Metadata
+  lastUpdated?: number; // Timestamp of last update
+  source?: 'stream' | 'context-command' | 'sdk-get-context-usage' | 'merged'; // Source of context data
 }

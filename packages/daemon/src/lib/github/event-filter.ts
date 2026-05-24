@@ -20,31 +20,31 @@ const GITHUB_API_BASE = 'https://api.github.com';
  * Permission level hierarchy for comparison
  */
 const PERMISSION_LEVELS: Record<string, number> = {
-	none: 0,
-	read: 1,
-	write: 2,
-	maintain: 3,
-	admin: 4,
+  none: 0,
+  read: 1,
+  write: 2,
+  maintain: 3,
+  admin: 4,
 };
 
 /**
  * Cache entry for permission checks
  */
 interface PermissionCacheEntry {
-	permission: string | null;
-	cachedAt: number;
+  permission: string | null;
+  cachedAt: number;
 }
 
 /**
  * Options for creating a GitHubEventFilter
  */
 export interface GitHubEventFilterOptions {
-	/** GitHub personal access token for permission API calls */
-	githubToken?: string;
-	/** Permission cache TTL in milliseconds */
-	cacheTtl?: number;
-	/** FilterConfigManager for dynamic config lookups (optional) */
-	configManager?: FilterConfigManager;
+  /** GitHub personal access token for permission API calls */
+  githubToken?: string;
+  /** Permission cache TTL in milliseconds */
+  cacheTtl?: number;
+  /** FilterConfigManager for dynamic config lookups (optional) */
+  configManager?: FilterConfigManager;
 }
 
 /**
@@ -55,398 +55,398 @@ export interface GitHubEventFilterOptions {
  * for dynamic per-repository config lookups.
  */
 export class GitHubEventFilter {
-	private config: GitHubFilterConfig;
-	private configManager?: FilterConfigManager;
-	private githubToken?: string;
-	private permissionCache: Map<string, PermissionCacheEntry> = new Map();
-	private cacheTtl: number;
+  private config: GitHubFilterConfig;
+  private configManager?: FilterConfigManager;
+  private githubToken?: string;
+  private permissionCache: Map<string, PermissionCacheEntry> = new Map();
+  private cacheTtl: number;
 
-	// Default TTL is 5 minutes
-	private static readonly DEFAULT_CACHE_TTL = 5 * 60 * 1000;
+  // Default TTL is 5 minutes
+  private static readonly DEFAULT_CACHE_TTL = 5 * 60 * 1000;
 
-	constructor(config: GitHubFilterConfig, options?: GitHubEventFilterOptions) {
-		this.config = config;
-		this.configManager = options?.configManager;
-		this.githubToken = options?.githubToken;
-		this.cacheTtl = options?.cacheTtl ?? GitHubEventFilter.DEFAULT_CACHE_TTL;
-		log.debug('GitHubEventFilter initialized', {
-			hasToken: !!this.githubToken,
-			cacheTtl: this.cacheTtl,
-			hasConfigManager: !!this.configManager,
-		});
-	}
+  constructor(config: GitHubFilterConfig, options?: GitHubEventFilterOptions) {
+    this.config = config;
+    this.configManager = options?.configManager;
+    this.githubToken = options?.githubToken;
+    this.cacheTtl = options?.cacheTtl ?? GitHubEventFilter.DEFAULT_CACHE_TTL;
+    log.debug('GitHubEventFilter initialized', {
+      hasToken: !!this.githubToken,
+      cacheTtl: this.cacheTtl,
+      hasConfigManager: !!this.configManager,
+    });
+  }
 
-	/**
-	 * Update the filter configuration
-	 */
-	setConfig(config: GitHubFilterConfig): void {
-		this.config = config;
-		log.debug('Filter config updated');
-	}
+  /**
+   * Update the filter configuration
+   */
+  setConfig(config: GitHubFilterConfig): void {
+    this.config = config;
+    log.debug('Filter config updated');
+  }
 
-	/**
-	 * Main filter method - checks if an event passes all filter rules
-	 */
-	async filter(event: GitHubEvent): Promise<FilterResult> {
-		log.debug('Filtering event', {
-			eventId: event.id,
-			eventType: event.eventType,
-			action: event.action,
-			repository: event.repository.fullName,
-			sender: event.sender.login,
-		});
+  /**
+   * Main filter method - checks if an event passes all filter rules
+   */
+  async filter(event: GitHubEvent): Promise<FilterResult> {
+    log.debug('Filtering event', {
+      eventId: event.id,
+      eventType: event.eventType,
+      action: event.action,
+      repository: event.repository.fullName,
+      sender: event.sender.login,
+    });
 
-		// Get the effective config for this repository
-		const effectiveConfig = this.getEffectiveConfig(event.repository.fullName);
+    // Get the effective config for this repository
+    const effectiveConfig = this.getEffectiveConfig(event.repository.fullName);
 
-		// Check repository
-		if (!this.checkRepository(event, effectiveConfig)) {
-			return {
-				passed: false,
-				reason: `Repository ${event.repository.fullName} not in allowlist`,
-			};
-		}
+    // Check repository
+    if (!this.checkRepository(event, effectiveConfig)) {
+      return {
+        passed: false,
+        reason: `Repository ${event.repository.fullName} not in allowlist`,
+      };
+    }
 
-		// Check event type
-		if (!this.checkEventType(event, effectiveConfig)) {
-			return {
-				passed: false,
-				reason: `Event type ${event.eventType}.${event.action} not in allowed actions`,
-			};
-		}
+    // Check event type
+    if (!this.checkEventType(event, effectiveConfig)) {
+      return {
+        passed: false,
+        reason: `Event type ${event.eventType}.${event.action} not in allowed actions`,
+      };
+    }
 
-		// Check author (async for permission API calls)
-		const authorResult = await this.checkAuthor(event, effectiveConfig);
-		if (!authorResult.passed) {
-			return authorResult;
-		}
+    // Check author (async for permission API calls)
+    const authorResult = await this.checkAuthor(event, effectiveConfig);
+    if (!authorResult.passed) {
+      return authorResult;
+    }
 
-		// Check labels
-		if (!this.checkLabels(event, effectiveConfig)) {
-			return {
-				passed: false,
-				reason: 'Event labels do not match required filter',
-			};
-		}
+    // Check labels
+    if (!this.checkLabels(event, effectiveConfig)) {
+      return {
+        passed: false,
+        reason: 'Event labels do not match required filter',
+      };
+    }
 
-		log.debug('Event passed all filters', { eventId: event.id });
-		return { passed: true };
-	}
+    log.debug('Event passed all filters', { eventId: event.id });
+    return { passed: true };
+  }
 
-	/**
-	 * Get effective config for a repository
-	 * Uses FilterConfigManager if available, otherwise uses static config
-	 */
-	private getEffectiveConfig(repository: string): GitHubFilterConfig {
-		if (this.configManager) {
-			return this.configManager.getFilterForRepository(repository);
-		}
-		return this.config;
-	}
+  /**
+   * Get effective config for a repository
+   * Uses FilterConfigManager if available, otherwise uses static config
+   */
+  private getEffectiveConfig(repository: string): GitHubFilterConfig {
+    if (this.configManager) {
+      return this.configManager.getFilterForRepository(repository);
+    }
+    return this.config;
+  }
 
-	/**
-	 * Set the GitHub token (for permission checks)
-	 */
-	setGitHubToken(token: string): void {
-		this.githubToken = token;
-	}
+  /**
+   * Set the GitHub token (for permission checks)
+   */
+  setGitHubToken(token: string): void {
+    this.githubToken = token;
+  }
 
-	/**
-	 * Clear the permission cache
-	 */
-	clearCache(): void {
-		this.permissionCache.clear();
-		log.debug('Permission cache cleared');
-	}
+  /**
+   * Clear the permission cache
+   */
+  clearCache(): void {
+    this.permissionCache.clear();
+    log.debug('Permission cache cleared');
+  }
 
-	/**
-	 * Check if event repository matches configured repositories
-	 * Supports wildcards: "owner/*" matches all repos under that owner
-	 */
-	private checkRepository(event: GitHubEvent, config: GitHubFilterConfig): boolean {
-		const fullName = event.repository.fullName;
-		const owner = event.repository.owner;
-		const repositories = config.repositories;
+  /**
+   * Check if event repository matches configured repositories
+   * Supports wildcards: "owner/*" matches all repos under that owner
+   */
+  private checkRepository(event: GitHubEvent, config: GitHubFilterConfig): boolean {
+    const fullName = event.repository.fullName;
+    const owner = event.repository.owner;
+    const repositories = config.repositories;
 
-		// Check for exact match or owner wildcard
-		for (const repo of repositories) {
-			if (repo === fullName) {
-				return true;
-			}
-			// Check owner/* wildcard
-			if (repo === `${owner}/*`) {
-				return true;
-			}
-		}
+    // Check for exact match or owner wildcard
+    for (const repo of repositories) {
+      if (repo === fullName) {
+        return true;
+      }
+      // Check owner/* wildcard
+      if (repo === `${owner}/*`) {
+        return true;
+      }
+    }
 
-		return false;
-	}
+    return false;
+  }
 
-	/**
-	 * Check if event type/action is allowed
-	 */
-	private checkEventType(event: GitHubEvent, config: GitHubFilterConfig): boolean {
-		const eventFilter = config.events;
-		const { eventType, action } = event;
+  /**
+   * Check if event type/action is allowed
+   */
+  private checkEventType(event: GitHubEvent, config: GitHubFilterConfig): boolean {
+    const eventFilter = config.events;
+    const { eventType, action } = event;
 
-		// Get allowed actions for this event type
-		let allowedActions: string[] | undefined;
-		if (eventType === 'issues') {
-			allowedActions = eventFilter.issues;
-		} else if (eventType === 'issue_comment') {
-			allowedActions = eventFilter.issue_comment;
-		} else if (eventType === 'pull_request') {
-			allowedActions = eventFilter.pull_request;
-		}
+    // Get allowed actions for this event type
+    let allowedActions: string[] | undefined;
+    if (eventType === 'issues') {
+      allowedActions = eventFilter.issues;
+    } else if (eventType === 'issue_comment') {
+      allowedActions = eventFilter.issue_comment;
+    } else if (eventType === 'pull_request') {
+      allowedActions = eventFilter.pull_request;
+    }
 
-		// If no filter configured for this event type, allow all
-		if (!allowedActions) {
-			return true;
-		}
+    // If no filter configured for this event type, allow all
+    if (!allowedActions) {
+      return true;
+    }
 
-		return allowedActions.includes(action as never);
-	}
+    return allowedActions.includes(action as never);
+  }
 
-	/**
-	 * Check if event author passes the author filter
-	 */
-	private async checkAuthor(event: GitHubEvent, config: GitHubFilterConfig): Promise<FilterResult> {
-		const authorFilter = config.authors;
-		const sender = event.sender;
+  /**
+   * Check if event author passes the author filter
+   */
+  private async checkAuthor(event: GitHubEvent, config: GitHubFilterConfig): Promise<FilterResult> {
+    const authorFilter = config.authors;
+    const sender = event.sender;
 
-		// Mode: all - pass all users
-		if (authorFilter.mode === 'all') {
-			// Still check minPermission if set
-			if (authorFilter.minPermission && this.githubToken) {
-				const permission = await this.checkUserPermission(
-					event.repository.owner,
-					event.repository.repo,
-					sender.login
-				);
-				if (permission && !this.hasMinPermission(permission, authorFilter.minPermission)) {
-					return {
-						passed: false,
-						reason: `User ${sender.login} has permission ${permission}, requires ${authorFilter.minPermission}`,
-					};
-				}
-			}
-			return { passed: true };
-		}
+    // Mode: all - pass all users
+    if (authorFilter.mode === 'all') {
+      // Still check minPermission if set
+      if (authorFilter.minPermission && this.githubToken) {
+        const permission = await this.checkUserPermission(
+          event.repository.owner,
+          event.repository.repo,
+          sender.login
+        );
+        if (permission && !this.hasMinPermission(permission, authorFilter.minPermission)) {
+          return {
+            passed: false,
+            reason: `User ${sender.login} has permission ${permission}, requires ${authorFilter.minPermission}`,
+          };
+        }
+      }
+      return { passed: true };
+    }
 
-		// Check if user is a bot - bots are typically allowed
-		if (sender.type === 'Bot') {
-			// Bots pass through unless explicitly blocked
-			if (authorFilter.mode === 'blocklist') {
-				const blockedUsers = authorFilter.users ?? [];
-				if (blockedUsers.includes(sender.login)) {
-					return {
-						passed: false,
-						reason: `Bot ${sender.login} is in blocklist`,
-					};
-				}
-			}
-			return { passed: true };
-		}
+    // Check if user is a bot - bots are typically allowed
+    if (sender.type === 'Bot') {
+      // Bots pass through unless explicitly blocked
+      if (authorFilter.mode === 'blocklist') {
+        const blockedUsers = authorFilter.users ?? [];
+        if (blockedUsers.includes(sender.login)) {
+          return {
+            passed: false,
+            reason: `Bot ${sender.login} is in blocklist`,
+          };
+        }
+      }
+      return { passed: true };
+    }
 
-		// Mode: allowlist - only allow users/teams in the list
-		if (authorFilter.mode === 'allowlist') {
-			const allowedUsers = authorFilter.users ?? [];
-			// Note: Team support not yet implemented
-			// const allowedTeams = authorFilter.teams ?? [];
+    // Mode: allowlist - only allow users/teams in the list
+    if (authorFilter.mode === 'allowlist') {
+      const allowedUsers = authorFilter.users ?? [];
+      // Note: Team support not yet implemented
+      // const allowedTeams = authorFilter.teams ?? [];
 
-			// Check if user is in allowlist
-			const userAllowed = allowedUsers.includes(sender.login);
+      // Check if user is in allowlist
+      const userAllowed = allowedUsers.includes(sender.login);
 
-			// Check teams (requires API call and team membership check)
-			// For now, we only support user-level allowlist; team checks would need
-			// additional API calls to /orgs/{org}/teams/{team}/memberships/{username}
-			const teamAllowed = false; // TODO: Implement team checks
+      // Check teams (requires API call and team membership check)
+      // For now, we only support user-level allowlist; team checks would need
+      // additional API calls to /orgs/{org}/teams/{team}/memberships/{username}
+      const teamAllowed = false; // TODO: Implement team checks
 
-			if (!userAllowed && !teamAllowed) {
-				return {
-					passed: false,
-					reason: `User ${sender.login} not in allowlist`,
-				};
-			}
-		}
+      if (!userAllowed && !teamAllowed) {
+        return {
+          passed: false,
+          reason: `User ${sender.login} not in allowlist`,
+        };
+      }
+    }
 
-		// Mode: blocklist - block users in the list
-		if (authorFilter.mode === 'blocklist') {
-			const blockedUsers = authorFilter.users ?? [];
+    // Mode: blocklist - block users in the list
+    if (authorFilter.mode === 'blocklist') {
+      const blockedUsers = authorFilter.users ?? [];
 
-			if (blockedUsers.includes(sender.login)) {
-				return {
-					passed: false,
-					reason: `User ${sender.login} is in blocklist`,
-				};
-			}
-		}
+      if (blockedUsers.includes(sender.login)) {
+        return {
+          passed: false,
+          reason: `User ${sender.login} is in blocklist`,
+        };
+      }
+    }
 
-		// Check minPermission if configured
-		if (authorFilter.minPermission && this.githubToken) {
-			const permission = await this.checkUserPermission(
-				event.repository.owner,
-				event.repository.repo,
-				sender.login
-			);
+    // Check minPermission if configured
+    if (authorFilter.minPermission && this.githubToken) {
+      const permission = await this.checkUserPermission(
+        event.repository.owner,
+        event.repository.repo,
+        sender.login
+      );
 
-			if (permission && !this.hasMinPermission(permission, authorFilter.minPermission)) {
-				return {
-					passed: false,
-					reason: `User ${sender.login} has permission ${permission}, requires ${authorFilter.minPermission}`,
-				};
-			}
-		}
+      if (permission && !this.hasMinPermission(permission, authorFilter.minPermission)) {
+        return {
+          passed: false,
+          reason: `User ${sender.login} has permission ${permission}, requires ${authorFilter.minPermission}`,
+        };
+      }
+    }
 
-		return { passed: true };
-	}
+    return { passed: true };
+  }
 
-	/**
-	 * Check if event labels pass the label filter
-	 */
-	private checkLabels(event: GitHubEvent, config: GitHubFilterConfig): boolean {
-		const labelFilter = config.labels;
-		const eventLabels = event.issue?.labels ?? [];
+  /**
+   * Check if event labels pass the label filter
+   */
+  private checkLabels(event: GitHubEvent, config: GitHubFilterConfig): boolean {
+    const labelFilter = config.labels;
+    const eventLabels = event.issue?.labels ?? [];
 
-		// Mode: any - any labels allowed (no filtering)
-		if (labelFilter.mode === 'any') {
-			return true;
-		}
+    // Mode: any - any labels allowed (no filtering)
+    if (labelFilter.mode === 'any') {
+      return true;
+    }
 
-		// Mode: require_any - must have at least one of the specified labels
-		if (labelFilter.mode === 'require_any') {
-			const requiredLabels = labelFilter.labels ?? [];
-			if (requiredLabels.length === 0) {
-				return true; // No labels required
-			}
-			return eventLabels.some((label) => requiredLabels.includes(label));
-		}
+    // Mode: require_any - must have at least one of the specified labels
+    if (labelFilter.mode === 'require_any') {
+      const requiredLabels = labelFilter.labels ?? [];
+      if (requiredLabels.length === 0) {
+        return true; // No labels required
+      }
+      return eventLabels.some((label) => requiredLabels.includes(label));
+    }
 
-		// Mode: require_all - must have all specified labels
-		if (labelFilter.mode === 'require_all') {
-			const requiredLabels = labelFilter.labels ?? [];
-			if (requiredLabels.length === 0) {
-				return true; // No labels required
-			}
-			return requiredLabels.every((label) => eventLabels.includes(label));
-		}
+    // Mode: require_all - must have all specified labels
+    if (labelFilter.mode === 'require_all') {
+      const requiredLabels = labelFilter.labels ?? [];
+      if (requiredLabels.length === 0) {
+        return true; // No labels required
+      }
+      return requiredLabels.every((label) => eventLabels.includes(label));
+    }
 
-		// Mode: exclude - must not have any of specified labels
-		if (labelFilter.mode === 'exclude') {
-			const excludedLabels = labelFilter.labels ?? [];
-			return !eventLabels.some((label) => excludedLabels.includes(label));
-		}
+    // Mode: exclude - must not have any of specified labels
+    if (labelFilter.mode === 'exclude') {
+      const excludedLabels = labelFilter.labels ?? [];
+      return !eventLabels.some((label) => excludedLabels.includes(label));
+    }
 
-		return true;
-	}
+    return true;
+  }
 
-	/**
-	 * Check user's permission level in the repository via GitHub API
-	 * Uses caching to reduce API calls
-	 */
-	private async checkUserPermission(
-		owner: string,
-		repo: string,
-		username: string
-	): Promise<string | null> {
-		const cacheKey = `${owner}/${repo}:${username}`;
+  /**
+   * Check user's permission level in the repository via GitHub API
+   * Uses caching to reduce API calls
+   */
+  private async checkUserPermission(
+    owner: string,
+    repo: string,
+    username: string
+  ): Promise<string | null> {
+    const cacheKey = `${owner}/${repo}:${username}`;
 
-		// Check cache
-		const cached = this.permissionCache.get(cacheKey);
-		if (cached && Date.now() - cached.cachedAt < this.cacheTtl) {
-			log.debug('Permission cache hit', { cacheKey, permission: cached.permission });
-			return cached.permission;
-		}
+    // Check cache
+    const cached = this.permissionCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < this.cacheTtl) {
+      log.debug('Permission cache hit', { cacheKey, permission: cached.permission });
+      return cached.permission;
+    }
 
-		// No token - can't check permission
-		if (!this.githubToken) {
-			log.debug('No GitHub token, skipping permission check');
-			return null;
-		}
+    // No token - can't check permission
+    if (!this.githubToken) {
+      log.debug('No GitHub token, skipping permission check');
+      return null;
+    }
 
-		try {
-			const response = await fetch(
-				`${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}/permission`,
-				{
-					headers: {
-						Accept: 'application/vnd.github+json',
-						Authorization: `Bearer ${this.githubToken}`,
-						'User-Agent': 'NeoKai-GitHub-Integration/1.0',
-						'X-GitHub-Api-Version': '2022-11-28',
-					},
-				}
-			);
+    try {
+      const response = await fetch(
+        `${GITHUB_API_BASE}/repos/${owner}/${repo}/collaborators/${username}/permission`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${this.githubToken}`,
+            'User-Agent': 'NeoKai-GitHub-Integration/1.0',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        }
+      );
 
-			// Handle rate limiting
-			if (response.status === 403) {
-				const remaining = response.headers.get('X-RateLimit-Remaining');
-				const reset = response.headers.get('X-RateLimit-Reset');
-				log.warn('GitHub API rate limit hit during permission check', {
-					remaining,
-					resetsAt: reset ? new Date(parseInt(reset, 10) * 1000).toISOString() : 'unknown',
-				});
-				return null;
-			}
+      // Handle rate limiting
+      if (response.status === 403) {
+        const remaining = response.headers.get('X-RateLimit-Remaining');
+        const reset = response.headers.get('X-RateLimit-Reset');
+        log.warn('GitHub API rate limit hit during permission check', {
+          remaining,
+          resetsAt: reset ? new Date(parseInt(reset, 10) * 1000).toISOString() : 'unknown',
+        });
+        return null;
+      }
 
-			// User not a collaborator
-			if (response.status === 404) {
-				this.cachePermission(cacheKey, null);
-				return null;
-			}
+      // User not a collaborator
+      if (response.status === 404) {
+        this.cachePermission(cacheKey, null);
+        return null;
+      }
 
-			if (!response.ok) {
-				log.warn('Failed to check user permission', {
-					status: response.status,
-					statusText: response.statusText,
-				});
-				return null;
-			}
+      if (!response.ok) {
+        log.warn('Failed to check user permission', {
+          status: response.status,
+          statusText: response.statusText,
+        });
+        return null;
+      }
 
-			const data = (await response.json()) as { permission?: string };
-			const permission = data.permission ?? null;
+      const data = (await response.json()) as { permission?: string };
+      const permission = data.permission ?? null;
 
-			this.cachePermission(cacheKey, permission);
-			log.debug('Permission check successful', { cacheKey, permission });
+      this.cachePermission(cacheKey, permission);
+      log.debug('Permission check successful', { cacheKey, permission });
 
-			return permission;
-		} catch (error) {
-			log.error('Error checking user permission', {
-				cacheKey,
-				error: error instanceof Error ? error.message : error,
-			});
-			return null;
-		}
-	}
+      return permission;
+    } catch (error) {
+      log.error('Error checking user permission', {
+        cacheKey,
+        error: error instanceof Error ? error.message : error,
+      });
+      return null;
+    }
+  }
 
-	/**
-	 * Cache a permission result
-	 */
-	private cachePermission(cacheKey: string, permission: string | null): void {
-		this.permissionCache.set(cacheKey, {
-			permission,
-			cachedAt: Date.now(),
-		});
-	}
+  /**
+   * Cache a permission result
+   */
+  private cachePermission(cacheKey: string, permission: string | null): void {
+    this.permissionCache.set(cacheKey, {
+      permission,
+      cachedAt: Date.now(),
+    });
+  }
 
-	/**
-	 * Check if a permission level meets the minimum required
-	 */
-	private hasMinPermission(
-		actual: string,
-		required: 'admin' | 'maintain' | 'write' | 'read' | 'none'
-	): boolean {
-		const actualLevel = PERMISSION_LEVELS[actual] ?? 0;
-		const requiredLevel = PERMISSION_LEVELS[required] ?? 0;
-		return actualLevel >= requiredLevel;
-	}
+  /**
+   * Check if a permission level meets the minimum required
+   */
+  private hasMinPermission(
+    actual: string,
+    required: 'admin' | 'maintain' | 'write' | 'read' | 'none'
+  ): boolean {
+    const actualLevel = PERMISSION_LEVELS[actual] ?? 0;
+    const requiredLevel = PERMISSION_LEVELS[required] ?? 0;
+    return actualLevel >= requiredLevel;
+  }
 }
 
 /**
  * Create a GitHub event filter instance
  */
 export function createEventFilter(
-	config: GitHubFilterConfig,
-	options?: GitHubEventFilterOptions
+  config: GitHubFilterConfig,
+  options?: GitHubEventFilterOptions
 ): GitHubEventFilter {
-	return new GitHubEventFilter(config, options);
+  return new GitHubEventFilter(config, options);
 }

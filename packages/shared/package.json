@@ -1,25 +1,25 @@
 {
-	"name": "@neokai/shared",
-	"version": "0.31.0",
-	"type": "module",
-	"license": "Apache-2.0",
-	"main": "src/mod.ts",
-	"exports": {
-		".": "./src/mod.ts",
-		"./state-types": "./src/state-types.ts",
-		"./types": "./src/types.ts",
-		"./types/*": "./src/types/*.ts",
-		"./models": "./src/models.ts",
-		"./provider": "./src/provider/index.ts",
-		"./provider/*": "./src/provider/*.ts",
-		"./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
-		"./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",
-		"./message-hub/protocol": "./src/message-hub/protocol.ts",
-		"./message-hub/types": "./src/message-hub/types.ts",
-		"./message-hub/message-hub": "./src/message-hub/message-hub.ts",
-		"./sdk/*": "./src/sdk/*"
-	},
-	"devDependencies": {
-		"@types/bun": "1.3.13"
-	}
+  "name": "@neokai/shared",
+  "version": "0.31.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "src/mod.ts",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./state-types": "./src/state-types.ts",
+    "./types": "./src/types.ts",
+    "./types/*": "./src/types/*.ts",
+    "./models": "./src/models.ts",
+    "./provider": "./src/provider/index.ts",
+    "./provider/*": "./src/provider/*.ts",
+    "./message-hub/unix-socket-transport": "./src/message-hub/unix-socket-transport.ts",
+    "./message-hub/stdio-transport": "./src/message-hub/stdio-transport.ts",
+    "./message-hub/protocol": "./src/message-hub/protocol.ts",
+    "./message-hub/types": "./src/message-hub/types.ts",
+    "./message-hub/message-hub": "./src/message-hub/message-hub.ts",
+    "./sdk/*": "./src/sdk/*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13"
+  }
 }

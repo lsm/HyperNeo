@@ -1,28 +1,28 @@
 import type { AgentDefinition } from '@neokai/shared';
 
 export const debuggerAgent: AgentDefinition = {
-	description: 'Reproduce and diagnose bugs. Writes a failing test first, then traces root cause.',
-	tools: [
-		'Read',
-		'Write',
-		'Edit',
-		'Grep',
-		'Glob',
-		'Bash',
-		'WebFetch',
-		'WebSearch',
-		'Skill',
-		'Task',
-		'TodoWrite',
-		'TaskOutput',
-		'TaskStop',
-		'EnterPlanMode',
-		'ExitPlanMode',
-		'NotebookEdit',
-		'ToolSearch',
-	],
-	model: 'sonnet',
-	prompt: `You are a debugging specialist. Your job is to reproduce issues, trace code paths, and find root causes.
+  description: 'Reproduce and diagnose bugs. Writes a failing test first, then traces root cause.',
+  tools: [
+    'Read',
+    'Write',
+    'Edit',
+    'Grep',
+    'Glob',
+    'Bash',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'Task',
+    'TodoWrite',
+    'TaskOutput',
+    'TaskStop',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'NotebookEdit',
+    'ToolSearch',
+  ],
+  model: 'sonnet',
+  prompt: `You are a debugging specialist. Your job is to reproduce issues, trace code paths, and find root causes.
 
 When given a bug report:
 1. Understand the symptoms — what is failing and how

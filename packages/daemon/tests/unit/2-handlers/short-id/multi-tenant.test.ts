@@ -13,8 +13,8 @@ import { ShortIdAllocator } from '../../../../src/lib/short-id-allocator';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
 function makeDb(): Database {
-	const db = new Database(':memory:');
-	db.exec(`
+  const db = new Database(':memory:');
+  db.exec(`
 		CREATE TABLE tasks (
 			id TEXT PRIMARY KEY,
 			room_id TEXT NOT NULL,
@@ -80,244 +80,244 @@ function makeDb(): Database {
 		CREATE INDEX idx_tasks_room ON tasks(room_id);
 		CREATE INDEX idx_goals_room ON goals(room_id);
 	`);
-	return db;
+  return db;
 }
 
 describe('Multi-tenant short ID isolation', () => {
-	let db: Database;
-	let allocator: ShortIdAllocator;
-	let taskRepo: TaskRepository;
-	let goalRepo: GoalRepository;
+  let db: Database;
+  let allocator: ShortIdAllocator;
+  let taskRepo: TaskRepository;
+  let goalRepo: GoalRepository;
 
-	const ROOM_A = 'room-a-uuid-0001';
-	const ROOM_B = 'room-b-uuid-0002';
+  const ROOM_A = 'room-a-uuid-0001';
+  const ROOM_B = 'room-b-uuid-0002';
 
-	beforeEach(() => {
-		db = makeDb();
-		allocator = new ShortIdAllocator(db);
-		taskRepo = new TaskRepository(db, noOpReactiveDb, allocator);
-		goalRepo = new GoalRepository(db, noOpReactiveDb, allocator);
-	});
+  beforeEach(() => {
+    db = makeDb();
+    allocator = new ShortIdAllocator(db);
+    taskRepo = new TaskRepository(db, noOpReactiveDb, allocator);
+    goalRepo = new GoalRepository(db, noOpReactiveDb, allocator);
+  });
 
-	afterEach(() => {
-		db.close();
-	});
+  afterEach(() => {
+    db.close();
+  });
 
-	describe('task short IDs are scoped per room', () => {
-		it('Room A and Room B both start their task counters at t-1', () => {
-			const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-			const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
+  describe('task short IDs are scoped per room', () => {
+    it('Room A and Room B both start their task counters at t-1', () => {
+      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
+      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
 
-			expect(tA1.shortId).toBe('t-1');
-			expect(tB1.shortId).toBe('t-1');
-		});
+      expect(tA1.shortId).toBe('t-1');
+      expect(tB1.shortId).toBe('t-1');
+    });
 
-		it('Room A and Room B have completely independent counters', () => {
-			const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-			const tA2 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-2', description: 'D' });
-			const tA3 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-3', description: 'D' });
+    it('Room A and Room B have completely independent counters', () => {
+      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
+      const tA2 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-2', description: 'D' });
+      const tA3 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-3', description: 'D' });
 
-			const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
-			const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
+      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
+      const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
 
-			// Room A has t-1, t-2, t-3
-			expect(tA1.shortId).toBe('t-1');
-			expect(tA2.shortId).toBe('t-2');
-			expect(tA3.shortId).toBe('t-3');
+      // Room A has t-1, t-2, t-3
+      expect(tA1.shortId).toBe('t-1');
+      expect(tA2.shortId).toBe('t-2');
+      expect(tA3.shortId).toBe('t-3');
 
-			// Room B independently has t-1, t-2
-			expect(tB1.shortId).toBe('t-1');
-			expect(tB2.shortId).toBe('t-2');
-		});
+      // Room B independently has t-1, t-2
+      expect(tB1.shortId).toBe('t-1');
+      expect(tB2.shortId).toBe('t-2');
+    });
 
-		it('Room A t-1 and Room B t-1 have different UUIDs', () => {
-			const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A', description: 'D' });
-			const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B', description: 'D' });
+    it('Room A t-1 and Room B t-1 have different UUIDs', () => {
+      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A', description: 'D' });
+      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B', description: 'D' });
 
-			expect(tA1.shortId).toBe('t-1');
-			expect(tB1.shortId).toBe('t-1');
-			// Same short ID, but different underlying UUIDs
-			expect(tA1.id).not.toBe(tB1.id);
-		});
+      expect(tA1.shortId).toBe('t-1');
+      expect(tB1.shortId).toBe('t-1');
+      // Same short ID, but different underlying UUIDs
+      expect(tA1.id).not.toBe(tB1.id);
+    });
 
-		it('cross-room lookup: Room B getTaskByShortId cannot find Room A t-1', () => {
-			taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
+    it('cross-room lookup: Room B getTaskByShortId cannot find Room A t-1', () => {
+      taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
 
-			// Room B has no tasks — looking up t-1 in Room B must return null
-			const result = taskRepo.getTaskByShortId(ROOM_B, 't-1');
-			expect(result).toBeNull();
-		});
+      // Room B has no tasks — looking up t-1 in Room B must return null
+      const result = taskRepo.getTaskByShortId(ROOM_B, 't-1');
+      expect(result).toBeNull();
+    });
 
-		it('cross-room lookup: Room A getTaskByShortId cannot find Room B tasks', () => {
-			const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-			const tA2 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-2', description: 'D' });
-			const tA3 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-3', description: 'D' });
+    it('cross-room lookup: Room A getTaskByShortId cannot find Room B tasks', () => {
+      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
+      const tA2 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-2', description: 'D' });
+      const tA3 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-3', description: 'D' });
 
-			const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
-			const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
+      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
+      const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
 
-			// Room A lookups resolve to Room A's tasks
-			expect(taskRepo.getTaskByShortId(ROOM_A, 't-1')!.id).toBe(tA1.id);
-			expect(taskRepo.getTaskByShortId(ROOM_A, 't-2')!.id).toBe(tA2.id);
-			expect(taskRepo.getTaskByShortId(ROOM_A, 't-3')!.id).toBe(tA3.id);
+      // Room A lookups resolve to Room A's tasks
+      expect(taskRepo.getTaskByShortId(ROOM_A, 't-1')!.id).toBe(tA1.id);
+      expect(taskRepo.getTaskByShortId(ROOM_A, 't-2')!.id).toBe(tA2.id);
+      expect(taskRepo.getTaskByShortId(ROOM_A, 't-3')!.id).toBe(tA3.id);
 
-			// Room B lookups resolve to Room B's tasks
-			expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).toBe(tB1.id);
-			expect(taskRepo.getTaskByShortId(ROOM_B, 't-2')!.id).toBe(tB2.id);
+      // Room B lookups resolve to Room B's tasks
+      expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).toBe(tB1.id);
+      expect(taskRepo.getTaskByShortId(ROOM_B, 't-2')!.id).toBe(tB2.id);
 
-			// Room A t-1 is not accessible via Room B
-			expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).not.toBe(tA1.id);
+      // Room A t-1 is not accessible via Room B
+      expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).not.toBe(tA1.id);
 
-			// Room A has no t-4 (Room B's task count doesn't affect Room A)
-			expect(taskRepo.getTaskByShortId(ROOM_A, 't-4')).toBeNull();
-		});
+      // Room A has no t-4 (Room B's task count doesn't affect Room A)
+      expect(taskRepo.getTaskByShortId(ROOM_A, 't-4')).toBeNull();
+    });
 
-		it('listTasks only returns tasks belonging to the queried room', () => {
-			taskRepo.createTask({ roomId: ROOM_A, title: 'A1', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_A, title: 'A2', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_A, title: 'A3', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_B, title: 'B1', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_B, title: 'B2', description: 'D' });
+    it('listTasks only returns tasks belonging to the queried room', () => {
+      taskRepo.createTask({ roomId: ROOM_A, title: 'A1', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_A, title: 'A2', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_A, title: 'A3', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_B, title: 'B1', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_B, title: 'B2', description: 'D' });
 
-			const roomATasks = taskRepo.listTasks(ROOM_A);
-			const roomBTasks = taskRepo.listTasks(ROOM_B);
+      const roomATasks = taskRepo.listTasks(ROOM_A);
+      const roomBTasks = taskRepo.listTasks(ROOM_B);
 
-			expect(roomATasks.length).toBe(3);
-			expect(roomBTasks.length).toBe(2);
+      expect(roomATasks.length).toBe(3);
+      expect(roomBTasks.length).toBe(2);
 
-			// All Room A tasks belong to Room A
-			expect(roomATasks.every((t) => t.roomId === ROOM_A)).toBe(true);
-			// All Room B tasks belong to Room B
-			expect(roomBTasks.every((t) => t.roomId === ROOM_B)).toBe(true);
-		});
-	});
+      // All Room A tasks belong to Room A
+      expect(roomATasks.every((t) => t.roomId === ROOM_A)).toBe(true);
+      // All Room B tasks belong to Room B
+      expect(roomBTasks.every((t) => t.roomId === ROOM_B)).toBe(true);
+    });
+  });
 
-	describe('goal short IDs are scoped per room', () => {
-		it('Room A and Room B both have g-1 independently', () => {
-			const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
-			const gB1 = goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
+  describe('goal short IDs are scoped per room', () => {
+    it('Room A and Room B both have g-1 independently', () => {
+      const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
+      const gB1 = goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
 
-			expect(gA1.shortId).toBe('g-1');
-			expect(gB1.shortId).toBe('g-1');
-			// Same short ID, but different UUIDs
-			expect(gA1.id).not.toBe(gB1.id);
-		});
+      expect(gA1.shortId).toBe('g-1');
+      expect(gB1.shortId).toBe('g-1');
+      // Same short ID, but different UUIDs
+      expect(gA1.id).not.toBe(gB1.id);
+    });
 
-		it('Room A and Room B goal counters are fully independent', () => {
-			const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
-			const gA2 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-2' });
+    it('Room A and Room B goal counters are fully independent', () => {
+      const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
+      const gA2 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-2' });
 
-			const gB1 = goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
+      const gB1 = goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
 
-			expect(gA1.shortId).toBe('g-1');
-			expect(gA2.shortId).toBe('g-2');
-			expect(gB1.shortId).toBe('g-1');
-		});
+      expect(gA1.shortId).toBe('g-1');
+      expect(gA2.shortId).toBe('g-2');
+      expect(gB1.shortId).toBe('g-1');
+    });
 
-		it('cross-room lookup: getGoalByShortId is scoped to the queried room', () => {
-			const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
-			goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
+    it('cross-room lookup: getGoalByShortId is scoped to the queried room', () => {
+      const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
+      goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
 
-			// Room A g-1 is found in Room A
-			expect(goalRepo.getGoalByShortId(ROOM_A, 'g-1')!.id).toBe(gA1.id);
+      // Room A g-1 is found in Room A
+      expect(goalRepo.getGoalByShortId(ROOM_A, 'g-1')!.id).toBe(gA1.id);
 
-			// Room A g-1 is NOT accessible via Room B (different record)
-			const roomBResult = goalRepo.getGoalByShortId(ROOM_B, 'g-1');
-			expect(roomBResult).not.toBeNull();
-			expect(roomBResult!.id).not.toBe(gA1.id);
-		});
+      // Room A g-1 is NOT accessible via Room B (different record)
+      const roomBResult = goalRepo.getGoalByShortId(ROOM_B, 'g-1');
+      expect(roomBResult).not.toBeNull();
+      expect(roomBResult!.id).not.toBe(gA1.id);
+    });
 
-		it('cross-room lookup returns null for short IDs that exist only in another room', () => {
-			// Room A has g-1 and g-2; Room B has only g-1
-			goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
-			goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-2' });
-			goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
+    it('cross-room lookup returns null for short IDs that exist only in another room', () => {
+      // Room A has g-1 and g-2; Room B has only g-1
+      goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
+      goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-2' });
+      goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
 
-			// Room A g-2 is inaccessible via Room B
-			expect(goalRepo.getGoalByShortId(ROOM_B, 'g-2')).toBeNull();
-		});
-	});
+      // Room A g-2 is inaccessible via Room B
+      expect(goalRepo.getGoalByShortId(ROOM_B, 'g-2')).toBeNull();
+    });
+  });
 
-	describe('task and goal counters are independent within the same room', () => {
-		it('task counter and goal counter do not interfere in the same room', () => {
-			const t1 = taskRepo.createTask({ roomId: ROOM_A, title: 'Task', description: 'D' });
-			const g1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'Goal' });
+  describe('task and goal counters are independent within the same room', () => {
+    it('task counter and goal counter do not interfere in the same room', () => {
+      const t1 = taskRepo.createTask({ roomId: ROOM_A, title: 'Task', description: 'D' });
+      const g1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'Goal' });
 
-			expect(t1.shortId).toBe('t-1');
-			expect(g1.shortId).toBe('g-1');
+      expect(t1.shortId).toBe('t-1');
+      expect(g1.shortId).toBe('g-1');
 
-			const t2 = taskRepo.createTask({ roomId: ROOM_A, title: 'Task 2', description: 'D' });
-			const g2 = goalRepo.createGoal({ roomId: ROOM_A, title: 'Goal 2' });
+      const t2 = taskRepo.createTask({ roomId: ROOM_A, title: 'Task 2', description: 'D' });
+      const g2 = goalRepo.createGoal({ roomId: ROOM_A, title: 'Goal 2' });
 
-			expect(t2.shortId).toBe('t-2');
-			expect(g2.shortId).toBe('g-2');
-		});
-	});
+      expect(t2.shortId).toBe('t-2');
+      expect(g2.shortId).toBe('g-2');
+    });
+  });
 
-	describe('short_id_counters table isolation', () => {
-		it('each (entity_type, scope_id) pair gets its own counter row', () => {
-			taskRepo.createTask({ roomId: ROOM_A, title: 'T1', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_A, title: 'T2', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_A, title: 'T3', description: 'D' });
+  describe('short_id_counters table isolation', () => {
+    it('each (entity_type, scope_id) pair gets its own counter row', () => {
+      taskRepo.createTask({ roomId: ROOM_A, title: 'T1', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_A, title: 'T2', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_A, title: 'T3', description: 'D' });
 
-			taskRepo.createTask({ roomId: ROOM_B, title: 'T1', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_B, title: 'T2', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_B, title: 'T1', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_B, title: 'T2', description: 'D' });
 
-			goalRepo.createGoal({ roomId: ROOM_A, title: 'G1' });
-			goalRepo.createGoal({ roomId: ROOM_B, title: 'G1' });
+      goalRepo.createGoal({ roomId: ROOM_A, title: 'G1' });
+      goalRepo.createGoal({ roomId: ROOM_B, title: 'G1' });
 
-			// Query the counters table directly
-			const rows = db
-				.prepare(
-					`SELECT entity_type, scope_id, counter
+      // Query the counters table directly
+      const rows = db
+        .prepare(
+          `SELECT entity_type, scope_id, counter
 					 FROM short_id_counters
 					 ORDER BY entity_type, scope_id`
-				)
-				.all() as { entity_type: string; scope_id: string; counter: number }[];
+        )
+        .all() as { entity_type: string; scope_id: string; counter: number }[];
 
-			// Expect 4 distinct rows: task/room-a, task/room-b, goal/room-a, goal/room-b
-			expect(rows.length).toBe(4);
+      // Expect 4 distinct rows: task/room-a, task/room-b, goal/room-a, goal/room-b
+      expect(rows.length).toBe(4);
 
-			const taskRoomA = rows.find((r) => r.entity_type === 'task' && r.scope_id === ROOM_A);
-			const taskRoomB = rows.find((r) => r.entity_type === 'task' && r.scope_id === ROOM_B);
-			const goalRoomA = rows.find((r) => r.entity_type === 'goal' && r.scope_id === ROOM_A);
-			const goalRoomB = rows.find((r) => r.entity_type === 'goal' && r.scope_id === ROOM_B);
+      const taskRoomA = rows.find((r) => r.entity_type === 'task' && r.scope_id === ROOM_A);
+      const taskRoomB = rows.find((r) => r.entity_type === 'task' && r.scope_id === ROOM_B);
+      const goalRoomA = rows.find((r) => r.entity_type === 'goal' && r.scope_id === ROOM_A);
+      const goalRoomB = rows.find((r) => r.entity_type === 'goal' && r.scope_id === ROOM_B);
 
-			expect(taskRoomA).toBeDefined();
-			expect(taskRoomA!.counter).toBe(3);
+      expect(taskRoomA).toBeDefined();
+      expect(taskRoomA!.counter).toBe(3);
 
-			expect(taskRoomB).toBeDefined();
-			expect(taskRoomB!.counter).toBe(2);
+      expect(taskRoomB).toBeDefined();
+      expect(taskRoomB!.counter).toBe(2);
 
-			expect(goalRoomA).toBeDefined();
-			expect(goalRoomA!.counter).toBe(1);
+      expect(goalRoomA).toBeDefined();
+      expect(goalRoomA!.counter).toBe(1);
 
-			expect(goalRoomB).toBeDefined();
-			expect(goalRoomB!.counter).toBe(1);
-		});
+      expect(goalRoomB).toBeDefined();
+      expect(goalRoomB!.counter).toBe(1);
+    });
 
-		it('counter rows have the correct primary key — no cross-room bleed possible', () => {
-			taskRepo.createTask({ roomId: ROOM_A, title: 'T', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_B, title: 'T', description: 'D' });
+    it('counter rows have the correct primary key — no cross-room bleed possible', () => {
+      taskRepo.createTask({ roomId: ROOM_A, title: 'T', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_B, title: 'T', description: 'D' });
 
-			// Attempting to insert a duplicate PK must fail (proves PK constraint enforces isolation)
-			expect(() => {
-				db.prepare(
-					`INSERT INTO short_id_counters (entity_type, scope_id, counter)
+      // Attempting to insert a duplicate PK must fail (proves PK constraint enforces isolation)
+      expect(() => {
+        db.prepare(
+          `INSERT INTO short_id_counters (entity_type, scope_id, counter)
 					 VALUES ('task', ?, 99)`
-				).run(ROOM_A);
-			}).toThrow();
-		});
+        ).run(ROOM_A);
+      }).toThrow();
+    });
 
-		it('getCounter reflects per-room state accurately', () => {
-			taskRepo.createTask({ roomId: ROOM_A, title: 'T1', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_A, title: 'T2', description: 'D' });
-			taskRepo.createTask({ roomId: ROOM_B, title: 'T1', description: 'D' });
+    it('getCounter reflects per-room state accurately', () => {
+      taskRepo.createTask({ roomId: ROOM_A, title: 'T1', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_A, title: 'T2', description: 'D' });
+      taskRepo.createTask({ roomId: ROOM_B, title: 'T1', description: 'D' });
 
-			expect(allocator.getCounter('task', ROOM_A)).toBe(2);
-			expect(allocator.getCounter('task', ROOM_B)).toBe(1);
-			// Room C was never used
-			expect(allocator.getCounter('task', 'room-c-uuid-0003')).toBe(0);
-		});
-	});
+      expect(allocator.getCounter('task', ROOM_A)).toBe(2);
+      expect(allocator.getCounter('task', ROOM_B)).toBe(1);
+      // Room C was never used
+      expect(allocator.getCounter('task', 'room-c-uuid-0003')).toBe(0);
+    });
+  });
 });

@@ -29,458 +29,458 @@ import type { ReferenceMetadata } from '@neokai/shared';
  * components and leaving all other text (including plain @) unchanged.
  */
 function renderMessageText(
-	text: string,
-	metadata: ReferenceMetadata,
-	sessionId?: string
+  text: string,
+  metadata: ReferenceMetadata,
+  sessionId?: string
 ): JSX.Element {
-	// Fast path: skip parsing when there are no @ref tokens
-	if (!text.includes('@ref{')) {
-		return <>{text}</>;
-	}
+  // Fast path: skip parsing when there are no @ref tokens
+  if (!text.includes('@ref{')) {
+    return <>{text}</>;
+  }
 
-	const segments = parseTextWithReferences(text, metadata);
+  const segments = parseTextWithReferences(text, metadata);
 
-	return (
-		<>
-			{segments.map((seg, idx) => {
-				if (seg.kind === 'text') {
-					// Use Fragment to emit text nodes without a DOM wrapper, preserving
-					// the original text-node structure for selection and layout.
-					return <Fragment key={idx}>{seg.content}</Fragment>;
-				}
-				if (seg.kind === 'mention') {
-					return (
-						<MentionToken
-							key={idx}
-							refType={seg.refType}
-							id={seg.id}
-							displayText={seg.displayText}
-							status={seg.status}
-							sessionId={sessionId}
-						/>
-					);
-				}
-				// unknown-mention: render the raw token string with warning styling
-				return (
-					<span key={idx} class="text-yellow-500/70 italic" title="Unknown reference type">
-						{seg.content}
-					</span>
-				);
-			})}
-		</>
-	);
+  return (
+    <>
+      {segments.map((seg, idx) => {
+        if (seg.kind === 'text') {
+          // Use Fragment to emit text nodes without a DOM wrapper, preserving
+          // the original text-node structure for selection and layout.
+          return <Fragment key={idx}>{seg.content}</Fragment>;
+        }
+        if (seg.kind === 'mention') {
+          return (
+            <MentionToken
+              key={idx}
+              refType={seg.refType}
+              id={seg.id}
+              displayText={seg.displayText}
+              status={seg.status}
+              sessionId={sessionId}
+            />
+          );
+        }
+        // unknown-mention: render the raw token string with warning styling
+        return (
+          <span key={idx} class="text-yellow-500/70 italic" title="Unknown reference type">
+            {seg.content}
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }> & { sendStatus?: string };
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {
-	message: UserMessage;
-	onEdit?: () => void;
-	onDelete?: () => void;
-	sessionInfo?: SystemInitMessage; // Optional session init info to display
-	isReplay?: boolean; // Whether this is a replay message (slash command response)
-	sessionId?: string; // Session ID for rewind operations
-	onRewind?: (uuid: string) => void; // Rewind to this message
-	rewindingMessageUuid?: string | null; // UUID of message currently being rewound
-	// Rewind mode props
-	rewindMode?: boolean;
-	selectedMessages?: Set<string>;
-	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	/** Render user rows whose content is tool_result blocks. */
-	showToolResultMessages?: boolean;
+  message: UserMessage;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  sessionInfo?: SystemInitMessage; // Optional session init info to display
+  isReplay?: boolean; // Whether this is a replay message (slash command response)
+  sessionId?: string; // Session ID for rewind operations
+  onRewind?: (uuid: string) => void; // Rewind to this message
+  rewindingMessageUuid?: string | null; // UUID of message currently being rewound
+  // Rewind mode props
+  rewindMode?: boolean;
+  selectedMessages?: Set<string>;
+  onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
+  /** Render user rows whose content is tool_result blocks. */
+  showToolResultMessages?: boolean;
 }
 
 export function SDKUserMessage({
-	message,
-	onEdit: _onEdit,
-	onDelete: _onDelete,
-	sessionInfo,
-	isReplay,
-	sessionId,
-	onRewind,
-	rewindingMessageUuid,
-	rewindMode,
-	selectedMessages,
-	onMessageCheckboxChange,
-	showToolResultMessages = false,
+  message,
+  onEdit: _onEdit,
+  onDelete: _onDelete,
+  sessionInfo,
+  isReplay,
+  sessionId,
+  onRewind,
+  rewindingMessageUuid,
+  rewindMode,
+  selectedMessages,
+  onMessageCheckboxChange,
+  showToolResultMessages = false,
 }: Props) {
-	const { message: apiMessage } = message;
-	const [copied, setCopied] = useState(false);
+  const { message: apiMessage } = message;
+  const [copied, setCopied] = useState(false);
 
-	// Check if this is a tool result message (should not be rendered as user message)
-	const isToolResultMessage = (): boolean => {
-		if (Array.isArray(apiMessage.content)) {
-			return apiMessage.content.some(
-				(block: unknown) => (block as Record<string, unknown>).type === 'tool_result'
-			);
-		}
-		return false;
-	};
+  // Check if this is a tool result message (should not be rendered as user message)
+  const isToolResultMessage = (): boolean => {
+    if (Array.isArray(apiMessage.content)) {
+      return apiMessage.content.some(
+        (block: unknown) => (block as Record<string, unknown>).type === 'tool_result'
+      );
+    }
+    return false;
+  };
 
-	// Don't render tool result messages - they'll be shown with their tool use blocks
-	if (isToolResultMessage() && !showToolResultMessages) {
-		return null;
-	}
+  // Don't render tool result messages - they'll be shown with their tool use blocks
+  if (isToolResultMessage() && !showToolResultMessages) {
+    return null;
+  }
 
-	// Don't render hidden command outputs (e.g., "Compacted" is shown in CompactBoundaryMessage)
-	if (isReplay) {
-		const content = typeof apiMessage.content === 'string' ? apiMessage.content : '';
-		if (isHiddenCommandOutput(content)) {
-			return null;
-		}
-	}
+  // Don't render hidden command outputs (e.g., "Compacted" is shown in CompactBoundaryMessage)
+  if (isReplay) {
+    const content = typeof apiMessage.content === 'string' ? apiMessage.content : '';
+    if (isHiddenCommandOutput(content)) {
+      return null;
+    }
+  }
 
-	// Extract text content from the message
-	const getTextContent = (): string => {
-		if (Array.isArray(apiMessage.content)) {
-			return apiMessage.content
-				.map((block: unknown) => {
-					const b = block as Record<string, unknown>;
-					// Text blocks
-					if (b.type === 'text') {
-						return b.text as string;
-					}
-					// Image blocks or other types - skip or show type
-					if (b.type === 'tool_result') {
-						const rawContent = b.content;
-						if (typeof rawContent === 'string') return rawContent;
-						if (Array.isArray(rawContent)) {
-							return rawContent
-								.map((c: unknown) => {
-									const obj = c as Record<string, unknown>;
-									if (typeof obj.text === 'string') return obj.text;
-									return '';
-								})
-								.filter(Boolean)
-								.join('\n');
-						}
-						if (rawContent && typeof rawContent === 'object') {
-							try {
-								return JSON.stringify(rawContent, null, 2);
-							} catch {
-								return String(rawContent);
-							}
-						}
-						return '';
-					}
-					return '';
-				})
-				.filter(Boolean)
-				.join('\n');
-		}
-		if (typeof apiMessage.content === 'string') {
-			return apiMessage.content;
-		}
-		return '';
-	};
+  // Extract text content from the message
+  const getTextContent = (): string => {
+    if (Array.isArray(apiMessage.content)) {
+      return apiMessage.content
+        .map((block: unknown) => {
+          const b = block as Record<string, unknown>;
+          // Text blocks
+          if (b.type === 'text') {
+            return b.text as string;
+          }
+          // Image blocks or other types - skip or show type
+          if (b.type === 'tool_result') {
+            const rawContent = b.content;
+            if (typeof rawContent === 'string') return rawContent;
+            if (Array.isArray(rawContent)) {
+              return rawContent
+                .map((c: unknown) => {
+                  const obj = c as Record<string, unknown>;
+                  if (typeof obj.text === 'string') return obj.text;
+                  return '';
+                })
+                .filter(Boolean)
+                .join('\n');
+            }
+            if (rawContent && typeof rawContent === 'object') {
+              try {
+                return JSON.stringify(rawContent, null, 2);
+              } catch {
+                return String(rawContent);
+              }
+            }
+            return '';
+          }
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+    if (typeof apiMessage.content === 'string') {
+      return apiMessage.content;
+    }
+    return '';
+  };
 
-	// Extract image blocks from the message
-	const getImageBlocks = (): Array<Record<string, unknown>> => {
-		if (!Array.isArray(apiMessage.content)) return [];
+  // Extract image blocks from the message
+  const getImageBlocks = (): Array<Record<string, unknown>> => {
+    if (!Array.isArray(apiMessage.content)) return [];
 
-		return apiMessage.content.filter((block: unknown) => {
-			const b = block as Record<string, unknown>;
-			return b.type === 'image';
-		}) as Array<Record<string, unknown>>;
-	};
+    return apiMessage.content.filter((block: unknown) => {
+      const b = block as Record<string, unknown>;
+      return b.type === 'image';
+    }) as Array<Record<string, unknown>>;
+  };
 
-	const textContent = getTextContent();
-	const imageBlocks = getImageBlocks();
+  const textContent = getTextContent();
+  const imageBlocks = getImageBlocks();
 
-	// Extract reference metadata from the message blob for rendering @ref tokens
-	const referenceMetadata: ReferenceMetadata =
-		(message as typeof message & { referenceMetadata?: ReferenceMetadata }).referenceMetadata ?? {};
+  // Extract reference metadata from the message blob for rendering @ref tokens
+  const referenceMetadata: ReferenceMetadata =
+    (message as typeof message & { referenceMetadata?: ReferenceMetadata }).referenceMetadata ?? {};
 
-	// For synthetic messages, extract all content blocks for detailed display
-	const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | string | null => {
-		if (!message.isSynthetic) return null;
+  // For synthetic messages, extract all content blocks for detailed display
+  const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | string | null => {
+    if (!message.isSynthetic) return null;
 
-		if (Array.isArray(apiMessage.content)) {
-			return apiMessage.content.map((block: unknown) => {
-				if (typeof block === 'object' && block !== null) {
-					return block as Record<string, unknown>;
-				}
-				return { type: 'unknown', content: block };
-			});
-		}
+    if (Array.isArray(apiMessage.content)) {
+      return apiMessage.content.map((block: unknown) => {
+        if (typeof block === 'object' && block !== null) {
+          return block as Record<string, unknown>;
+        }
+        return { type: 'unknown', content: block };
+      });
+    }
 
-		// For string content (like compact summaries), return the string directly
-		if (typeof apiMessage.content === 'string') {
-			return apiMessage.content;
-		}
+    // For string content (like compact summaries), return the string directly
+    if (typeof apiMessage.content === 'string') {
+      return apiMessage.content;
+    }
 
-		return null;
-	};
+    return null;
+  };
 
-	const syntheticContentBlocks = getSyntheticContentBlocks();
+  const syntheticContentBlocks = getSyntheticContentBlocks();
 
-	// Check if this is a slash command output (has <local-command-stdout> tags)
-	const hasCommandOutput = (): boolean => {
-		if (!isReplay) return false;
-		return /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/.test(textContent);
-	};
+  // Check if this is a slash command output (has <local-command-stdout> tags)
+  const hasCommandOutput = (): boolean => {
+    if (!isReplay) return false;
+    return /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/.test(textContent);
+  };
 
-	// Check if this contains an error output (has <local-command-stderr> tags)
-	// This can happen in both replay and synthetic messages (SDK injects errors as user messages)
-	const containsErrorOutput = (): boolean => {
-		return hasErrorOutput(textContent);
-	};
+  // Check if this contains an error output (has <local-command-stderr> tags)
+  // This can happen in both replay and synthetic messages (SDK injects errors as user messages)
+  const containsErrorOutput = (): boolean => {
+    return hasErrorOutput(textContent);
+  };
 
-	useEffect(() => {
-		if (!copied) return;
-		const timer = setTimeout(() => setCopied(false), 1500);
-		return () => clearTimeout(timer);
-	}, [copied]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
-	const handleCopy = async () => {
-		const success = await copyToClipboard(textContent);
-		if (success) {
-			setCopied(true);
-		} else {
-			toast.error('Failed to copy message');
-		}
-	};
+  const handleCopy = async () => {
+    const success = await copyToClipboard(textContent);
+    if (success) {
+      setCopied(true);
+    } else {
+      toast.error('Failed to copy message');
+    }
+  };
 
-	// Get timestamp from message
-	const getTimestamp = (): string => {
-		// Use the timestamp injected by the database (milliseconds since epoch)
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		const date = messageWithTimestamp.timestamp
-			? new Date(messageWithTimestamp.timestamp)
-			: new Date();
-		return date.toLocaleTimeString([], {
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	};
+  // Get timestamp from message
+  const getTimestamp = (): string => {
+    // Use the timestamp injected by the database (milliseconds since epoch)
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp
+      ? new Date(messageWithTimestamp.timestamp)
+      : new Date();
+    return date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
-	// Get full timestamp for tooltip
-	const getFullTimestamp = (): string => {
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		const date = messageWithTimestamp.timestamp
-			? new Date(messageWithTimestamp.timestamp)
-			: new Date();
-		return date.toLocaleString();
-	};
+  // Get full timestamp for tooltip
+  const getFullTimestamp = (): string => {
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    const date = messageWithTimestamp.timestamp
+      ? new Date(messageWithTimestamp.timestamp)
+      : new Date();
+    return date.toLocaleString();
+  };
 
-	// If this is a replay message with command output, use SlashCommandOutput component
-	if (isReplay && hasCommandOutput()) {
-		return (
-			<div class={cn(messageSpacing.assistant.container.combined)}>
-				<SlashCommandOutput content={textContent} />
-			</div>
-		);
-	}
+  // If this is a replay message with command output, use SlashCommandOutput component
+  if (isReplay && hasCommandOutput()) {
+    return (
+      <div class={cn(messageSpacing.assistant.container.combined)}>
+        <SlashCommandOutput content={textContent} />
+      </div>
+    );
+  }
 
-	// If this contains error output (<local-command-stderr>), render as error message
-	// This takes priority over generic synthetic message rendering
-	if (containsErrorOutput()) {
-		return (
-			<div class={cn(messageSpacing.assistant.container.combined)}>
-				<ErrorOutput content={textContent} />
-			</div>
-		);
-	}
+  // If this contains error output (<local-command-stderr>), render as error message
+  // This takes priority over generic synthetic message rendering
+  if (containsErrorOutput()) {
+    return (
+      <div class={cn(messageSpacing.assistant.container.combined)}>
+        <ErrorOutput content={textContent} />
+      </div>
+    );
+  }
 
-	// If this is a synthetic message (compaction summary, interrupt, agent→agent
-	// handoff, etc.), use the reusable amber-trimmed card component. Synthetic
-	// messages are always visually distinct from human input — the amber chrome
-	// marks that the message was system-generated, not typed by a human,
-	// regardless of whether we're in a normal chat or a task thread.
-	if (syntheticContentBlocks) {
-		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
-		return (
-			<div class={cn(messageSpacing.user.container.combined)}>
-				<SyntheticMessageBlock
-					content={syntheticContentBlocks}
-					timestamp={messageWithTimestamp.timestamp}
-					uuid={message.uuid}
-				/>
-			</div>
-		);
-	}
+  // If this is a synthetic message (compaction summary, interrupt, agent→agent
+  // handoff, etc.), use the reusable amber-trimmed card component. Synthetic
+  // messages are always visually distinct from human input — the amber chrome
+  // marks that the message was system-generated, not typed by a human,
+  // regardless of whether we're in a normal chat or a task thread.
+  if (syntheticContentBlocks) {
+    const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+    return (
+      <div class={cn(messageSpacing.user.container.combined)}>
+        <SyntheticMessageBlock
+          content={syntheticContentBlocks}
+          timestamp={messageWithTimestamp.timestamp}
+          uuid={message.uuid}
+        />
+      </div>
+    );
+  }
 
-	// Get message metadata for E2E tests
-	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
+  // Get message metadata for E2E tests
+  const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-	// Checkbox rendering for rewind mode (using shared function)
-	const renderCheckbox = () =>
-		renderRewindCheckbox({
-			rewindMode,
-			messageUuid: message.uuid,
-			onMessageCheckboxChange,
-			selectedMessages,
-		});
+  // Checkbox rendering for rewind mode (using shared function)
+  const renderCheckbox = () =>
+    renderRewindCheckbox({
+      rewindMode,
+      messageUuid: message.uuid,
+      onMessageCheckboxChange,
+      selectedMessages,
+    });
 
-	// Message bubble component - extracted for proper checkbox alignment
-	const messageBubble = (
-		<div
-			class={cn(
-				messageColors.user.background,
-				borderRadius.message.bubble,
-				messageSpacing.user.bubble.combined
-			)}
-		>
-			{/* Main Content */}
-			<div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
-				{renderMessageText(textContent, referenceMetadata, sessionId)}
-			</div>
+  // Message bubble component - extracted for proper checkbox alignment
+  const messageBubble = (
+    <div
+      class={cn(
+        messageColors.user.background,
+        borderRadius.message.bubble,
+        messageSpacing.user.bubble.combined
+      )}
+    >
+      {/* Main Content */}
+      <div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
+        {renderMessageText(textContent, referenceMetadata, sessionId)}
+      </div>
 
-			{/* Attached images */}
-			{imageBlocks.length > 0 && (
-				<div class="mt-3 space-y-2">
-					{imageBlocks.map((img, idx) => {
-						const source = img.source as Record<string, unknown>;
-						const mediaType = source.media_type as string;
-						const data = source.data as string;
+      {/* Attached images */}
+      {imageBlocks.length > 0 && (
+        <div class="mt-3 space-y-2">
+          {imageBlocks.map((img, idx) => {
+            const source = img.source as Record<string, unknown>;
+            const mediaType = source.media_type as string;
+            const data = source.data as string;
 
-						return (
-							<div key={idx} class="rounded overflow-hidden border border-gray-600/50">
-								<img
-									src={`data:${mediaType};base64,${data}`}
-									alt="Attached image"
-									class="max-w-full h-auto"
-								/>
-							</div>
-						);
-					})}
-				</div>
-			)}
+            return (
+              <div key={idx} class="rounded overflow-hidden border border-gray-600/50">
+                <img
+                  src={`data:${mediaType};base64,${data}`}
+                  alt="Attached image"
+                  class="max-w-full h-auto"
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-			{/* Parent tool use indicator (for sub-agent messages) */}
-			{message.parent_tool_use_id && (
-				<div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
-					Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
-				</div>
-			)}
-		</div>
-	);
+      {/* Parent tool use indicator (for sub-agent messages) */}
+      {message.parent_tool_use_id && (
+        <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
+          Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
+        </div>
+      )}
+    </div>
+  );
 
-	// Actions/toolbar component
-	const messageActions = (
-		<div
-			class={cn(
-				'flex items-center justify-end',
-				messageSpacing.actions.gap,
-				messageSpacing.actions.marginTop,
-				messageSpacing.actions.padding
-			)}
-		>
-			<Tooltip content={getFullTimestamp()} position="left">
-				<span class="text-xs text-gray-500">{getTimestamp()}</span>
-			</Tooltip>
+  // Actions/toolbar component
+  const messageActions = (
+    <div
+      class={cn(
+        'flex items-center justify-end',
+        messageSpacing.actions.gap,
+        messageSpacing.actions.marginTop,
+        messageSpacing.actions.padding
+      )}
+    >
+      <Tooltip content={getFullTimestamp()} position="left">
+        <span class="text-xs text-gray-500">{getTimestamp()}</span>
+      </Tooltip>
 
-			{message.isSynthetic && (
-				<Tooltip content="System-generated message" position="left">
-					<span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
-						synthetic
-					</span>
-				</Tooltip>
-			)}
+      {message.isSynthetic && (
+        <Tooltip content="System-generated message" position="left">
+          <span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
+            synthetic
+          </span>
+        </Tooltip>
+      )}
 
-			{message.sendStatus === 'failed' && (
-				<Tooltip
-					content="Message was not delivered — the server crashed before Claude responded"
-					position="left"
-				>
-					<span class="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">not delivered</span>
-				</Tooltip>
-			)}
+      {message.sendStatus === 'failed' && (
+        <Tooltip
+          content="Message was not delivered — the server crashed before Claude responded"
+          position="left"
+        >
+          <span class="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">not delivered</span>
+        </Tooltip>
+      )}
 
-			{/* Rewind button - only for non-replay user messages with valid UUID */}
-			{!isReplay &&
-				onRewind &&
-				sessionId &&
-				message.uuid &&
-				(rewindingMessageUuid === message.uuid ? (
-					<Spinner size="sm" color="border-amber-500" />
-				) : (
-					<Tooltip content="Rewind to this message" position="left">
-						<IconButton size="md" onClick={() => onRewind(message.uuid!)} title="Rewind to here">
-							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth={2}
-									d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-								/>
-							</svg>
-						</IconButton>
-					</Tooltip>
-				))}
+      {/* Rewind button - only for non-replay user messages with valid UUID */}
+      {!isReplay &&
+        onRewind &&
+        sessionId &&
+        message.uuid &&
+        (rewindingMessageUuid === message.uuid ? (
+          <Spinner size="sm" color="border-amber-500" />
+        ) : (
+          <Tooltip content="Rewind to this message" position="left">
+            <IconButton size="md" onClick={() => onRewind(message.uuid!)} title="Rewind to here">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                />
+              </svg>
+            </IconButton>
+          </Tooltip>
+        ))}
 
-			{/* Session info icon (if session info is attached) */}
-			{sessionInfo && (
-				<Dropdown
-					trigger={<MessageInfoButton />}
-					items={[]}
-					customContent={<MessageInfoDropdown sessionInfo={sessionInfo} />}
-				/>
-			)}
+      {/* Session info icon (if session info is attached) */}
+      {sessionInfo && (
+        <Dropdown
+          trigger={<MessageInfoButton />}
+          items={[]}
+          customContent={<MessageInfoDropdown sessionInfo={sessionInfo} />}
+        />
+      )}
 
-			<IconButton
-				size="md"
-				onClick={handleCopy}
-				title={copied ? 'Copied!' : 'Copy message'}
-				class={copied ? 'text-green-400' : ''}
-			>
-				{copied ? (
-					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-					</svg>
-				) : (
-					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-						/>
-					</svg>
-				)}
-			</IconButton>
-		</div>
-	);
+      <IconButton
+        size="md"
+        onClick={handleCopy}
+        title={copied ? 'Copied!' : 'Copy message'}
+        class={copied ? 'text-green-400' : ''}
+      >
+        {copied ? (
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        ) : (
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+            />
+          </svg>
+        )}
+      </IconButton>
+    </div>
+  );
 
-	// Wrap with checkbox if in rewind mode - simpler structure for proper alignment
-	if (rewindMode && message.uuid && onMessageCheckboxChange) {
-		return (
-			<div
-				class={cn(messageSpacing.user.container.combined)}
-				data-testid="user-message"
-				data-message-role="user"
-				data-message-uuid={message.uuid}
-				data-message-timestamp={messageWithTimestamp.timestamp || 0}
-			>
-				<div class="flex items-center gap-2">
-					{renderCheckbox()}
-					<div class="flex justify-end flex-1">
-						<div class="max-w-[85%] md:max-w-[70%] w-auto">{messageBubble}</div>
-					</div>
-				</div>
-				<div class="flex justify-end">
-					<div class="max-w-[85%] md:max-w-[70%] w-auto">{messageActions}</div>
-				</div>
-			</div>
-		);
-	}
+  // Wrap with checkbox if in rewind mode - simpler structure for proper alignment
+  if (rewindMode && message.uuid && onMessageCheckboxChange) {
+    return (
+      <div
+        class={cn(messageSpacing.user.container.combined)}
+        data-testid="user-message"
+        data-message-role="user"
+        data-message-uuid={message.uuid}
+        data-message-timestamp={messageWithTimestamp.timestamp || 0}
+      >
+        <div class="flex items-center gap-2">
+          {renderCheckbox()}
+          <div class="flex justify-end flex-1">
+            <div class="max-w-[85%] md:max-w-[70%] w-auto">{messageBubble}</div>
+          </div>
+        </div>
+        <div class="flex justify-end">
+          <div class="max-w-[85%] md:max-w-[70%] w-auto">{messageActions}</div>
+        </div>
+      </div>
+    );
+  }
 
-	// Normal mode (non-rewind): original layout
-	const messageContent = (
-		<div
-			class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
-			data-testid="user-message"
-			data-message-role="user"
-			data-message-uuid={message.uuid ?? ''}
-			data-message-timestamp={messageWithTimestamp.timestamp || 0}
-		>
-			<div class="max-w-[85%] md:max-w-[70%] w-auto">
-				{messageBubble}
-				{messageActions}
-			</div>
-		</div>
-	);
+  // Normal mode (non-rewind): original layout
+  const messageContent = (
+    <div
+      class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
+      data-testid="user-message"
+      data-message-role="user"
+      data-message-uuid={message.uuid ?? ''}
+      data-message-timestamp={messageWithTimestamp.timestamp || 0}
+    >
+      <div class="max-w-[85%] md:max-w-[70%] w-auto">
+        {messageBubble}
+        {messageActions}
+      </div>
+    </div>
+  );
 
-	return messageContent;
+  return messageContent;
 }

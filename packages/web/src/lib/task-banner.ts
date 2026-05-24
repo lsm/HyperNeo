@@ -35,16 +35,16 @@ import type { SpaceTask } from '@neokai/shared';
  * banner-relevant fields are added.
  */
 export type TaskBannerInput = Pick<
-	SpaceTask,
-	'status' | 'postApprovalBlockedReason' | 'pendingCheckpointType' | 'workflowRunId'
+  SpaceTask,
+  'status' | 'postApprovalBlockedReason' | 'pendingCheckpointType' | 'workflowRunId'
 >;
 
 /** Gate status as evaluated by `gate-status.ts::evaluateGateStatus`. */
 export type GateBannerStatus = 'open' | 'blocked' | 'waiting_human';
 
 export interface GateBannerSummary {
-	/** Evaluated gate status. Only `'waiting_human'` triggers `gate_pending`. */
-	status: GateBannerStatus;
+  /** Evaluated gate status. Only `'waiting_human'` triggers `gate_pending`. */
+  status: GateBannerStatus;
 }
 
 /**
@@ -53,11 +53,11 @@ export interface GateBannerSummary {
  * render nothing, or a neutral background element.
  */
 export type ActiveTaskBanner =
-	| { kind: 'blocked' }
-	| { kind: 'post_approval_blocked'; reason: string }
-	| { kind: 'task_completion_pending' }
-	| { kind: 'gate_pending'; runId: string }
-	| null;
+  | { kind: 'blocked' }
+  | { kind: 'post_approval_blocked'; reason: string }
+  | { kind: 'task_completion_pending' }
+  | { kind: 'gate_pending'; runId: string }
+  | null;
 
 /**
  * Compute the active task-pane banner from a task plus the current gate
@@ -71,27 +71,27 @@ export type ActiveTaskBanner =
  *                  completed but no gate is waiting for a human.
  */
 export function resolveActiveTaskBanner(
-	task: TaskBannerInput,
-	gates?: readonly GateBannerSummary[]
+  task: TaskBannerInput,
+  gates?: readonly GateBannerSummary[]
 ): ActiveTaskBanner {
-	if (task.status === 'blocked') {
-		return { kind: 'blocked' };
-	}
+  if (task.status === 'blocked') {
+    return { kind: 'blocked' };
+  }
 
-	if (task.status === 'approved') {
-		const reason = task.postApprovalBlockedReason?.trim();
-		if (reason) {
-			return { kind: 'post_approval_blocked', reason };
-		}
-	}
+  if (task.status === 'approved') {
+    const reason = task.postApprovalBlockedReason?.trim();
+    if (reason) {
+      return { kind: 'post_approval_blocked', reason };
+    }
+  }
 
-	if (task.pendingCheckpointType === 'task_completion') {
-		return { kind: 'task_completion_pending' };
-	}
+  if (task.pendingCheckpointType === 'task_completion') {
+    return { kind: 'task_completion_pending' };
+  }
 
-	if (task.workflowRunId && gates && gates.some((g) => g.status === 'waiting_human')) {
-		return { kind: 'gate_pending', runId: task.workflowRunId };
-	}
+  if (task.workflowRunId && gates && gates.some((g) => g.status === 'waiting_human')) {
+    return { kind: 'gate_pending', runId: task.workflowRunId };
+  }
 
-	return null;
+  return null;
 }

@@ -26,56 +26,56 @@ import { downloadBundle, pickImportFile } from './export-import-utils.ts';
 // ============================================================================
 
 const GATE_COLORS: Record<WorkflowConditionType, string> = {
-	always: 'bg-blue-500',
-	human: 'bg-yellow-400',
-	condition: 'bg-purple-400',
-	task_result: 'bg-orange-500',
+  always: 'bg-blue-500',
+  human: 'bg-yellow-400',
+  condition: 'bg-purple-400',
+  task_result: 'bg-orange-500',
 };
 
 function MiniStepDot({ isStart }: { isStart: boolean }) {
-	return (
-		<span
-			class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isStart ? 'bg-blue-500' : 'bg-blue-400'}`}
-		/>
-	);
+  return (
+    <span
+      class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isStart ? 'bg-blue-500' : 'bg-blue-400'}`}
+    />
+  );
 }
 
 function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionType }) {
-	const color = conditionType ? GATE_COLORS[conditionType] : 'bg-gray-700';
-	return (
-		<div class="flex items-center gap-0.5 flex-shrink-0">
-			<div class="w-4 h-px bg-gray-700" />
-			{conditionType && conditionType !== 'always' && (
-				<span class={`w-1.5 h-1.5 rounded-full ${color}`} />
-			)}
-			<div class="w-4 h-px bg-gray-700" />
-		</div>
-	);
+  const color = conditionType ? GATE_COLORS[conditionType] : 'bg-gray-700';
+  return (
+    <div class="flex items-center gap-0.5 flex-shrink-0">
+      <div class="w-4 h-px bg-gray-700" />
+      {conditionType && conditionType !== 'always' && (
+        <span class={`w-1.5 h-1.5 rounded-full ${color}`} />
+      )}
+      <div class="w-4 h-px bg-gray-700" />
+    </div>
+  );
 }
 
 // Show at most MAX_DOTS dots; if there are more steps, show a "+N" overflow label.
 const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
-	if (workflow.nodeCount === 0) {
-		return <span class="text-xs text-gray-700 italic">No steps</span>;
-	}
+  if (workflow.nodeCount === 0) {
+    return <span class="text-xs text-gray-700 italic">No steps</span>;
+  }
 
-	// Cap display at MAX_DOTS; show overflow count if needed
-	const overflow = workflow.nodeCount > MAX_DOTS ? workflow.nodeCount - MAX_DOTS : 0;
-	const display = overflow > 0 ? workflow.nodeCount - overflow : workflow.nodeCount;
+  // Cap display at MAX_DOTS; show overflow count if needed
+  const overflow = workflow.nodeCount > MAX_DOTS ? workflow.nodeCount - MAX_DOTS : 0;
+  const display = overflow > 0 ? workflow.nodeCount - overflow : workflow.nodeCount;
 
-	return (
-		<div class="flex items-center gap-0 overflow-hidden">
-			{Array.from({ length: display }).map((_, i) => (
-				<div key={i} class="flex items-center">
-					<MiniStepDot isStart={i === 0} />
-					{i + 1 < display && <MiniConnector conditionType={undefined} />}
-				</div>
-			))}
-			{overflow > 0 && <span class="text-xs text-gray-600 ml-1">+{overflow}</span>}
-		</div>
-	);
+  return (
+    <div class="flex items-center gap-0 overflow-hidden">
+      {Array.from({ length: display }).map((_, i) => (
+        <div key={i} class="flex items-center">
+          <MiniStepDot isStart={i === 0} />
+          {i + 1 < display && <MiniConnector conditionType={undefined} />}
+        </div>
+      ))}
+      {overflow > 0 && <span class="text-xs text-gray-600 ml-1">+{overflow}</span>}
+    </div>
+  );
 }
 
 // ============================================================================
@@ -90,378 +90,378 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
  * newest row in a drift group.
  */
 interface DuplicateDriftInfo {
-	/** Shared `templateName` that formed the drift group. */
-	templateName: string;
-	/** Total rows in the drift group (always >= 2). */
-	groupSize: number;
-	/** True if this workflow is the newest row in the group (becomes the kept row on resync). */
-	isNewest: boolean;
+  /** Shared `templateName` that formed the drift group. */
+  templateName: string;
+  /** Total rows in the drift group (always >= 2). */
+  groupSize: number;
+  /** True if this workflow is the newest row in the group (becomes the kept row on resync). */
+  isNewest: boolean;
 }
 
 interface WorkflowCardProps {
-	workflow: SpaceWorkflowSummary;
-	spaceId: string;
-	spaceName: string;
-	onEdit: () => void;
-	duplicateDrift?: DuplicateDriftInfo;
-	onResyncDuplicates?: (templateName: string) => Promise<void>;
+  workflow: SpaceWorkflowSummary;
+  spaceId: string;
+  spaceName: string;
+  onEdit: () => void;
+  duplicateDrift?: DuplicateDriftInfo;
+  onResyncDuplicates?: (templateName: string) => Promise<void>;
 }
 
 function WorkflowCard({
-	workflow,
-	spaceId,
-	spaceName,
-	onEdit,
-	duplicateDrift,
-	onResyncDuplicates,
+  workflow,
+  spaceId,
+  spaceName,
+  onEdit,
+  duplicateDrift,
+  onResyncDuplicates,
 }: WorkflowCardProps) {
-	const [confirmDelete, setConfirmDelete] = useState(false);
-	const [deleting, setDeleting] = useState(false);
-	const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-	// Drift detection state: null = unknown/checking, true = drifted, false = in sync
-	const [driftDrifted, setDriftDrifted] = useState<boolean | null>(null);
-	const [syncing, setSyncing] = useState(false);
-	const [syncError, setSyncError] = useState<string | null>(null);
-	const [confirmSync, setConfirmSync] = useState(false);
+  // Drift detection state: null = unknown/checking, true = drifted, false = in sync
+  const [driftDrifted, setDriftDrifted] = useState<boolean | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [confirmSync, setConfirmSync] = useState(false);
 
-	// Duplicate-drift resync state
-	const [confirmDupResync, setConfirmDupResync] = useState(false);
-	const [dupResyncing, setDupResyncing] = useState(false);
-	const [dupResyncError, setDupResyncError] = useState<string | null>(null);
+  // Duplicate-drift resync state
+  const [confirmDupResync, setConfirmDupResync] = useState(false);
+  const [dupResyncing, setDupResyncing] = useState(false);
+  const [dupResyncError, setDupResyncError] = useState<string | null>(null);
 
-	// Check for template drift whenever workflow changes (if it came from a template)
-	useEffect(() => {
-		if (!workflow.templateName) return;
+  // Check for template drift whenever workflow changes (if it came from a template)
+  useEffect(() => {
+    if (!workflow.templateName) return;
 
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) return;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
 
-		let cancelled = false;
-		hub
-			.request<{ drifted: boolean }>('spaceWorkflow.detectDrift', {
-				id: workflow.id,
-				spaceId,
-			})
-			.then((result) => {
-				if (!cancelled) setDriftDrifted(result.drifted);
-			})
-			.catch(() => {
-				// Ignore drift detection errors silently
-			});
+    let cancelled = false;
+    hub
+      .request<{ drifted: boolean }>('spaceWorkflow.detectDrift', {
+        id: workflow.id,
+        spaceId,
+      })
+      .then((result) => {
+        if (!cancelled) setDriftDrifted(result.drifted);
+      })
+      .catch(() => {
+        // Ignore drift detection errors silently
+      });
 
-		return () => {
-			cancelled = true;
-		};
-	}, [workflow.id, workflow.updatedAt, workflow.templateName, spaceId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [workflow.id, workflow.updatedAt, workflow.templateName, spaceId]);
 
-	async function handleDelete() {
-		setDeleting(true);
-		setDeleteError(null);
-		try {
-			await spaceStore.deleteWorkflow(workflow.id);
-		} catch (err) {
-			setDeleteError(err instanceof Error ? err.message : 'Failed to delete workflow.');
-			setDeleting(false);
-			setConfirmDelete(false);
-		}
-	}
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await spaceStore.deleteWorkflow(workflow.id);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete workflow.');
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
 
-	async function handleExport() {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Connection lost.');
-			return;
-		}
-		try {
-			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.workflows', {
-				spaceId,
-				workflowIds: [workflow.id],
-			});
-			downloadBundle(bundle, spaceName, 'workflows');
-			toast.success(`Exported "${workflow.name}"`);
-		} catch (err) {
-			toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
+  async function handleExport() {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Connection lost.');
+      return;
+    }
+    try {
+      const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.workflows', {
+        spaceId,
+        workflowIds: [workflow.id],
+      });
+      downloadBundle(bundle, spaceName, 'workflows');
+      toast.success(`Exported "${workflow.name}"`);
+    } catch (err) {
+      toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-	async function handleSyncFromTemplate() {
-		setSyncing(true);
-		setSyncError(null);
-		try {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) throw new Error('Not connected');
-			await hub.request('spaceWorkflow.syncFromTemplate', {
-				id: workflow.id,
-				spaceId,
-			});
-			setConfirmSync(false);
-			setDriftDrifted(false); // no longer drifted after sync
-			toast.success(`"${workflow.name}" synced from template`);
-		} catch (err) {
-			setSyncError(err instanceof Error ? err.message : 'Sync failed');
-		} finally {
-			setSyncing(false);
-		}
-	}
+  async function handleSyncFromTemplate() {
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Not connected');
+      await hub.request('spaceWorkflow.syncFromTemplate', {
+        id: workflow.id,
+        spaceId,
+      });
+      setConfirmSync(false);
+      setDriftDrifted(false); // no longer drifted after sync
+      toast.success(`"${workflow.name}" synced from template`);
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
-	async function handleResyncDuplicates() {
-		if (!duplicateDrift || !onResyncDuplicates) return;
-		setDupResyncing(true);
-		setDupResyncError(null);
-		try {
-			await onResyncDuplicates(duplicateDrift.templateName);
-			setConfirmDupResync(false);
-		} catch (err) {
-			setDupResyncError(err instanceof Error ? err.message : 'Resync failed');
-		} finally {
-			setDupResyncing(false);
-		}
-	}
+  async function handleResyncDuplicates() {
+    if (!duplicateDrift || !onResyncDuplicates) return;
+    setDupResyncing(true);
+    setDupResyncError(null);
+    try {
+      await onResyncDuplicates(duplicateDrift.templateName);
+      setConfirmDupResync(false);
+    } catch (err) {
+      setDupResyncError(err instanceof Error ? err.message : 'Resync failed');
+    } finally {
+      setDupResyncing(false);
+    }
+  }
 
-	return (
-		<div
-			class={[
-				'group border-b border-white/10 py-3 transition-colors last:border-b-0',
-				workflow.disabled ? 'opacity-60' : '',
-			].join(' ')}
-		>
-			{deleteError && (
-				<div class="mb-2 rounded bg-red-900/20 px-3 py-1.5 text-xs text-red-300">{deleteError}</div>
-			)}
+  return (
+    <div
+      class={[
+        'group border-b border-white/10 py-3 transition-colors last:border-b-0',
+        workflow.disabled ? 'opacity-60' : '',
+      ].join(' ')}
+    >
+      {deleteError && (
+        <div class="mb-2 rounded bg-red-900/20 px-3 py-1.5 text-xs text-red-300">{deleteError}</div>
+      )}
 
-			<div class="flex items-start justify-between gap-4">
-				<div class="min-w-0 flex-1">
-					<div class="flex min-w-0 items-center gap-2">
-						<h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
-						{workflow.disabled && (
-							<span class="inline-flex shrink-0 items-center rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
-								Disabled
-							</span>
-						)}
-					</div>
-					{workflow.description && (
-						<p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{workflow.description}</p>
-					)}
-					{/* Template badge + drift indicator */}
-					{workflow.templateName && (
-						<div class="mt-1.5 flex items-center gap-1.5">
-							<span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500">
-								{workflow.templateName}
-							</span>
-							{driftDrifted === true && (
-								<span class="inline-flex items-center rounded bg-yellow-500/10 px-1.5 py-0.5 text-xs text-yellow-300">
-									Outdated
-								</span>
-							)}
-							{duplicateDrift && (
-								<span
-									class="inline-flex items-center rounded bg-orange-500/10 px-1.5 py-0.5 text-xs text-orange-300"
-									title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template with diverging content. Resync keeps the newest row and removes the rest.`}
-								>
-									Duplicate ×{duplicateDrift.groupSize}
-								</span>
-							)}
-						</div>
-					)}
-				</div>
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <div class="flex min-w-0 items-center gap-2">
+            <h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
+            {workflow.disabled && (
+              <span class="inline-flex shrink-0 items-center rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+                Disabled
+              </span>
+            )}
+          </div>
+          {workflow.description && (
+            <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{workflow.description}</p>
+          )}
+          {/* Template badge + drift indicator */}
+          {workflow.templateName && (
+            <div class="mt-1.5 flex items-center gap-1.5">
+              <span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500">
+                {workflow.templateName}
+              </span>
+              {driftDrifted === true && (
+                <span class="inline-flex items-center rounded bg-yellow-500/10 px-1.5 py-0.5 text-xs text-yellow-300">
+                  Outdated
+                </span>
+              )}
+              {duplicateDrift && (
+                <span
+                  class="inline-flex items-center rounded bg-orange-500/10 px-1.5 py-0.5 text-xs text-orange-300"
+                  title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template with diverging content. Resync keeps the newest row and removes the rest.`}
+                >
+                  Duplicate ×{duplicateDrift.groupSize}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
 
-				{/* Action buttons */}
-				<div
-					data-testid="workflow-card-actions"
-					class="flex flex-shrink-0 items-center gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"
-				>
-					{confirmDelete ? (
-						<>
-							<span class="text-xs text-red-400">Delete?</span>
-							<button
-								onClick={handleDelete}
-								disabled={deleting}
-								class="px-2 py-1 text-xs text-red-300 bg-red-900/30 hover:bg-red-900/50 border border-red-800/50 rounded disabled:opacity-50 transition-colors"
-							>
-								{deleting ? '…' : 'Confirm'}
-							</button>
-							<button
-								onClick={() => setConfirmDelete(false)}
-								class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
-							>
-								Cancel
-							</button>
-						</>
-					) : (
-						<>
-							{workflow.templateName && driftDrifted === true && (
-								<button
-									onClick={() => setConfirmSync(true)}
-									class="rounded-md px-2 py-1 text-xs text-yellow-300 transition-colors hover:bg-white/5 hover:text-yellow-200"
-									title="Sync from template (overwrites local changes)"
-								>
-									Sync
-								</button>
-							)}
-							{duplicateDrift?.isNewest && (
-								<button
-									onClick={() => setConfirmDupResync(true)}
-									class="rounded-md px-2 py-1 text-xs text-orange-300 transition-colors hover:bg-white/5 hover:text-orange-200"
-									title={`Remove ${duplicateDrift.groupSize - 1} older duplicate${duplicateDrift.groupSize - 1 === 1 ? '' : 's'} and resync this workflow from the built-in template`}
-								>
-									Resync duplicates
-								</button>
-							)}
-							<button
-								onClick={onEdit}
-								class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
-							>
-								Edit
-							</button>
-							<button
-								onClick={handleExport}
-								class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
-								title="Export workflow"
-							>
-								<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-									/>
-								</svg>
-							</button>
-							<button
-								onClick={() => setConfirmDelete(true)}
-								class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
-								title="Delete workflow"
-							>
-								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-									/>
-								</svg>
-							</button>
-						</>
-					)}
-				</div>
-			</div>
+        {/* Action buttons */}
+        <div
+          data-testid="workflow-card-actions"
+          class="flex flex-shrink-0 items-center gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"
+        >
+          {confirmDelete ? (
+            <>
+              <span class="text-xs text-red-400">Delete?</span>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                class="px-2 py-1 text-xs text-red-300 bg-red-900/30 hover:bg-red-900/50 border border-red-800/50 rounded disabled:opacity-50 transition-colors"
+              >
+                {deleting ? '…' : 'Confirm'}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {workflow.templateName && driftDrifted === true && (
+                <button
+                  onClick={() => setConfirmSync(true)}
+                  class="rounded-md px-2 py-1 text-xs text-yellow-300 transition-colors hover:bg-white/5 hover:text-yellow-200"
+                  title="Sync from template (overwrites local changes)"
+                >
+                  Sync
+                </button>
+              )}
+              {duplicateDrift?.isNewest && (
+                <button
+                  onClick={() => setConfirmDupResync(true)}
+                  class="rounded-md px-2 py-1 text-xs text-orange-300 transition-colors hover:bg-white/5 hover:text-orange-200"
+                  title={`Remove ${duplicateDrift.groupSize - 1} older duplicate${duplicateDrift.groupSize - 1 === 1 ? '' : 's'} and resync this workflow from the built-in template`}
+                >
+                  Resync duplicates
+                </button>
+              )}
+              <button
+                onClick={onEdit}
+                class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+              >
+                Edit
+              </button>
+              <button
+                onClick={handleExport}
+                class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+                title="Export workflow"
+              >
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                  />
+                </svg>
+              </button>
+              <button
+                onClick={() => setConfirmDelete(true)}
+                class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
+                title="Delete workflow"
+              >
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
-			<div class="mt-2 flex flex-wrap items-center gap-2">
-				<span class="text-xs text-gray-600">
-					{workflow.nodeCount} {workflow.nodeCount === 1 ? 'step' : 'steps'}
-				</span>
-				<MiniStepViz workflow={workflow} />
-				{workflow.tags.length > 0 && (
-					<>
-						<span class="text-gray-700">·</span>
-						{workflow.tags.map((tag) => (
-							<span
-								key={tag}
-								class="rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500"
-							>
-								{tag}
-							</span>
-						))}
-					</>
-				)}
-			</div>
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <span class="text-xs text-gray-600">
+          {workflow.nodeCount} {workflow.nodeCount === 1 ? 'step' : 'steps'}
+        </span>
+        <MiniStepViz workflow={workflow} />
+        {workflow.tags.length > 0 && (
+          <>
+            <span class="text-gray-700">·</span>
+            {workflow.tags.map((tag) => (
+              <span
+                key={tag}
+                class="rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500"
+              >
+                {tag}
+              </span>
+            ))}
+          </>
+        )}
+      </div>
 
-			{/* Resync duplicates confirmation modal */}
-			{confirmDupResync && duplicateDrift && (
-				<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-					<div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
-						<h3 class="text-sm font-semibold text-gray-100 mb-2">Resync duplicate workflows?</h3>
-						<p class="text-xs text-gray-400 mb-1">
-							This space has{' '}
-							<span class="font-medium text-gray-200">{duplicateDrift.groupSize} rows</span> sharing
-							the <span class="font-medium text-gray-200">"{duplicateDrift.templateName}"</span>{' '}
-							template with diverging content.
-						</p>
-						<p class="text-xs text-gray-400 mb-1">
-							The newest row <span class="font-medium text-gray-200">"{workflow.name}"</span> will
-							be kept and resynced from the built-in template. The remaining{' '}
-							<span class="font-medium text-gray-200">
-								{duplicateDrift.groupSize - 1} older{' '}
-								{duplicateDrift.groupSize - 1 === 1 ? 'row' : 'rows'}
-							</span>{' '}
-							will be deleted.
-						</p>
-						<p class="text-xs text-red-400 mb-4">
-							Local edits to the older rows and any workflow runs attached to them will be
-							permanently lost.
-						</p>
-						{dupResyncError && (
-							<div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
-								{dupResyncError}
-							</div>
-						)}
-						<div class="flex items-center gap-2 justify-end">
-							<button
-								onClick={() => {
-									setConfirmDupResync(false);
-									setDupResyncError(null);
-								}}
-								disabled={dupResyncing}
-								class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-							>
-								Cancel
-							</button>
-							<button
-								onClick={handleResyncDuplicates}
-								disabled={dupResyncing}
-								class="px-3 py-1.5 text-xs font-medium text-white bg-orange-700 hover:bg-orange-600 rounded transition-colors disabled:opacity-50"
-							>
-								{dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
-							</button>
-						</div>
-					</div>
-				</div>
-			)}
+      {/* Resync duplicates confirmation modal */}
+      {confirmDupResync && duplicateDrift && (
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
+            <h3 class="text-sm font-semibold text-gray-100 mb-2">Resync duplicate workflows?</h3>
+            <p class="text-xs text-gray-400 mb-1">
+              This space has{' '}
+              <span class="font-medium text-gray-200">{duplicateDrift.groupSize} rows</span> sharing
+              the <span class="font-medium text-gray-200">"{duplicateDrift.templateName}"</span>{' '}
+              template with diverging content.
+            </p>
+            <p class="text-xs text-gray-400 mb-1">
+              The newest row <span class="font-medium text-gray-200">"{workflow.name}"</span> will
+              be kept and resynced from the built-in template. The remaining{' '}
+              <span class="font-medium text-gray-200">
+                {duplicateDrift.groupSize - 1} older{' '}
+                {duplicateDrift.groupSize - 1 === 1 ? 'row' : 'rows'}
+              </span>{' '}
+              will be deleted.
+            </p>
+            <p class="text-xs text-red-400 mb-4">
+              Local edits to the older rows and any workflow runs attached to them will be
+              permanently lost.
+            </p>
+            {dupResyncError && (
+              <div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+                {dupResyncError}
+              </div>
+            )}
+            <div class="flex items-center gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setConfirmDupResync(false);
+                  setDupResyncError(null);
+                }}
+                disabled={dupResyncing}
+                class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResyncDuplicates}
+                disabled={dupResyncing}
+                class="px-3 py-1.5 text-xs font-medium text-white bg-orange-700 hover:bg-orange-600 rounded transition-colors disabled:opacity-50"
+              >
+                {dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-			{/* Sync from template confirmation modal */}
-			{confirmSync && (
-				<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-					<div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
-						<h3 class="text-sm font-semibold text-gray-100 mb-2">Sync from template?</h3>
-						<p class="text-xs text-gray-400 mb-1">
-							This will overwrite <span class="font-medium text-gray-200">"{workflow.name}"</span>{' '}
-							with the latest version of the{' '}
-							<span class="font-medium text-gray-200">"{workflow.templateName}"</span> template.
-						</p>
-						<p class="text-xs text-red-400 mb-4">
-							All local edits to this workflow (nodes, channels, gates, instructions) will be
-							permanently lost.
-						</p>
-						{syncError && (
-							<div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
-								{syncError}
-							</div>
-						)}
-						<div class="flex items-center gap-2 justify-end">
-							<button
-								onClick={() => {
-									setConfirmSync(false);
-									setSyncError(null);
-								}}
-								disabled={syncing}
-								class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
-							>
-								Cancel
-							</button>
-							<button
-								onClick={handleSyncFromTemplate}
-								disabled={syncing}
-								class="px-3 py-1.5 text-xs font-medium text-white bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
-							>
-								{syncing ? 'Syncing…' : 'Sync from template'}
-							</button>
-						</div>
-					</div>
-				</div>
-			)}
-		</div>
-	);
+      {/* Sync from template confirmation modal */}
+      {confirmSync && (
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
+            <h3 class="text-sm font-semibold text-gray-100 mb-2">Sync from template?</h3>
+            <p class="text-xs text-gray-400 mb-1">
+              This will overwrite <span class="font-medium text-gray-200">"{workflow.name}"</span>{' '}
+              with the latest version of the{' '}
+              <span class="font-medium text-gray-200">"{workflow.templateName}"</span> template.
+            </p>
+            <p class="text-xs text-red-400 mb-4">
+              All local edits to this workflow (nodes, channels, gates, instructions) will be
+              permanently lost.
+            </p>
+            {syncError && (
+              <div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+                {syncError}
+              </div>
+            )}
+            <div class="flex items-center gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setConfirmSync(false);
+                  setSyncError(null);
+                }}
+                disabled={syncing}
+                class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSyncFromTemplate}
+                disabled={syncing}
+                class="px-3 py-1.5 text-xs font-medium text-white bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
+              >
+                {syncing ? 'Syncing…' : 'Sync from template'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ============================================================================
@@ -469,295 +469,295 @@ function WorkflowCard({
 // ============================================================================
 
 interface WorkflowListProps {
-	spaceId: string;
-	spaceName: string;
-	workflows: SpaceWorkflowSummary[];
-	onCreateWorkflow: () => void;
-	onEditWorkflow: (workflowId: string) => void;
+  spaceId: string;
+  spaceName: string;
+  workflows: SpaceWorkflowSummary[];
+  onCreateWorkflow: () => void;
+  onEditWorkflow: (workflowId: string) => void;
 }
 
 export function WorkflowList({
-	spaceId,
-	spaceName,
-	workflows,
-	onCreateWorkflow,
-	onEditWorkflow,
+  spaceId,
+  spaceName,
+  workflows,
+  onCreateWorkflow,
+  onEditWorkflow,
 }: WorkflowListProps) {
-	const loading = spaceStore.loading.value;
-	const [importBundle, setImportBundle] = useState<SpaceExportBundle | null>(null);
-	const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
-	const [isExecuting, setIsExecuting] = useState(false);
+  const loading = spaceStore.loading.value;
+  const [importBundle, setImportBundle] = useState<SpaceExportBundle | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
 
-	// Map of workflow id → duplicate-drift info (only present for workflows in a drift group).
-	const [duplicateDriftMap, setDuplicateDriftMap] = useState<Map<string, DuplicateDriftInfo>>(
-		new Map()
-	);
+  // Map of workflow id → duplicate-drift info (only present for workflows in a drift group).
+  const [duplicateDriftMap, setDuplicateDriftMap] = useState<Map<string, DuplicateDriftInfo>>(
+    new Map()
+  );
 
-	// Fetch duplicate-drift reports whenever the set of workflows changes. We
-	// watch the list of (id, updatedAt) tuples so the effect re-runs when a
-	// workflow is added, removed, or edited.
-	const driftKey = workflows
-		.map((w) => `${w.id}:${w.updatedAt}`)
-		.sort()
-		.join('|');
-	useEffect(() => {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) return;
+  // Fetch duplicate-drift reports whenever the set of workflows changes. We
+  // watch the list of (id, updatedAt) tuples so the effect re-runs when a
+  // workflow is added, removed, or edited.
+  const driftKey = workflows
+    .map((w) => `${w.id}:${w.updatedAt}`)
+    .sort()
+    .join('|');
+  useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
 
-		let cancelled = false;
-		hub
-			.request<{ reports: DuplicateDriftReport[] }>('spaceWorkflow.detectDuplicateDrift', {
-				spaceId,
-			})
-			.then((result) => {
-				if (cancelled) return;
-				const map = new Map<string, DuplicateDriftInfo>();
-				for (const report of result.reports) {
-					// Rows are newest-first; the first entry becomes the kept row on resync.
-					for (const [i, row] of report.rows.entries()) {
-						map.set(row.id, {
-							templateName: report.templateName,
-							groupSize: report.rows.length,
-							isNewest: i === 0,
-						});
-					}
-				}
-				setDuplicateDriftMap(map);
-			})
-			.catch(() => {
-				// Non-fatal — drift reporting is best-effort.
-			});
+    let cancelled = false;
+    hub
+      .request<{ reports: DuplicateDriftReport[] }>('spaceWorkflow.detectDuplicateDrift', {
+        spaceId,
+      })
+      .then((result) => {
+        if (cancelled) return;
+        const map = new Map<string, DuplicateDriftInfo>();
+        for (const report of result.reports) {
+          // Rows are newest-first; the first entry becomes the kept row on resync.
+          for (const [i, row] of report.rows.entries()) {
+            map.set(row.id, {
+              templateName: report.templateName,
+              groupSize: report.rows.length,
+              isNewest: i === 0,
+            });
+          }
+        }
+        setDuplicateDriftMap(map);
+      })
+      .catch(() => {
+        // Non-fatal — drift reporting is best-effort.
+      });
 
-		return () => {
-			cancelled = true;
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
-	}, [spaceId, driftKey]);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
+  }, [spaceId, driftKey]);
 
-	async function handleResyncDuplicates(templateName: string) {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Connection lost.');
-			throw new Error('Not connected');
-		}
-		const result = await hub.request<{ deletedIds: string[] }>('spaceWorkflow.resyncDuplicates', {
-			spaceId,
-			templateName,
-		});
-		const removed = result.deletedIds.length;
-		toast.success(
-			`Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}`
-		);
-	}
+  async function handleResyncDuplicates(templateName: string) {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Connection lost.');
+      throw new Error('Not connected');
+    }
+    const result = await hub.request<{ deletedIds: string[] }>('spaceWorkflow.resyncDuplicates', {
+      spaceId,
+      templateName,
+    });
+    const removed = result.deletedIds.length;
+    toast.success(
+      `Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}`
+    );
+  }
 
-	// ─── Import/Export helpers ──────────────────────────────────────────────
+  // ─── Import/Export helpers ──────────────────────────────────────────────
 
-	async function exportAll() {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Connection lost.');
-			return;
-		}
-		try {
-			const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.workflows', {
-				spaceId,
-			});
-			downloadBundle(bundle, spaceName, 'workflows');
-			toast.success(`Exported ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`);
-		} catch (err) {
-			toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
+  async function exportAll() {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Connection lost.');
+      return;
+    }
+    try {
+      const { bundle } = await hub.request<{ bundle: SpaceExportBundle }>('spaceExport.workflows', {
+        spaceId,
+      });
+      downloadBundle(bundle, spaceName, 'workflows');
+      toast.success(`Exported ${workflows.length} workflow${workflows.length === 1 ? '' : 's'}`);
+    } catch (err) {
+      toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-	async function startImport() {
-		const bundle = await pickImportFile();
-		if (!bundle) return;
+  async function startImport() {
+    const bundle = await pickImportFile();
+    if (!bundle) return;
 
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Connection lost.');
-			return;
-		}
-		try {
-			const preview = await hub.request<ImportPreviewResult>('spaceImport.preview', {
-				spaceId,
-				bundle,
-			});
-			setImportBundle(bundle);
-			setImportPreview(preview);
-		} catch (err) {
-			toast.error(`Preview failed: ${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Connection lost.');
+      return;
+    }
+    try {
+      const preview = await hub.request<ImportPreviewResult>('spaceImport.preview', {
+        spaceId,
+        bundle,
+      });
+      setImportBundle(bundle);
+      setImportPreview(preview);
+    } catch (err) {
+      toast.error(`Preview failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
-	async function executeImport(resolution: ImportConflictResolution) {
-		if (!importBundle) return;
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			toast.error('Connection lost.');
-			return;
-		}
-		setIsExecuting(true);
-		try {
-			const result = await hub.request<{
-				agents: Array<{ name: string; id: string; action: string }>;
-				workflows: Array<{ name: string; id: string; action: string }>;
-				warnings: string[];
-			}>('spaceImport.execute', { spaceId, bundle: importBundle, conflictResolution: resolution });
+  async function executeImport(resolution: ImportConflictResolution) {
+    if (!importBundle) return;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Connection lost.');
+      return;
+    }
+    setIsExecuting(true);
+    try {
+      const result = await hub.request<{
+        agents: Array<{ name: string; id: string; action: string }>;
+        workflows: Array<{ name: string; id: string; action: string }>;
+        warnings: string[];
+      }>('spaceImport.execute', { spaceId, bundle: importBundle, conflictResolution: resolution });
 
-			const createdWorkflows = result.workflows.filter((w) => w.action !== 'skipped').length;
-			toast.success(
-				createdWorkflows > 0
-					? `Imported ${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`
-					: 'Nothing imported'
-			);
-			if (result.warnings.length) {
-				toast.warning(result.warnings[0]);
-			}
-			setImportBundle(null);
-			setImportPreview(null);
-		} catch (err) {
-			toast.error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
-		} finally {
-			setIsExecuting(false);
-		}
-	}
+      const createdWorkflows = result.workflows.filter((w) => w.action !== 'skipped').length;
+      toast.success(
+        createdWorkflows > 0
+          ? `Imported ${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`
+          : 'Nothing imported'
+      );
+      if (result.warnings.length) {
+        toast.warning(result.warnings[0]);
+      }
+      setImportBundle(null);
+      setImportPreview(null);
+    } catch (err) {
+      toast.error(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsExecuting(false);
+    }
+  }
 
-	if (loading) {
-		return (
-			<div class="h-full overflow-y-auto">
-				<div class="min-h-[calc(100%+1px)] flex items-center justify-center">
-					<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-				</div>
-			</div>
-		);
-	}
+  if (loading) {
+    return (
+      <div class="h-full overflow-y-auto">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center">
+          <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
 
-	return (
-		<div class="flex h-full min-h-0 flex-col overflow-hidden">
-			<div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
-				<div class="flex min-w-0 items-start gap-3">
-					<div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-purple-400/70" />
-					<div class="min-w-0">
-						<p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
-							{workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
-						</p>
-						<p class="mt-1 text-xs text-gray-500">Reusable multi-agent pipelines for this space.</p>
-					</div>
-				</div>
-				<div class="flex items-center gap-2">
-					<button
-						type="button"
-						onClick={startImport}
-						class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
-					>
-						<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-							/>
-						</svg>
-						Import
-					</button>
-					{workflows.length > 0 && (
-						<button
-							type="button"
-							onClick={exportAll}
-							class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
-						>
-							<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-								/>
-							</svg>
-							Export All
-						</button>
-					)}
-					<button
-						onClick={onCreateWorkflow}
-						class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-					>
-						<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M12 4v16m8-8H4"
-							/>
-						</svg>
-						Create Workflow
-					</button>
-				</div>
-			</div>
+  return (
+    <div class="flex h-full min-h-0 flex-col overflow-hidden">
+      <div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
+        <div class="flex min-w-0 items-start gap-3">
+          <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-purple-400/70" />
+          <div class="min-w-0">
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
+              {workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
+            </p>
+            <p class="mt-1 text-xs text-gray-500">Reusable multi-agent pipelines for this space.</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={startImport}
+            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+              />
+            </svg>
+            Import
+          </button>
+          {workflows.length > 0 && (
+            <button
+              type="button"
+              onClick={exportAll}
+              class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                />
+              </svg>
+              Export All
+            </button>
+          )}
+          <button
+            onClick={onCreateWorkflow}
+            class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            Create Workflow
+          </button>
+        </div>
+      </div>
 
-			<div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
-				<div class="min-h-[calc(100%+1px)]">
-					{workflows.length === 0 ? (
-						<div class="text-center py-12">
-							<div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
-								<svg
-									class="w-5 h-5 text-gray-600"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M4 6h16M4 10h16M4 14h16M4 18h16"
-									/>
-								</svg>
-							</div>
-							<p class="text-sm text-gray-500">No workflows yet</p>
-							<p class="text-xs text-gray-600 mt-1">
-								Create a workflow to define multi-agent pipelines.
-							</p>
-							<button
-								onClick={onCreateWorkflow}
-								class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
-							>
-								Create your first workflow
-							</button>
-						</div>
-					) : (
-						<div>
-							{workflows.map((wf) => (
-								<WorkflowCard
-									key={wf.id}
-									workflow={wf}
-									spaceId={spaceId}
-									spaceName={spaceName}
-									onEdit={() => onEditWorkflow(wf.id)}
-									duplicateDrift={duplicateDriftMap.get(wf.id)}
-									onResyncDuplicates={handleResyncDuplicates}
-								/>
-							))}
-						</div>
-					)}
-				</div>
-			</div>
+      <div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
+        <div class="min-h-[calc(100%+1px)]">
+          {workflows.length === 0 ? (
+            <div class="text-center py-12">
+              <div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
+                <svg
+                  class="w-5 h-5 text-gray-600"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M4 6h16M4 10h16M4 14h16M4 18h16"
+                  />
+                </svg>
+              </div>
+              <p class="text-sm text-gray-500">No workflows yet</p>
+              <p class="text-xs text-gray-600 mt-1">
+                Create a workflow to define multi-agent pipelines.
+              </p>
+              <button
+                onClick={onCreateWorkflow}
+                class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+              >
+                Create your first workflow
+              </button>
+            </div>
+          ) : (
+            <div>
+              {workflows.map((wf) => (
+                <WorkflowCard
+                  key={wf.id}
+                  workflow={wf}
+                  spaceId={spaceId}
+                  spaceName={spaceName}
+                  onEdit={() => onEditWorkflow(wf.id)}
+                  duplicateDrift={duplicateDriftMap.get(wf.id)}
+                  onResyncDuplicates={handleResyncDuplicates}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
-			{/* Import Preview Dialog */}
-			{importPreview && importBundle && (
-				<ImportPreviewDialog
-					key={importBundle.exportedAt}
-					isOpen={true}
-					onClose={() => {
-						setImportBundle(null);
-						setImportPreview(null);
-					}}
-					onConfirm={executeImport}
-					preview={importPreview}
-					bundle={importBundle}
-					isExecuting={isExecuting}
-				/>
-			)}
-		</div>
-	);
+      {/* Import Preview Dialog */}
+      {importPreview && importBundle && (
+        <ImportPreviewDialog
+          key={importBundle.exportedAt}
+          isOpen={true}
+          onClose={() => {
+            setImportBundle(null);
+            setImportPreview(null);
+          }}
+          onConfirm={executeImport}
+          preview={importPreview}
+          bundle={importBundle}
+          isExecuting={isExecuting}
+        />
+      )}
+    </div>
+  );
 }

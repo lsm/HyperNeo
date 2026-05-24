@@ -24,24 +24,24 @@ import { runMigration54 } from '../../../../../src/storage/schema/migrations.ts'
 // ---------------------------------------------------------------------------
 
 function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-migration-54',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
-	db.exec('PRAGMA foreign_keys = ON');
-	runMigrations(db, () => {});
-	return { db, dir };
+  const dir = join(
+    process.cwd(),
+    'tmp',
+    'test-migration-54',
+    `t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  mkdirSync(dir, { recursive: true });
+  const db = new BunDatabase(join(dir, 'test.db'));
+  db.exec('PRAGMA foreign_keys = ON');
+  runMigrations(db, () => {});
+  return { db, dir };
 }
 
 function getIndexNames(db: BunDatabase, table: string): string[] {
-	const rows = db
-		.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?`)
-		.all(table) as { name: string }[];
-	return rows.map((r) => r.name);
+  const rows = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?`)
+    .all(table) as { name: string }[];
+  return rows.map((r) => r.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -49,37 +49,37 @@ function getIndexNames(db: BunDatabase, table: string): string[] {
 // ---------------------------------------------------------------------------
 
 describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
-	let db: BunDatabase;
-	let dir: string;
+  let db: BunDatabase;
+  let dir: string;
 
-	beforeEach(() => {
-		({ db, dir } = makeDb());
-	});
+  beforeEach(() => {
+    ({ db, dir } = makeDb());
+  });
 
-	afterEach(() => {
-		db.close();
-		rmSync(dir, { recursive: true, force: true });
-	});
+  afterEach(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
-	test('index does NOT exist on a fully-migrated DB (workflow_node_id removed in M71)', () => {
-		// After M71, workflow_node_id and agent_name columns no longer exist, so M54
-		// guard returns early and the index is never created.
-		const indexes = getIndexNames(db, 'space_tasks');
-		expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
-	});
+  test('index does NOT exist on a fully-migrated DB (workflow_node_id removed in M71)', () => {
+    // After M71, workflow_node_id and agent_name columns no longer exist, so M54
+    // guard returns early and the index is never created.
+    const indexes = getIndexNames(db, 'space_tasks');
+    expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
+  });
 
-	test('idempotent: calling runMigration54 on a fully-migrated DB does not error', () => {
-		// M54's guard checks for the presence of workflow_node_id and returns early if absent.
-		expect(() => runMigration54(db)).not.toThrow();
-	});
+  test('idempotent: calling runMigration54 on a fully-migrated DB does not error', () => {
+    // M54's guard checks for the presence of workflow_node_id and returns early if absent.
+    expect(() => runMigration54(db)).not.toThrow();
+  });
 
-	test('skips gracefully when workflow_node_id column is absent', () => {
-		// Create a minimal space_tasks table WITHOUT workflow_node_id
-		const db2Dir = join(process.cwd(), 'tmp', 'test-migration-54', `no-col-${Date.now()}`);
-		mkdirSync(db2Dir, { recursive: true });
-		const db2 = new BunDatabase(join(db2Dir, 'test2.db'));
-		try {
-			db2.exec(`
+  test('skips gracefully when workflow_node_id column is absent', () => {
+    // Create a minimal space_tasks table WITHOUT workflow_node_id
+    const db2Dir = join(process.cwd(), 'tmp', 'test-migration-54', `no-col-${Date.now()}`);
+    mkdirSync(db2Dir, { recursive: true });
+    const db2 = new BunDatabase(join(db2Dir, 'test2.db'));
+    try {
+      db2.exec(`
 				CREATE TABLE space_tasks (
 					id TEXT PRIMARY KEY,
 					space_id TEXT NOT NULL,
@@ -94,14 +94,14 @@ describe('Migration 54: uq_space_tasks_run_node_agent unique index', () => {
 					updated_at INTEGER NOT NULL DEFAULT 0
 				)
 			`);
-			// runMigration54 should skip without throwing
-			expect(() => runMigration54(db2)).not.toThrow();
-			// Index should NOT exist since workflow_node_id is absent
-			const indexes = getIndexNames(db2, 'space_tasks');
-			expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
-		} finally {
-			db2.close();
-			rmSync(db2Dir, { recursive: true, force: true });
-		}
-	});
+      // runMigration54 should skip without throwing
+      expect(() => runMigration54(db2)).not.toThrow();
+      // Index should NOT exist since workflow_node_id is absent
+      const indexes = getIndexNames(db2, 'space_tasks');
+      expect(indexes).not.toContain('uq_space_tasks_run_node_agent');
+    } finally {
+      db2.close();
+      rmSync(db2Dir, { recursive: true, force: true });
+    }
+  });
 });

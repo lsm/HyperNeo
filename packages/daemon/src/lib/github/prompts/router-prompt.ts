@@ -52,9 +52,9 @@ When comparing events to rooms, consider:
  * Parsed routing classification result from AI analysis
  */
 export interface RoutingClassification {
-	decision: 'route' | 'inbox' | 'reject';
-	roomId: string | null;
-	confidence: 'high' | 'medium' | 'low';
-	reason: string;
-	suggestedLabels?: string[];
+  decision: 'route' | 'inbox' | 'reject';
+  roomId: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+  suggestedLabels?: string[];
 }

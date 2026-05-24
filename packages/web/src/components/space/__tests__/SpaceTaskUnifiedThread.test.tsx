@@ -9,133 +9,133 @@ let mockIsLoading = false;
 let mockIsReconnecting = false;
 
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
-	useSpaceTaskMessages: () => ({
-		rows: mockRows,
-		isLoading: mockIsLoading,
-		isReconnecting: mockIsReconnecting,
-	}),
+  useSpaceTaskMessages: () => ({
+    rows: mockRows,
+    isLoading: mockIsLoading,
+    isReconnecting: mockIsReconnecting,
+  }),
 }));
 
 // MinimalThreadFeed pulls in MarkdownRenderer (lazy-loads marked). Stub it
 // so tests don't need to wait on async markdown parsing.
 vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
-	default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
+  default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
 
 function makeRow(
-	id: string,
-	label: string,
-	message: unknown,
-	createdAt: number,
-	sessionId = 'space:space-1:task:task-1'
+  id: string,
+  label: string,
+  message: unknown,
+  createdAt: number,
+  sessionId = 'space:space-1:task:task-1'
 ) {
-	return {
-		id,
-		sessionId,
-		kind: 'task_agent',
-		role: 'task',
-		label,
-		taskId: 'task-1',
-		taskTitle: 'Task One',
-		messageType: typeof message === 'object' ? (message as any).type : 'assistant',
-		content: JSON.stringify(message),
-		createdAt,
-	};
+  return {
+    id,
+    sessionId,
+    kind: 'task_agent',
+    role: 'task',
+    label,
+    taskId: 'task-1',
+    taskTitle: 'Task One',
+    messageType: typeof message === 'object' ? (message as any).type : 'assistant',
+    content: JSON.stringify(message),
+    createdAt,
+  };
 }
 
 function makeMinimalRows() {
-	return [
-		makeRow(
-			'u1',
-			'Task Agent',
-			{
-				type: 'user',
-				uuid: 'u1',
-				session_id: 'space:space-1:task:task-1',
-				message: { content: 'Initial ask' },
-			},
-			1
-		),
-		makeRow(
-			'a1',
-			'Task Agent',
-			{ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'old-1' }] } },
-			2
-		),
-		makeRow(
-			'a2',
-			'Coder Agent',
-			{ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'old-2' }] } },
-			3
-		),
-	];
+  return [
+    makeRow(
+      'u1',
+      'Task Agent',
+      {
+        type: 'user',
+        uuid: 'u1',
+        session_id: 'space:space-1:task:task-1',
+        message: { content: 'Initial ask' },
+      },
+      1
+    ),
+    makeRow(
+      'a1',
+      'Task Agent',
+      { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'old-1' }] } },
+      2
+    ),
+    makeRow(
+      'a2',
+      'Coder Agent',
+      { type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'old-2' }] } },
+      3
+    ),
+  ];
 }
 
 describe('SpaceTaskUnifiedThread', () => {
-	beforeEach(() => {
-		cleanup();
-		mockRows = makeMinimalRows();
-		mockIsLoading = false;
-		mockIsReconnecting = false;
-	});
+  beforeEach(() => {
+    cleanup();
+    mockRows = makeMinimalRows();
+    mockIsLoading = false;
+    mockIsReconnecting = false;
+  });
 
-	afterEach(() => cleanup());
+  afterEach(() => cleanup());
 
-	it('renders MinimalThreadFeed with one turn per agent block', () => {
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+  it('renders MinimalThreadFeed with one turn per agent block', () => {
+    render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		expect(screen.getByTestId('space-task-event-feed-minimal')).toBeTruthy();
-		// Each agent block becomes one minimal turn row.
-		expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
-	});
+    expect(screen.getByTestId('space-task-event-feed-minimal')).toBeTruthy();
+    // Each agent block becomes one minimal turn row.
+    expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
+  });
 
-	it('reports the actual scroll container to the parent', () => {
-		const onScrollerChange = vi.fn();
-		render(<SpaceTaskUnifiedThread taskId="task-1" onScrollerChange={onScrollerChange} />);
+  it('reports the actual scroll container to the parent', () => {
+    const onScrollerChange = vi.fn();
+    render(<SpaceTaskUnifiedThread taskId="task-1" onScrollerChange={onScrollerChange} />);
 
-		const scroller = screen.getByTestId('space-task-unified-thread').firstElementChild;
-		expect(scroller).toBeInstanceOf(HTMLDivElement);
-		expect(onScrollerChange).toHaveBeenCalledWith(scroller);
-	});
+    const scroller = screen.getByTestId('space-task-unified-thread').firstElementChild;
+    expect(scroller).toBeInstanceOf(HTMLDivElement);
+    expect(onScrollerChange).toHaveBeenCalledWith(scroller);
+  });
 
-	it('applies bottom scroll padding to the scroll container', () => {
-		render(
-			<SpaceTaskUnifiedThread
-				taskId="task-1"
-				bottomInsetClass="pb-44 sm:pb-36"
-				bottomScrollPaddingClass="scroll-pb-44 sm:scroll-pb-36"
-			/>
-		);
+  it('applies bottom scroll padding to the scroll container', () => {
+    render(
+      <SpaceTaskUnifiedThread
+        taskId="task-1"
+        bottomInsetClass="pb-44 sm:pb-36"
+        bottomScrollPaddingClass="scroll-pb-44 sm:scroll-pb-36"
+      />
+    );
 
-		const scroller = screen.getByTestId('space-task-unified-thread').firstElementChild!;
-		expect(scroller.className).toContain('pb-44 sm:pb-36');
-		expect(scroller.className).toContain('scroll-pb-44 sm:scroll-pb-36');
-	});
+    const scroller = screen.getByTestId('space-task-unified-thread').firstElementChild!;
+    expect(scroller.className).toContain('pb-44 sm:pb-36');
+    expect(scroller.className).toContain('scroll-pb-44 sm:scroll-pb-36');
+  });
 
-	it('does not render the legacy floating agent-name tag', () => {
-		// The compact-mode-only sticky agent label has been removed; minimal
-		// rows carry their own per-row header so the floating tag is redundant.
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.queryByTestId('agent-name-tag')).toBeNull();
-	});
+  it('does not render the legacy floating agent-name tag', () => {
+    // The compact-mode-only sticky agent label has been removed; minimal
+    // rows carry their own per-row header so the floating tag is redundant.
+    render(<SpaceTaskUnifiedThread taskId="task-1" />);
+    expect(screen.queryByTestId('agent-name-tag')).toBeNull();
+  });
 
-	it('shows loading state when loading', () => {
-		mockIsLoading = true;
-		mockRows = [];
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.getByText('Loading task thread…')).toBeTruthy();
-	});
+  it('shows loading state when loading', () => {
+    mockIsLoading = true;
+    mockRows = [];
+    render(<SpaceTaskUnifiedThread taskId="task-1" />);
+    expect(screen.getByText('Loading task thread…')).toBeTruthy();
+  });
 
-	it('shows reconnecting state when reconnecting', () => {
-		mockIsReconnecting = true;
-		mockRows = [];
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.getByText('Reconnecting task thread…')).toBeTruthy();
-	});
+  it('shows reconnecting state when reconnecting', () => {
+    mockIsReconnecting = true;
+    mockRows = [];
+    render(<SpaceTaskUnifiedThread taskId="task-1" />);
+    expect(screen.getByText('Reconnecting task thread…')).toBeTruthy();
+  });
 
-	it('shows empty state when no rows', () => {
-		mockRows = [];
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
-	});
+  it('shows empty state when no rows', () => {
+    mockRows = [];
+    render(<SpaceTaskUnifiedThread taskId="task-1" />);
+    expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
+  });
 });

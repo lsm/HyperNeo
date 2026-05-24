@@ -1,19 +1,19 @@
 {
-	"name": "@neokai/desktop",
-	"version": "0.31.0",
-	"private": true,
-	"description": "Kai Desktop App - Tauri wrapper bundling the neokai daemon as a sidecar",
-	"scripts": {
-		"build:sidecar": "./build-sidecar.sh",
-		"dev": "cargo tauri dev",
-		"build": "bun run build:sidecar && cargo tauri build",
-		"build:debug": "cargo tauri build --debug",
-		"build:macos": "bun run build:sidecar && cargo tauri build --target aarch64-apple-darwin",
-		"build:macos-intel": "bun run build:sidecar && cargo tauri build --target x86_64-apple-darwin",
-		"build:macos-universal": "bun run build:sidecar && cargo tauri build --target universal-apple-darwin",
-		"build:windows": "bun run build:sidecar && cargo tauri build --target x86_64-pc-windows-msvc",
-		"build:linux": "bun run build:sidecar && cargo tauri build --target x86_64-unknown-linux-gnu",
-		"build:linux-arm": "bun run build:sidecar && cargo tauri build --target aarch64-unknown-linux-gnu",
-		"tauri": "cargo tauri"
-	}
+  "name": "@neokai/desktop",
+  "version": "0.31.0",
+  "private": true,
+  "description": "Kai Desktop App - Tauri wrapper bundling the neokai daemon as a sidecar",
+  "scripts": {
+    "build:sidecar": "./build-sidecar.sh",
+    "dev": "cargo tauri dev",
+    "build": "bun run build:sidecar && cargo tauri build",
+    "build:debug": "cargo tauri build --debug",
+    "build:macos": "bun run build:sidecar && cargo tauri build --target aarch64-apple-darwin",
+    "build:macos-intel": "bun run build:sidecar && cargo tauri build --target x86_64-apple-darwin",
+    "build:macos-universal": "bun run build:sidecar && cargo tauri build --target universal-apple-darwin",
+    "build:windows": "bun run build:sidecar && cargo tauri build --target x86_64-pc-windows-msvc",
+    "build:linux": "bun run build:sidecar && cargo tauri build --target x86_64-unknown-linux-gnu",
+    "build:linux-arm": "bun run build:sidecar && cargo tauri build --target aarch64-unknown-linux-gnu",
+    "tauri": "cargo tauri"
+  }
 }

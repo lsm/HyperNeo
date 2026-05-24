@@ -19,27 +19,27 @@ export type AnchorTo = `${Placement}` | `${Placement} ${Align}`;
  * Anchor placement with selection support (for combobox).
  */
 export type AnchorToWithSelection =
-	| `${Placement | 'selection'}`
-	| `${Placement | 'selection'} ${Align}`;
+  | `${Placement | 'selection'}`
+  | `${Placement | 'selection'} ${Align}`;
 
 /**
  * Base anchor configuration properties.
  */
 type BaseAnchorProps = {
-	/**
-	 * The gap is the space between the trigger and the panel.
-	 */
-	gap: number | string; // For `var()` support
+  /**
+   * The gap is the space between the trigger and the panel.
+   */
+  gap: number | string; // For `var()` support
 
-	/**
-	 * The offset is the amount the panel should be nudged from its original position.
-	 */
-	offset: number | string; // For `var()` support
+  /**
+   * The offset is the amount the panel should be nudged from its original position.
+   */
+  offset: number | string; // For `var()` support
 
-	/**
-	 * The padding is the minimum space between the panel and the viewport.
-	 */
-	padding: number | string; // For `var()` support
+  /**
+   * The padding is the minimum space between the panel and the viewport.
+   */
+  padding: number | string; // For `var()` support
 };
 
 /**
@@ -63,17 +63,17 @@ type BaseAnchorProps = {
  * ```
  */
 export type AnchorProps =
-	| false // Disable entirely
-	| AnchorTo // String value to define the placement
-	| Partial<
-			BaseAnchorProps & {
-				/**
-				 * The to value defines which side of the trigger the panel should be placed on and its
-				 * alignment.
-				 */
-				to: AnchorTo;
-			}
-	  >;
+  | false // Disable entirely
+  | AnchorTo // String value to define the placement
+  | Partial<
+      BaseAnchorProps & {
+        /**
+         * The to value defines which side of the trigger the panel should be placed on and its
+         * alignment.
+         */
+        to: AnchorTo;
+      }
+    >;
 
 /**
  * Anchor props with selection support (for combobox).
@@ -82,26 +82,26 @@ export type AnchorProps =
  * which positions the panel relative to the selected item.
  */
 export type AnchorPropsWithSelection =
-	| false // Disable entirely
-	| AnchorToWithSelection
-	| Partial<
-			BaseAnchorProps & {
-				/**
-				 * The to value defines which side of the trigger the panel should be placed on and its
-				 * alignment.
-				 */
-				to: AnchorToWithSelection;
-			}
-	  >;
+  | false // Disable entirely
+  | AnchorToWithSelection
+  | Partial<
+      BaseAnchorProps & {
+        /**
+         * The to value defines which side of the trigger the panel should be placed on and its
+         * alignment.
+         */
+        to: AnchorToWithSelection;
+      }
+    >;
 
 /**
  * Internal props for floating panel with inner middleware support.
  */
 export type InternalFloatingPanelProps = Partial<{
-	inner: {
-		listRef: React.MutableRefObject<(HTMLElement | null)[]>;
-		index: number;
-	};
+  inner: {
+    listRef: React.MutableRefObject<(HTMLElement | null)[]>;
+    index: number;
+  };
 }>;
 
 /**
@@ -118,11 +118,11 @@ export type InternalFloatingPanelProps = Partial<{
  * ```
  */
 export function useResolvedAnchor<T extends AnchorProps | AnchorPropsWithSelection>(
-	anchor?: T
+  anchor?: T
 ): Exclude<T, boolean | string> | null {
-	return useMemo(() => {
-		if (!anchor) return null; // Disable entirely
-		if (typeof anchor === 'string') return { to: anchor } as Exclude<T, boolean | string>; // Simple string based value
-		return anchor as Exclude<T, boolean | string>; // User-provided value
-	}, [anchor]);
+  return useMemo(() => {
+    if (!anchor) return null; // Disable entirely
+    if (typeof anchor === 'string') return { to: anchor } as Exclude<T, boolean | string>; // Simple string based value
+    return anchor as Exclude<T, boolean | string>; // User-provided value
+  }, [anchor]);
 }

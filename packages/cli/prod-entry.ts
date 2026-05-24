@@ -15,33 +15,33 @@ import { version } from './package.json';
 
 // Handle uncaught errors to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
-	console.error('[Fatal] Unhandled Promise Rejection:', reason);
-	console.error('Promise:', promise);
-	process.exit(1);
+  console.error('[Fatal] Unhandled Promise Rejection:', reason);
+  console.error('Promise:', promise);
+  process.exit(1);
 });
 
 process.on('uncaughtException', (error) => {
-	console.error('[Fatal] Uncaught Exception:', error);
-	process.exit(1);
+  console.error('[Fatal] Uncaught Exception:', error);
+  process.exit(1);
 });
 
 const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 
 if (error) {
-	console.error(`Error: ${error}`);
-	if (!cliOptions.help) {
-		process.exit(1);
-	}
+  console.error(`Error: ${error}`);
+  if (!cliOptions.help) {
+    process.exit(1);
+  }
 }
 
 if (cliOptions.version) {
-	console.log(version);
-	process.exit(0);
+  console.log(version);
+  process.exit(0);
 }
 
 if (cliOptions.help) {
-	console.log(getHelpText());
-	process.exit(0);
+  console.log(getHelpText());
+  process.exit(0);
 }
 
 // Production binary always runs in production mode
@@ -53,8 +53,8 @@ console.log(`\nNeoKai Server`);
 console.log(`   Database: ${config.dbPath}\n`);
 
 try {
-	await startProdServer(config);
+  await startProdServer(config);
 } catch (error) {
-	console.error('[Fatal] Server startup failed:', error);
-	process.exit(1);
+  console.error('[Fatal] Server startup failed:', error);
+  process.exit(1);
 }

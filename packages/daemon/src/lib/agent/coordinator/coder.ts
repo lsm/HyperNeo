@@ -1,29 +1,29 @@
 import type { AgentDefinition } from '@neokai/shared';
 
 export const coderAgent: AgentDefinition = {
-	description:
-		'Write and modify code. Use for implementing features, fixing bugs, editing files, and making code changes.',
-	tools: [
-		'Read',
-		'Edit',
-		'Write',
-		'Grep',
-		'Glob',
-		'Bash',
-		'WebFetch',
-		'WebSearch',
-		'Skill',
-		'Task',
-		'TodoWrite',
-		'TaskOutput',
-		'TaskStop',
-		'EnterPlanMode',
-		'ExitPlanMode',
-		'NotebookEdit',
-		'ToolSearch',
-	],
-	model: 'sonnet',
-	prompt: `You are a focused code implementer. Your job is to achieve the stated goal by making precise, minimal code changes.
+  description:
+    'Write and modify code. Use for implementing features, fixing bugs, editing files, and making code changes.',
+  tools: [
+    'Read',
+    'Edit',
+    'Write',
+    'Grep',
+    'Glob',
+    'Bash',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'Task',
+    'TodoWrite',
+    'TaskOutput',
+    'TaskStop',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'NotebookEdit',
+    'ToolSearch',
+  ],
+  model: 'sonnet',
+  prompt: `You are a focused code implementer. Your job is to achieve the stated goal by making precise, minimal code changes.
 
 When given a task:
 1. Understand the goal and acceptance criteria

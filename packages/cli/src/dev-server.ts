@@ -7,291 +7,291 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createLogger } from '@neokai/shared';
 import {
-	findAvailablePort,
-	createCorsPreflightResponse,
-	isWebSocketPath,
-	createJsonErrorResponse,
-	printServerUrls,
+  findAvailablePort,
+  createCorsPreflightResponse,
+  isWebSocketPath,
+  createJsonErrorResponse,
+  printServerUrls,
 } from './cli-utils';
 import { ensureBuiltinSkills } from './skill-utils';
 
 const log = createLogger('kai:cli:dev-server');
 
 const VITE_CLIENT_SCRIPT_RE =
-	/<script\b(?=[^>]*\btype=(["'])module\1)(?=[^>]*\bsrc=(["'])\/@vite\/client\2)[^>]*>\s*<\/script>\s*/i;
+  /<script\b(?=[^>]*\btype=(["'])module\1)(?=[^>]*\bsrc=(["'])\/@vite\/client\2)[^>]*>\s*<\/script>\s*/i;
 
 function stripViteClientScript(html: string): string {
-	return html.replace(VITE_CLIENT_SCRIPT_RE, '');
+  return html.replace(VITE_CLIENT_SCRIPT_RE, '');
 }
 
 function responseHeadersWithoutContentLength(headers: Headers): Headers {
-	const nextHeaders = new Headers(headers);
-	nextHeaders.delete('content-length');
-	return nextHeaders;
+  const nextHeaders = new Headers(headers);
+  nextHeaders.delete('content-length');
+  return nextHeaders;
 }
 
 const VITE_CLIENT_SHIM = [
-	"import '/@vite/env';",
-	'const hotData = new Map();',
-	'const styleElements = new Map();',
-	'export function createHotContext(ownerPath) {',
-	'  const data = hotData.get(ownerPath) ?? {};',
-	'  hotData.set(ownerPath, data);',
-	'  return {',
-	'    data,',
-	'    accept() {},',
-	'    acceptExports() {},',
-	'    dispose() {},',
-	'    prune() {},',
-	'    decline() {},',
-	'    invalidate() {},',
-	'    on() {},',
-	'    off() {},',
-	'    send() {},',
-	'  };',
-	'}',
-	'export function updateStyle(id, content) {',
-	'  let style = styleElements.get(id);',
-	'  if (!style) {',
-	'    style = document.querySelector(`style[data-vite-dev-id="${id}"]`);',
-	'  }',
-	'  if (!style) {',
-	"    style = document.createElement('style');",
-	"    style.setAttribute('type', 'text/css');",
-	"    style.setAttribute('data-vite-dev-id', id);",
-	'    document.head.appendChild(style);',
-	'  }',
-	'  style.textContent = content;',
-	'  styleElements.set(id, style);',
-	'}',
-	'export function removeStyle(id) {',
-	'  styleElements.get(id)?.remove();',
-	'  styleElements.delete(id);',
-	'}',
-	'export function injectQuery(url, queryToInject) {',
-	"  if (url[0] !== '.' && url[0] !== '/') return url;",
-	"  const pathname = url.replace(/[?#].*$/, '');",
-	"  const { search, hash } = new URL(url, 'http://vite.dev');",
-	"  return `${pathname}${search ? `${search}&${queryToInject.slice(1)}` : queryToInject}${hash || ''}`;",
-	'}',
+  "import '/@vite/env';",
+  'const hotData = new Map();',
+  'const styleElements = new Map();',
+  'export function createHotContext(ownerPath) {',
+  '  const data = hotData.get(ownerPath) ?? {};',
+  '  hotData.set(ownerPath, data);',
+  '  return {',
+  '    data,',
+  '    accept() {},',
+  '    acceptExports() {},',
+  '    dispose() {},',
+  '    prune() {},',
+  '    decline() {},',
+  '    invalidate() {},',
+  '    on() {},',
+  '    off() {},',
+  '    send() {},',
+  '  };',
+  '}',
+  'export function updateStyle(id, content) {',
+  '  let style = styleElements.get(id);',
+  '  if (!style) {',
+  '    style = document.querySelector(`style[data-vite-dev-id="${id}"]`);',
+  '  }',
+  '  if (!style) {',
+  "    style = document.createElement('style');",
+  "    style.setAttribute('type', 'text/css');",
+  "    style.setAttribute('data-vite-dev-id', id);",
+  '    document.head.appendChild(style);',
+  '  }',
+  '  style.textContent = content;',
+  '  styleElements.set(id, style);',
+  '}',
+  'export function removeStyle(id) {',
+  '  styleElements.get(id)?.remove();',
+  '  styleElements.delete(id);',
+  '}',
+  'export function injectQuery(url, queryToInject) {',
+  "  if (url[0] !== '.' && url[0] !== '/') return url;",
+  "  const pathname = url.replace(/[?#].*$/, '');",
+  "  const { search, hash } = new URL(url, 'http://vite.dev');",
+  "  return `${pathname}${search ? `${search}&${queryToInject.slice(1)}` : queryToInject}${hash || ''}`;",
+  '}',
 ].join('\n');
 
 export async function startDevServer(config: Config) {
-	log.info('🔧 Starting unified development server...');
+  log.info('🔧 Starting unified development server...');
 
-	// Register signal handlers FIRST, before any async operations
-	// This ensures Ctrl+C works even if startup hangs
-	let isShuttingDown = false;
-	let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
-	let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
-	let server: ReturnType<typeof Bun.serve> | null = null;
-	let sdkWarmupTimer: ReturnType<typeof setTimeout> | undefined;
+  // Register signal handlers FIRST, before any async operations
+  // This ensures Ctrl+C works even if startup hangs
+  let isShuttingDown = false;
+  let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
+  let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  let sdkWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 
-	const shutdown = async (signal: string) => {
-		if (isShuttingDown) {
-			// Second Ctrl+C - force exit immediately
-			log.warn('Forcing exit...');
-			process.exit(1);
-		}
-		isShuttingDown = true;
+  const shutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      // Second Ctrl+C - force exit immediately
+      log.warn('Forcing exit...');
+      process.exit(1);
+    }
+    isShuttingDown = true;
 
-		// Cancel pending SDK warmup if shutting down early
-		if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
+    // Cancel pending SDK warmup if shutting down early
+    if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
 
-		log.info(
-			`\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
-		);
+    log.info(
+      `\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
+    );
 
-		try {
-			if (server) {
-				log.info('🛑 Stopping unified server...');
-				server.stop();
-			}
+    try {
+      if (server) {
+        log.info('🛑 Stopping unified server...');
+        server.stop();
+      }
 
-			if (vite) {
-				log.info('🛑 Stopping Vite dev server...');
-				// Add timeout for Vite close - it can hang on active HMR connections
-				await Promise.race([
-					vite.close(),
-					new Promise<void>((resolve) => {
-						setTimeout(() => {
-							log.warn('⚠️  Vite close timed out after 3s, continuing...');
-							resolve();
-						}, 3000);
-					}),
-				]);
-			}
+      if (vite) {
+        log.info('🛑 Stopping Vite dev server...');
+        // Add timeout for Vite close - it can hang on active HMR connections
+        await Promise.race([
+          vite.close(),
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              log.warn('⚠️  Vite close timed out after 3s, continuing...');
+              resolve();
+            }, 3000);
+          }),
+        ]);
+      }
 
-			if (daemonContext) {
-				log.info('🛑 Cleaning up daemon...');
-				// Add timeout for daemon cleanup as well
-				await Promise.race([
-					daemonContext.cleanup(),
-					new Promise<void>((resolve) => {
-						setTimeout(() => {
-							log.warn('⚠️  Daemon cleanup timed out after 5s, continuing...');
-							resolve();
-						}, 5000);
-					}),
-				]);
-			}
+      if (daemonContext) {
+        log.info('🛑 Cleaning up daemon...');
+        // Add timeout for daemon cleanup as well
+        await Promise.race([
+          daemonContext.cleanup(),
+          new Promise<void>((resolve) => {
+            setTimeout(() => {
+              log.warn('⚠️  Daemon cleanup timed out after 5s, continuing...');
+              resolve();
+            }, 5000);
+          }),
+        ]);
+      }
 
-			log.info('✨ Shutdown complete');
-			process.exit(0);
-		} catch (error) {
-			log.error('❌ Error during shutdown:', error);
-			process.exit(1);
-		}
-	};
+      log.info('✨ Shutdown complete');
+      process.exit(0);
+    } catch (error) {
+      log.error('❌ Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
 
-	process.on('SIGINT', () => shutdown('SIGINT'));
-	process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-	// Sync built-in skill files from packages/skills/ to ~/.neokai/skills/.
-	// In dev mode the source files live in the monorepo; in the compiled binary they
-	// are embedded and extracted by prod-server-embedded.ts instead. Both end up at
-	// ~/.neokai/skills/{commandName}/ which QueryOptionsBuilder injects as SDK plugins.
-	const skillsSourceDir = resolve(import.meta.dir, '../../skills');
-	const skillsDestDir = join(homedir(), '.neokai', 'skills');
-	await ensureBuiltinSkills(skillsSourceDir, skillsDestDir);
+  // Sync built-in skill files from packages/skills/ to ~/.neokai/skills/.
+  // In dev mode the source files live in the monorepo; in the compiled binary they
+  // are embedded and extracted by prod-server-embedded.ts instead. Both end up at
+  // ~/.neokai/skills/{commandName}/ which QueryOptionsBuilder injects as SDK plugins.
+  const skillsSourceDir = resolve(import.meta.dir, '../../skills');
+  const skillsDestDir = join(homedir(), '.neokai', 'skills');
+  await ensureBuiltinSkills(skillsSourceDir, skillsDestDir);
 
-	// Create daemon app in embedded mode (no root route)
-	daemonContext = await createDaemonApp({
-		config,
-		verbose: true,
-		standalone: false, // Skip root info route in embedded mode
-	});
+  // Create daemon app in embedded mode (no root route)
+  daemonContext = await createDaemonApp({
+    config,
+    verbose: true,
+    standalone: false, // Skip root info route in embedded mode
+  });
 
-	log.info('Room orchestration is handled by RoomAgentService');
+  log.info('Room orchestration is handled by RoomAgentService');
 
-	// Stop the daemon's internal server (we'll create a unified one)
-	daemonContext.server.stop();
+  // Stop the daemon's internal server (we'll create a unified one)
+  daemonContext.server.stop();
 
-	// Find an available port for Vite dev server
-	log.info('📦 Starting Vite dev server...');
-	const vitePort = await findAvailablePort();
-	log.info(`   Found available Vite port: ${vitePort}`);
+  // Find an available port for Vite dev server
+  log.info('📦 Starting Vite dev server...');
+  const vitePort = await findAvailablePort();
+  log.info(`   Found available Vite port: ${vitePort}`);
 
-	vite = await createViteServer({
-		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
-		root: resolve(import.meta.dir, '../../web/src'),
-		server: {
-			host: '0.0.0.0',
-			port: vitePort,
-			strictPort: false,
-			// The unified dev server is often stopped while the browser stays open.
-			// Vite's HMR client aggressively reconnects after shutdown, which can
-			// create thousands of failed localhost requests. Keep Vite's dev
-			// transforms, but require a manual browser refresh for UI changes.
-			hmr: false,
-		},
-	});
-	await vite.listen();
-	log.info(`✅ Vite dev server running on port ${vitePort}`);
+  vite = await createViteServer({
+    configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
+    root: resolve(import.meta.dir, '../../web/src'),
+    server: {
+      host: '0.0.0.0',
+      port: vitePort,
+      strictPort: false,
+      // The unified dev server is often stopped while the browser stays open.
+      // Vite's HMR client aggressively reconnects after shutdown, which can
+      // create thousands of failed localhost requests. Keep Vite's dev
+      // transforms, but require a manual browser refresh for UI changes.
+      hmr: false,
+    },
+  });
+  await vite.listen();
+  log.info(`✅ Vite dev server running on port ${vitePort}`);
 
-	// Get WebSocket handlers from daemon
-	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
-	const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
+  // Get WebSocket handlers from daemon
+  const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
+  const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
-	// Create unified Bun server that combines daemon + Vite proxy
-	server = Bun.serve({
-		hostname: config.host,
-		port: config.port,
-		idleTimeout: 255, // Max value (255 sec) - prevent timeout on long requests
+  // Create unified Bun server that combines daemon + Vite proxy
+  server = Bun.serve({
+    hostname: config.host,
+    port: config.port,
+    idleTimeout: 255, // Max value (255 sec) - prevent timeout on long requests
 
-		async fetch(req, server) {
-			const url = new URL(req.url);
+    async fetch(req, server) {
+      const url = new URL(req.url);
 
-			// CORS preflight
-			if (req.method === 'OPTIONS') {
-				return createCorsPreflightResponse();
-			}
+      // CORS preflight
+      if (req.method === 'OPTIONS') {
+        return createCorsPreflightResponse();
+      }
 
-			// WebSocket upgrade at /ws (daemon WebSocket)
-			if (isWebSocketPath(url.pathname)) {
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const upgraded = (server as any).upgrade(req, {
-					data: {
-						connectionSessionId: 'global',
-					},
-				});
+      // WebSocket upgrade at /ws (daemon WebSocket)
+      if (isWebSocketPath(url.pathname)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const upgraded = (server as any).upgrade(req, {
+          data: {
+            connectionSessionId: 'global',
+          },
+        });
 
-				if (upgraded) {
-					return; // WebSocket upgrade successful
-				}
+        if (upgraded) {
+          return; // WebSocket upgrade successful
+        }
 
-				return new Response('WebSocket upgrade failed', { status: 500 });
-			}
+        return new Response('WebSocket upgrade failed', { status: 500 });
+      }
 
-			// Proxy all other requests to Vite dev server
-			try {
-				if (url.pathname === '/@vite/client') {
-					return new Response(VITE_CLIENT_SHIM, {
-						headers: {
-							'content-type': 'text/javascript',
-							'cache-control': 'no-cache',
-						},
-					});
-				}
+      // Proxy all other requests to Vite dev server
+      try {
+        if (url.pathname === '/@vite/client') {
+          return new Response(VITE_CLIENT_SHIM, {
+            headers: {
+              'content-type': 'text/javascript',
+              'cache-control': 'no-cache',
+            },
+          });
+        }
 
-				const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
+        const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
 
-				// Forward request with original headers
-				const fetchOptions: RequestInit = {
-					method: req.method,
-					headers: Object.fromEntries(req.headers.entries()),
-				};
+        // Forward request with original headers
+        const fetchOptions: RequestInit = {
+          method: req.method,
+          headers: Object.fromEntries(req.headers.entries()),
+        };
 
-				// Forward request body for methods that may have one
-				if (req.method !== 'GET' && req.method !== 'HEAD') {
-					fetchOptions.body = req.body;
-					// Bun supports streaming body via duplex
-					(fetchOptions as Record<string, unknown>).duplex = 'half';
-				}
+        // Forward request body for methods that may have one
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          fetchOptions.body = req.body;
+          // Bun supports streaming body via duplex
+          (fetchOptions as Record<string, unknown>).duplex = 'half';
+        }
 
-				const viteResponse = await fetch(viteUrl, fetchOptions);
-				const contentType = viteResponse.headers.get('content-type') ?? '';
+        const viteResponse = await fetch(viteUrl, fetchOptions);
+        const contentType = viteResponse.headers.get('content-type') ?? '';
 
-				if (contentType.includes('text/html')) {
-					const html = await viteResponse.text();
-					return new Response(stripViteClientScript(html), {
-						status: viteResponse.status,
-						headers: responseHeadersWithoutContentLength(viteResponse.headers),
-					});
-				}
+        if (contentType.includes('text/html')) {
+          const html = await viteResponse.text();
+          return new Response(stripViteClientScript(html), {
+            status: viteResponse.status,
+            headers: responseHeadersWithoutContentLength(viteResponse.headers),
+          });
+        }
 
-				// Create response with Vite's response
-				return new Response(viteResponse.body, {
-					status: viteResponse.status,
-					headers: viteResponse.headers,
-				});
-			} catch (error) {
-				log.error('Vite proxy error:', error);
-				return new Response('Failed to proxy to Vite', { status: 502 });
-			}
-		},
+        // Create response with Vite's response
+        return new Response(viteResponse.body, {
+          status: viteResponse.status,
+          headers: viteResponse.headers,
+        });
+      } catch (error) {
+        log.error('Vite proxy error:', error);
+        return new Response('Failed to proxy to Vite', { status: 502 });
+      }
+    },
 
-		websocket: {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bun's WebSocket data is shaped by upgrade()
-			open(ws: any) {
-				wsHandlers.open(ws);
-			},
-			message(ws: any, msg: string | Buffer) {
-				wsHandlers.message(ws, msg);
-			},
-			close(ws: any) {
-				wsHandlers.close(ws);
-			},
-		},
+    websocket: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bun's WebSocket data is shaped by upgrade()
+      open(ws: any) {
+        wsHandlers.open(ws);
+      },
+      message(ws: any, msg: string | Buffer) {
+        wsHandlers.message(ws, msg);
+      },
+      close(ws: any) {
+        wsHandlers.close(ws);
+      },
+    },
 
-		error(error) {
-			log.error('Server error:', error);
-			return createJsonErrorResponse(error instanceof Error ? error.message : String(error));
-		},
-	});
+    error(error) {
+      log.error('Server error:', error);
+      return createJsonErrorResponse(error instanceof Error ? error.message : String(error));
+    },
+  });
 
-	console.log(`\n✨ Unified development server running!`);
-	printServerUrls(config.port, config.host);
-	console.log(`   🔄 Vite dev transforms enabled; refresh the browser after UI changes`);
-	console.log(`\n📝 Press Ctrl+C to stop\n`);
+  console.log(`\n✨ Unified development server running!`);
+  printServerUrls(config.port, config.host);
+  console.log(`   🔄 Vite dev transforms enabled; refresh the browser after UI changes`);
+  console.log(`\n📝 Press Ctrl+C to stop\n`);
 }

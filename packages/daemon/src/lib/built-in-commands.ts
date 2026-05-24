@@ -9,9 +9,9 @@
  */
 
 export interface BuiltInCommand {
-	name: string;
-	description: string;
-	prompt: string;
+  name: string;
+  description: string;
+  prompt: string;
 }
 
 /**
@@ -19,11 +19,11 @@ export interface BuiltInCommand {
  * Internal-only: use getBuiltInCommandNames() or expandBuiltInCommand() instead
  */
 const BUILT_IN_COMMANDS: BuiltInCommand[] = [
-	{
-		name: 'merge-session',
-		description:
-			'Complete the current worktree session by committing, merging to target branch, and pushing',
-		prompt: `Complete the current worktree session workflow:
+  {
+    name: 'merge-session',
+    description:
+      'Complete the current worktree session by committing, merging to target branch, and pushing',
+    prompt: `Complete the current worktree session workflow:
 
 1. Create logical commits for all changes in this worktree
 2. Detect the current branch in the root repository (could be main, dev, feature branch, etc.)
@@ -36,14 +36,14 @@ Follow git best practices:
 - Verify no conflicts during rebase
 - Ensure the merge is fast-forward only
 - Detect and use whatever branch is currently checked out in the root repo`,
-	},
+  },
 ];
 
 /**
  * Get list of built-in command names
  */
 export function getBuiltInCommandNames(): string[] {
-	return BUILT_IN_COMMANDS.map((cmd) => cmd.name);
+  return BUILT_IN_COMMANDS.map((cmd) => cmd.name);
 }
 
 /**
@@ -51,17 +51,17 @@ export function getBuiltInCommandNames(): string[] {
  * Returns null if the command is not a built-in command
  */
 export function expandBuiltInCommand(content: string): string | null {
-	const trimmed = content.trim();
-	if (!trimmed.startsWith('/')) {
-		return null;
-	}
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('/')) {
+    return null;
+  }
 
-	const commandName = trimmed.slice(1).split(/\s+/)[0];
-	const command = BUILT_IN_COMMANDS.find((cmd) => cmd.name === commandName);
+  const commandName = trimmed.slice(1).split(/\s+/)[0];
+  const command = BUILT_IN_COMMANDS.find((cmd) => cmd.name === commandName);
 
-	if (!command) {
-		return null;
-	}
+  if (!command) {
+    return null;
+  }
 
-	return command.prompt;
+  return command.prompt;
 }

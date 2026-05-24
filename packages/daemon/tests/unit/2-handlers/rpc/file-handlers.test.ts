@@ -18,222 +18,222 @@ type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
-	hub: MessageHub;
-	handlers: Map<string, RequestHandler>;
+  hub: MessageHub;
+  handlers: Map<string, RequestHandler>;
 } {
-	const handlers = new Map<string, RequestHandler>();
+  const handlers = new Map<string, RequestHandler>();
 
-	const hub = {
-		onRequest: mock((method: string, handler: RequestHandler) => {
-			handlers.set(method, handler);
-			return () => handlers.delete(method);
-		}),
-		onEvent: mock(() => () => {}),
-		request: mock(async () => {}),
-		event: mock(() => {}),
-		joinChannel: mock(async () => {}),
-		leaveChannel: mock(async () => {}),
-		isConnected: mock(() => true),
-		getState: mock(() => 'connected' as const),
-		onConnection: mock(() => () => {}),
-		onMessage: mock(() => () => {}),
-		cleanup: mock(() => {}),
-		registerTransport: mock(() => () => {}),
-		registerRouter: mock(() => {}),
-		getRouter: mock(() => null),
-		getPendingCallCount: mock(() => 0),
-	} as unknown as MessageHub;
+  const hub = {
+    onRequest: mock((method: string, handler: RequestHandler) => {
+      handlers.set(method, handler);
+      return () => handlers.delete(method);
+    }),
+    onEvent: mock(() => () => {}),
+    request: mock(async () => {}),
+    event: mock(() => {}),
+    joinChannel: mock(async () => {}),
+    leaveChannel: mock(async () => {}),
+    isConnected: mock(() => true),
+    getState: mock(() => 'connected' as const),
+    onConnection: mock(() => () => {}),
+    onMessage: mock(() => () => {}),
+    cleanup: mock(() => {}),
+    registerTransport: mock(() => () => {}),
+    registerRouter: mock(() => {}),
+    getRouter: mock(() => null),
+    getPendingCallCount: mock(() => 0),
+  } as unknown as MessageHub;
 
-	return { hub, handlers };
+  return { hub, handlers };
 }
 
 // Helper to create a mock AgentSession
 function createMockAgentSession(workspacePath: string = '/workspace/test'): {
-	agentSession: AgentSession;
+  agentSession: AgentSession;
 } {
-	const agentSession = {
-		getSessionData: mock(() => ({
-			id: 'session-123',
-			workspacePath,
-			config: {},
-		})),
-	} as unknown as AgentSession;
+  const agentSession = {
+    getSessionData: mock(() => ({
+      id: 'session-123',
+      workspacePath,
+      config: {},
+    })),
+  } as unknown as AgentSession;
 
-	return { agentSession };
+  return { agentSession };
 }
 
 // Helper to create mock SessionManager
 function createMockSessionManager(): {
-	sessionManager: SessionManager;
-	getSessionAsyncMock: ReturnType<typeof mock>;
+  sessionManager: SessionManager;
+  getSessionAsyncMock: ReturnType<typeof mock>;
 } {
-	const { agentSession } = createMockAgentSession();
+  const { agentSession } = createMockAgentSession();
 
-	const getSessionAsyncMock = mock(async () => agentSession);
+  const getSessionAsyncMock = mock(async () => agentSession);
 
-	const sessionManager = {
-		getSessionAsync: getSessionAsyncMock,
-	} as unknown as SessionManager;
+  const sessionManager = {
+    getSessionAsync: getSessionAsyncMock,
+  } as unknown as SessionManager;
 
-	return { sessionManager, getSessionAsyncMock };
+  return { sessionManager, getSessionAsyncMock };
 }
 
 describe('File RPC Handlers', () => {
-	let messageHubData: ReturnType<typeof createMockMessageHub>;
-	let sessionManagerData: ReturnType<typeof createMockSessionManager>;
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let sessionManagerData: ReturnType<typeof createMockSessionManager>;
 
-	beforeEach(() => {
-		messageHubData = createMockMessageHub();
-		sessionManagerData = createMockSessionManager();
+  beforeEach(() => {
+    messageHubData = createMockMessageHub();
+    sessionManagerData = createMockSessionManager();
 
-		// Setup handlers with mocked dependencies
-		setupFileHandlers(messageHubData.hub, sessionManagerData.sessionManager);
-	});
+    // Setup handlers with mocked dependencies
+    setupFileHandlers(messageHubData.hub, sessionManagerData.sessionManager);
+  });
 
-	afterEach(() => {
-		mock.restore();
-	});
+  afterEach(() => {
+    mock.restore();
+  });
 
-	describe('file.read', () => {
-		it('throws error when session not found', async () => {
-			const handler = messageHubData.handlers.get('file.read');
-			expect(handler).toBeDefined();
+  describe('file.read', () => {
+    it('throws error when session not found', async () => {
+      const handler = messageHubData.handlers.get('file.read');
+      expect(handler).toBeDefined();
 
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent', path: 'test.txt' }, {})).rejects.toThrow(
-				'Session not found'
-			);
-		});
+      await expect(handler!({ sessionId: 'non-existent', path: 'test.txt' }, {})).rejects.toThrow(
+        'Session not found'
+      );
+    });
 
-		it('reads file with utf-8 encoding', async () => {
-			const handler = messageHubData.handlers.get('file.read');
-			expect(handler).toBeDefined();
+    it('reads file with utf-8 encoding', async () => {
+      const handler = messageHubData.handlers.get('file.read');
+      expect(handler).toBeDefined();
 
-			// Note: This will fail with real FileManager if file doesn't exist
-			// In a unit test, we're testing the handler logic, not FileManager implementation
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      // Note: This will fail with real FileManager if file doesn't exist
+      // In a unit test, we're testing the handler logic, not FileManager implementation
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// The test should verify the handler calls the right methods
-			// FileManager will throw if file doesn't exist, which is expected behavior
-		});
+      // The test should verify the handler calls the right methods
+      // FileManager will throw if file doesn't exist, which is expected behavior
+    });
 
-		it('reads file with base64 encoding', async () => {
-			const handler = messageHubData.handlers.get('file.read');
-			expect(handler).toBeDefined();
+    it('reads file with base64 encoding', async () => {
+      const handler = messageHubData.handlers.get('file.read');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Verify handler accepts encoding parameter
-		});
+      // Verify handler accepts encoding parameter
+    });
 
-		it('handles missing path parameter', async () => {
-			const handler = messageHubData.handlers.get('file.read');
-			expect(handler).toBeDefined();
+    it('handles missing path parameter', async () => {
+      const handler = messageHubData.handlers.get('file.read');
+      expect(handler).toBeDefined();
 
-			// Handler should pass undefined path to FileManager which will handle error
-		});
-	});
+      // Handler should pass undefined path to FileManager which will handle error
+    });
+  });
 
-	describe('file.list', () => {
-		it('throws error when session not found', async () => {
-			const handler = messageHubData.handlers.get('file.list');
-			expect(handler).toBeDefined();
+  describe('file.list', () => {
+    it('throws error when session not found', async () => {
+      const handler = messageHubData.handlers.get('file.list');
+      expect(handler).toBeDefined();
 
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
-				'Session not found'
-			);
-		});
+      await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+        'Session not found'
+      );
+    });
 
-		it('lists directory contents non-recursively', async () => {
-			const handler = messageHubData.handlers.get('file.list');
-			expect(handler).toBeDefined();
+    it('lists directory contents non-recursively', async () => {
+      const handler = messageHubData.handlers.get('file.list');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Handler should return { files: [...] }
-		});
+      // Handler should return { files: [...] }
+    });
 
-		it('lists directory contents recursively', async () => {
-			const handler = messageHubData.handlers.get('file.list');
-			expect(handler).toBeDefined();
+    it('lists directory contents recursively', async () => {
+      const handler = messageHubData.handlers.get('file.list');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Handler should pass recursive flag to FileManager
-		});
+      // Handler should pass recursive flag to FileManager
+    });
 
-		it('uses default path when not provided', async () => {
-			const handler = messageHubData.handlers.get('file.list');
-			expect(handler).toBeDefined();
+    it('uses default path when not provided', async () => {
+      const handler = messageHubData.handlers.get('file.list');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Handler should default to '.' path
-		});
-	});
+      // Handler should default to '.' path
+    });
+  });
 
-	describe('file.tree', () => {
-		it('throws error when session not found', async () => {
-			const handler = messageHubData.handlers.get('file.tree');
-			expect(handler).toBeDefined();
+  describe('file.tree', () => {
+    it('throws error when session not found', async () => {
+      const handler = messageHubData.handlers.get('file.tree');
+      expect(handler).toBeDefined();
 
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
 
-			await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
-				'Session not found'
-			);
-		});
+      await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
+        'Session not found'
+      );
+    });
 
-		it('gets file tree with default depth', async () => {
-			const handler = messageHubData.handlers.get('file.tree');
-			expect(handler).toBeDefined();
+    it('gets file tree with default depth', async () => {
+      const handler = messageHubData.handlers.get('file.tree');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Handler should default to maxDepth of 3
-		});
+      // Handler should default to maxDepth of 3
+    });
 
-		it('gets file tree with custom depth', async () => {
-			const handler = messageHubData.handlers.get('file.tree');
-			expect(handler).toBeDefined();
+    it('gets file tree with custom depth', async () => {
+      const handler = messageHubData.handlers.get('file.tree');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Handler should pass custom maxDepth
-		});
+      // Handler should pass custom maxDepth
+    });
 
-		it('uses default path when not provided', async () => {
-			const handler = messageHubData.handlers.get('file.tree');
-			expect(handler).toBeDefined();
+    it('uses default path when not provided', async () => {
+      const handler = messageHubData.handlers.get('file.tree');
+      expect(handler).toBeDefined();
 
-			const { agentSession } = createMockAgentSession('/tmp');
-			sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
+      const { agentSession } = createMockAgentSession('/tmp');
+      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(agentSession);
 
-			// Handler should default to '.' path
-		});
-	});
+      // Handler should default to '.' path
+    });
+  });
 
-	describe('handler registration', () => {
-		it('registers file.read handler', () => {
-			expect(messageHubData.handlers.has('file.read')).toBe(true);
-		});
+  describe('handler registration', () => {
+    it('registers file.read handler', () => {
+      expect(messageHubData.handlers.has('file.read')).toBe(true);
+    });
 
-		it('registers file.list handler', () => {
-			expect(messageHubData.handlers.has('file.list')).toBe(true);
-		});
+    it('registers file.list handler', () => {
+      expect(messageHubData.handlers.has('file.list')).toBe(true);
+    });
 
-		it('registers file.tree handler', () => {
-			expect(messageHubData.handlers.has('file.tree')).toBe(true);
-		});
-	});
+    it('registers file.tree handler', () => {
+      expect(messageHubData.handlers.has('file.tree')).toBe(true);
+    });
+  });
 });

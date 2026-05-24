@@ -27,17 +27,17 @@ import type { GateBannerSummary } from '../../lib/task-banner.ts';
 import { evaluateGateStatus, parseScriptResult } from './gate-status.ts';
 
 interface GateDataRecord {
-	runId: string;
-	gateId: string;
-	data: Record<string, unknown>;
-	updatedAt: number;
+  runId: string;
+  gateId: string;
+  data: Record<string, unknown>;
+  updatedAt: number;
 }
 
 export interface RunGateSummary extends GateBannerSummary {
-	gateId: string;
-	label?: string;
-	/** Raw gate data — callers rendering details (e.g. PendingGateBanner) use this. */
-	data: Record<string, unknown>;
+  gateId: string;
+  label?: string;
+  /** Raw gate data — callers rendering details (e.g. PendingGateBanner) use this. */
+  data: Record<string, unknown>;
 }
 
 /**
@@ -46,119 +46,119 @@ export interface RunGateSummary extends GateBannerSummary {
  * it will always return `undefined` in that case.
  */
 export function useRunGateSummaries(
-	runId: string | null | undefined,
-	workflowId: string | null | undefined
+  runId: string | null | undefined,
+  workflowId: string | null | undefined
 ): { summaries: RunGateSummary[] | undefined; fetchError: string | null; retry: () => void } {
-	const [gates, setGates] = useState<Gate[]>([]);
-	// Read the workflow version so the effect re-runs when the same workflow
-	// is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
-	const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
+  const [gates, setGates] = useState<Gate[]>([]);
+  // Read the workflow version so the effect re-runs when the same workflow
+  // is edited in place (spaceStore bumps the version on spaceWorkflow.updated).
+  const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
 
-	useEffect(() => {
-		if (!workflowId) {
-			setGates([]);
-			return;
-		}
-		let cancelled = false;
-		// Clear stale gates immediately so banners are never evaluated against
-		// a previous workflow's gate list while the new fetch is in flight.
-		setGates([]);
-		spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
-			if (cancelled) return;
-			// Only update gates when the fetch succeeds. If wf is null (transient
-			// RPC failure or concurrently deleted workflow), leave gates as [] from
-			// the clear above rather than explicitly mapping failure to "no gates".
-			if (wf) setGates(wf.gates ?? []);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [workflowId, workflowVersion]);
+  useEffect(() => {
+    if (!workflowId) {
+      setGates([]);
+      return;
+    }
+    let cancelled = false;
+    // Clear stale gates immediately so banners are never evaluated against
+    // a previous workflow's gate list while the new fetch is in flight.
+    setGates([]);
+    spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
+      if (cancelled) return;
+      // Only update gates when the fetch succeeds. If wf is null (transient
+      // RPC failure or concurrently deleted workflow), leave gates as [] from
+      // the clear above rather than explicitly mapping failure to "no gates".
+      if (wf) setGates(wf.gates ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workflowId, workflowVersion]);
 
-	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>> | null>(null);
-	const [fetchError, setFetchError] = useState<string | null>(null);
-	const [fetchAttempt, setFetchAttempt] = useState(0);
+  const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>> | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [fetchAttempt, setFetchAttempt] = useState(0);
 
-	useEffect(() => {
-		if (!runId) {
-			setGateDataMap(null);
-			setFetchError(null);
-			return;
-		}
+  useEffect(() => {
+    if (!runId) {
+      setGateDataMap(null);
+      setFetchError(null);
+      return;
+    }
 
-		let cancelled = false;
-		let unsubscribe: (() => void) | undefined;
-		setGateDataMap(null);
-		setFetchError(null);
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    setGateDataMap(null);
+    setFetchError(null);
 
-		(async () => {
-			try {
-				const hub = await connectionManager.getHub();
-				if (cancelled) return;
+    (async () => {
+      try {
+        const hub = await connectionManager.getHub();
+        if (cancelled) return;
 
-				// Subscribe before fetching so updates delivered while the fetch
-				// is in flight aren't lost.
-				unsubscribe = hub.onEvent<{
-					runId: string;
-					gateId: string;
-					data: Record<string, unknown>;
-				}>('space.gateData.updated', (event) => {
-					if (event.runId !== runId) return;
-					setGateDataMap((prev) => {
-						const next = new Map(prev ?? []);
-						next.set(event.gateId, event.data);
-						return next;
-					});
-				});
+        // Subscribe before fetching so updates delivered while the fetch
+        // is in flight aren't lost.
+        unsubscribe = hub.onEvent<{
+          runId: string;
+          gateId: string;
+          data: Record<string, unknown>;
+        }>('space.gateData.updated', (event) => {
+          if (event.runId !== runId) return;
+          setGateDataMap((prev) => {
+            const next = new Map(prev ?? []);
+            next.set(event.gateId, event.data);
+            return next;
+          });
+        });
 
-				const result = await hub.request<{ gateData: GateDataRecord[] }>(
-					'spaceWorkflowRun.listGateData',
-					{ runId }
-				);
-				if (cancelled) return;
-				setGateDataMap((prev) => {
-					// Seed from fetch; overlay any event-delivered entries already
-					// present in `prev` (strictly newer than the fetch snapshot).
-					const merged = new Map<string, Record<string, unknown>>();
-					for (const record of result.gateData) merged.set(record.gateId, record.data);
-					for (const [gateId, data] of prev ?? []) merged.set(gateId, data);
-					return merged;
-				});
-			} catch (err: unknown) {
-				if (cancelled) return;
-				setFetchError(err instanceof Error ? err.message : 'Failed to load gate status');
-			}
-		})();
+        const result = await hub.request<{ gateData: GateDataRecord[] }>(
+          'spaceWorkflowRun.listGateData',
+          { runId }
+        );
+        if (cancelled) return;
+        setGateDataMap((prev) => {
+          // Seed from fetch; overlay any event-delivered entries already
+          // present in `prev` (strictly newer than the fetch snapshot).
+          const merged = new Map<string, Record<string, unknown>>();
+          for (const record of result.gateData) merged.set(record.gateId, record.data);
+          for (const [gateId, data] of prev ?? []) merged.set(gateId, data);
+          return merged;
+        });
+      } catch (err: unknown) {
+        if (cancelled) return;
+        setFetchError(err instanceof Error ? err.message : 'Failed to load gate status');
+      }
+    })();
 
-		return () => {
-			cancelled = true;
-			unsubscribe?.();
-		};
-	}, [runId, fetchAttempt]);
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [runId, fetchAttempt]);
 
-	const summaries =
-		gateDataMap === null
-			? undefined
-			: gates.flatMap((gate): RunGateSummary[] => {
-					// Only emit gates that have been activated (data row exists). A
-					// defined-but-never-triggered gate is not a banner signal.
-					if (!gateDataMap.has(gate.id)) return [];
-					const data = gateDataMap.get(gate.id)!;
-					const scriptResult = parseScriptResult(data);
-					const status = evaluateGateStatus(gate, data, scriptResult.failed);
-					return [
-						{
-							gateId: gate.id,
-							status,
-							label: gate.label ?? gate.description,
-							data,
-						},
-					];
-				});
+  const summaries =
+    gateDataMap === null
+      ? undefined
+      : gates.flatMap((gate): RunGateSummary[] => {
+          // Only emit gates that have been activated (data row exists). A
+          // defined-but-never-triggered gate is not a banner signal.
+          if (!gateDataMap.has(gate.id)) return [];
+          const data = gateDataMap.get(gate.id)!;
+          const scriptResult = parseScriptResult(data);
+          const status = evaluateGateStatus(gate, data, scriptResult.failed);
+          return [
+            {
+              gateId: gate.id,
+              status,
+              label: gate.label ?? gate.description,
+              data,
+            },
+          ];
+        });
 
-	return {
-		summaries,
-		fetchError,
-		retry: () => setFetchAttempt((n) => n + 1),
-	};
+  return {
+    summaries,
+    fetchError,
+    retry: () => setFetchAttempt((n) => n + 1),
+  };
 }

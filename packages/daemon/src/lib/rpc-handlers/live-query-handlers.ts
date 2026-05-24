@@ -11,12 +11,12 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import type { MessageHub } from '@neokai/shared';
 import { createEventMessage, parseJson, parseJsonOptional } from '@neokai/shared';
 import type {
-	LiveQuerySubscribeRequest,
-	LiveQuerySubscribeResponse,
-	LiveQueryUnsubscribeRequest,
-	LiveQueryUnsubscribeResponse,
-	LiveQuerySnapshotEvent,
-	LiveQueryDeltaEvent,
+  LiveQuerySubscribeRequest,
+  LiveQuerySubscribeResponse,
+  LiveQueryUnsubscribeRequest,
+  LiveQueryUnsubscribeResponse,
+  LiveQuerySnapshotEvent,
+  LiveQueryDeltaEvent,
 } from '@neokai/shared';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
@@ -27,52 +27,52 @@ import { Logger } from '../logger';
 // ============================================================================
 
 export interface NamedQuery {
-	/** Parameterised SQL that will be executed by LiveQueryEngine */
-	sql: string;
-	/** Number of positional parameters the SQL expects */
-	paramCount: number;
-	/**
-	 * Optional debounce for table-change reevaluation. Use only for expensive
-	 * feeds fed by high-frequency writes, where latest-state delivery matters
-	 * more than one event per row mutation.
-	 */
-	debounceMs?: number;
-	/**
-	 * Optional row transformer applied after every query execution.
-	 * Must return a plain object whose keys match the frontend TypeScript types.
-	 */
-	mapRow?: (row: Record<string, unknown>) => Record<string, unknown>;
-	/**
-	 * Optional hook to extract metadata from raw query results (before mapRow).
-	 * Called once per query evaluation; result is attached to snapshot/delta events.
-	 *
-	 * The bound query parameters are forwarded as a second argument so handlers
-	 * that need to run a sidecar prepared statement (e.g., `spaceTaskMessages.
-	 * byTask.compact`'s active-turn aggregation) can reuse the same param values
-	 * the live query was subscribed with — they aren't otherwise visible to
-	 * `mapResult`.
-	 */
-	mapResult?: (
-		rawRows: Record<string, unknown>[],
-		params: ReadonlyArray<unknown>
-	) => Record<string, unknown> | undefined;
-	/**
-	 * Optional scope filter builder. Called once per subscribe RPC with the
-	 * subscription's params; returns a `(scope) => boolean` closure that
-	 * decides whether a scoped table-change event is relevant to this
-	 * particular subscription.
-	 *
-	 * When the closure returns `false`, re-evaluation is skipped entirely.
-	 * When no closure is provided (or the event has no scope), the query is
-	 * re-evaluated as usual (backward-compatible fallback).
-	 *
-	 * @param params  The positional parameters the live query was subscribed with.
-	 * @param db      The raw Bun SQLite database for membership lookups.
-	 */
-	buildScopeFilter?: (
-		params: ReadonlyArray<unknown>,
-		db: BunDatabase
-	) => ((scope: TableChangeScope) => boolean) | undefined;
+  /** Parameterised SQL that will be executed by LiveQueryEngine */
+  sql: string;
+  /** Number of positional parameters the SQL expects */
+  paramCount: number;
+  /**
+   * Optional debounce for table-change reevaluation. Use only for expensive
+   * feeds fed by high-frequency writes, where latest-state delivery matters
+   * more than one event per row mutation.
+   */
+  debounceMs?: number;
+  /**
+   * Optional row transformer applied after every query execution.
+   * Must return a plain object whose keys match the frontend TypeScript types.
+   */
+  mapRow?: (row: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * Optional hook to extract metadata from raw query results (before mapRow).
+   * Called once per query evaluation; result is attached to snapshot/delta events.
+   *
+   * The bound query parameters are forwarded as a second argument so handlers
+   * that need to run a sidecar prepared statement (e.g., `spaceTaskMessages.
+   * byTask.compact`'s active-turn aggregation) can reuse the same param values
+   * the live query was subscribed with — they aren't otherwise visible to
+   * `mapResult`.
+   */
+  mapResult?: (
+    rawRows: Record<string, unknown>[],
+    params: ReadonlyArray<unknown>
+  ) => Record<string, unknown> | undefined;
+  /**
+   * Optional scope filter builder. Called once per subscribe RPC with the
+   * subscription's params; returns a `(scope) => boolean` closure that
+   * decides whether a scoped table-change event is relevant to this
+   * particular subscription.
+   *
+   * When the closure returns `false`, re-evaluation is skipped entirely.
+   * When no closure is provided (or the event has no scope), the query is
+   * re-evaluated as usual (backward-compatible fallback).
+   *
+   * @param params  The positional parameters the live query was subscribed with.
+   * @param db      The raw Bun SQLite database for membership lookups.
+   */
+  buildScopeFilter?: (
+    params: ReadonlyArray<unknown>,
+    db: BunDatabase
+  ) => ((scope: TableChangeScope) => boolean) | undefined;
 }
 
 const DEBOUNCE_SDK_MESSAGES_MS = 100;
@@ -91,52 +91,52 @@ const DEBOUNCE_SPACE_TASK_FEEDS_MS = 250;
  * render role/session context without relying on runtime mirroring.
  */
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
-	const sourceType = row.sourceType;
-	const groupId = String(row.groupId ?? '');
-	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
-	const role = String(row.role ?? 'system');
-	const messageType = String(row.messageType ?? 'status');
-	const createdAt = Number(row.createdAt ?? Date.now());
-	const rawId = row.id;
-	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
-	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
-	const turnUserMessageId =
-		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
+  const sourceType = row.sourceType;
+  const groupId = String(row.groupId ?? '');
+  const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+  const role = String(row.role ?? 'system');
+  const messageType = String(row.messageType ?? 'status');
+  const createdAt = Number(row.createdAt ?? Date.now());
+  const rawId = row.id;
+  const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
+  const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+  const turnUserMessageId =
+    typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
 
-	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
+  let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
-	if (sourceType === 'sdk') {
-		try {
-			const parsed = JSON.parse(content) as Record<string, unknown>;
-			// turnId is the user message's own ID — every non-user row inherits the
-			// most recent user-row id within its session, so all rows belonging to
-			// the same turn share a stable, content-derived turn key. Rows that
-			// precede any user message in their session fall back to their own id.
-			const turnId = turnUserMessageId ?? String(id);
-			const enriched = {
-				...parsed,
-				_taskMeta: {
-					authorRole: role,
-					authorSessionId: sessionId ?? '',
-					turnId,
-				},
-			};
-			content = JSON.stringify(enriched);
-		} catch {
-			// Keep original content if parsing fails.
-		}
-	}
+  if (sourceType === 'sdk') {
+    try {
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      // turnId is the user message's own ID — every non-user row inherits the
+      // most recent user-row id within its session, so all rows belonging to
+      // the same turn share a stable, content-derived turn key. Rows that
+      // precede any user message in their session fall back to their own id.
+      const turnId = turnUserMessageId ?? String(id);
+      const enriched = {
+        ...parsed,
+        _taskMeta: {
+          authorRole: role,
+          authorSessionId: sessionId ?? '',
+          turnId,
+        },
+      };
+      content = JSON.stringify(enriched);
+    } catch {
+      // Keep original content if parsing fails.
+    }
+  }
 
-	return {
-		id,
-		groupId,
-		sessionId,
-		role,
-		messageType,
-		content,
-		createdAt,
-		parentToolUseId,
-	};
+  return {
+    id,
+    groupId,
+    sessionId,
+    role,
+    messageType,
+    content,
+    createdAt,
+    parentToolUseId,
+  };
 }
 
 /**
@@ -144,123 +144,123 @@ function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string,
  * message envelope that preserves agent/task attribution.
  */
 function parseProjectionRef(value: unknown): Record<string, unknown> | null {
-	if (typeof value !== 'string' || value.length === 0) return null;
-	try {
-		const parsed = JSON.parse(value) as Record<string, unknown>;
-		return parsed;
-	} catch {
-		return null;
-	}
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 function mapActorMessageProjectionRow(row: Record<string, unknown>): Record<string, unknown> {
-	const createdAt = Number(row.createdAt ?? Date.now());
-	return {
-		id: String(row.id ?? `projection-${createdAt}`),
-		scope: row.scope === 'workflow_log' ? 'workflow_log' : 'task_timeline',
-		eventKind: String(row.eventKind ?? 'system'),
-		taskId: typeof row.taskId === 'string' ? row.taskId : null,
-		taskTitle: typeof row.taskTitle === 'string' ? row.taskTitle : null,
-		workflowRunId: typeof row.workflowRunId === 'string' ? row.workflowRunId : null,
-		messageId: typeof row.messageId === 'string' ? row.messageId : null,
-		eventRef: typeof row.eventRef === 'string' ? row.eventRef : null,
-		from: parseProjectionRef(row.fromActor) ?? { kind: 'system', label: 'System' },
-		target: parseProjectionRef(row.targetActor),
-		targetResolution: typeof row.targetResolution === 'string' ? row.targetResolution : null,
-		deliveryState: typeof row.deliveryState === 'string' ? row.deliveryState : null,
-		title: String(row.title ?? 'Event'),
-		summary: String(row.summary ?? ''),
-		details: typeof row.details === 'string' ? row.details : null,
-		severity: typeof row.severity === 'string' ? row.severity : null,
-		createdAt,
-	};
+  const createdAt = Number(row.createdAt ?? Date.now());
+  return {
+    id: String(row.id ?? `projection-${createdAt}`),
+    scope: row.scope === 'workflow_log' ? 'workflow_log' : 'task_timeline',
+    eventKind: String(row.eventKind ?? 'system'),
+    taskId: typeof row.taskId === 'string' ? row.taskId : null,
+    taskTitle: typeof row.taskTitle === 'string' ? row.taskTitle : null,
+    workflowRunId: typeof row.workflowRunId === 'string' ? row.workflowRunId : null,
+    messageId: typeof row.messageId === 'string' ? row.messageId : null,
+    eventRef: typeof row.eventRef === 'string' ? row.eventRef : null,
+    from: parseProjectionRef(row.fromActor) ?? { kind: 'system', label: 'System' },
+    target: parseProjectionRef(row.targetActor),
+    targetResolution: typeof row.targetResolution === 'string' ? row.targetResolution : null,
+    deliveryState: typeof row.deliveryState === 'string' ? row.deliveryState : null,
+    title: String(row.title ?? 'Event'),
+    summary: String(row.summary ?? ''),
+    details: typeof row.details === 'string' ? row.details : null,
+    severity: typeof row.severity === 'string' ? row.severity : null,
+    createdAt,
+  };
 }
 
 function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, unknown> {
-	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
-	const role = String(row.role ?? 'system');
-	const label = String(row.label ?? 'Agent');
-	const kind =
-		row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
-	const taskId = String(row.taskId ?? '');
-	const taskTitle = String(row.taskTitle ?? '');
-	const messageType = String(row.messageType ?? 'status');
-	const createdAt = Number(row.createdAt ?? Date.now());
-	const rawId = row.id;
-	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
-	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
-	const turnUserMessageId =
-		typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
-	const origin = typeof row.origin === 'string' ? row.origin : null;
-	const deliveryState = messageType === 'user' && row.deliveryState === 'failed' ? 'failed' : null;
-	// Optional backward-compat field from older compact-query variants.
-	// Current compact SQL no longer emits this, but keep tolerant parsing so
-	// historical rows/tests and alternate query variants remain safe.
-	const sessionMessageCount =
-		typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
-			? Number(row.sessionMessageCount)
-			: undefined;
-	const turnIndex =
-		typeof row.turnIndex === 'number' && Number.isFinite(row.turnIndex)
-			? Number(row.turnIndex)
-			: undefined;
-	const turnHiddenMessageCount =
-		typeof row.turnHiddenMessageCount === 'number' && Number.isFinite(row.turnHiddenMessageCount)
-			? Number(row.turnHiddenMessageCount)
-			: undefined;
+  const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+  const role = String(row.role ?? 'system');
+  const label = String(row.label ?? 'Agent');
+  const kind =
+    row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
+  const taskId = String(row.taskId ?? '');
+  const taskTitle = String(row.taskTitle ?? '');
+  const messageType = String(row.messageType ?? 'status');
+  const createdAt = Number(row.createdAt ?? Date.now());
+  const rawId = row.id;
+  const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
+  const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+  const turnUserMessageId =
+    typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
+  const origin = typeof row.origin === 'string' ? row.origin : null;
+  const deliveryState = messageType === 'user' && row.deliveryState === 'failed' ? 'failed' : null;
+  // Optional backward-compat field from older compact-query variants.
+  // Current compact SQL no longer emits this, but keep tolerant parsing so
+  // historical rows/tests and alternate query variants remain safe.
+  const sessionMessageCount =
+    typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
+      ? Number(row.sessionMessageCount)
+      : undefined;
+  const turnIndex =
+    typeof row.turnIndex === 'number' && Number.isFinite(row.turnIndex)
+      ? Number(row.turnIndex)
+      : undefined;
+  const turnHiddenMessageCount =
+    typeof row.turnHiddenMessageCount === 'number' && Number.isFinite(row.turnHiddenMessageCount)
+      ? Number(row.turnHiddenMessageCount)
+      : undefined;
 
-	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
+  let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
-	try {
-		const parsed = JSON.parse(content) as Record<string, unknown>;
-		// turnId = the id of the user-message that started this turn. SQL emits
-		// `turnUserMessageId` per row by carrying forward the most recent user-row
-		// id within the session via a window function. Rows that precede any
-		// user message in their session fall back to their own id, giving every
-		// row a stable, content-derived turn key without depending on
-		// session-group iteration metadata.
-		const turnId = turnUserMessageId ?? String(id);
-		content = JSON.stringify({
-			...parsed,
-			_taskMeta: {
-				authorRole: role,
-				authorLabel: label,
-				authorKind: kind,
-				authorSessionId: sessionId ?? '',
-				taskId,
-				taskTitle,
-				turnId,
-			},
-		});
-	} catch {
-		// Keep original content when sdk_message is not valid JSON.
-	}
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    // turnId = the id of the user-message that started this turn. SQL emits
+    // `turnUserMessageId` per row by carrying forward the most recent user-row
+    // id within the session via a window function. Rows that precede any
+    // user message in their session fall back to their own id, giving every
+    // row a stable, content-derived turn key without depending on
+    // session-group iteration metadata.
+    const turnId = turnUserMessageId ?? String(id);
+    content = JSON.stringify({
+      ...parsed,
+      _taskMeta: {
+        authorRole: role,
+        authorLabel: label,
+        authorKind: kind,
+        authorSessionId: sessionId ?? '',
+        taskId,
+        taskTitle,
+        turnId,
+      },
+    });
+  } catch {
+    // Keep original content when sdk_message is not valid JSON.
+  }
 
-	const mapped: Record<string, unknown> = {
-		id,
-		sessionId,
-		kind,
-		role,
-		label,
-		taskId,
-		taskTitle,
-		messageType,
-		content,
-		createdAt,
-		origin,
-		deliveryState,
-		parentToolUseId,
-	};
-	if (sessionMessageCount !== undefined) {
-		mapped.sessionMessageCount = sessionMessageCount;
-	}
-	if (turnIndex !== undefined) {
-		mapped.turnIndex = turnIndex;
-	}
-	if (turnHiddenMessageCount !== undefined) {
-		mapped.turnHiddenMessageCount = turnHiddenMessageCount;
-	}
-	return mapped;
+  const mapped: Record<string, unknown> = {
+    id,
+    sessionId,
+    kind,
+    role,
+    label,
+    taskId,
+    taskTitle,
+    messageType,
+    content,
+    createdAt,
+    origin,
+    deliveryState,
+    parentToolUseId,
+  };
+  if (sessionMessageCount !== undefined) {
+    mapped.sessionMessageCount = sessionMessageCount;
+  }
+  if (turnIndex !== undefined) {
+    mapped.turnIndex = turnIndex;
+  }
+  if (turnHiddenMessageCount !== undefined) {
+    mapped.turnHiddenMessageCount = turnHiddenMessageCount;
+  }
+  return mapped;
 }
 
 // ============================================================================
@@ -294,25 +294,25 @@ ORDER BY name, id ASC
  * snake_case mapping: `source_type` → `sourceType` (handled via AS alias in SQL).
  */
 function mapMcpServerRow(row: Record<string, unknown>): Record<string, unknown> {
-	// Mirror the repository's rowToServer logic: omit optional fields entirely when the
-	// SQLite column is NULL rather than spreading null into the AppMcpServer object.
-	// This keeps the LiveQuery path type-consistent with the RPC handler path.
-	return {
-		id: row.id,
-		name: row.name,
-		sourceType: row.sourceType,
-		enabled: row.enabled === 1,
-		...(row.description != null ? { description: row.description } : {}),
-		...(row.command != null ? { command: row.command } : {}),
-		...(row.url != null ? { url: row.url } : {}),
-		...(row.args != null ? { args: JSON.parse(row.args as string) as string[] } : {}),
-		...(row.env != null ? { env: JSON.parse(row.env as string) as Record<string, string> } : {}),
-		...(row.headers != null
-			? { headers: JSON.parse(row.headers as string) as Record<string, string> }
-			: {}),
-		...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
-		...(row.updatedAt != null ? { updatedAt: row.updatedAt } : {}),
-	};
+  // Mirror the repository's rowToServer logic: omit optional fields entirely when the
+  // SQLite column is NULL rather than spreading null into the AppMcpServer object.
+  // This keeps the LiveQuery path type-consistent with the RPC handler path.
+  return {
+    id: row.id,
+    name: row.name,
+    sourceType: row.sourceType,
+    enabled: row.enabled === 1,
+    ...(row.description != null ? { description: row.description } : {}),
+    ...(row.command != null ? { command: row.command } : {}),
+    ...(row.url != null ? { url: row.url } : {}),
+    ...(row.args != null ? { args: JSON.parse(row.args as string) as string[] } : {}),
+    ...(row.env != null ? { env: JSON.parse(row.env as string) as Record<string, string> } : {}),
+    ...(row.headers != null
+      ? { headers: JSON.parse(row.headers as string) as Record<string, string> }
+      : {}),
+    ...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
+    ...(row.updatedAt != null ? { updatedAt: row.updatedAt } : {}),
+  };
 }
 
 const SKILLS_LIST_SQL = `
@@ -339,18 +339,18 @@ ORDER BY built_in DESC, created_at ASC, id ASC
  * Boolean coercion: `enabled`, `builtIn` — SQLite stores 0/1; convert to JS boolean.
  */
 function mapSkillRow(row: Record<string, unknown>): Record<string, unknown> {
-	return {
-		id: row.id,
-		name: row.name,
-		displayName: row.displayName,
-		description: row.description,
-		sourceType: row.sourceType,
-		...(row.config != null ? { config: JSON.parse(row.config as string) as unknown } : {}),
-		enabled: row.enabled === 1,
-		builtIn: row.builtIn === 1,
-		validationStatus: row.validationStatus,
-		...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
-	};
+  return {
+    id: row.id,
+    name: row.name,
+    displayName: row.displayName,
+    description: row.description,
+    sourceType: row.sourceType,
+    ...(row.config != null ? { config: JSON.parse(row.config as string) as unknown } : {}),
+    enabled: row.enabled === 1,
+    builtIn: row.builtIn === 1,
+    validationStatus: row.validationStatus,
+    ...(row.createdAt != null ? { createdAt: row.createdAt } : {}),
+  };
 }
 
 /**
@@ -382,63 +382,63 @@ ORDER BY ams.source ASC, ams.created_at IS NULL, ams.created_at ASC, ams.id ASC
 `.trim();
 
 function mapMcpEnablementBySpaceRow(row: Record<string, unknown>): Record<string, unknown> {
-	const sourceRaw = typeof row.source === 'string' ? row.source : null;
-	const normalisedSource =
-		sourceRaw === 'builtin' || sourceRaw === 'imported' || sourceRaw === 'user'
-			? sourceRaw
-			: 'user';
-	const out: Record<string, unknown> = {
-		serverId: row.serverId,
-		name: row.name,
-		sourceType: row.sourceType,
-		source: normalisedSource,
-		globallyEnabled: row.globallyEnabled === 1,
-		overridden: row.overridden === 1,
-		enabled: row.enabled === 1,
-	};
-	if (row.description != null) out.description = row.description;
-	if (row.sourcePath != null) out.sourcePath = row.sourcePath;
-	return out;
+  const sourceRaw = typeof row.source === 'string' ? row.source : null;
+  const normalisedSource =
+    sourceRaw === 'builtin' || sourceRaw === 'imported' || sourceRaw === 'user'
+      ? sourceRaw
+      : 'user';
+  const out: Record<string, unknown> = {
+    serverId: row.serverId,
+    name: row.name,
+    sourceType: row.sourceType,
+    source: normalisedSource,
+    globallyEnabled: row.globallyEnabled === 1,
+    overridden: row.overridden === 1,
+    enabled: row.enabled === 1,
+  };
+  if (row.description != null) out.description = row.description;
+  if (row.sourcePath != null) out.sourcePath = row.sourcePath;
+  return out;
 }
 
 function formatTaskActivityLabel(value: unknown, fallback: string): string {
-	if (typeof value !== 'string' || value.trim() === '') return fallback;
-	return value
-		.split(/[_-\s]+/)
-		.filter(Boolean)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(' ');
+  if (typeof value !== 'string' || value.trim() === '') return fallback;
+  return value
+    .split(/[_-\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, unknown> {
-	const kind =
-		row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
-	const rawRole =
-		typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : kind;
-	const rawLabel = typeof row.label === 'string' ? row.label : rawRole;
+  const kind =
+    row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
+  const rawRole =
+    typeof row.role === 'string' ? row.role : kind === 'task_agent' ? 'task-agent' : kind;
+  const rawLabel = typeof row.label === 'string' ? row.label : rawRole;
 
-	return {
-		...row,
-		kind,
-		nodeExecution:
-			kind === 'node_agent'
-				? {
-						nodeExecutionId: row.nodeExecutionId,
-						nodeId: row.workflowNodeId,
-						agentName: row.agentName,
-						status: row.executionStatus,
-						result: row.executionResult ?? null,
-					}
-				: null,
-		label:
-			kind === 'task_agent'
-				? 'Task Agent'
-				: kind === 'github'
-					? 'GitHub'
-					: formatTaskActivityLabel(rawLabel, 'Agent'),
-		role: rawRole,
-		messageCount: Number(row.messageCount ?? 0),
-	};
+  return {
+    ...row,
+    kind,
+    nodeExecution:
+      kind === 'node_agent'
+        ? {
+            nodeExecutionId: row.nodeExecutionId,
+            nodeId: row.workflowNodeId,
+            agentName: row.agentName,
+            status: row.executionStatus,
+            result: row.executionResult ?? null,
+          }
+        : null,
+    label:
+      kind === 'task_agent'
+        ? 'Task Agent'
+        : kind === 'github'
+          ? 'GitHub'
+          : formatTaskActivityLabel(rawLabel, 'Agent'),
+    role: rawRole,
+    messageCount: Number(row.messageCount ?? 0),
+  };
 }
 
 /**
@@ -720,16 +720,16 @@ ORDER BY createdAt ASC, id ASC
 `.trim();
 
 function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
-	const raw = row.data as string | null;
-	let data: Record<string, unknown> = {};
-	if (raw) {
-		try {
-			data = JSON.parse(raw) as Record<string, unknown>;
-		} catch {
-			log.warn(`Corrupted artifact JSON for id=${row.id} — returning empty data`);
-		}
-	}
-	return { ...row, data };
+  const raw = row.data as string | null;
+  let data: Record<string, unknown> = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      log.warn(`Corrupted artifact JSON for id=${row.id} — returning empty data`);
+    }
+  }
+  return { ...row, data };
 }
 
 /**
@@ -1618,54 +1618,54 @@ const ACTIVITY_PREVIEW_MAX_LEN = 200;
  * collapsing line up byte-for-byte across server and client.
  */
 function activityOneLine(value: string, max = ACTIVITY_PREVIEW_MAX_LEN): string {
-	const collapsed = value.replace(/\s+/g, ' ').trim();
-	if (collapsed.length === 0) return '';
-	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (collapsed.length === 0) return '';
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
 function activityStringProp(input: Record<string, unknown>, key: string): string {
-	const value = input[key];
-	return typeof value === 'string' ? value : '';
+  const value = input[key];
+  return typeof value === 'string' ? value : '';
 }
 
 function activityPathBase(path: string): string {
-	const parts = path.split('/').filter(Boolean);
-	return parts[parts.length - 1] || path;
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] || path;
 }
 
 function activityPreviewFromTodoInput(input: Record<string, unknown>): string {
-	const todos = input.todos;
-	if (!Array.isArray(todos)) return 'Update todos';
-	const todoItems = todos
-		.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-		.map((item) => {
-			const content = activityStringProp(item, 'content');
-			const activeForm = activityStringProp(item, 'activeForm');
-			const status = activityStringProp(item, 'status');
-			return { content, activeForm, status };
-		});
-	const running = todoItems.find((item) => item.status === 'in_progress');
-	if (running) {
-		return activityOneLine(`Running: ${running.activeForm || running.content || 'todo item'}`);
-	}
-	const completed = [...todoItems].reverse().find((item) => item.status === 'completed');
-	if (completed?.content) return activityOneLine(`Marked done: ${completed.content}`);
-	const pending = todoItems.find((item) => item.status === 'pending');
-	if (pending?.content) return activityOneLine(`Added task: ${pending.content}`);
-	const count = todoItems.length;
-	return count ? `${count} todo${count !== 1 ? 's' : ''}` : 'Update todos';
+  const todos = input.todos;
+  if (!Array.isArray(todos)) return 'Update todos';
+  const todoItems = todos
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => {
+      const content = activityStringProp(item, 'content');
+      const activeForm = activityStringProp(item, 'activeForm');
+      const status = activityStringProp(item, 'status');
+      return { content, activeForm, status };
+    });
+  const running = todoItems.find((item) => item.status === 'in_progress');
+  if (running) {
+    return activityOneLine(`Running: ${running.activeForm || running.content || 'todo item'}`);
+  }
+  const completed = [...todoItems].reverse().find((item) => item.status === 'completed');
+  if (completed?.content) return activityOneLine(`Marked done: ${completed.content}`);
+  const pending = todoItems.find((item) => item.status === 'pending');
+  if (pending?.content) return activityOneLine(`Added task: ${pending.content}`);
+  const count = todoItems.length;
+  return count ? `${count} todo${count !== 1 ? 's' : ''}` : 'Update todos';
 }
 
 function activityPreviewFromQuestionInput(input: Record<string, unknown>): string {
-	const questions = input.questions;
-	if (!Array.isArray(questions) || questions.length === 0) return 'Ask user';
-	const firstQuestion = questions.find(
-		(question): question is Record<string, unknown> => !!question && typeof question === 'object'
-	);
-	const text = firstQuestion ? activityStringProp(firstQuestion, 'question') : '';
-	if (!text) return `${questions.length} question${questions.length !== 1 ? 's' : ''}`;
-	const suffix = questions.length > 1 ? ` (+${questions.length - 1})` : '';
-	return `${activityOneLine(text, 60)}${suffix}`;
+  const questions = input.questions;
+  if (!Array.isArray(questions) || questions.length === 0) return 'Ask user';
+  const firstQuestion = questions.find(
+    (question): question is Record<string, unknown> => !!question && typeof question === 'object'
+  );
+  const text = firstQuestion ? activityStringProp(firstQuestion, 'question') : '';
+  if (!text) return `${questions.length} question${questions.length !== 1 ? 's' : ''}`;
+  const suffix = questions.length > 1 ? ` (+${questions.length - 1})` : '';
+  return `${activityOneLine(text, 60)}${suffix}`;
 }
 
 /**
@@ -1674,80 +1674,80 @@ function activityPreviewFromQuestionInput(input: Record<string, unknown>): strin
  * lines carry the same primary meaning as full chat tool blocks.
  */
 function activityPreviewFromToolInput(toolName: string, input: Record<string, unknown>): string {
-	if (toolName.startsWith('mcp__')) {
-		return '';
-	}
-	switch (toolName) {
-		case 'Bash': {
-			const description = activityStringProp(input, 'description');
-			if (description) return activityOneLine(description);
-			return activityOneLine(activityStringProp(input, 'command'));
-		}
-		case 'Write':
-		case 'Edit': {
-			const filePath = activityStringProp(input, 'file_path');
-			return filePath ? activityOneLine(activityPathBase(filePath)) : '';
-		}
-		case 'MultiEdit': {
-			const filePath = activityStringProp(input, 'file_path');
-			return filePath ? activityOneLine(activityPathBase(filePath)) : '';
-		}
-		case 'Read': {
-			const filePath = activityStringProp(input, 'file_path');
-			return filePath ? activityOneLine(activityPathBase(filePath)) : '';
-		}
-		case 'NotebookEdit': {
-			const notebookPath = activityStringProp(input, 'notebook_path');
-			return notebookPath ? activityOneLine(activityPathBase(notebookPath)) : '';
-		}
-		case 'Glob':
-		case 'Grep':
-			return activityOneLine(activityStringProp(input, 'pattern'), 50);
-		case 'WebFetch':
-			return activityOneLine(activityStringProp(input, 'url'), 50);
-		case 'WebSearch':
-			return activityOneLine(activityStringProp(input, 'query'), 50);
-		case 'Task':
-			return activityOneLine(activityStringProp(input, 'description') || 'Task execution');
-		case 'Agent':
-			return activityOneLine(activityStringProp(input, 'description') || 'Agent execution');
-		case 'TaskOutput':
-			return activityOneLine(activityStringProp(input, 'task_id') || 'Task output');
-		case 'TaskStop':
-			return activityOneLine(
-				activityStringProp(input, 'task_id') || activityStringProp(input, 'shell_id') || 'Stop task'
-			);
-		case 'BashOutput': {
-			const bashId = activityStringProp(input, 'bash_id');
-			return `Shell: ${bashId.slice(0, 8) || 'unknown'}`;
-		}
-		case 'KillShell': {
-			const shellId = activityStringProp(input, 'shell_id');
-			return `Shell: ${shellId.slice(0, 8) || 'unknown'}`;
-		}
-		case 'TodoWrite':
-			return activityPreviewFromTodoInput(input);
-		case 'ListMcpResourcesTool':
-			return activityOneLine(activityStringProp(input, 'server') || 'All servers');
-		case 'ReadMcpResourceTool':
-			return activityOneLine(activityStringProp(input, 'uri'), 50);
-		case 'AskUserQuestion':
-			return activityPreviewFromQuestionInput(input);
-		case 'EnterPlanMode':
-			return 'Entering plan mode';
-		case 'ExitPlanMode':
-			return 'Exiting plan mode';
-		case 'TimeMachine':
-			return activityOneLine(activityStringProp(input, 'message_prefix'), 40);
-		default: {
-			const keys = Object.keys(input);
-			if (keys.length === 0) return '';
-			const firstKey = keys[0];
-			const firstVal = input[firstKey];
-			if (typeof firstVal === 'string') return activityOneLine(firstVal, 40);
-			return `${firstKey}: …`;
-		}
-	}
+  if (toolName.startsWith('mcp__')) {
+    return '';
+  }
+  switch (toolName) {
+    case 'Bash': {
+      const description = activityStringProp(input, 'description');
+      if (description) return activityOneLine(description);
+      return activityOneLine(activityStringProp(input, 'command'));
+    }
+    case 'Write':
+    case 'Edit': {
+      const filePath = activityStringProp(input, 'file_path');
+      return filePath ? activityOneLine(activityPathBase(filePath)) : '';
+    }
+    case 'MultiEdit': {
+      const filePath = activityStringProp(input, 'file_path');
+      return filePath ? activityOneLine(activityPathBase(filePath)) : '';
+    }
+    case 'Read': {
+      const filePath = activityStringProp(input, 'file_path');
+      return filePath ? activityOneLine(activityPathBase(filePath)) : '';
+    }
+    case 'NotebookEdit': {
+      const notebookPath = activityStringProp(input, 'notebook_path');
+      return notebookPath ? activityOneLine(activityPathBase(notebookPath)) : '';
+    }
+    case 'Glob':
+    case 'Grep':
+      return activityOneLine(activityStringProp(input, 'pattern'), 50);
+    case 'WebFetch':
+      return activityOneLine(activityStringProp(input, 'url'), 50);
+    case 'WebSearch':
+      return activityOneLine(activityStringProp(input, 'query'), 50);
+    case 'Task':
+      return activityOneLine(activityStringProp(input, 'description') || 'Task execution');
+    case 'Agent':
+      return activityOneLine(activityStringProp(input, 'description') || 'Agent execution');
+    case 'TaskOutput':
+      return activityOneLine(activityStringProp(input, 'task_id') || 'Task output');
+    case 'TaskStop':
+      return activityOneLine(
+        activityStringProp(input, 'task_id') || activityStringProp(input, 'shell_id') || 'Stop task'
+      );
+    case 'BashOutput': {
+      const bashId = activityStringProp(input, 'bash_id');
+      return `Shell: ${bashId.slice(0, 8) || 'unknown'}`;
+    }
+    case 'KillShell': {
+      const shellId = activityStringProp(input, 'shell_id');
+      return `Shell: ${shellId.slice(0, 8) || 'unknown'}`;
+    }
+    case 'TodoWrite':
+      return activityPreviewFromTodoInput(input);
+    case 'ListMcpResourcesTool':
+      return activityOneLine(activityStringProp(input, 'server') || 'All servers');
+    case 'ReadMcpResourceTool':
+      return activityOneLine(activityStringProp(input, 'uri'), 50);
+    case 'AskUserQuestion':
+      return activityPreviewFromQuestionInput(input);
+    case 'EnterPlanMode':
+      return 'Entering plan mode';
+    case 'ExitPlanMode':
+      return 'Exiting plan mode';
+    case 'TimeMachine':
+      return activityOneLine(activityStringProp(input, 'message_prefix'), 40);
+    default: {
+      const keys = Object.keys(input);
+      if (keys.length === 0) return '';
+      const firstKey = keys[0];
+      const firstVal = input[firstKey];
+      if (typeof firstVal === 'string') return activityOneLine(firstVal, 40);
+      return `${firstKey}: …`;
+    }
+  }
 }
 
 /**
@@ -1763,129 +1763,129 @@ function activityPreviewFromToolInput(toolName: string, input: Record<string, un
  * Exported for unit-test coverage.
  */
 export function buildActiveTurnSummariesFromRows(
-	rows: Record<string, unknown>[]
+  rows: Record<string, unknown>[]
 ): Array<{ sessionId: string; turnIndex: number; entries: Record<string, unknown>[] }> {
-	const bySession = new Map<
-		string,
-		{ sessionId: string; turnIndex: number; entries: Record<string, unknown>[] }
-	>();
+  const bySession = new Map<
+    string,
+    { sessionId: string; turnIndex: number; entries: Record<string, unknown>[] }
+  >();
 
-	for (const row of rows) {
-		const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
-		if (!sessionId) continue;
-		const turnIndex = Number(row.turnIndex ?? 0);
-		const ts = Number(row.ts ?? 0);
-		const uuid = typeof row.uuid === 'string' ? row.uuid : '';
-		const blockType = typeof row.blockType === 'string' ? row.blockType : '';
+  for (const row of rows) {
+    const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
+    if (!sessionId) continue;
+    const turnIndex = Number(row.turnIndex ?? 0);
+    const ts = Number(row.ts ?? 0);
+    const uuid = typeof row.uuid === 'string' ? row.uuid : '';
+    const blockType = typeof row.blockType === 'string' ? row.blockType : '';
 
-		let entry: Record<string, unknown> | null = null;
-		if (blockType === 'tool_use') {
-			const toolName = typeof row.toolName === 'string' ? row.toolName : '';
-			const rawInput = row.toolInput;
-			let parsedInput: Record<string, unknown> = {};
-			if (typeof rawInput === 'string') {
-				try {
-					const maybe = JSON.parse(rawInput);
-					if (maybe && typeof maybe === 'object') {
-						parsedInput = maybe as Record<string, unknown>;
-					}
-				} catch {
-					// Leave parsedInput empty — preview falls through to `tool_name: …`.
-				}
-			} else if (rawInput && typeof rawInput === 'object') {
-				parsedInput = rawInput as Record<string, unknown>;
-			}
-			entry = {
-				kind: 'tool_use',
-				toolName,
-				preview: activityPreviewFromToolInput(toolName, parsedInput),
-				ts,
-				uuid,
-			};
-		} else if (blockType === 'text') {
-			const text = typeof row.textValue === 'string' ? row.textValue : '';
-			if (text.trim().length === 0) continue;
-			entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
-		} else if (blockType === 'thinking') {
-			const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
-			if (thinking.trim().length === 0) continue;
-			entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
-		} else if (blockType === '__user_message') {
-			const text = typeof row.textValue === 'string' ? row.textValue : '';
-			entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
-		} else if (blockType === '__user_replay') {
-			const text = typeof row.textValue === 'string' ? row.textValue : '';
-			entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
-		}
-		if (!entry) continue;
+    let entry: Record<string, unknown> | null = null;
+    if (blockType === 'tool_use') {
+      const toolName = typeof row.toolName === 'string' ? row.toolName : '';
+      const rawInput = row.toolInput;
+      let parsedInput: Record<string, unknown> = {};
+      if (typeof rawInput === 'string') {
+        try {
+          const maybe = JSON.parse(rawInput);
+          if (maybe && typeof maybe === 'object') {
+            parsedInput = maybe as Record<string, unknown>;
+          }
+        } catch {
+          // Leave parsedInput empty — preview falls through to `tool_name: …`.
+        }
+      } else if (rawInput && typeof rawInput === 'object') {
+        parsedInput = rawInput as Record<string, unknown>;
+      }
+      entry = {
+        kind: 'tool_use',
+        toolName,
+        preview: activityPreviewFromToolInput(toolName, parsedInput),
+        ts,
+        uuid,
+      };
+    } else if (blockType === 'text') {
+      const text = typeof row.textValue === 'string' ? row.textValue : '';
+      if (text.trim().length === 0) continue;
+      entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
+    } else if (blockType === 'thinking') {
+      const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
+      if (thinking.trim().length === 0) continue;
+      entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
+    } else if (blockType === '__user_message') {
+      const text = typeof row.textValue === 'string' ? row.textValue : '';
+      entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
+    } else if (blockType === '__user_replay') {
+      const text = typeof row.textValue === 'string' ? row.textValue : '';
+      entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+    }
+    if (!entry) continue;
 
-		let summary = bySession.get(sessionId);
-		if (!summary) {
-			summary = { sessionId, turnIndex, entries: [] };
-			bySession.set(sessionId, summary);
-		}
-		summary.entries.push(entry);
-	}
+    let summary = bySession.get(sessionId);
+    if (!summary) {
+      summary = { sessionId, turnIndex, entries: [] };
+      bySession.set(sessionId, summary);
+    }
+    summary.entries.push(entry);
+  }
 
-	return Array.from(bySession.values());
+  return Array.from(bySession.values());
 }
 
 function mapActiveTurnEntryRow(row: Record<string, unknown>): Record<string, unknown> {
-	const sessionId = typeof row.sessionId === 'string' ? row.sessionId : '';
-	const turnIndex = Number(row.turnIndex ?? 0);
-	const ts = Number(row.ts ?? 0);
-	const uuid = typeof row.uuid === 'string' ? row.uuid : '';
-	const blockType = typeof row.blockType === 'string' ? row.blockType : '';
-	const rowId = typeof row.rowId === 'string' || typeof row.rowId === 'number' ? row.rowId : '';
-	const blockIdx = Number(row.blockIdx ?? -1);
-	const rawId = row.id;
-	const id = typeof rawId === 'string' ? rawId : `${sessionId}:${turnIndex}:${rowId}:${blockIdx}`;
+  const sessionId = typeof row.sessionId === 'string' ? row.sessionId : '';
+  const turnIndex = Number(row.turnIndex ?? 0);
+  const ts = Number(row.ts ?? 0);
+  const uuid = typeof row.uuid === 'string' ? row.uuid : '';
+  const blockType = typeof row.blockType === 'string' ? row.blockType : '';
+  const rowId = typeof row.rowId === 'string' || typeof row.rowId === 'number' ? row.rowId : '';
+  const blockIdx = Number(row.blockIdx ?? -1);
+  const rawId = row.id;
+  const id = typeof rawId === 'string' ? rawId : `${sessionId}:${turnIndex}:${rowId}:${blockIdx}`;
 
-	let entry: Record<string, unknown> | null = null;
-	if (blockType === 'tool_use') {
-		const toolName = typeof row.toolName === 'string' ? row.toolName : '';
-		const rawInput = row.toolInput;
-		let parsedInput: Record<string, unknown> = {};
-		if (typeof rawInput === 'string') {
-			try {
-				const maybe = JSON.parse(rawInput);
-				if (maybe && typeof maybe === 'object') parsedInput = maybe as Record<string, unknown>;
-			} catch {
-				parsedInput = {};
-			}
-		} else if (rawInput && typeof rawInput === 'object') {
-			parsedInput = rawInput as Record<string, unknown>;
-		}
-		entry = {
-			kind: 'tool_use',
-			toolName,
-			preview: activityPreviewFromToolInput(toolName, parsedInput),
-			ts,
-			uuid,
-		};
-	} else if (blockType === 'text') {
-		const text = typeof row.textValue === 'string' ? row.textValue : '';
-		if (text.trim().length > 0) entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
-	} else if (blockType === 'thinking') {
-		const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
-		if (thinking.trim().length > 0) {
-			entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
-		}
-	} else if (blockType === '__user_message') {
-		const text = typeof row.textValue === 'string' ? row.textValue : '';
-		entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
-	} else if (blockType === '__user_replay') {
-		const text = typeof row.textValue === 'string' ? row.textValue : '';
-		entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
-	}
+  let entry: Record<string, unknown> | null = null;
+  if (blockType === 'tool_use') {
+    const toolName = typeof row.toolName === 'string' ? row.toolName : '';
+    const rawInput = row.toolInput;
+    let parsedInput: Record<string, unknown> = {};
+    if (typeof rawInput === 'string') {
+      try {
+        const maybe = JSON.parse(rawInput);
+        if (maybe && typeof maybe === 'object') parsedInput = maybe as Record<string, unknown>;
+      } catch {
+        parsedInput = {};
+      }
+    } else if (rawInput && typeof rawInput === 'object') {
+      parsedInput = rawInput as Record<string, unknown>;
+    }
+    entry = {
+      kind: 'tool_use',
+      toolName,
+      preview: activityPreviewFromToolInput(toolName, parsedInput),
+      ts,
+      uuid,
+    };
+  } else if (blockType === 'text') {
+    const text = typeof row.textValue === 'string' ? row.textValue : '';
+    if (text.trim().length > 0) entry = { kind: 'text', text: activityOneLine(text), ts, uuid };
+  } else if (blockType === 'thinking') {
+    const thinking = typeof row.thinkingValue === 'string' ? row.thinkingValue : '';
+    if (thinking.trim().length > 0) {
+      entry = { kind: 'thinking', preview: thinking.trim(), ts, uuid };
+    }
+  } else if (blockType === '__user_message') {
+    const text = typeof row.textValue === 'string' ? row.textValue : '';
+    entry = { kind: 'user_message', text: activityOneLine(text), ts, uuid };
+  } else if (blockType === '__user_replay') {
+    const text = typeof row.textValue === 'string' ? row.textValue : '';
+    entry = { kind: 'agent_handoff', text: activityOneLine(text), ts, uuid };
+  }
 
-	return {
-		id,
-		sessionId,
-		turnIndex,
-		ts,
-		entry,
-	};
+  return {
+    id,
+    sessionId,
+    turnIndex,
+    ts,
+    entry,
+  };
 }
 
 // ============================================================================
@@ -1981,51 +1981,51 @@ WHERE s.type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 
  * - Type coercion for is_worktree (integer → boolean)
  */
 function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
-	const isWorktree = row.is_worktree === 1;
-	const worktree = isWorktree
-		? {
-				isWorktree: true as const,
-				worktreePath: row.worktree_path as string,
-				mainRepoPath: row.main_repo_path as string,
-				branch: row.worktree_branch as string,
-			}
-		: undefined;
+  const isWorktree = row.is_worktree === 1;
+  const worktree = isWorktree
+    ? {
+        isWorktree: true as const,
+        worktreePath: row.worktree_path as string,
+        mainRepoPath: row.main_repo_path as string,
+        branch: row.worktree_branch as string,
+      }
+    : undefined;
 
-	const availableCommands =
-		row.available_commands && typeof row.available_commands === 'string'
-			? (JSON.parse(row.available_commands) as string[])
-			: undefined;
+  const availableCommands =
+    row.available_commands && typeof row.available_commands === 'string'
+      ? (JSON.parse(row.available_commands) as string[])
+      : undefined;
 
-	const sessionContext =
-		row.session_context && typeof row.session_context === 'string'
-			? parseJsonOptional(row.session_context)
-			: undefined;
+  const sessionContext =
+    row.session_context && typeof row.session_context === 'string'
+      ? parseJsonOptional(row.session_context)
+      : undefined;
 
-	return {
-		id: row.id,
-		title: row.title,
-		workspacePath: row.workspacePath,
-		createdAt: row.createdAt,
-		lastActiveAt: row.lastActiveAt,
-		status: row.status,
-		config: parseJson(row.config as string, {}),
-		metadata: parseJson(row.metadata as string, {
-			messageCount: 0,
-			totalTokens: 0,
-			inputTokens: 0,
-			outputTokens: 0,
-			totalCost: 0,
-			toolCallCount: 0,
-		}),
-		worktree,
-		gitBranch: (row.gitBranch as string | null) ?? undefined,
-		sdkSessionId: (row.sdkSessionId as string | null) ?? undefined,
-		availableCommands,
-		processingState: (row.processingState as string | null) ?? undefined,
-		archivedAt: (row.archivedAt as string | null) ?? undefined,
-		type: (row.type as string | null) ?? 'worker',
-		context: sessionContext,
-	};
+  return {
+    id: row.id,
+    title: row.title,
+    workspacePath: row.workspacePath,
+    createdAt: row.createdAt,
+    lastActiveAt: row.lastActiveAt,
+    status: row.status,
+    config: parseJson(row.config as string, {}),
+    metadata: parseJson(row.metadata as string, {
+      messageCount: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalCost: 0,
+      toolCallCount: 0,
+    }),
+    worktree,
+    gitBranch: (row.gitBranch as string | null) ?? undefined,
+    sdkSessionId: (row.sdkSessionId as string | null) ?? undefined,
+    availableCommands,
+    processingState: (row.processingState as string | null) ?? undefined,
+    archivedAt: (row.archivedAt as string | null) ?? undefined,
+    type: (row.type as string | null) ?? 'worker',
+    context: sessionContext,
+  };
 }
 
 const SPACE_SESSIONS_BY_SPACE_SQL = `
@@ -2131,27 +2131,27 @@ ORDER BY timestamp ASC, id ASC
  *     SDK message lacks a `uuid`.
  */
 function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
-	const contentRaw = row.content;
-	let parsed: Record<string, unknown> = {};
-	if (typeof contentRaw === 'string') {
-		try {
-			parsed = JSON.parse(contentRaw) as Record<string, unknown>;
-		} catch {
-			// Corrupted JSON — return a sentinel object so the client doesn't crash.
-			parsed = { type: 'unknown', rawContent: contentRaw };
-		}
-	}
+  const contentRaw = row.content;
+  let parsed: Record<string, unknown> = {};
+  if (typeof contentRaw === 'string') {
+    try {
+      parsed = JSON.parse(contentRaw) as Record<string, unknown>;
+    } catch {
+      // Corrupted JSON — return a sentinel object so the client doesn't crash.
+      parsed = { type: 'unknown', rawContent: contentRaw };
+    }
+  }
 
-	const extras: Record<string, unknown> = {
-		id: row.id,
-		timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
-		origin: row.origin != null ? row.origin : undefined,
-	};
-	if (row.sendStatus === 'failed') {
-		extras.sendStatus = 'failed';
-	}
+  const extras: Record<string, unknown> = {
+    id: row.id,
+    timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
+    origin: row.origin != null ? row.origin : undefined,
+  };
+  if (row.sendStatus === 'failed') {
+    extras.sendStatus = 'failed';
+  }
 
-	return { ...parsed, ...extras };
+  return { ...parsed, ...extras };
 }
 
 /**
@@ -2173,76 +2173,76 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
  * after subscribe are caught by the dynamic checks.
  */
 function buildTaskScopeFilter(
-	params: ReadonlyArray<unknown>,
-	db: BunDatabase
+  params: ReadonlyArray<unknown>,
+  db: BunDatabase
 ): ((scope: TableChangeScope) => boolean) | undefined {
-	const taskId = params[0] as string;
+  const taskId = params[0] as string;
 
-	// Capture the set of sessions linked to this task at subscribe time.
-	// This prevents the delete-last-message false negative: a session that
-	// had messages when the subscription was created stays in-scope even
-	// after those messages are deleted.
-	const linkedSessions = new Set<string>();
-	try {
-		const taskAgent = db
-			.prepare('SELECT task_agent_session_id FROM space_tasks WHERE id = ?')
-			.get(taskId) as { task_agent_session_id: string } | undefined;
-		if (taskAgent?.task_agent_session_id) {
-			linkedSessions.add(taskAgent.task_agent_session_id);
-		}
-	} catch {
-		// space_tasks may not exist in minimal test schemas
-	}
-	try {
-		const nodeAgents = db
-			.prepare(
-				`SELECT ne.agent_session_id
+  // Capture the set of sessions linked to this task at subscribe time.
+  // This prevents the delete-last-message false negative: a session that
+  // had messages when the subscription was created stays in-scope even
+  // after those messages are deleted.
+  const linkedSessions = new Set<string>();
+  try {
+    const taskAgent = db
+      .prepare('SELECT task_agent_session_id FROM space_tasks WHERE id = ?')
+      .get(taskId) as { task_agent_session_id: string } | undefined;
+    if (taskAgent?.task_agent_session_id) {
+      linkedSessions.add(taskAgent.task_agent_session_id);
+    }
+  } catch {
+    // space_tasks may not exist in minimal test schemas
+  }
+  try {
+    const nodeAgents = db
+      .prepare(
+        `SELECT ne.agent_session_id
 				 FROM node_executions ne
 				 JOIN space_tasks st ON st.id = ? AND st.workflow_run_id IS NOT NULL
 				 WHERE ne.workflow_run_id = st.workflow_run_id
 				   AND ne.agent_session_id IS NOT NULL`
-			)
-			.all(taskId) as Array<{ agent_session_id: string }>;
-		for (const row of nodeAgents) {
-			if (row.agent_session_id) linkedSessions.add(row.agent_session_id);
-		}
-	} catch {
-		// node_executions may not exist in minimal test schemas
-	}
-	try {
-		const messageSessions = db
-			.prepare('SELECT DISTINCT session_id FROM sdk_messages WHERE task_id = ?')
-			.all(taskId) as Array<{ session_id: string }>;
-		for (const row of messageSessions) {
-			if (row.session_id) linkedSessions.add(row.session_id);
-		}
-	} catch {
-		// sdk_messages may not exist in minimal test schemas
-	}
+      )
+      .all(taskId) as Array<{ agent_session_id: string }>;
+    for (const row of nodeAgents) {
+      if (row.agent_session_id) linkedSessions.add(row.agent_session_id);
+    }
+  } catch {
+    // node_executions may not exist in minimal test schemas
+  }
+  try {
+    const messageSessions = db
+      .prepare('SELECT DISTINCT session_id FROM sdk_messages WHERE task_id = ?')
+      .all(taskId) as Array<{ session_id: string }>;
+    for (const row of messageSessions) {
+      if (row.session_id) linkedSessions.add(row.session_id);
+    }
+  } catch {
+    // sdk_messages may not exist in minimal test schemas
+  }
 
-	// Dynamic checks for sessions that become linked after subscribe time.
-	const messageStmt = db.prepare(
-		`SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
-	);
-	const taskAgentStmt = db.prepare(
-		`SELECT 1 FROM space_tasks WHERE id = ? AND task_agent_session_id = ? LIMIT 1`
-	);
-	const nodeExecStmt = db.prepare(
-		`SELECT 1 FROM node_executions ne
+  // Dynamic checks for sessions that become linked after subscribe time.
+  const messageStmt = db.prepare(
+    `SELECT 1 FROM sdk_messages WHERE task_id = ? AND session_id = ? LIMIT 1`
+  );
+  const taskAgentStmt = db.prepare(
+    `SELECT 1 FROM space_tasks WHERE id = ? AND task_agent_session_id = ? LIMIT 1`
+  );
+  const nodeExecStmt = db.prepare(
+    `SELECT 1 FROM node_executions ne
 		 JOIN space_tasks st ON st.id = ?
 		   AND st.workflow_run_id IS NOT NULL
 		   AND ne.workflow_run_id = st.workflow_run_id
 		 WHERE ne.agent_session_id = ?
 		 LIMIT 1`
-	);
-	return (scope) => {
-		if (scope.taskId) return scope.taskId === taskId;
-		if (!scope.sessionId) return true;
-		if (linkedSessions.has(scope.sessionId)) return true;
-		if (messageStmt.get(taskId, scope.sessionId)) return true;
-		if (taskAgentStmt.get(taskId, scope.sessionId)) return true;
-		return !!nodeExecStmt.get(taskId, scope.sessionId);
-	};
+  );
+  return (scope) => {
+    if (scope.taskId) return scope.taskId === taskId;
+    if (!scope.sessionId) return true;
+    if (linkedSessions.has(scope.sessionId)) return true;
+    if (messageStmt.get(taskId, scope.sessionId)) return true;
+    if (taskAgentStmt.get(taskId, scope.sessionId)) return true;
+    return !!nodeExecStmt.get(taskId, scope.sessionId);
+  };
 }
 
 // Note: `sessions.list` intentionally has no scope filter. The query only
@@ -2256,277 +2256,277 @@ function buildTaskScopeFilter(
 // `sessions.list` on every session write is cheap and correct.
 
 function buildWorkflowRunScopeFilter(
-	params: ReadonlyArray<unknown>,
-	db: BunDatabase
+  params: ReadonlyArray<unknown>,
+  db: BunDatabase
 ): (scope: TableChangeScope) => boolean {
-	const workflowRunId = params[0] as string;
-	const taskIds = new Set<string>();
-	const sessionIds = new Set<string>();
-	const loadScope = () => {
-		taskIds.clear();
-		sessionIds.clear();
-		try {
-			const tasks = db
-				.prepare('SELECT id, task_agent_session_id FROM space_tasks WHERE workflow_run_id = ?')
-				.all(workflowRunId) as Array<{ id: string; task_agent_session_id: string | null }>;
-			for (const row of tasks) {
-				taskIds.add(row.id);
-				if (row.task_agent_session_id) sessionIds.add(row.task_agent_session_id);
-			}
-		} catch {
-			// space_tasks may not exist in minimal test schemas
-		}
-		try {
-			const executions = db
-				.prepare('SELECT agent_session_id FROM node_executions WHERE workflow_run_id = ?')
-				.all(workflowRunId) as Array<{ agent_session_id: string | null }>;
-			for (const row of executions) {
-				if (row.agent_session_id) sessionIds.add(row.agent_session_id);
-			}
-		} catch {
-			// node_executions may not exist in minimal test schemas
-		}
-		try {
-			const messages = db
-				.prepare(
-					'SELECT DISTINCT session_id FROM sdk_messages WHERE task_id IN (SELECT id FROM space_tasks WHERE workflow_run_id = ?)'
-				)
-				.all(workflowRunId) as Array<{ session_id: string | null }>;
-			for (const row of messages) {
-				if (row.session_id) sessionIds.add(row.session_id);
-			}
-		} catch {
-			// sdk_messages may not exist in minimal test schemas
-		}
-	};
-	loadScope();
-	return (scope) => {
-		if (scope.taskId) return taskIds.has(scope.taskId);
-		if (!scope.sessionId) return true;
-		if (sessionIds.has(scope.sessionId)) return true;
-		loadScope();
-		return sessionIds.has(scope.sessionId);
-	};
+  const workflowRunId = params[0] as string;
+  const taskIds = new Set<string>();
+  const sessionIds = new Set<string>();
+  const loadScope = () => {
+    taskIds.clear();
+    sessionIds.clear();
+    try {
+      const tasks = db
+        .prepare('SELECT id, task_agent_session_id FROM space_tasks WHERE workflow_run_id = ?')
+        .all(workflowRunId) as Array<{ id: string; task_agent_session_id: string | null }>;
+      for (const row of tasks) {
+        taskIds.add(row.id);
+        if (row.task_agent_session_id) sessionIds.add(row.task_agent_session_id);
+      }
+    } catch {
+      // space_tasks may not exist in minimal test schemas
+    }
+    try {
+      const executions = db
+        .prepare('SELECT agent_session_id FROM node_executions WHERE workflow_run_id = ?')
+        .all(workflowRunId) as Array<{ agent_session_id: string | null }>;
+      for (const row of executions) {
+        if (row.agent_session_id) sessionIds.add(row.agent_session_id);
+      }
+    } catch {
+      // node_executions may not exist in minimal test schemas
+    }
+    try {
+      const messages = db
+        .prepare(
+          'SELECT DISTINCT session_id FROM sdk_messages WHERE task_id IN (SELECT id FROM space_tasks WHERE workflow_run_id = ?)'
+        )
+        .all(workflowRunId) as Array<{ session_id: string | null }>;
+      for (const row of messages) {
+        if (row.session_id) sessionIds.add(row.session_id);
+      }
+    } catch {
+      // sdk_messages may not exist in minimal test schemas
+    }
+  };
+  loadScope();
+  return (scope) => {
+    if (scope.taskId) return taskIds.has(scope.taskId);
+    if (!scope.sessionId) return true;
+    if (sessionIds.has(scope.sessionId)) return true;
+    loadScope();
+    return sessionIds.has(scope.sessionId);
+  };
 }
 
 function buildSpaceSessionsScopeFilter(
-	params: ReadonlyArray<unknown>,
-	db: BunDatabase
+  params: ReadonlyArray<unknown>,
+  db: BunDatabase
 ): (scope: TableChangeScope) => boolean {
-	const spaceId = params[0] as string;
-	// Re-query membership on every invalidation rather than snapshotting at
-	// subscribe time. Snapshotting drops two important update paths:
-	//   1. Sessions added to the space *after* subscription would be filtered
-	//      out and miss title/status/lastActiveAt changes until the client
-	//      reconnects.
-	//   2. Sessions removed from the space would remain "in scope" forever,
-	//      causing avoidable re-evaluations.
-	// Reading the row is a single indexed lookup against `spaces.id`, so
-	// the cost is negligible relative to the SQL re-evaluation it gates.
-	const memberStmt = db.prepare('SELECT session_ids FROM spaces WHERE id = ?');
-	const readMembership = (): Set<string> | null => {
-		try {
-			const row = memberStmt.get(spaceId) as { session_ids: string | null } | undefined;
-			if (!row?.session_ids) return new Set();
-			const parsed = JSON.parse(row.session_ids) as unknown;
-			if (!Array.isArray(parsed)) return new Set();
-			const out = new Set<string>();
-			for (const value of parsed) {
-				if (typeof value === 'string') out.add(value);
-			}
-			return out;
-		} catch {
-			return null;
-		}
-	};
+  const spaceId = params[0] as string;
+  // Re-query membership on every invalidation rather than snapshotting at
+  // subscribe time. Snapshotting drops two important update paths:
+  //   1. Sessions added to the space *after* subscription would be filtered
+  //      out and miss title/status/lastActiveAt changes until the client
+  //      reconnects.
+  //   2. Sessions removed from the space would remain "in scope" forever,
+  //      causing avoidable re-evaluations.
+  // Reading the row is a single indexed lookup against `spaces.id`, so
+  // the cost is negligible relative to the SQL re-evaluation it gates.
+  const memberStmt = db.prepare('SELECT session_ids FROM spaces WHERE id = ?');
+  const readMembership = (): Set<string> | null => {
+    try {
+      const row = memberStmt.get(spaceId) as { session_ids: string | null } | undefined;
+      if (!row?.session_ids) return new Set();
+      const parsed = JSON.parse(row.session_ids) as unknown;
+      if (!Array.isArray(parsed)) return new Set();
+      const out = new Set<string>();
+      for (const value of parsed) {
+        if (typeof value === 'string') out.add(value);
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  };
 
-	return (scope) => {
-		// If the scope explicitly tags this write with our spaceId (e.g. the
-		// session was just created/updated as a member of this space), accept
-		// without an extra DB hit. Covers the new-member case directly.
-		if (scope.spaceId === spaceId) return true;
+  return (scope) => {
+    // If the scope explicitly tags this write with our spaceId (e.g. the
+    // session was just created/updated as a member of this space), accept
+    // without an extra DB hit. Covers the new-member case directly.
+    if (scope.spaceId === spaceId) return true;
 
-		// No sessionId on the scope (e.g. a `spaces` row was rewritten):
-		// we cannot tell what changed, so be conservative.
-		if (!scope.sessionId) return true;
+    // No sessionId on the scope (e.g. a `spaces` row was rewritten):
+    // we cannot tell what changed, so be conservative.
+    if (!scope.sessionId) return true;
 
-		const members = readMembership();
-		if (members === null) return true; // membership unreadable: be safe
-		// Re-evaluate when the session is currently in this space *or* could
-		// have been a member just before the write — we cannot distinguish a
-		// just-removed session from an unrelated session here, so accept any
-		// scope whose sessionId matches the live set. Sessions outside the
-		// live set with no spaceId hint are filtered.
-		return members.has(scope.sessionId);
-	};
+    const members = readMembership();
+    if (members === null) return true; // membership unreadable: be safe
+    // Re-evaluate when the session is currently in this space *or* could
+    // have been a member just before the write — we cannot distinguish a
+    // just-removed session from an unrelated session here, so accept any
+    // scope whose sessionId matches the live set. Sessions outside the
+    // live set with no spaceId hint are filtered.
+    return members.has(scope.sessionId);
+  };
 }
 
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
-	[
-		'sessionGroupMessages.byGroup',
-		{
-			sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SESSION_GROUP_MESSAGES_MS,
-			mapRow: mapSessionGroupMessageRow,
-			buildScopeFilter: (params, db) => {
-				const groupId = params[0] as string;
-				const stmt = db.prepare(
-					'SELECT 1 FROM session_group_members WHERE group_id = ? AND session_id = ? LIMIT 1'
-				);
-				return (scope) => {
-					if (!scope.sessionId) return true;
-					return !!stmt.get(groupId, scope.sessionId);
-				};
-			},
-		},
-	],
-	[
-		'spaceTaskActivity.byTask',
-		{
-			sql: SPACE_TASK_ACTIVITY_BY_TASK_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-			mapRow: mapSpaceTaskActivityRow,
-			buildScopeFilter: buildTaskScopeFilter,
-		},
-	],
-	[
-		'spaceTaskMessages.byTask',
-		{
-			sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-			mapRow: mapSpaceTaskMessageRow,
-			buildScopeFilter: buildTaskScopeFilter,
-		},
-	],
-	[
-		'spaceTaskMessages.byTask.compact',
-		{
-			sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-			mapRow: mapSpaceTaskMessageRow,
-			buildScopeFilter: buildTaskScopeFilter,
-		},
-	],
-	[
-		'spaceTaskActiveTurn.byTask',
-		{
-			sql: SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-			mapRow: mapActiveTurnEntryRow,
-			buildScopeFilter: buildTaskScopeFilter,
-		},
-	],
-	[
-		'mcpServers.global',
-		{
-			sql: MCP_SERVERS_GLOBAL_SQL,
-			paramCount: 0,
-			mapRow: mapMcpServerRow,
-		},
-	],
-	[
-		'skills.list',
-		{
-			sql: SKILLS_LIST_SQL,
-			paramCount: 0,
-			mapRow: mapSkillRow,
-		},
-	],
-	[
-		'mcpEnablement.bySpace',
-		{
-			sql: MCP_ENABLEMENT_BY_SPACE_SQL,
-			paramCount: 1,
-			mapRow: mapMcpEnablementBySpaceRow,
-		},
-	],
-	[
-		'actorMessages.byTask',
-		{
-			sql: ACTOR_MESSAGES_BY_TASK_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-			mapRow: mapActorMessageProjectionRow,
-			buildScopeFilter: buildTaskScopeFilter,
-		},
-	],
-	[
-		'actorMessages.byWorkflowRun',
-		{
-			sql: ACTOR_MESSAGES_BY_WORKFLOW_RUN_SQL,
-			paramCount: 3,
-			debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-			mapRow: mapActorMessageProjectionRow,
-			buildScopeFilter: buildWorkflowRunScopeFilter,
-		},
-	],
-	[
-		'nodeExecutions.byRun',
-		{
-			sql: NODE_EXECUTIONS_BY_RUN_SQL,
-			paramCount: 1,
-		},
-	],
-	[
-		'workflowRunArtifacts.byRun',
-		{
-			sql: WORKFLOW_RUN_ARTIFACTS_BY_RUN_SQL,
-			paramCount: 1,
-			mapRow: mapArtifactRow,
-		},
-	],
-	[
-		'spaceSessions.bySpace',
-		{
-			sql: SPACE_SESSIONS_BY_SPACE_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SPACE_SESSIONS_MS,
-			buildScopeFilter: buildSpaceSessionsScopeFilter,
-		},
-	],
-	[
-		'messages.bySession',
-		{
-			sql: MESSAGES_BY_SESSION_SQL,
-			paramCount: 2,
-			debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
-			mapRow: mapMessageRow,
-			buildScopeFilter: (params) => {
-				const targetSessionId = params[0] as string;
-				return (scope) => {
-					if (!scope.sessionId) return true;
-					return scope.sessionId === targetSessionId;
-				};
-			},
-		},
-	],
-	[
-		'sessions.list',
-		{
-			sql: SESSIONS_LIST_SQL,
-			paramCount: 1,
-			debounceMs: DEBOUNCE_SESSION_LIST_MS,
-			mapRow: mapSessionRow,
-			// No scope filter — see the comment on the (deleted)
-			// `buildSessionsListScopeFilter` site above. Session writes are
-			// infrequent and `updateSession` post-write scope can hide
-			// transitions that should remove a row from this list.
-			mapResult: (rawRows) => {
-				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
-					return {
-						totalCount: rawRows[0]._totalCount as number,
-						archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
-					};
-				}
-				return { totalCount: 0, archivedCount: 0 };
-			},
-		},
-	],
+  [
+    'sessionGroupMessages.byGroup',
+    {
+      sql: SESSION_GROUP_MESSAGES_BY_GROUP_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SESSION_GROUP_MESSAGES_MS,
+      mapRow: mapSessionGroupMessageRow,
+      buildScopeFilter: (params, db) => {
+        const groupId = params[0] as string;
+        const stmt = db.prepare(
+          'SELECT 1 FROM session_group_members WHERE group_id = ? AND session_id = ? LIMIT 1'
+        );
+        return (scope) => {
+          if (!scope.sessionId) return true;
+          return !!stmt.get(groupId, scope.sessionId);
+        };
+      },
+    },
+  ],
+  [
+    'spaceTaskActivity.byTask',
+    {
+      sql: SPACE_TASK_ACTIVITY_BY_TASK_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapSpaceTaskActivityRow,
+      buildScopeFilter: buildTaskScopeFilter,
+    },
+  ],
+  [
+    'spaceTaskMessages.byTask',
+    {
+      sql: SPACE_TASK_MESSAGES_BY_TASK_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapSpaceTaskMessageRow,
+      buildScopeFilter: buildTaskScopeFilter,
+    },
+  ],
+  [
+    'spaceTaskMessages.byTask.compact',
+    {
+      sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapSpaceTaskMessageRow,
+      buildScopeFilter: buildTaskScopeFilter,
+    },
+  ],
+  [
+    'spaceTaskActiveTurn.byTask',
+    {
+      sql: SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapActiveTurnEntryRow,
+      buildScopeFilter: buildTaskScopeFilter,
+    },
+  ],
+  [
+    'mcpServers.global',
+    {
+      sql: MCP_SERVERS_GLOBAL_SQL,
+      paramCount: 0,
+      mapRow: mapMcpServerRow,
+    },
+  ],
+  [
+    'skills.list',
+    {
+      sql: SKILLS_LIST_SQL,
+      paramCount: 0,
+      mapRow: mapSkillRow,
+    },
+  ],
+  [
+    'mcpEnablement.bySpace',
+    {
+      sql: MCP_ENABLEMENT_BY_SPACE_SQL,
+      paramCount: 1,
+      mapRow: mapMcpEnablementBySpaceRow,
+    },
+  ],
+  [
+    'actorMessages.byTask',
+    {
+      sql: ACTOR_MESSAGES_BY_TASK_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapActorMessageProjectionRow,
+      buildScopeFilter: buildTaskScopeFilter,
+    },
+  ],
+  [
+    'actorMessages.byWorkflowRun',
+    {
+      sql: ACTOR_MESSAGES_BY_WORKFLOW_RUN_SQL,
+      paramCount: 3,
+      debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
+      mapRow: mapActorMessageProjectionRow,
+      buildScopeFilter: buildWorkflowRunScopeFilter,
+    },
+  ],
+  [
+    'nodeExecutions.byRun',
+    {
+      sql: NODE_EXECUTIONS_BY_RUN_SQL,
+      paramCount: 1,
+    },
+  ],
+  [
+    'workflowRunArtifacts.byRun',
+    {
+      sql: WORKFLOW_RUN_ARTIFACTS_BY_RUN_SQL,
+      paramCount: 1,
+      mapRow: mapArtifactRow,
+    },
+  ],
+  [
+    'spaceSessions.bySpace',
+    {
+      sql: SPACE_SESSIONS_BY_SPACE_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SPACE_SESSIONS_MS,
+      buildScopeFilter: buildSpaceSessionsScopeFilter,
+    },
+  ],
+  [
+    'messages.bySession',
+    {
+      sql: MESSAGES_BY_SESSION_SQL,
+      paramCount: 2,
+      debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
+      mapRow: mapMessageRow,
+      buildScopeFilter: (params) => {
+        const targetSessionId = params[0] as string;
+        return (scope) => {
+          if (!scope.sessionId) return true;
+          return scope.sessionId === targetSessionId;
+        };
+      },
+    },
+  ],
+  [
+    'sessions.list',
+    {
+      sql: SESSIONS_LIST_SQL,
+      paramCount: 1,
+      debounceMs: DEBOUNCE_SESSION_LIST_MS,
+      mapRow: mapSessionRow,
+      // No scope filter — see the comment on the (deleted)
+      // `buildSessionsListScopeFilter` site above. Session writes are
+      // infrequent and `updateSession` post-write scope can hide
+      // transitions that should remove a row from this list.
+      mapResult: (rawRows) => {
+        if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
+          return {
+            totalCount: rawRows[0]._totalCount as number,
+            archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
+          };
+        }
+        return { totalCount: 0, archivedCount: 0 };
+      },
+    },
+  ],
 ]);
 
 // ============================================================================
@@ -2546,356 +2546,356 @@ const log = new Logger('live-query-handlers');
  * unregisters the client-disconnect listener.
  */
 export function setupLiveQueryHandlers(
-	messageHub: MessageHub,
-	liveQueries: LiveQueryEngine,
-	db: BunDatabase
+  messageHub: MessageHub,
+  liveQueries: LiveQueryEngine,
+  db: BunDatabase
 ): () => void {
-	// Map<clientId → Map<subscriptionId → LiveQueryHandle>>
-	const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
+  // Map<clientId → Map<subscriptionId → LiveQueryHandle>>
+  const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
 
-	// Build a local registry that overrides sessions.list with a closure capturing db.
-	// This ensures totalCount and archivedCount metadata are accurate even when the
-	// visible session list is empty (e.g. all sessions are archived, showArchived=false).
-	const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
-	const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
+  // Build a local registry that overrides sessions.list with a closure capturing db.
+  // This ensures totalCount and archivedCount metadata are accurate even when the
+  // visible session list is empty (e.g. all sessions are archived, showArchived=false).
+  const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
+  const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
 
-	const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
-	const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
+  const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
+  const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
 
-	activeRegistry.set('sessions.list', {
-		...sessionsListBase,
-		mapResult: (rawRows) => {
-			if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
-				return {
-					totalCount: rawRows[0]._totalCount as number,
-					archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
-				};
-			}
-			// When no visible sessions exist (e.g. all archived and showArchived=false),
-			// run direct count queries so hasArchivedSessions correctly shows the toggle.
-			const totalRow = stmtSessionsTotalCount.get() as { cnt: number } | undefined;
-			const archivedRow = stmtSessionsArchivedCount.get() as { cnt: number } | undefined;
-			return {
-				totalCount: totalRow?.cnt ?? 0,
-				archivedCount: archivedRow?.cnt ?? 0,
-			};
-		},
-	});
+  activeRegistry.set('sessions.list', {
+    ...sessionsListBase,
+    mapResult: (rawRows) => {
+      if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
+        return {
+          totalCount: rawRows[0]._totalCount as number,
+          archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
+        };
+      }
+      // When no visible sessions exist (e.g. all archived and showArchived=false),
+      // run direct count queries so hasArchivedSessions correctly shows the toggle.
+      const totalRow = stmtSessionsTotalCount.get() as { cnt: number } | undefined;
+      const archivedRow = stmtSessionsArchivedCount.get() as { cnt: number } | undefined;
+      return {
+        totalCount: totalRow?.cnt ?? 0,
+        archivedCount: archivedRow?.cnt ?? 0,
+      };
+    },
+  });
 
-	// Cache prepared statements once at setup time — compiled once per handler
-	// registration, not once per subscribe call (which would add compilation
-	// overhead on every subscribe RPC invocation).
-	const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
-	const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
-	const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
-	const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
-	const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
+  // Cache prepared statements once at setup time — compiled once per handler
+  // registration, not once per subscribe call (which would add compilation
+  // overhead on every subscribe RPC invocation).
+  const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
+  const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
+  const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
+  const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
+  const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
 
-	// -------------------------------------------------------------------------
-	// liveQuery.subscribe
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // liveQuery.subscribe
+  // -------------------------------------------------------------------------
 
-	messageHub.onRequest('liveQuery.subscribe', (data, context) => {
-		const { queryName, params, subscriptionId } = data as LiveQuerySubscribeRequest;
-		const { clientId, sessionId } = context;
+  messageHub.onRequest('liveQuery.subscribe', (data, context) => {
+    const { queryName, params, subscriptionId } = data as LiveQuerySubscribeRequest;
+    const { clientId, sessionId } = context;
 
-		// 1. Require WebSocket clientId
-		if (!clientId) {
-			throw new Error('liveQuery.subscribe requires a WebSocket connection (clientId absent)');
-		}
+    // 1. Require WebSocket clientId
+    if (!clientId) {
+      throw new Error('liveQuery.subscribe requires a WebSocket connection (clientId absent)');
+    }
 
-		// 2. Resolve query from registry
-		const namedQuery = activeRegistry.get(queryName);
-		if (!namedQuery) {
-			throw new Error(`Unknown query name: "${queryName}"`);
-		}
+    // 2. Resolve query from registry
+    const namedQuery = activeRegistry.get(queryName);
+    if (!namedQuery) {
+      throw new Error(`Unknown query name: "${queryName}"`);
+    }
 
-		// 3. Validate parameter count
-		if (params.length !== namedQuery.paramCount) {
-			throw new Error(
-				`Query "${queryName}" expects ${namedQuery.paramCount} parameter(s), got ${params.length}`
-			);
-		}
+    // 3. Validate parameter count
+    if (params.length !== namedQuery.paramCount) {
+      throw new Error(
+        `Query "${queryName}" expects ${namedQuery.paramCount} parameter(s), got ${params.length}`
+      );
+    }
 
-		// 4. Authorization checks
-		if (queryName === 'sessionGroupMessages.byGroup') {
-			const groupId = params[0] as string;
-			const group = stmtGroup.get(groupId) as { ref_id: string; group_type: string } | null;
-			if (!group) {
-				throw new Error(`Unauthorized: session group "${groupId}" not found`);
-			}
-			if (group.group_type === 'task') {
-				// For task-typed groups, verify the full group → task → room chain.
-				// This ensures the requesting client has access to the room the task belongs to.
-				const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
-				if (!task) {
-					throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
-				}
-				if (!stmtRoom.get(task.room_id)) {
-					throw new Error(`Unauthorized: room "${task.room_id}" not found`);
-				}
-			}
-			// Non-task group types (e.g., 'workflow', 'global') are authorized by group
-			// existence alone.  All current non-task groups are internal daemon constructs
-			// not directly reachable by client-supplied IDs without prior knowledge.
-			// If new group types with finer-grained access control are introduced, extend
-			// this block with the appropriate chain validation.
-		} else if (
-			queryName === 'spaceTaskActivity.byTask' ||
-			queryName === 'spaceTaskMessages.byTask' ||
-			queryName === 'spaceTaskMessages.byTask.compact' ||
-			queryName === 'spaceTaskActiveTurn.byTask' ||
-			queryName === 'actorMessages.byTask'
-		) {
-			const taskId = params[0] as string;
-			let spaceTask: { space_id: string } | null = null;
-			try {
-				spaceTask = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
-					space_id: string;
-				} | null;
-			} catch {
-				spaceTask = null;
-			}
-			if (!spaceTask) {
-				throw new Error(`Unauthorized: space task "${taskId}" not found`);
-			}
-		} else if (queryName === 'actorMessages.byWorkflowRun') {
-			const workflowRunId = params[0] as string;
-			if (params.some((param) => param !== workflowRunId)) {
-				throw new Error(
-					'Unauthorized: actorMessages.byWorkflowRun requires matching workflow run ids'
-				);
-			}
-			let workflowRun: { id: string } | null = null;
-			try {
-				workflowRun = db
-					.prepare('SELECT id FROM space_workflow_runs WHERE id = ?')
-					.get(workflowRunId) as {
-					id: string;
-				} | null;
-			} catch {
-				workflowRun = null;
-			}
-			if (!workflowRun) {
-				throw new Error(`Unauthorized: workflow run "${workflowRunId}" not found`);
-			}
-		} else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
-			const spaceId = params[0] as string;
-			if (!stmtSpace.get(spaceId)) {
-				throw new Error(`Unauthorized: space "${spaceId}" not found`);
-			}
-		} else if (queryName === 'messages.bySession') {
-			// Verify the session exists. We intentionally do not restrict by
-			// session type (users can view their own worker, room_chat, space_chat,
-			// task_agent, etc. sessions), and the WebSocket clientId check above
-			// already requires an active connection.
-			const targetSessionId = params[0] as string;
-			if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
-				throw new Error('Unauthorized: messages.bySession requires a non-empty sessionId');
-			}
-			if (!stmtSession.get(targetSessionId)) {
-				throw new Error(`Unauthorized: session "${targetSessionId}" not found`);
-			}
-			// Validate the limit parameter is a positive integer so bad input
-			// (e.g. NaN, negative numbers) doesn't silently produce an empty result
-			// set that the client would interpret as "no messages".
-			const limit = params[1];
-			if (typeof limit !== 'number' || !Number.isInteger(limit) || limit <= 0 || limit > 10000) {
-				throw new Error(
-					`Unauthorized: messages.bySession limit must be an integer in [1, 10000], got ${String(limit)}`
-				);
-			}
-		}
+    // 4. Authorization checks
+    if (queryName === 'sessionGroupMessages.byGroup') {
+      const groupId = params[0] as string;
+      const group = stmtGroup.get(groupId) as { ref_id: string; group_type: string } | null;
+      if (!group) {
+        throw new Error(`Unauthorized: session group "${groupId}" not found`);
+      }
+      if (group.group_type === 'task') {
+        // For task-typed groups, verify the full group → task → room chain.
+        // This ensures the requesting client has access to the room the task belongs to.
+        const task = stmtTask.get(group.ref_id) as { room_id: string } | null;
+        if (!task) {
+          throw new Error(`Unauthorized: task "${group.ref_id}" not found`);
+        }
+        if (!stmtRoom.get(task.room_id)) {
+          throw new Error(`Unauthorized: room "${task.room_id}" not found`);
+        }
+      }
+      // Non-task group types (e.g., 'workflow', 'global') are authorized by group
+      // existence alone.  All current non-task groups are internal daemon constructs
+      // not directly reachable by client-supplied IDs without prior knowledge.
+      // If new group types with finer-grained access control are introduced, extend
+      // this block with the appropriate chain validation.
+    } else if (
+      queryName === 'spaceTaskActivity.byTask' ||
+      queryName === 'spaceTaskMessages.byTask' ||
+      queryName === 'spaceTaskMessages.byTask.compact' ||
+      queryName === 'spaceTaskActiveTurn.byTask' ||
+      queryName === 'actorMessages.byTask'
+    ) {
+      const taskId = params[0] as string;
+      let spaceTask: { space_id: string } | null = null;
+      try {
+        spaceTask = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
+          space_id: string;
+        } | null;
+      } catch {
+        spaceTask = null;
+      }
+      if (!spaceTask) {
+        throw new Error(`Unauthorized: space task "${taskId}" not found`);
+      }
+    } else if (queryName === 'actorMessages.byWorkflowRun') {
+      const workflowRunId = params[0] as string;
+      if (params.some((param) => param !== workflowRunId)) {
+        throw new Error(
+          'Unauthorized: actorMessages.byWorkflowRun requires matching workflow run ids'
+        );
+      }
+      let workflowRun: { id: string } | null = null;
+      try {
+        workflowRun = db
+          .prepare('SELECT id FROM space_workflow_runs WHERE id = ?')
+          .get(workflowRunId) as {
+          id: string;
+        } | null;
+      } catch {
+        workflowRun = null;
+      }
+      if (!workflowRun) {
+        throw new Error(`Unauthorized: workflow run "${workflowRunId}" not found`);
+      }
+    } else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
+      const spaceId = params[0] as string;
+      if (!stmtSpace.get(spaceId)) {
+        throw new Error(`Unauthorized: space "${spaceId}" not found`);
+      }
+    } else if (queryName === 'messages.bySession') {
+      // Verify the session exists. We intentionally do not restrict by
+      // session type (users can view their own worker, room_chat, space_chat,
+      // task_agent, etc. sessions), and the WebSocket clientId check above
+      // already requires an active connection.
+      const targetSessionId = params[0] as string;
+      if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
+        throw new Error('Unauthorized: messages.bySession requires a non-empty sessionId');
+      }
+      if (!stmtSession.get(targetSessionId)) {
+        throw new Error(`Unauthorized: session "${targetSessionId}" not found`);
+      }
+      // Validate the limit parameter is a positive integer so bad input
+      // (e.g. NaN, negative numbers) doesn't silently produce an empty result
+      // set that the client would interpret as "no messages".
+      const limit = params[1];
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit <= 0 || limit > 10000) {
+        throw new Error(
+          `Unauthorized: messages.bySession limit must be an integer in [1, 10000], got ${String(limit)}`
+        );
+      }
+    }
 
-		// 5. Get or create client subscription map
-		let clientSubs = subscriptions.get(clientId);
-		if (!clientSubs) {
-			clientSubs = new Map();
-			subscriptions.set(clientId, clientSubs);
-		}
+    // 5. Get or create client subscription map
+    let clientSubs = subscriptions.get(clientId);
+    if (!clientSubs) {
+      clientSubs = new Map();
+      subscriptions.set(clientId, clientSubs);
+    }
 
-		// 6. Handle subscriptionId collision — dispose existing handle silently
-		const existing = clientSubs.get(subscriptionId);
-		if (existing) {
-			log.debug(
-				`liveQuery.subscribe: replacing subscription ${subscriptionId} for client ${clientId}`
-			);
-			existing.dispose();
-			clientSubs.delete(subscriptionId);
-		}
+    // 6. Handle subscriptionId collision — dispose existing handle silently
+    const existing = clientSubs.get(subscriptionId);
+    if (existing) {
+      log.debug(
+        `liveQuery.subscribe: replacing subscription ${subscriptionId} for client ${clientId}`
+      );
+      existing.dispose();
+      clientSubs.delete(subscriptionId);
+    }
 
-		// 7. Subscribe to LiveQueryEngine
-		const { sql, mapRow } = namedQuery;
-		const applyMapRow = (row: Record<string, unknown>) => (mapRow ? mapRow(row) : row);
-		const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
+    // 7. Subscribe to LiveQueryEngine
+    const { sql, mapRow } = namedQuery;
+    const applyMapRow = (row: Record<string, unknown>) => (mapRow ? mapRow(row) : row);
+    const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
 
-		// Track whether the synchronous snapshot delivery failed so we can
-		// dispose the handle after subscribe() returns.  The snapshot is fired
-		// inside liveQueries.subscribe() before it returns the handle, so we
-		// cannot call handle.dispose() directly during the callback.
-		let snapshotDeliveryFailed = false;
+    // Track whether the synchronous snapshot delivery failed so we can
+    // dispose the handle after subscribe() returns.  The snapshot is fired
+    // inside liveQueries.subscribe() before it returns the handle, so we
+    // cannot call handle.dispose() directly during the callback.
+    let snapshotDeliveryFailed = false;
 
-		const handle = liveQueries.subscribe(
-			sql,
-			params,
-			(diff: QueryDiff<Record<string, unknown>>) => {
-				const router = messageHub.getRouter();
-				if (!router) {
-					// Router not yet registered or already torn down.  Mark snapshot
-					// as failed so the handle is disposed after subscribe() returns;
-					// for deltas this is a no-op since the engine will never fire
-					// another callback after the handle is disposed.
-					log.warn(
-						`liveQuery: router unavailable; skipping event (clientId=${clientId}, subscriptionId=${subscriptionId})`
-					);
-					if (diff.type === 'snapshot') {
-						snapshotDeliveryFailed = true;
-					}
-					return;
-				}
+    const handle = liveQueries.subscribe(
+      sql,
+      params,
+      (diff: QueryDiff<Record<string, unknown>>) => {
+        const router = messageHub.getRouter();
+        if (!router) {
+          // Router not yet registered or already torn down.  Mark snapshot
+          // as failed so the handle is disposed after subscribe() returns;
+          // for deltas this is a no-op since the engine will never fire
+          // another callback after the handle is disposed.
+          log.warn(
+            `liveQuery: router unavailable; skipping event (clientId=${clientId}, subscriptionId=${subscriptionId})`
+          );
+          if (diff.type === 'snapshot') {
+            snapshotDeliveryFailed = true;
+          }
+          return;
+        }
 
-				// Metadata is computed by LiveQueryEngine once per cached query
-				// evaluation so identical subscriptions share expensive sidecars
-				// like the compact task feed's active-turn aggregation.
-				const metadata = diff.metadata;
+        // Metadata is computed by LiveQueryEngine once per cached query
+        // evaluation so identical subscriptions share expensive sidecars
+        // like the compact task feed's active-turn aggregation.
+        const metadata = diff.metadata;
 
-				let message: ReturnType<typeof createEventMessage>;
+        let message: ReturnType<typeof createEventMessage>;
 
-				if (diff.type === 'snapshot') {
-					const eventData: LiveQuerySnapshotEvent = {
-						subscriptionId,
-						rows: applyMapRows(diff.rows),
-						version: diff.version,
-						...(metadata ? { metadata } : {}),
-					};
-					message = createEventMessage({
-						method: 'liveQuery.snapshot',
-						data: eventData,
-						sessionId,
-					});
-				} else {
-					const eventData: LiveQueryDeltaEvent = {
-						subscriptionId,
-						added: diff.added ? applyMapRows(diff.added) : undefined,
-						removed: diff.removed ? applyMapRows(diff.removed) : undefined,
-						updated: diff.updated ? applyMapRows(diff.updated) : undefined,
-						version: diff.version,
-						...(metadata ? { metadata } : {}),
-					};
-					message = createEventMessage({
-						method: 'liveQuery.delta',
-						data: eventData,
-						sessionId,
-					});
-				}
+        if (diff.type === 'snapshot') {
+          const eventData: LiveQuerySnapshotEvent = {
+            subscriptionId,
+            rows: applyMapRows(diff.rows),
+            version: diff.version,
+            ...(metadata ? { metadata } : {}),
+          };
+          message = createEventMessage({
+            method: 'liveQuery.snapshot',
+            data: eventData,
+            sessionId,
+          });
+        } else {
+          const eventData: LiveQueryDeltaEvent = {
+            subscriptionId,
+            added: diff.added ? applyMapRows(diff.added) : undefined,
+            removed: diff.removed ? applyMapRows(diff.removed) : undefined,
+            updated: diff.updated ? applyMapRows(diff.updated) : undefined,
+            version: diff.version,
+            ...(metadata ? { metadata } : {}),
+          };
+          message = createEventMessage({
+            method: 'liveQuery.delta',
+            data: eventData,
+            sessionId,
+          });
+        }
 
-				const sent = router.sendToClient(clientId, message);
-				if (!sent) {
-					if (diff.type === 'snapshot') {
-						// handle not yet assigned; defer cleanup to after subscribe() returns
-						snapshotDeliveryFailed = true;
-						log.warn(
-							`liveQuery: snapshot delivery failed for client ${clientId}; subscription ${subscriptionId} will be disposed`
-						);
-					} else {
-						// Delta: client disconnected — dispose now (handle is assigned)
-						log.warn(
-							`liveQuery: delta delivery failed for client ${clientId}; disposing subscription ${subscriptionId}`
-						);
-						handle.dispose();
-						const subs = subscriptions.get(clientId);
-						if (subs) {
-							subs.delete(subscriptionId);
-							if (subs.size === 0) subscriptions.delete(clientId);
-						}
-					}
-				}
-			},
-			{
-				debounceMs: namedQuery.debounceMs,
-				getMetadata: namedQuery.mapResult,
-				scopeFilter: namedQuery.buildScopeFilter?.(params, db),
-			}
-		);
+        const sent = router.sendToClient(clientId, message);
+        if (!sent) {
+          if (diff.type === 'snapshot') {
+            // handle not yet assigned; defer cleanup to after subscribe() returns
+            snapshotDeliveryFailed = true;
+            log.warn(
+              `liveQuery: snapshot delivery failed for client ${clientId}; subscription ${subscriptionId} will be disposed`
+            );
+          } else {
+            // Delta: client disconnected — dispose now (handle is assigned)
+            log.warn(
+              `liveQuery: delta delivery failed for client ${clientId}; disposing subscription ${subscriptionId}`
+            );
+            handle.dispose();
+            const subs = subscriptions.get(clientId);
+            if (subs) {
+              subs.delete(subscriptionId);
+              if (subs.size === 0) subscriptions.delete(clientId);
+            }
+          }
+        }
+      },
+      {
+        debounceMs: namedQuery.debounceMs,
+        getMetadata: namedQuery.mapResult,
+        scopeFilter: namedQuery.buildScopeFilter?.(params, db),
+      }
+    );
 
-		// If snapshot delivery failed (no router or client not found), clean up
-		// immediately and return ok — this is not a protocol error from the
-		// client's perspective.
-		if (snapshotDeliveryFailed) {
-			handle.dispose();
-			return { ok: true } satisfies LiveQuerySubscribeResponse;
-		}
+    // If snapshot delivery failed (no router or client not found), clean up
+    // immediately and return ok — this is not a protocol error from the
+    // client's perspective.
+    if (snapshotDeliveryFailed) {
+      handle.dispose();
+      return { ok: true } satisfies LiveQuerySubscribeResponse;
+    }
 
-		// 8. Track the handle
-		clientSubs.set(subscriptionId, handle);
-		log.debug(
-			`liveQuery.subscribe: registered subscription ${subscriptionId} for client ${clientId}, query=${queryName}`
-		);
+    // 8. Track the handle
+    clientSubs.set(subscriptionId, handle);
+    log.debug(
+      `liveQuery.subscribe: registered subscription ${subscriptionId} for client ${clientId}, query=${queryName}`
+    );
 
-		return { ok: true } satisfies LiveQuerySubscribeResponse;
-	});
+    return { ok: true } satisfies LiveQuerySubscribeResponse;
+  });
 
-	// -------------------------------------------------------------------------
-	// liveQuery.unsubscribe
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // liveQuery.unsubscribe
+  // -------------------------------------------------------------------------
 
-	messageHub.onRequest('liveQuery.unsubscribe', (data, context) => {
-		const { subscriptionId } = data as LiveQueryUnsubscribeRequest;
-		const { clientId } = context;
+  messageHub.onRequest('liveQuery.unsubscribe', (data, context) => {
+    const { subscriptionId } = data as LiveQueryUnsubscribeRequest;
+    const { clientId } = context;
 
-		if (!clientId) {
-			throw new Error('liveQuery.unsubscribe requires a WebSocket connection (clientId absent)');
-		}
+    if (!clientId) {
+      throw new Error('liveQuery.unsubscribe requires a WebSocket connection (clientId absent)');
+    }
 
-		const clientSubs = subscriptions.get(clientId);
-		const handle = clientSubs?.get(subscriptionId);
-		if (handle) {
-			handle.dispose();
-			clientSubs!.delete(subscriptionId);
-			if (clientSubs!.size === 0) subscriptions.delete(clientId);
-			log.debug(
-				`liveQuery.unsubscribe: disposed subscription ${subscriptionId} for client ${clientId}`
-			);
-		} else {
-			log.debug(
-				`liveQuery.unsubscribe: subscription ${subscriptionId} not found for client ${clientId}`
-			);
-		}
+    const clientSubs = subscriptions.get(clientId);
+    const handle = clientSubs?.get(subscriptionId);
+    if (handle) {
+      handle.dispose();
+      clientSubs!.delete(subscriptionId);
+      if (clientSubs!.size === 0) subscriptions.delete(clientId);
+      log.debug(
+        `liveQuery.unsubscribe: disposed subscription ${subscriptionId} for client ${clientId}`
+      );
+    } else {
+      log.debug(
+        `liveQuery.unsubscribe: subscription ${subscriptionId} not found for client ${clientId}`
+      );
+    }
 
-		return { ok: true } satisfies LiveQueryUnsubscribeResponse;
-	});
+    return { ok: true } satisfies LiveQueryUnsubscribeResponse;
+  });
 
-	// -------------------------------------------------------------------------
-	// Client disconnect cleanup
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Client disconnect cleanup
+  // -------------------------------------------------------------------------
 
-	const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
-		const clientSubs = subscriptions.get(disconnectedClientId);
-		if (!clientSubs || clientSubs.size === 0) return;
+  const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
+    const clientSubs = subscriptions.get(disconnectedClientId);
+    if (!clientSubs || clientSubs.size === 0) return;
 
-		log.debug(
-			`liveQuery: client ${disconnectedClientId} disconnected; disposing ${clientSubs.size} subscription(s)`
-		);
-		for (const [, handle] of clientSubs) {
-			handle.dispose();
-		}
-		subscriptions.delete(disconnectedClientId);
-	});
+    log.debug(
+      `liveQuery: client ${disconnectedClientId} disconnected; disposing ${clientSubs.size} subscription(s)`
+    );
+    for (const [, handle] of clientSubs) {
+      handle.dispose();
+    }
+    subscriptions.delete(disconnectedClientId);
+  });
 
-	// -------------------------------------------------------------------------
-	// Cleanup function
-	// -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Cleanup function
+  // -------------------------------------------------------------------------
 
-	return () => {
-		// Dispose all active handles before unregistering the disconnect listener.
-		// This ensures handles are cleaned up against the live engine before it
-		// may be disposed by the caller (e.g., createDaemonApp shutdown sequence).
-		for (const [, clientSubs] of subscriptions) {
-			for (const [, handle] of clientSubs) {
-				handle.dispose();
-			}
-		}
-		subscriptions.clear();
-		unsubDisconnect();
-	};
+  return () => {
+    // Dispose all active handles before unregistering the disconnect listener.
+    // This ensures handles are cleaned up against the live engine before it
+    // may be disposed by the caller (e.g., createDaemonApp shutdown sequence).
+    for (const [, clientSubs] of subscriptions) {
+      for (const [, handle] of clientSubs) {
+        handle.dispose();
+      }
+    }
+    subscriptions.clear();
+    unsubDisconnect();
+  };
 }
