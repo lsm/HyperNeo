@@ -122,11 +122,17 @@ let astGrepServerPath: string | null = null;
 function buildCodeGraph() {
 	console.log('Building CodeGraph index...');
 	const start = Date.now();
-	const p = Bun.spawnSync(['npx', '-y', '@colbymchenry/codegraph', 'init', WORKTREE, '-i'], {
-		timeout: 120_000,
-		stdout: 'pipe',
-		stderr: 'pipe',
-	});
+	let p: Bun.SpawnSyncResult<Buffer>;
+	try {
+		p = Bun.spawnSync(['npx', '-y', '@colbymchenry/codegraph', 'init', WORKTREE, '-i'], {
+			timeout: 120_000,
+			stdout: 'pipe',
+			stderr: 'pipe',
+		});
+	} catch (err) {
+		console.error('  CodeGraph build skipped (executable not found):', (err as Error).message);
+		return;
+	}
 	const elapsed = Date.now() - start;
 	if (p.exitCode === 0) {
 		codegraphReady = true;
@@ -139,20 +145,26 @@ function buildCodeGraph() {
 function buildCRG() {
 	console.log('Building code-review-graph...');
 	const start = Date.now();
-	const p = Bun.spawnSync(
-		[
-			'uvx',
-			'--from',
-			'code-review-graph',
-			'code-review-graph',
-			'build',
-			'--repo',
-			WORKTREE,
-			'--data-dir',
-			CRG_DATA_DIR,
-		],
-		{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
-	);
+	let p: Bun.SpawnSyncResult<Buffer>;
+	try {
+		p = Bun.spawnSync(
+			[
+				'uvx',
+				'--from',
+				'code-review-graph',
+				'code-review-graph',
+				'build',
+				'--repo',
+				WORKTREE,
+				'--data-dir',
+				CRG_DATA_DIR,
+			],
+			{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
+		);
+	} catch (err) {
+		console.error('  CRG build skipped (executable not found):', (err as Error).message);
+		return;
+	}
 	const elapsed = Date.now() - start;
 	if (p.exitCode === 0) {
 		crgReady = true;
@@ -191,19 +203,25 @@ function setupGraphify() {
 	console.log('Extracting Graphify graph...');
 	const start = Date.now();
 	mkdirSync(GRAPHIFY_OUT, { recursive: true });
-	const p = Bun.spawnSync(
-		[
-			GRAPHIFY_BIN,
-			'extract',
-			WORKTREE,
-			'--out',
-			GRAPHIFY_OUT,
-			'--no-cluster',
-			'--backend',
-			GRAPHIFY_BACKEND,
-		],
-		{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
-	);
+	let p: Bun.SpawnSyncResult<Buffer>;
+	try {
+		p = Bun.spawnSync(
+			[
+				GRAPHIFY_BIN,
+				'extract',
+				WORKTREE,
+				'--out',
+				GRAPHIFY_OUT,
+				'--no-cluster',
+				'--backend',
+				GRAPHIFY_BACKEND,
+			],
+			{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
+		);
+	} catch (err) {
+		console.error('  Graphify extraction skipped (executable not found):', (err as Error).message);
+		return;
+	}
 	const elapsed = Date.now() - start;
 	if (p.exitCode === 0 && existsSync(graphJson)) {
 		// Tag the cache with worktree + commit + backend for staleness detection
@@ -319,7 +337,7 @@ describeSkip('Graph Tool Benchmark', () => {
 		buildCRG();
 		setupGraphify();
 		setupAstGrep();
-	}, 420_000);
+	}, 900_000);
 
 	afterAll(() => {
 		// Write results
@@ -361,7 +379,7 @@ describeSkip('Graph Tool Benchmark', () => {
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
-	}, 420_000);
+	}, 900_000);
 
 	test('CodeGraph', async () => {
 		if (!codegraphReady) return expect.unreachable('CodeGraph index not built');
@@ -380,7 +398,7 @@ describeSkip('Graph Tool Benchmark', () => {
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
-	}, 420_000);
+	}, 900_000);
 
 	test('code-review-graph', async () => {
 		if (!crgReady) return expect.unreachable('CRG graph not built');
@@ -409,7 +427,7 @@ describeSkip('Graph Tool Benchmark', () => {
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
-	}, 420_000);
+	}, 900_000);
 
 	test('Graphify', async () => {
 		if (!graphifyReady) return expect.unreachable('Graphify graph not extracted');
@@ -427,7 +445,7 @@ describeSkip('Graph Tool Benchmark', () => {
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
-	}, 420_000);
+	}, 900_000);
 
 	test('ast-grep', async () => {
 		if (!astGrepServerPath) return expect.unreachable('ast-grep setup failed (binary or wrapper)');
@@ -447,5 +465,5 @@ describeSkip('Graph Tool Benchmark', () => {
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
-	}, 420_000);
+	}, 900_000);
 });
