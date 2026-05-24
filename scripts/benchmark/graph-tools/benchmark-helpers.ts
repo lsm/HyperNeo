@@ -4,14 +4,54 @@
  * Uses Claude Agent SDK directly (no daemon) with GLM provider routing
  * via environment variables. MCP-only arms use `tools: []` to disable
  * all built-ins; the baseline arm uses built-in Read/Grep/Glob only.
- *
- * Must be importable from `bun test` without special loaders.
  */
 
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { execSync, execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
+
+// ---------------------------------------------------------------------------
+// Shared config
+// ---------------------------------------------------------------------------
+
+/** Resolve the repo root (3 levels up from this file). */
+export const WORKTREE =
+	process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..');
+
+/** GLM model to benchmark. Default: glm-5.1. */
+export const BENCHMARK_MODEL = process.env.NEOKAI_BENCHMARK_MODEL || 'glm-5.1';
+
+/** Get git commit SHA. */
+export function resolveCommitSha(): string {
+	return execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
+}
+
+/** GLM API key from env. */
+export function getGlmApiKey(): string {
+	const key = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY || '';
+	if (!key) {
+		console.error('Error: GLM_API_KEY or ZHIPU_API_KEY must be set');
+		process.exit(1);
+	}
+	return key;
+}
+
+/** Run a benchmark case with GLM env vars set/restored. */
+export async function runWithGlm(
+	options: Omit<BenchmarkCaseOptions, 'cwd'>
+): Promise<BenchmarkResult> {
+	const apiKey = getGlmApiKey();
+	const envVars = setGlmEnvVars(apiKey, BENCHMARK_MODEL);
+	try {
+		return await runBenchmarkCase({ ...options, cwd: WORKTREE });
+	} finally {
+		restoreEnvVars(envVars);
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Prompts
@@ -176,18 +216,23 @@ export function extractToolCalls(messages: Array<Record<string, unknown>>): Map<
 	return counts;
 }
 
-/** Extract concatenated assistant text from SDK messages. */
+/** Extract text from the final assistant message only (excludes interim narration). */
 export function extractResponseText(messages: Array<Record<string, unknown>>): string {
-	const parts: string[] = [];
+	// Find the last assistant message — that's the final answer
+	let lastAssistantContent: unknown[] | null = null;
 	for (const msg of messages) {
 		if ((msg as { type?: string }).type !== 'assistant') continue;
 		const content = (msg as { message?: { content?: unknown[] } }).message?.content;
-		if (!Array.isArray(content)) continue;
-		for (const block of content) {
-			const b = block as { type?: string; text?: string };
-			if (b.type === 'text' && b.text) {
-				parts.push(b.text);
-			}
+		if (Array.isArray(content)) {
+			lastAssistantContent = content;
+		}
+	}
+	if (!lastAssistantContent) return '';
+	const parts: string[] = [];
+	for (const block of lastAssistantContent) {
+		const b = block as { type?: string; text?: string };
+		if (b.type === 'text' && b.text) {
+			parts.push(b.text);
 		}
 	}
 	return parts.join('\n');
@@ -235,6 +280,7 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 		| { input_tokens: number; output_tokens: number; [key: string]: unknown }
 		| undefined;
 	let sessionId = '';
+	let resultText = '';
 	let gotResult = false;
 
 	for await (const msg of agentQuery) {
@@ -245,6 +291,7 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 				subtype?: string;
 				usage?: { input_tokens: number; output_tokens: number; [key: string]: unknown };
 				session_id?: string;
+				result?: string;
 			};
 			// Reject errored results — max_turns, auth failures, etc.
 			// Reject all non-success terminal subtypes.
@@ -259,6 +306,7 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 			}
 			resultUsage = result.usage;
 			sessionId = result.session_id ?? '';
+			resultText = result.result ?? '';
 			gotResult = true;
 			break;
 		}
@@ -275,7 +323,9 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 	const wallTimeMs = Date.now() - startMs;
 
 	const toolCallMap = extractToolCalls(sdkMessages);
-	const responseText = extractResponseText(sdkMessages);
+	const streamedText = extractResponseText(sdkMessages);
+	// Use streamed text if available, fall back to result message text
+	const responseText = streamedText || resultText;
 
 	const toolCalls = Array.from(toolCallMap.entries()).map(([toolName, count]) => ({
 		name: toolName,
