@@ -300,6 +300,10 @@ jobs:
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
+          # Benchmark suite is describe.skip by default; runs only with NEOKAI_BENCHMARK_RUN=1
+          - module: benchmark
+            test_path: tests/online/benchmark
+            mock_sdk: true
           # Real-key cross-provider shards are manual-only in real-api-tests.yml.
 
     steps:

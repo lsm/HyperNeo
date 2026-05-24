@@ -58,25 +58,41 @@ const CRG_TOOLS =
 
 const RESULTS_PATH = '/tmp/graph-tool-benchmark-results.json';
 
-// Resolve the actual commit SHA from the worktree for reproducible results
-const COMMIT_SHA = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
-
-// Resolve Graphify python env (same executable used for extraction and MCP serve)
-// First resolve the binary path via PATH lookup, then read its shebang for the Python interpreter
+// Defer heavy resolution until benchmark is enabled to avoid failing unrelated test runs
+let COMMIT_SHA = '';
 const GRAPHIFY_BIN = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BIN || 'graphify';
+const GRAPHIFY_BACKEND = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BACKEND || 'ollama';
 let graphifyPython = 'python3';
-try {
-	const resolvedBin =
-		GRAPHIFY_BIN === 'graphify'
-			? execSync('which graphify', { encoding: 'utf-8' }).trim()
-			: GRAPHIFY_BIN;
-	const shebang = readFileSync(resolvedBin, 'utf-8')
-		.split('\n')[0]
-		.replace(/^#!\s*/, '')
-		.trim();
-	if (shebang) graphifyPython = shebang;
-} catch {
-	// Fall back to python3
+let graphifyPythonArgs: string[] = [];
+
+function resolveConfig() {
+	COMMIT_SHA = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
+
+	// Resolve Graphify python env (same executable used for extraction and MCP serve)
+	// First resolve the binary path via PATH lookup, then read its shebang for the Python interpreter
+	try {
+		const resolvedBin =
+			GRAPHIFY_BIN === 'graphify'
+				? execSync('which graphify', { encoding: 'utf-8' }).trim()
+				: GRAPHIFY_BIN;
+		const shebang = readFileSync(resolvedBin, 'utf-8')
+			.split('\n')[0]
+			.replace(/^#!\s*/, '')
+			.trim();
+		if (shebang) {
+			// Handle env-style shebangs: "#!/usr/bin/env python3" → command=env, args=[python3]
+			// Direct shebangs: "#!/path/to/python3" → command=/path/to/python3, args=[]
+			const parts = shebang.split(/\s+/);
+			if (parts[0].endsWith('/env') && parts.length > 1) {
+				graphifyPython = parts[0];
+				graphifyPythonArgs = parts.slice(1);
+			} else {
+				graphifyPython = parts[0];
+			}
+		}
+	} catch {
+		// Fall back to python3
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +188,7 @@ async function setupGraphify() {
 			GRAPHIFY_OUT,
 			'--no-cluster',
 			'--backend',
-			'ollama',
+			GRAPHIFY_BACKEND,
 		],
 		{ timeout: 300_000, stdout: 'pipe', stderr: 'pipe' }
 	);
@@ -214,6 +230,7 @@ describeSkip('Graph Tool Benchmark', () => {
 			throw new Error('GLM_API_KEY or ZHIPU_API_KEY must be set');
 		}
 
+		resolveConfig();
 		console.log(`Worktree: ${WORKTREE}`);
 		console.log(`Commit: ${COMMIT_SHA}`);
 
@@ -324,7 +341,7 @@ describeSkip('Graph Tool Benchmark', () => {
 			mcpServers: {
 				graphify: {
 					command: graphifyPython,
-					args: ['-m', 'graphify.serve', join(GRAPHIFY_OUT, 'graph.json')],
+					args: [...graphifyPythonArgs, '-m', 'graphify.serve', join(GRAPHIFY_OUT, 'graph.json')],
 				},
 			},
 		});
