@@ -239,6 +239,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
 
 	// Initialize Space manager
+	const spaceRepo = new SpaceRepository(db.getDatabase());
 	const spaceManager = new SpaceManager(db.getDatabase());
 
 	// Initialize authentication manager
@@ -306,6 +307,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const restoreConsoleCapture = installConsoleLogCapture();
 	const logEvidenceService = new EvolutionLogEvidenceService({
 		evolutionRepo: db.evolution,
+		spaceRepo,
 	});
 	const unsubscribeStructuredLogs = subscribeToStructuredLogs((event) => {
 		logEvidenceService.capture(event);

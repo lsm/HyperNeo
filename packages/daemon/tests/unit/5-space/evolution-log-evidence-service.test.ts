@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { StructuredLogEvent } from '@neokai/shared';
-import { EvolutionLogEvidenceService } from '../../../src/lib/space/evolution-log-evidence-service';
+import {
+	EvolutionLogEvidenceService,
+	PRODUCT_FORGE_SCOPE_ID,
+} from '../../../src/lib/space/evolution-log-evidence-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../helpers/space-test-db';
@@ -69,6 +72,46 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(evidence[0].kind).toBe('runtime_warning');
 		expect(evidence[0].metadata.count).toBe(2);
 		expect(evidence[0].metadata.samples).toHaveLength(2);
+	});
+
+	it('resolves default product scope dynamically when the fixed scope is absent', () => {
+		const dynamicSpaceId = new SpaceRepository(db as never).createSpace({
+			workspacePath: '/workspace/log-evidence-dynamic',
+			slug: 'log-evidence-dynamic',
+			name: 'Log Evidence Dynamic',
+		}).id;
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			spaceRepo: { listSpaces: () => [{ id: dynamicSpaceId }] as never },
+		});
+		expect(evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID)).toBeNull();
+
+		service.capture(createEvent({ level: 'error', message: 'dynamic scope failure' }));
+		service.flush();
+
+		const scope = evolutionRepo
+			.listScopes({ spaceId: dynamicSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(scope).toBeTruthy();
+		expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(1);
+	});
+
+	it('classifies process crash events by processEvent metadata', () => {
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			subscriptions: [{ scopeId, levels: ['fatal'] }],
+		});
+
+		service.capture(
+			createEvent({
+				level: 'fatal',
+				message: 'uncaught exception',
+				metadata: { processEvent: 'uncaughtException' },
+			})
+		);
+		service.flush();
+
+		expect(evolutionRepo.listEvidence(scopeId)[0].kind).toBe('uncaught_exception');
 	});
 
 	it('does not capture unsubscribed levels and redacts secrets', () => {

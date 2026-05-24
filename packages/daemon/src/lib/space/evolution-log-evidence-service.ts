@@ -1,5 +1,6 @@
 import type { EvidenceKind, StructuredLogEvent, StructuredLogLevel } from '@neokai/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
+import type { SpaceRepository } from '../../storage/repositories/space-repository';
 
 export const PRODUCT_FORGE_SCOPE_ID = 'f4ace1c5-f1b5-4fa7-88b4-6717ab70cfe0';
 
@@ -12,6 +13,7 @@ export interface LogEvidenceSubscription {
 
 export interface EvolutionLogEvidenceServiceDeps {
 	evolutionRepo: EvolutionRepository;
+	spaceRepo?: Pick<SpaceRepository, 'listSpaces'>;
 	subscriptions?: LogEvidenceSubscription[];
 	dedupeWindowMs?: number;
 	maxBufferedEvents?: number;
@@ -103,14 +105,39 @@ export class EvolutionLogEvidenceService {
 	}
 
 	private getSubscriptions(): LogEvidenceSubscription[] {
-		return (
-			this.deps.subscriptions ?? [
-				{
-					scopeId: PRODUCT_FORGE_SCOPE_ID,
-					levels: ['warn', 'error', 'fatal'],
-				},
-			]
-		);
+		if (this.deps.subscriptions) return this.deps.subscriptions;
+		const scopes = this.resolveDefaultProductScopes();
+		return scopes.map((scopeId) => ({ scopeId, levels: ['warn', 'error', 'fatal'] }));
+	}
+
+	private resolveDefaultProductScopes(): string[] {
+		const fixedScope = this.deps.evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID);
+		if (fixedScope) return [fixedScope.id];
+		const spaces = this.deps.spaceRepo?.listSpaces(true) ?? [];
+		return spaces
+			.flatMap((space) =>
+				typeof space.id === 'string' ? [this.findOrCreateProductScope(space.id)] : []
+			)
+			.filter((scopeId): scopeId is string => scopeId !== null);
+	}
+
+	private findOrCreateProductScope(spaceId: string): string | null {
+		const existing = this.deps.evolutionRepo
+			.listScopes({ spaceId })
+			.find((scope) => scope.policy.logEvidenceProductScope === true);
+		if (existing) return existing.id;
+		try {
+			return this.deps.evolutionRepo.createScope({
+				spaceId,
+				kind: 'project',
+				name: 'NeoKai product runtime evidence',
+				objective:
+					'Capture daemon runtime warnings, errors, and crashes for product Forge evidence.',
+				policy: { logEvidenceProductScope: true },
+			}).id;
+		} catch {
+			return null;
+		}
 	}
 }
 
@@ -128,9 +155,9 @@ function matchesSubscription(
 }
 
 function selectEvidenceKind(event: StructuredLogEvent): EvidenceKind {
-	if (event.level === 'fatal') return 'runtime_crash';
 	if (event.metadata.processEvent === 'uncaughtException') return 'uncaught_exception';
 	if (event.metadata.processEvent === 'unhandledRejection') return 'runtime_crash';
+	if (event.level === 'fatal') return 'runtime_crash';
 	if (event.level === 'warn') return 'runtime_warning';
 	return 'daemon_error';
 }

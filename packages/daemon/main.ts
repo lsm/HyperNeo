@@ -2,13 +2,28 @@
 // before any other modules (like provider-service) that depend on it.
 import { getConfig } from './src/config';
 import { createDaemonApp } from './src/app';
+import { emitStructuredLogEvent } from './src/lib/logger';
 
 process.on('uncaughtException', (error) => {
+	emitStructuredLogEvent({
+		level: 'fatal',
+		args: ['[Daemon] Uncaught exception:', error],
+		source: 'process',
+		module: 'daemon:main',
+		metadata: { processEvent: 'uncaughtException' },
+	});
 	console.error('[Daemon] Uncaught exception:', error);
 	process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
+	emitStructuredLogEvent({
+		level: 'fatal',
+		args: ['[Daemon] Unhandled promise rejection:', reason],
+		source: 'process',
+		module: 'daemon:main',
+		metadata: { processEvent: 'unhandledRejection' },
+	});
 	console.error('[Daemon] Unhandled promise rejection:', reason);
 	process.exit(1);
 });
