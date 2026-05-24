@@ -353,7 +353,10 @@ rl.on('line', (line) => {
         const parts = patterns.map(p => ({ pattern: p, output: runAstGrep(p, args.lang || 'ts') }));
         result = JSON.stringify(parts);
       } else {
-        result = 'Unknown tool: ' + toolName;
+        write({ jsonrpc: '2.0', id, result: {
+          content: [{ type: 'text', text: 'Unknown tool: ' + toolName }], isError: true
+        }});
+        return;
       }
       write({ jsonrpc: '2.0', id, result: {
         content: [{ type: 'text', text: result }], isError: false

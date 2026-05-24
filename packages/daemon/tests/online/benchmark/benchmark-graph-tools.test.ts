@@ -24,7 +24,8 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -48,11 +49,10 @@ const WORKTREE =
 
 const CRG_DATA_DIR = process.env.NEOKAI_BENCHMARK_CRG_DATA || '/tmp/neokai-benchmark-crg';
 
-// Use full base64url encoding (no truncation) for collision resistance.
-// Two different worktree paths map to different dirs with negligible probability.
+// SHA-256 hex digest of worktree path — fixed 64-char length, collision-resistant
 const GRAPHIFY_OUT =
 	process.env.NEOKAI_BENCHMARK_GRAPHIFY_OUT ||
-	`/tmp/neokai-benchmark-graphify/${Buffer.from(WORKTREE).toString('base64url')}`;
+	`/tmp/neokai-benchmark-graphify/${createHash('sha256').update(WORKTREE).digest('hex')}`;
 
 const CRG_TOOLS =
 	'get_minimal_context_tool,get_review_context_tool,get_impact_radius_tool,query_graph_tool,semantic_search_nodes_tool,list_graph_stats_tool,detect_changes_tool';
@@ -98,7 +98,7 @@ function resolveConfig() {
 		// not a file path. Falls back to the literal value for absolute paths.
 		let resolvedBin = GRAPHIFY_BIN;
 		try {
-			resolvedBin = execSync(`which ${GRAPHIFY_BIN}`, { encoding: 'utf-8' }).trim();
+			resolvedBin = execFileSync('which', [GRAPHIFY_BIN], { encoding: 'utf-8' }).trim();
 		} catch {
 			// Not on PATH — assume it's an absolute path
 		}
@@ -191,9 +191,12 @@ async function setupGraphify() {
 		const cachedCommit = existsSync(join(GRAPHIFY_OUT, '.benchmark_commit'))
 			? readFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), 'utf-8').trim()
 			: '';
+		const cachedBackend = existsSync(join(GRAPHIFY_OUT, '.benchmark_backend'))
+			? readFileSync(join(GRAPHIFY_OUT, '.benchmark_backend'), 'utf-8').trim()
+			: '';
 		if (cachedWorktree !== WORKTREE) {
 			console.log('  Graphify graph is from a different worktree, forcing rebuild...');
-		} else if (cachedCommit && cachedCommit === COMMIT_SHA) {
+		} else if (cachedCommit && cachedCommit === COMMIT_SHA && cachedBackend === GRAPHIFY_BACKEND) {
 			// Same worktree and commit - keep cached graph
 			graphifyReady = true;
 			console.log('  Graphify graph already exists for this worktree@commit, skipping extraction');
@@ -224,6 +227,7 @@ async function setupGraphify() {
 		// Tag the cache with worktree + commit for staleness detection
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), WORKTREE);
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), COMMIT_SHA);
+		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_backend'), GRAPHIFY_BACKEND);
 		graphifyReady = true;
 		console.log(`  Graphify graph extracted in ${(elapsed / 1000).toFixed(1)}s`);
 	} else {
