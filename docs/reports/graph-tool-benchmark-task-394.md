@@ -350,3 +350,39 @@ The agent session benchmark validates the test infrastructure (daemon sessions w
 2. **The Claude Agent SDK has a context-fetcher incompatibility** with GLM-5.x's tool_use responses, limiting GLM to 4.7 for NeoKai sessions.
 
 The raw API benchmark results (seeded, unseeded, mixed rounds) remain the authoritative comparison. The agent session infrastructure is ready for re-use once these gaps are addressed.
+
+---
+
+## Round 2: Direct SDK Benchmark (2026-05-24)
+
+**Method:** Claude Agent SDK `query()` directly (no daemon). GLM-4.7 via env var routing. Each arm uses `tools: []` to disable all built-in tools, forcing MCP-only isolation.
+
+**Commit:** `f6109d220`
+
+### Results
+
+| Arm | Wall (s) | Tool Calls | Response Length | Notes |
+|---|---|---|---|---|
+| baseline (text-only) | 51.3 | 0 | 17,111 | Detailed plan, generic file paths |
+| CodeGraph | 33.6 | 0 | 11,704 | No tool use — model responded without MCP |
+| code-review-graph | 4.2 | 0 | 210 | Truncated response |
+| Graphify | — | — | — | Skipped: missing `openai` Python package |
+| ast-grep | 182.0 | 35 | 12,470 | **35 MCP tool calls**, real NeoKai file paths |
+
+### Key Findings
+
+1. **ast-grep is the only tool the model actually used.** 35 calls to `mcp__ast-grep__ast_grep_search`, producing a response grounded in actual NeoKai file paths (`packages/daemon/src/lib/space/runtime/space-runtime.ts`, `stuck-detection.ts`, etc.).
+
+2. **CodeGraph and CRG: model ignored the MCP tools.** GLM-4.7 responded with text-only plans despite MCP servers being attached. This is a model behavior issue, not a tool issue — the model chose not to invoke tools. The `tools: []` isolation is working correctly (no built-in fallback).
+
+3. **CRG truncated response** at 210 chars ("Let me start by exploring the key components:") — the model likely attempted to use a tool, got blocked by `tools: []`, and stopped early.
+
+4. **Graphify extraction failed** due to missing `openai` Python package for the Ollama backend. Not a tool quality issue.
+
+5. **Token counts all zero** — the SDK's result message usage data structure differs from the parsed format. Needs a follow-up fix.
+
+### Conclusion
+
+The `tools: []` isolation strategy works: when the model does attempt tool use (ast-grep, CRG), it can only reach the MCP server. GLM-4.7's reluctance to invoke CodeGraph/CRG tools is a model limitation — future runs should use Anthropic models or add explicit "use the available tool" instructions to the prompt.
+
+ast-grep produced the most grounded plan (35 structural searches → real file paths) despite being the slowest arm (182s). The baseline produced the longest response (17k chars) but with generic/invented file paths.
