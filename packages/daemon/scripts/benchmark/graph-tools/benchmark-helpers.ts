@@ -20,7 +20,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 /** Resolve the repo root (3 levels up from this file). */
 export const WORKTREE =
-	process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..');
+	process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
 
 /** GLM model to benchmark. Default: glm-5.1. */
 export const BENCHMARK_MODEL = process.env.NEOKAI_BENCHMARK_MODEL || 'glm-5.1';
@@ -285,6 +285,15 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 
 	for await (const msg of agentQuery) {
 		sdkMessages.push(msg as Record<string, unknown>);
+
+		// Dump system message on first encounter
+		if ((msg as { type?: string }).type === 'system' && sdkMessages.length === 1) {
+			const { writeFileSync: dump } = await import('node:fs');
+			const { join } = await import('node:path');
+			const dumpPath = join('/tmp', `benchmark-system-${name.replace(/[^a-z0-9]/gi, '_')}.json`);
+			dump(dumpPath, JSON.stringify(msg, null, 2));
+			console.log(`  [debug] System message dumped to ${dumpPath}`);
+		}
 
 		if ((msg as { type?: string }).type === 'result') {
 			const result = msg as {
