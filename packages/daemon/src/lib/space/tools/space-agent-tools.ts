@@ -132,6 +132,7 @@ function handleFromName(value: string): string | null {
 function normalizeReplyTargetHandle(value: string): string | null {
 	const trimmed = value.trim();
 	if (!trimmed) return null;
+	if (trimmed === 'space-agent') return '@coordinator';
 	return trimmed.startsWith('@') ? trimmed : handleFromName(trimmed);
 }
 

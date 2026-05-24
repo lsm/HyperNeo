@@ -34,6 +34,7 @@ function replyTargetSuffix(options: FormatAgentMessageOptions): string {
 
 function replyTargetHandle(options: FormatAgentMessageOptions): string {
 	if (options.replyTargetHandle) return options.replyTargetHandle;
+	if (options.fromAgentName === 'space-agent') return '@coordinator';
 	return `@${options.fromAgentName}`;
 }
 

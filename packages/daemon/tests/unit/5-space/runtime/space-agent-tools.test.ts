@@ -3740,6 +3740,42 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 		);
 	});
 
+	test('coordinator sender falls back to coordinator handle when no alias exists', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Coordinator'
+		);
+		const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Coordinator target');
+		const task = tasks[0];
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: task.workflowRunId,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-session-live',
+			status: 'idle',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async () => {},
+			myAgentName: 'space-agent',
+		});
+
+		await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'check coordinator fallback',
+		});
+
+		expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
+		expect(tam.subSessionInjects[0]?.message).toContain(
+			'To reply, use: send_message with target "@coordinator"'
+		);
+		expect(tam.subSessionInjects[0]?.message).not.toContain('target "@space-agent"');
+	});
+
 	test('long-horizon sender uses canonical handle alias without double prefix', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Handle');
 		const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Handle target');

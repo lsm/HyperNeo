@@ -42,6 +42,22 @@ describe('formatAgentMessage', () => {
 		);
 	});
 
+	test('defaults space-agent reply target to coordinator handle', () => {
+		expect(
+			formatAgentMessage({
+				fromLevel: 'space-agent',
+				fromAgentName: 'space-agent',
+				toLevel: 'node-agent',
+				body: 'Legacy queued follow-up',
+			})
+		).toBe(
+			'─── Message from space-agent ───\n\n' +
+				'Legacy queued follow-up\n\n' +
+				'─── Reply ───\n' +
+				'To reply, use: send_message with target "@coordinator"'
+		);
+	});
+
 	test('formats ad-hoc session messages with explicit reply instructions', () => {
 		expect(
 			formatAgentMessage({
