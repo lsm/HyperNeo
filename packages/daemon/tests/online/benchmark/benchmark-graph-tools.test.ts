@@ -31,7 +31,6 @@ import { randomUUID, createHash } from 'node:crypto';
 
 import {
 	BENCHMARK_PROMPT_UNSEDED,
-	BENCHMARK_PROMPT_TEXT_ONLY,
 	runBenchmarkCase,
 	writeBenchmarkResults,
 	makeAstGrepMcpServerScript,
@@ -353,12 +352,12 @@ describeSkip('Graph Tool Benchmark', () => {
 	// Benchmark arms
 	// -----------------------------------------------------------------------
 
-	test('baseline: plain GLM (text-only)', async () => {
+	test('baseline: built-in Read/Grep/Glob only', async () => {
 		const result = await runWithGlm({
-			name: 'baseline: plain GLM (text-only)',
-			prompt: BENCHMARK_PROMPT_TEXT_ONLY,
-			// No MCP servers, no built-in tools — pure text response
-			tools: [],
+			name: 'baseline: built-in Read/Grep/Glob only',
+			prompt: BENCHMARK_PROMPT_UNSEDED,
+			// Built-in file exploration tools, no MCP servers
+			tools: ['Read', 'Grep', 'Glob'],
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);

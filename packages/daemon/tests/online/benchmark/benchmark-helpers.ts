@@ -2,8 +2,8 @@
  * Benchmark helpers for graph tool comparison.
  *
  * Uses Claude Agent SDK directly (no daemon) with GLM provider routing
- * via environment variables. Each benchmark arm isolates its target tool
- * by setting `tools: []` to disable all built-ins.
+ * via environment variables. MCP-only arms use `tools: []` to disable
+ * all built-ins; the baseline arm uses built-in Read/Grep/Glob only.
  *
  * Must be importable from `bun test` without special loaders.
  */
@@ -63,17 +63,6 @@ Produce an implementation plan with:
 - tests to add or update,
 - risks and edge cases,
 - estimated change scope.` as const;
-
-/**
- * Text-only variant for the baseline test.  Instructs the model to respond
- * without using any tools — required because GLM's tool_use responses are
- * incompatible with the Claude Agent SDK's context-fetcher when no tools
- * are available for the SDK to execute.
- */
-export const BENCHMARK_PROMPT_TEXT_ONLY = (BENCHMARK_PROMPT_UNSEDED +
-	`
-
-IMPORTANT: Respond with text only. Do NOT use any tools (no Bash, Read, Write, Glob, Grep, or any other tool). Produce your plan based on your understanding of typical agent runtime architectures.`) as const;
 
 // ---------------------------------------------------------------------------
 // Types
