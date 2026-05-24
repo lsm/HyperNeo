@@ -156,6 +156,17 @@ export class EvolutionRepository {
 		return rows.map(rowToEvidence);
 	}
 
+	findEvidenceBySource(scopeId: string, sourceId: string): EvidenceRef[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM evolution_evidence
+				 WHERE scope_id = ? AND source_id = ?
+				 ORDER BY created_at DESC, id DESC`
+			)
+			.all(scopeId, sourceId) as Record<string, unknown>[];
+		return rows.map(rowToEvidence);
+	}
+
 	createEpisode(params: CreateEvolutionEpisodeParams): EvolutionEpisode {
 		const id = generateUUID();
 		const now = Date.now();

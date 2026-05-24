@@ -6,6 +6,7 @@ import {
 	PRODUCT_FORGE_SCOPE_ID,
 } from '../../../src/lib/space/evolution-log-evidence-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
+import type { EvidenceRef } from '@neokai/shared';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../helpers/space-test-db';
 
@@ -57,8 +58,21 @@ describe('EvolutionLogEvidenceService', () => {
 	});
 
 	it('deduplicates identical signatures within the window', () => {
+		let listEvidenceCalls = 0;
+		let findEvidenceBySourceCalls = 0;
+		const repo = Object.create(evolutionRepo) as EvolutionRepository & {
+			findEvidenceBySource(scopeId: string, sourceId: string): EvidenceRef[];
+		};
+		repo.listEvidence = (...args) => {
+			listEvidenceCalls += 1;
+			return evolutionRepo.listEvidence(...args);
+		};
+		repo.findEvidenceBySource = (...args) => {
+			findEvidenceBySourceCalls += 1;
+			return evolutionRepo.findEvidenceBySource(...args);
+		};
 		const service = new EvolutionLogEvidenceService({
-			evolutionRepo,
+			evolutionRepo: repo,
 			subscriptions: [{ scopeId, levels: ['warn'] }],
 			dedupeWindowMs: 60_000,
 		});
@@ -72,6 +86,8 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(evidence[0].kind).toBe('runtime_warning');
 		expect(evidence[0].metadata.count).toBe(2);
 		expect(evidence[0].metadata.samples).toHaveLength(2);
+		expect(findEvidenceBySourceCalls).toBe(2);
+		expect(listEvidenceCalls).toBe(0);
 	});
 
 	it('resolves default product scope dynamically when the fixed scope is absent', () => {
@@ -80,20 +96,28 @@ describe('EvolutionLogEvidenceService', () => {
 			slug: 'log-evidence-dynamic',
 			name: 'Log Evidence Dynamic',
 		}).id;
+		let listSpacesCalls = 0;
 		const service = new EvolutionLogEvidenceService({
 			evolutionRepo,
-			spaceRepo: { listSpaces: () => [{ id: dynamicSpaceId }] as never },
+			spaceRepo: {
+				listSpaces: () => {
+					listSpacesCalls += 1;
+					return [{ id: dynamicSpaceId }] as never;
+				},
+			},
 		});
 		expect(evolutionRepo.getScope(PRODUCT_FORGE_SCOPE_ID)).toBeNull();
 
 		service.capture(createEvent({ level: 'error', message: 'dynamic scope failure' }));
+		service.capture(createEvent({ level: 'warn', message: 'dynamic scope warning' }));
 		service.flush();
 
 		const scope = evolutionRepo
 			.listScopes({ spaceId: dynamicSpaceId })
 			.find((item) => item.policy.logEvidenceProductScope === true);
 		expect(scope).toBeTruthy();
-		expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(1);
+		expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(2);
+		expect(listSpacesCalls).toBe(1);
 	});
 
 	it('classifies process crash events by processEvent metadata', () => {

@@ -19,6 +19,13 @@ export interface EvolutionLogEvidenceServiceDeps {
 	maxBufferedEvents?: number;
 }
 
+type LogEvidenceRepository = EvolutionRepository & {
+	findEvidenceBySource?: (
+		scopeId: string,
+		sourceId: string
+	) => ReturnType<EvolutionRepository['listEvidence']>;
+};
+
 interface BufferedEvent {
 	event: StructuredLogEvent;
 	subscription: LogEvidenceSubscription;
@@ -31,6 +38,7 @@ const MAX_SAMPLES = 5;
 
 export class EvolutionLogEvidenceService {
 	private buffer: BufferedEvent[] = [];
+	private cachedSubscriptions: LogEvidenceSubscription[] | null = null;
 
 	constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
@@ -64,14 +72,11 @@ export class EvolutionLogEvidenceService {
 		const now = item.event.timestamp;
 		const kind = selectEvidenceKind(item.event);
 		const sourceId = `log:${item.fingerprint}`;
-		const existing = this.deps.evolutionRepo
-			.listEvidence(item.subscription.scopeId)
-			.find(
-				(evidence) =>
-					evidence.sourceId === sourceId &&
-					evidence.metadata.autoCaptured === true &&
-					evidence.metadata.logFingerprint === item.fingerprint
-			);
+		const existing = this.findExistingEvidence(
+			item.subscription.scopeId,
+			sourceId,
+			item.fingerprint
+		);
 		const summary = summarizeLogEvent(item.event);
 		if (existing) {
 			const firstSeenAt = numberOr(existing.metadata.firstSeenAt, now);
@@ -104,10 +109,26 @@ export class EvolutionLogEvidenceService {
 		});
 	}
 
+	private findExistingEvidence(scopeId: string, sourceId: string, fingerprint: string) {
+		const repo = this.deps.evolutionRepo as LogEvidenceRepository;
+		const candidates = repo.findEvidenceBySource
+			? repo.findEvidenceBySource(scopeId, sourceId)
+			: repo.listEvidence(scopeId).filter((evidence) => evidence.sourceId === sourceId);
+		return candidates.find(
+			(evidence) =>
+				evidence.metadata.autoCaptured === true && evidence.metadata.logFingerprint === fingerprint
+		);
+	}
+
 	private getSubscriptions(): LogEvidenceSubscription[] {
 		if (this.deps.subscriptions) return this.deps.subscriptions;
+		if (this.cachedSubscriptions) return this.cachedSubscriptions;
 		const scopes = this.resolveDefaultProductScopes();
-		return scopes.map((scopeId) => ({ scopeId, levels: ['warn', 'error', 'fatal'] }));
+		this.cachedSubscriptions = scopes.map((scopeId) => ({
+			scopeId,
+			levels: ['warn', 'error', 'fatal'],
+		}));
+		return this.cachedSubscriptions;
 	}
 
 	private resolveDefaultProductScopes(): string[] {
