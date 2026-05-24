@@ -8,6 +8,7 @@ import {
 	clearStructuredLogSubscribers,
 	installConsoleLogCapture,
 	subscribeToStructuredLogs,
+	withConsoleLogCaptureSuppressed,
 } from '../src/logger.ts';
 
 describe('Logger', () => {
@@ -100,6 +101,19 @@ describe('Logger', () => {
 			expect(events).toHaveLength(2);
 			expect(events[0]).toMatchObject({ source: 'console', level: 'error' });
 			expect(events[1]).toMatchObject({ source: 'logger', level: 'error' });
+		});
+
+		test('can suppress console capture around already-structured output', () => {
+			const events: unknown[] = [];
+			subscribeToStructuredLogs((event) => events.push(event));
+			const restore = installConsoleLogCapture();
+			try {
+				withConsoleLogCaptureSuppressed(() => console.error('already captured'));
+			} finally {
+				restore();
+			}
+
+			expect(events).toHaveLength(0);
 		});
 	});
 

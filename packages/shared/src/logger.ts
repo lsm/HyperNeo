@@ -283,6 +283,16 @@ export function emitStructuredLogEvent(params: EmitStructuredLogEventParams): St
 	return event;
 }
 
+export function withConsoleLogCaptureSuppressed<T>(callback: () => T): T {
+	const wasSuppressed = suppressConsoleCapture;
+	suppressConsoleCapture = true;
+	try {
+		return callback();
+	} finally {
+		suppressConsoleCapture = wasSuppressed;
+	}
+}
+
 export function installConsoleLogCapture(): () => void {
 	if (consoleCaptureRestore) return consoleCaptureRestore;
 	const original = {
@@ -471,12 +481,9 @@ export class Logger {
 			metadata: { loggerLevel: LOG_LEVEL_NAMES[logLevel] },
 		});
 		const formatted = this.formatMessage(logLevel, args);
-		suppressConsoleCapture = true;
-		try {
+		withConsoleLogCaptureSuppressed(() => {
 			console[consoleMethod](...formatted);
-		} finally {
-			suppressConsoleCapture = false;
-		}
+		});
 	}
 
 	/**

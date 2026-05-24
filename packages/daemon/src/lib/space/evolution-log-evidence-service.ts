@@ -124,11 +124,12 @@ export class EvolutionLogEvidenceService {
 		if (this.deps.subscriptions) return this.deps.subscriptions;
 		if (this.cachedSubscriptions) return this.cachedSubscriptions;
 		const scopes = this.resolveDefaultProductScopes();
-		this.cachedSubscriptions = scopes.map((scopeId) => ({
+		const subscriptions = scopes.map((scopeId) => ({
 			scopeId,
-			levels: ['warn', 'error', 'fatal'],
+			levels: ['warn', 'error', 'fatal'] as StructuredLogLevel[],
 		}));
-		return this.cachedSubscriptions;
+		if (subscriptions.length > 0) this.cachedSubscriptions = subscriptions;
+		return subscriptions;
 	}
 
 	private resolveDefaultProductScopes(): string[] {

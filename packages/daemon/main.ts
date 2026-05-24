@@ -2,7 +2,7 @@
 // before any other modules (like provider-service) that depend on it.
 import { getConfig } from './src/config';
 import { createDaemonApp } from './src/app';
-import { emitStructuredLogEvent } from './src/lib/logger';
+import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger';
 
 process.on('uncaughtException', (error) => {
 	emitStructuredLogEvent({
@@ -12,7 +12,7 @@ process.on('uncaughtException', (error) => {
 		module: 'daemon:main',
 		metadata: { processEvent: 'uncaughtException' },
 	});
-	console.error('[Daemon] Uncaught exception:', error);
+	withConsoleLogCaptureSuppressed(() => console.error('[Daemon] Uncaught exception:', error));
 	process.exit(1);
 });
 
@@ -24,7 +24,9 @@ process.on('unhandledRejection', (reason) => {
 		module: 'daemon:main',
 		metadata: { processEvent: 'unhandledRejection' },
 	});
-	console.error('[Daemon] Unhandled promise rejection:', reason);
+	withConsoleLogCaptureSuppressed(() =>
+		console.error('[Daemon] Unhandled promise rejection:', reason)
+	);
 	process.exit(1);
 });
 

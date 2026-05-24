@@ -120,6 +120,41 @@ describe('EvolutionLogEvidenceService', () => {
 		expect(listSpacesCalls).toBe(1);
 	});
 
+	it('refreshes empty default subscriptions when spaces are created later', () => {
+		let spaces: { id: string }[] = [];
+		let listSpacesCalls = 0;
+		const service = new EvolutionLogEvidenceService({
+			evolutionRepo,
+			spaceRepo: {
+				listSpaces: () => {
+					listSpacesCalls += 1;
+					return spaces as never;
+				},
+			},
+		});
+
+		service.capture(createEvent({ level: 'error', message: 'before space exists' }));
+		service.flush();
+		expect(listSpacesCalls).toBe(1);
+
+		const laterSpaceId = new SpaceRepository(db as never).createSpace({
+			workspacePath: '/workspace/log-evidence-later',
+			slug: 'log-evidence-later',
+			name: 'Log Evidence Later',
+		}).id;
+		spaces = [{ id: laterSpaceId }];
+
+		service.capture(createEvent({ level: 'error', message: 'after space exists' }));
+		service.flush();
+
+		const scope = evolutionRepo
+			.listScopes({ spaceId: laterSpaceId })
+			.find((item) => item.policy.logEvidenceProductScope === true);
+		expect(scope).toBeTruthy();
+		expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(1);
+		expect(listSpacesCalls).toBe(2);
+	});
+
 	it('classifies process crash events by processEvent metadata', () => {
 		const service = new EvolutionLogEvidenceService({
 			evolutionRepo,

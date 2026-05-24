@@ -20,6 +20,7 @@ import {
 	clearStructuredLogSubscribers,
 	emitStructuredLogEvent,
 	installConsoleLogCapture,
+	withConsoleLogCaptureSuppressed,
 } from '@neokai/shared';
 
 /**
@@ -71,6 +72,7 @@ export {
 	clearStructuredLogSubscribers,
 	emitStructuredLogEvent,
 	installConsoleLogCapture,
+	withConsoleLogCaptureSuppressed,
 };
 export type {
 	StructuredLogContext,

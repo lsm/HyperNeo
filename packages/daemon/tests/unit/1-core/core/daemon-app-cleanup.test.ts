@@ -12,6 +12,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { existsSync, unlinkSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearStructuredLogSubscribers, installConsoleLogCapture } from '@neokai/shared';
 import { createDaemonApp } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
@@ -51,6 +52,7 @@ describe('Daemon App Cleanup', () => {
 					stop() {},
 				}) as never
 		);
+		clearStructuredLogSubscribers();
 
 		// Use in-memory database for tests
 		const tmpDir = process.env.TMPDIR || '/tmp';
@@ -97,6 +99,7 @@ describe('Daemon App Cleanup', () => {
 			bunServeSpy.mockRestore();
 			bunServeSpy = null;
 		}
+		clearStructuredLogSubscribers();
 		logs.length = 0;
 	});
 
@@ -283,6 +286,25 @@ describe('Daemon App Cleanup', () => {
 	});
 
 	describe('daemon startup (no workspace required)', () => {
+		test('should restore structured log capture when startup fails', async () => {
+			const originalError = console.error;
+			const alreadyInstalledRestore = installConsoleLogCapture();
+			alreadyInstalledRestore();
+			bunServeSpy?.mockImplementationOnce(() => {
+				throw new Error('bind failed');
+			});
+
+			await expect(
+				createDaemonApp({
+					config,
+					verbose: true,
+					standalone: false,
+				})
+			).rejects.toThrow('bind failed');
+
+			expect(console.error).toBe(originalError);
+		});
+
 		test('should start successfully with default config', async () => {
 			const daemonContext = await createDaemonApp({
 				config,

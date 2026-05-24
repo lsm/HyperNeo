@@ -45,6 +45,7 @@ export {
 	clearStructuredLogSubscribers,
 	emitStructuredLogEvent,
 	installConsoleLogCapture,
+	withConsoleLogCaptureSuppressed,
 } from './logger.ts';
 export type {
 	LoggerConfig,
