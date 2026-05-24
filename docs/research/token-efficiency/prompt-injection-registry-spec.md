@@ -105,9 +105,9 @@ export interface PromptInjectionConstraints {
 Use reverse-DNS-like IDs for built-ins:
 
 - `neokai.output-mode.compressed`
-- `neokai.worktree-isolation`
-- `neokai.space-chat.contract`
-- `neokai.workflow.runtime-contract`
+- `neokai.worktree-isolation` (future migration, not MVP)
+- `neokai.space-chat.contract` (future migration, not MVP)
+- `neokai.workflow.runtime-contract` (future migration, not MVP)
 
 User/config records can use generated UUID-backed IDs:
 
@@ -120,7 +120,7 @@ User/config records can use generated UUID-backed IDs:
 
 Built-ins live in code as template providers. They produce `PromptInjection` records at runtime when enabled by typed settings.
 
-Reason: compressed output, worktree isolation, and safety contracts need versioned source control and tests.
+Reason: compressed output and future safety/workflow contracts need versioned source control and tests. MVP ships only the compressed output built-in; worktree isolation and workflow contracts stay on existing code paths until later migration.
 
 ### User/configurable injection records
 
@@ -138,6 +138,7 @@ CREATE TABLE prompt_injections (
 	channel TEXT NOT NULL CHECK(channel IN (
 		'system.prepend', 'system.append', 'agent.prompt.append', 'user.prepend'
 	)),
+	-- MVP repository validation rejects stored user.prepend records until message-level rendering exists.
 	priority INTEGER NOT NULL,
 	enabled INTEGER NOT NULL DEFAULT 1,
 	content TEXT NOT NULL,
@@ -211,7 +212,7 @@ interface PromptInjectionProvider {
 Provider examples:
 
 - `BuiltinOutputModeInjectionProvider`
-- `BuiltinWorktreeInjectionProvider`
+- `BuiltinWorktreeInjectionProvider` (future migration, not MVP)
 - `DatabasePromptInjectionProvider`
 - `SpacePromptInjectionProvider`
 - `WorkflowPromptInjectionProvider`
@@ -238,7 +239,8 @@ interface PromptInjectionContext {
 
 Reject or disable invalid records:
 
-- Missing/duplicate `id` after provider merge.
+- Missing `id`.
+- Duplicate `id` after provider merge; duplicates are invalid and must not be precedence-resolved in MVP.
 - Unsupported `channel`.
 - `content` empty or above configured max size.
 - User/config source tries to use reserved built-in ID prefix `neokai.`.
@@ -266,7 +268,7 @@ Use one direction consistently. Recommended composer sorts by ascending `priorit
 - If any active injection has `requiresNormalProse`, output-mode compressed injection is suppressed for that render.
 - Any injection can list `suppresses: ['neokai.output-mode.compressed']`.
 - Built-in safety/approval injections must not be suppressible by user-configured output-style injections.
-- Duplicate IDs: highest-priority source wins only if source is allowed to override; otherwise fail closed and log.
+- Duplicate IDs are never resolved by priority in MVP. Treat duplicates as invalid, suppress all records with that ID for the render, log the conflict, and expose it in `suppressed` provenance. If future override semantics are needed, add explicit `overridesId` metadata rather than reusing the same `id`.
 
 ### Provenance
 
@@ -298,7 +300,10 @@ queryOptions.agents = promptRenderer.applyToAgentPrompts(
 	queryOptions.agents,
 	composed.byChannel['agent.prompt.append']
 );
+const userPrepend = composed.byChannel['user.prepend'];
 ```
+
+`user.prepend` must not silently no-op. MVP behavior: compose and expose `user.prepend` in preview/provenance, but do not allow stored records on that channel until a concrete message-rendering path exists. If enabled later, renderer must prepend it to the first user message submitted to the SDK query stream or to task-init messages before enqueueing.
 
 ### System prompt rendering
 
@@ -317,6 +322,12 @@ Apply `agent.prompt.append` to `queryOptions.agents[*].prompt` when scope says `
 Reason: SDK subagents do not inherit parent `systemPrompt.append`.
 
 Avoid blindly applying all system injections to all subagents. Some layers are parent-only.
+
+### User prepend rendering
+
+`user.prepend` is reserved for future message-level injections. MVP validation should reject stored `user.prepend` records because no renderer applies them to the SDK message stream yet.
+
+When implemented, `user.prepend` must be applied at message enqueue/build time, not in `systemPrompt`, and must be covered by tests that prove it reaches user chat messages and Space task-init messages. Until then, keeping the channel reserved but invalid prevents silent no-op configuration.
 
 ### SDK hook rendering
 
@@ -355,7 +366,7 @@ Provider emits this only when `effectiveOutputMode === 'compressed'` and not sup
 }
 ```
 
-Open question: use `system.append` only, or also `agent.prompt.append` for all subagents? Recommendation: renderer should create a subagent-channel copy when `scope.appliesToSubagents` is true, so subagents receive equivalent output style without relying on parent prompt inheritance.
+Subagent behavior is resolved for MVP: compressed output must reach SDK subagents. Renderer should create an `agent.prompt.append` copy when `scope.appliesToSubagents` is true, so subagents receive equivalent output style without relying on parent prompt inheritance.
 
 ## API and UI
 
@@ -401,10 +412,10 @@ This is critical for support and prompt-order debugging.
 
 - Add shared types for `PromptInjection`, channels, source, constraints.
 - Add `PromptInjectionResolver`, `PromptInjectionComposer`, `PromptInjectionRenderer` under `packages/daemon/src/lib/agent/prompt-injections/`.
-- Add built-in provider support but only worktree/output-mode templates initially.
+- Add built-in provider support for the compressed output template only. Keep worktree isolation on the existing code path in MVP.
 - Integrate renderer in `QueryOptionsBuilder` after session-specific query options are assembled and before cleanup.
-- Apply supported channels to top-level `systemPrompt` and `agents[*].prompt`.
-- Add unit tests for ordering, suppression, rendering shapes, subagent append behavior.
+- Apply supported MVP channels to top-level `systemPrompt` and `agents[*].prompt`; reject stored `user.prepend` records until message-level rendering exists.
+- Add unit tests for ordering, duplicate-ID suppression, unsupported-channel rejection, rendering shapes, subagent append behavior, and `user.prepend` validation rejection.
 
 ### Task 2 — Output mode config
 
