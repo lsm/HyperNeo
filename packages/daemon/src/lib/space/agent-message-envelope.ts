@@ -1,21 +1,23 @@
-export type AgentMessageLevel = 'space-agent' | 'task-agent' | 'node-agent';
+export type AgentMessageLevel = 'space-agent' | 'task-agent' | 'node-agent' | 'session-agent';
 
 export interface FormatAgentMessageOptions {
 	fromLevel: AgentMessageLevel;
 	fromAgentName: string;
 	toLevel: AgentMessageLevel;
 	body: string;
-	/** Parent task UUID. Required for Space Agent reply instructions when known. */
+	/** Parent task UUID. Required for coordinator reply instructions when known. */
 	taskId?: string | null;
 	/** Space-scoped task number for human-readable context. */
 	taskNumber?: number | null;
 	/** Sender/target node agent name for reply routing. */
 	nodeId?: string | null;
+	/** Agent handle to use in visible reply instructions. */
+	replyTargetHandle?: string | null;
 	/**
 	 * Session ID that should receive the reply when the target agent responds
-	 * via `send_message({ target: 'space-agent' })`. When set, the routing
-	 * layer delivers the reply to this session instead of the default
-	 * `space:chat:${spaceId}`. Null/undefined means "use default routing".
+	 * via the visible reply instructions. When set, the routing layer delivers
+	 * the reply to this session instead of the default coordinator session.
+	 * Null/undefined means "use default routing".
 	 */
 	replyToSessionId?: string | null;
 }
@@ -30,11 +32,17 @@ function replyTargetSuffix(options: FormatAgentMessageOptions): string {
 	return ` and target node "${target}"`;
 }
 
+function replyTargetHandle(options: FormatAgentMessageOptions): string {
+	if (options.replyTargetHandle) return options.replyTargetHandle;
+	if (options.fromAgentName === 'space-agent') return '@coordinator';
+	return `@${options.fromAgentName}`;
+}
+
 /**
  * Build the reply-routing metadata footer appended to messages that carry
  * `replyToSessionId`. The footer is a machine-readable XML block that the
- * routing layer parses when the receiving agent replies via
- * `send_message({ target: 'space-agent' })`.
+ * routing layer parses when the receiving agent replies via the visible reply
+ * instructions.
  */
 function replyRoutingFooter(options: FormatAgentMessageOptions): string {
 	if (!options.replyToSessionId) return '';
@@ -49,9 +57,9 @@ function replyRoutingFooter(options: FormatAgentMessageOptions): string {
  * session so the transcript records sender identity and concise reply guidance.
  *
  * When `replyToSessionId` is set, a `<reply-routing>` XML block is appended.
- * The routing layer extracts this when the agent replies via
- * `send_message({ target: 'space-agent' })` to deliver the reply back to the
- * originating session instead of the default `space:chat:${spaceId}`.
+ * The routing layer extracts this when the agent replies via the visible reply
+ * instructions to deliver the reply back to the originating session instead of
+ * the default coordinator session.
  */
 export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 	const body = options.body;
@@ -68,12 +76,12 @@ export function formatAgentMessage(options: FormatAgentMessageOptions): string {
 		);
 	}
 
-	if (options.fromLevel === 'space-agent') {
+	if (options.fromLevel === 'space-agent' || options.fromLevel === 'session-agent') {
 		return (
-			`─── Message from Space Agent ───\n\n` +
+			`─── Message from ${options.fromAgentName} ───\n\n` +
 			`${body}${footer}\n\n` +
 			`─── Reply ───\n` +
-			`To reply, use: send_message with target "space-agent"`
+			`To reply, use: send_message with target "${replyTargetHandle(options)}"`
 		);
 	}
 
