@@ -101,6 +101,12 @@ export interface BenchmarkCaseOptions {
 	 * and force MCP-only usage. Omit for default tool set.
 	 */
 	tools?: string[];
+	/**
+	 * Tool name patterns to auto-approve (e.g. ["mcp__codegraph__*"]).
+	 * Required for MCP tools — without this, the model sees them but
+	 * cannot call them, even with bypassPermissions.
+	 */
+	allowedTools?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +204,7 @@ export function extractResponseText(messages: Array<Record<string, unknown>>): s
  * Uses `query()` from the SDK with the provided MCP servers and tool config.
  */
 export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<BenchmarkResult> {
-	const { name, cwd, prompt, mcpServers, tools } = options;
+	const { name, cwd, prompt, mcpServers, tools, allowedTools } = options;
 
 	const startMs = Date.now();
 	// Build SDK options — only include `tools` when explicitly set.
@@ -215,6 +221,9 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 	};
 	if (tools !== undefined) {
 		sdkOptions.tools = tools;
+	}
+	if (allowedTools && allowedTools.length > 0) {
+		sdkOptions.allowedTools = allowedTools;
 	}
 	const agentQuery = query({
 		prompt,

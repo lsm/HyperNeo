@@ -370,6 +370,7 @@ describeSkip('Graph Tool Benchmark', () => {
 			prompt: BENCHMARK_PROMPT_UNSEDED,
 			// Only CodeGraph MCP available — no built-in tools
 			tools: [],
+			allowedTools: ['mcp__codegraph__*'],
 			mcpServers: {
 				codegraph: {
 					command: 'npx',
@@ -387,6 +388,7 @@ describeSkip('Graph Tool Benchmark', () => {
 			name: 'code-review-graph',
 			prompt: BENCHMARK_PROMPT_UNSEDED,
 			tools: [],
+			allowedTools: ['mcp__code-review-graph__*'],
 			mcpServers: {
 				'code-review-graph': {
 					command: 'uvx',
@@ -415,6 +417,7 @@ describeSkip('Graph Tool Benchmark', () => {
 			name: 'Graphify',
 			prompt: BENCHMARK_PROMPT_UNSEDED,
 			tools: [],
+			allowedTools: ['mcp__graphify__*'],
 			mcpServers: {
 				graphify: {
 					command: graphifyPython,
@@ -434,6 +437,7 @@ describeSkip('Graph Tool Benchmark', () => {
 			name: 'ast-grep',
 			prompt: BENCHMARK_PROMPT_UNSEDED,
 			tools: [],
+			allowedTools: ['mcp__ast-grep__*'],
 			mcpServers: {
 				'ast-grep': {
 					command: 'node',
