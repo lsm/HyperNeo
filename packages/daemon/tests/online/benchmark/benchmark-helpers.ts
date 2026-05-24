@@ -209,19 +209,24 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 	const { name, cwd, prompt, mcpServers, tools } = options;
 
 	const startMs = Date.now();
+	// Build SDK options — only include `tools` when explicitly set.
+	// Omitting `tools` uses SDK defaults; passing `[]` disables all built-ins.
+	const sdkOptions: Record<string, unknown> = {
+		model: 'default',
+		cwd,
+		permissionMode: 'bypassPermissions',
+		allowDangerouslySkipPermissions: true,
+		settingSources: [],
+		mcpServers: mcpServers ?? {},
+		strictMcpConfig: true,
+		maxTurns: 20,
+	};
+	if (tools !== undefined) {
+		sdkOptions.tools = tools;
+	}
 	const agentQuery = query({
 		prompt,
-		options: {
-			model: 'default',
-			cwd,
-			permissionMode: 'bypassPermissions',
-			allowDangerouslySkipPermissions: true,
-			settingSources: [],
-			mcpServers: mcpServers ?? {},
-			strictMcpConfig: true,
-			tools: tools ?? [],
-			maxTurns: 20,
-		},
+		options: sdkOptions as Parameters<typeof query>[0]['options'],
 	});
 
 	const sdkMessages: Array<Record<string, unknown>> = [];
@@ -274,12 +279,13 @@ export function writeBenchmarkResults(
 	results: BenchmarkResult[],
 	worktreePath: string,
 	outputPath?: string,
-	commitSha?: string
+	commitSha?: string,
+	model?: string
 ): string {
 	const output: BenchmarkOutput = {
 		timestamp: new Date().toISOString(),
 		neokaiCommit: commitSha ?? 'unknown',
-		model: 'glm-4.7',
+		model: model ?? process.env.NEOKAI_BENCHMARK_MODEL ?? 'glm-4.7',
 		worktreePath,
 		results,
 	};
@@ -373,6 +379,8 @@ function runAstGrep(pattern, lang) {
   const r = spawnSync('npx', ['-y', '-p', '@ast-grep/cli', 'ast-grep', 'run',
     '--pattern', pattern, '--lang', lang, '--json', WORKSPACE],
     { timeout: 60000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf-8' });
+  // ast-grep uses exit code 1 for "no matches found" — treat as empty result, not error
+  if (r.status === 1) return '(no matches)';
   if (r.status !== 0) throw new Error(r.stderr || 'ast-grep exited with code ' + r.status);
   return r.stdout || '(no output)';
 }

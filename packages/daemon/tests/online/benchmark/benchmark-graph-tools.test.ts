@@ -49,6 +49,8 @@ const WORKTREE =
 	// Default: the repo root (5 levels up from this file's directory)
 	join(import.meta.dir, '..', '..', '..', '..', '..');
 
+const BENCHMARK_MODEL = process.env.NEOKAI_BENCHMARK_MODEL || 'glm-4.7';
+
 const CRG_DATA_DIR = process.env.NEOKAI_BENCHMARK_CRG_DATA || '/tmp/neokai-benchmark-crg';
 
 // SHA-256 hex digest of worktree path — fixed 64-char length, collision-resistant
@@ -80,11 +82,12 @@ function resolveConfig() {
 		// Not on PATH — assume it's an absolute path
 	}
 	try {
-		const shebang = readFileSync(resolvedBin, 'utf-8')
-			.split('\n')[0]
-			.replace(/^#!\s*/, '')
-			.trim();
-		if (shebang) {
+		const firstLine = readFileSync(resolvedBin, 'utf-8').split('\n')[0];
+		// Validate: must start with #! to be a shebang script, not a binary
+		if (!firstLine.startsWith('#!')) {
+			console.log('  Graphify binary is not a script (no shebang), using python3 fallback');
+		} else {
+			const shebang = firstLine.replace(/^#!\s*/, '').trim();
 			// Handle env-style shebangs: "#!/usr/bin/env python3" -> command=env, args=[python3]
 			// Direct shebangs: "#!/path/to/python3" -> command=/path/to/python3, args=[]
 			const parts = shebang.split(/\s+/);
@@ -234,7 +237,7 @@ const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY || '';
 async function runWithGlm(
 	options: Omit<import('./benchmark-helpers').BenchmarkCaseOptions, 'cwd'>
 ): Promise<BenchmarkResult> {
-	const envVars = setGlmEnvVars(GLM_API_KEY, 'glm-4.7');
+	const envVars = setGlmEnvVars(GLM_API_KEY, BENCHMARK_MODEL);
 	try {
 		return await runBenchmarkCase({ ...options, cwd: WORKTREE });
 	} finally {
@@ -273,7 +276,13 @@ describeSkip('Graph Tool Benchmark', () => {
 	afterAll(() => {
 		// Write results
 		if (results.length > 0) {
-			const path = writeBenchmarkResults(results, WORKTREE, RESULTS_PATH, COMMIT_SHA);
+			const path = writeBenchmarkResults(
+				results,
+				WORKTREE,
+				RESULTS_PATH,
+				COMMIT_SHA,
+				BENCHMARK_MODEL
+			);
 			console.log(`\nResults written to ${path}`);
 			// Print summary table
 			console.log('\n=== Benchmark Summary ===');
