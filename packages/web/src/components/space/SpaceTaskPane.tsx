@@ -238,6 +238,20 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		: null;
 	const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
 	const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
+	const navigationSpaceIdForTask = spaceId ?? currentSpaceIdSignal.value ?? task?.spaceId;
+
+	useEffect(() => {
+		if (!taskId || !navigationSpaceIdForTask) return;
+		const currentTarget = rightPanelTargetSignal.value;
+		if (currentTarget?.type === 'task' && currentTarget.taskId === taskId) return;
+		if (currentTarget === null) return;
+		rightPanelTargetSignal.value = {
+			type: 'task',
+			spaceId: navigationSpaceIdForTask,
+			taskId,
+			tab: 'details',
+		};
+	}, [navigationSpaceIdForTask, taskId]);
 
 	if (!taskId) {
 		return (
@@ -255,8 +269,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		);
 	}
 
+	const navigationSpaceId = navigationSpaceIdForTask ?? task.spaceId;
 	const runtimeSpaceId = spaceId ?? task.spaceId;
-	const navigationSpaceId = spaceId ?? currentSpaceIdSignal.value ?? task.spaceId;
 	const auxiliaryPanelTab =
 		activeView === 'timeline' || activeView === 'log' || activeView === 'artifacts'
 			? activeView
