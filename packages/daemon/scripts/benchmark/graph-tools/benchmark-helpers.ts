@@ -293,20 +293,15 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
         session_id?: string;
         result?: string;
       };
-      // Accept max_turns (model was actively working) - record partial data.
-      // Reject other errors (auth, execution failures).
-      if (
-        result.subtype !== undefined &&
-        result.subtype !== 'success' &&
-        result.subtype !== 'error_max_turns'
-      ) {
+      // Reject all non-success terminal subtypes.
+      // Success: undefined (older SDK) or 'success'.
+      // Error: error, error_max_turns, error_during_execution,
+      //   error_max_budget_usd, error_max_structured_output_retries, etc.
+      if (result.subtype !== undefined && result.subtype !== 'success') {
         throw new Error(
           `Benchmark case "${name}" ended with non-success subtype: ${result.subtype}. ` +
             'Run is contaminated and cannot be used for comparison.'
         );
-      }
-      if (result.subtype === 'error_max_turns') {
-        console.warn(`  Warning: "${name}" hit max turns, recording partial data.`);
       }
       resultUsage = result.usage;
       sessionId = result.session_id ?? '';
