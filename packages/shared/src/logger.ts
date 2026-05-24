@@ -77,6 +77,46 @@ export interface LoggerConfig {
 	timestamps: boolean;
 }
 
+export type StructuredLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+export type StructuredLogSource = 'logger' | 'console' | 'process';
+
+export interface StructuredLogContext {
+	spaceId?: string;
+	sessionId?: string;
+	taskId?: string;
+	runId?: string;
+	[key: string]: unknown;
+}
+
+export interface StructuredLogProcessMetadata {
+	pid?: number;
+	memory?: NodeJS.MemoryUsage;
+	uptime?: number;
+}
+
+export interface StructuredLogEvent {
+	id: string;
+	timestamp: number;
+	level: StructuredLogLevel;
+	message: string;
+	module?: string;
+	source: StructuredLogSource;
+	stack?: string;
+	context: StructuredLogContext;
+	process: StructuredLogProcessMetadata;
+	metadata: Record<string, unknown>;
+}
+
+export type StructuredLogSubscriber = (event: StructuredLogEvent) => void;
+
+export interface EmitStructuredLogEventParams {
+	level: StructuredLogLevel;
+	args: unknown[];
+	source: StructuredLogSource;
+	module?: string;
+	metadata?: Record<string, unknown>;
+}
+
 /**
  * Get environment variable safely (works in browser and Node.js)
  */
@@ -203,6 +243,164 @@ let globalConfig: LoggerConfig = {
 	timestamps: false,
 };
 
+const structuredLogSubscribers = new Set<StructuredLogSubscriber>();
+let consoleCaptureRestore: (() => void) | null = null;
+let consoleCaptureRefCount = 0;
+let suppressConsoleCapture = false;
+
+export function subscribeToStructuredLogs(subscriber: StructuredLogSubscriber): () => void {
+	structuredLogSubscribers.add(subscriber);
+	return () => structuredLogSubscribers.delete(subscriber);
+}
+
+export function clearStructuredLogSubscribers(): void {
+	structuredLogSubscribers.clear();
+}
+
+export function emitStructuredLogEvent(params: EmitStructuredLogEventParams): StructuredLogEvent {
+	const timestamp = Date.now();
+	const event: StructuredLogEvent = {
+		id: createLogEventId(timestamp),
+		timestamp,
+		level: params.level,
+		message: formatStructuredLogMessage(params.args),
+		module: params.module,
+		source: params.source,
+		stack: extractStack(params.args),
+		context: extractLogContext(params.args),
+		process: getProcessMetadata(),
+		metadata: {
+			argTypes: params.args.map((arg) => (arg instanceof Error ? 'Error' : typeof arg)),
+			...params.metadata,
+		},
+	};
+	for (const subscriber of structuredLogSubscribers) {
+		try {
+			subscriber(event);
+		} catch {
+			// Logging must never fail because a subscriber failed.
+		}
+	}
+	return event;
+}
+
+export function withConsoleLogCaptureSuppressed<T>(callback: () => T): T {
+	const wasSuppressed = suppressConsoleCapture;
+	suppressConsoleCapture = true;
+	try {
+		return callback();
+	} finally {
+		suppressConsoleCapture = wasSuppressed;
+	}
+}
+
+export function installConsoleLogCapture(): () => void {
+	consoleCaptureRefCount += 1;
+	let restored = false;
+	if (!consoleCaptureRestore) {
+		const original = {
+			log: console.log,
+			info: console.info,
+			warn: console.warn,
+			error: console.error,
+			debug: console.debug,
+		};
+		const wrap = (method: keyof typeof original, level: StructuredLogLevel) => {
+			return (...args: unknown[]) => {
+				if (!suppressConsoleCapture) {
+					emitStructuredLogEvent({
+						level,
+						args,
+						source: 'console',
+						metadata: { consoleMethod: method },
+					});
+				}
+				return original[method](...args);
+			};
+		};
+		console.log = wrap('log', 'info');
+		console.info = wrap('info', 'info');
+		console.warn = wrap('warn', 'warn');
+		console.error = wrap('error', 'error');
+		console.debug = wrap('debug', 'debug');
+		consoleCaptureRestore = () => {
+			console.log = original.log;
+			console.info = original.info;
+			console.warn = original.warn;
+			console.error = original.error;
+			console.debug = original.debug;
+			consoleCaptureRestore = null;
+		};
+	}
+	return () => {
+		if (restored) return;
+		restored = true;
+		consoleCaptureRefCount = Math.max(0, consoleCaptureRefCount - 1);
+		if (consoleCaptureRefCount === 0) consoleCaptureRestore?.();
+	};
+}
+
+function createLogEventId(timestamp: number): string {
+	const random = Math.random().toString(36).slice(2, 10);
+	return `log_${timestamp}_${random}`;
+}
+
+function getProcessMetadata(): StructuredLogProcessMetadata {
+	if (typeof process === 'undefined') return {};
+	return {
+		pid: process.pid,
+		memory: typeof process.memoryUsage === 'function' ? process.memoryUsage() : undefined,
+		uptime: typeof process.uptime === 'function' ? process.uptime() : undefined,
+	};
+}
+
+function formatStructuredLogMessage(args: unknown[]): string {
+	return args.map(formatLogArg).join(' ').slice(0, 1000);
+}
+
+function formatLogArg(arg: unknown): string {
+	if (typeof arg === 'string') return arg;
+	if (typeof arg === 'number' || typeof arg === 'boolean' || arg === null) return String(arg);
+	if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+	try {
+		return JSON.stringify(arg);
+	} catch {
+		return String(arg);
+	}
+}
+
+function extractStack(args: unknown[]): string | undefined {
+	return args.find((arg): arg is Error => arg instanceof Error)?.stack;
+}
+
+function extractLogContext(args: unknown[]): StructuredLogContext {
+	const context: StructuredLogContext = {};
+	for (const arg of args) {
+		if (!arg || typeof arg !== 'object' || arg instanceof Error) continue;
+		const record = arg as Record<string, unknown>;
+		copyString(record, context, 'spaceId');
+		copyString(record, context, 'sessionId');
+		copyString(record, context, 'taskId');
+		copyString(record, context, 'runId');
+		if (record.context && typeof record.context === 'object') {
+			const nested = record.context as Record<string, unknown>;
+			copyString(nested, context, 'spaceId');
+			copyString(nested, context, 'sessionId');
+			copyString(nested, context, 'taskId');
+			copyString(nested, context, 'runId');
+		}
+	}
+	return context;
+}
+
+function copyString(
+	source: Record<string, unknown>,
+	target: StructuredLogContext,
+	key: 'spaceId' | 'sessionId' | 'taskId' | 'runId'
+): void {
+	if (typeof source[key] === 'string' && !target[key]) target[key] = source[key] as string;
+}
+
 /**
  * Configure the global logger
  */
@@ -278,6 +476,25 @@ export class Logger {
 		return [...parts, ...args];
 	}
 
+	private emitAndWrite(
+		logLevel: LogLevel,
+		structuredLevel: StructuredLogLevel,
+		consoleMethod: 'debug' | 'info' | 'warn' | 'error',
+		args: unknown[]
+	): void {
+		emitStructuredLogEvent({
+			level: structuredLevel,
+			args,
+			source: 'logger',
+			module: this.namespace,
+			metadata: { loggerLevel: LOG_LEVEL_NAMES[logLevel] },
+		});
+		const formatted = this.formatMessage(logLevel, args);
+		withConsoleLogCaptureSuppressed(() => {
+			console[consoleMethod](...formatted);
+		});
+	}
+
 	/**
 	 * Create a child logger with extended namespace
 	 */
@@ -291,7 +508,7 @@ export class Logger {
 	 */
 	trace(...args: unknown[]): void {
 		if (this.shouldLogLevel(LogLevel.TRACE)) {
-			console.debug(...this.formatMessage(LogLevel.TRACE, args));
+			this.emitAndWrite(LogLevel.TRACE, 'trace', 'debug', args);
 		}
 	}
 
@@ -300,7 +517,7 @@ export class Logger {
 	 */
 	debug(...args: unknown[]): void {
 		if (this.shouldLogLevel(LogLevel.DEBUG)) {
-			console.debug(...this.formatMessage(LogLevel.DEBUG, args));
+			this.emitAndWrite(LogLevel.DEBUG, 'debug', 'debug', args);
 		}
 	}
 
@@ -309,7 +526,7 @@ export class Logger {
 	 */
 	info(...args: unknown[]): void {
 		if (this.shouldLogLevel(LogLevel.INFO)) {
-			console.info(...this.formatMessage(LogLevel.INFO, args));
+			this.emitAndWrite(LogLevel.INFO, 'info', 'info', args);
 		}
 	}
 
@@ -325,7 +542,7 @@ export class Logger {
 	 */
 	warn(...args: unknown[]): void {
 		if (this.shouldLogLevel(LogLevel.WARN)) {
-			console.warn(...this.formatMessage(LogLevel.WARN, args));
+			this.emitAndWrite(LogLevel.WARN, 'warn', 'warn', args);
 		}
 	}
 
@@ -334,7 +551,7 @@ export class Logger {
 	 */
 	error(...args: unknown[]): void {
 		if (this.shouldLogLevel(LogLevel.ERROR)) {
-			console.error(...this.formatMessage(LogLevel.ERROR, args));
+			this.emitAndWrite(LogLevel.ERROR, 'error', 'error', args);
 		}
 	}
 
