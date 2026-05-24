@@ -5,9 +5,8 @@
  *   bun scripts/benchmark/graph-tools/run-graphify.ts
  */
 
-import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 import {
@@ -24,53 +23,16 @@ const GRAPHIFY_OUT =
   `/tmp/neokai-benchmark-graphify/${createHash('sha256').update(WORKTREE).digest('hex')}`;
 const GRAPHIFY_BIN = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BIN || 'graphify';
 const GRAPHIFY_BACKEND = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BACKEND || 'ollama';
-
-function resolveGraphifyPython(): { python: string; args: string[] } {
-  let resolvedBin = GRAPHIFY_BIN;
-  try {
-    resolvedBin = execFileSync('which', [GRAPHIFY_BIN], { encoding: 'utf-8' }).trim();
-  } catch {
-    // Not on PATH
-  }
-  try {
-    const firstLine = readFileSync(resolvedBin, 'utf-8').split('\n')[0];
-    if (!firstLine.startsWith('#!')) {
-      console.log('  Graphify binary is not a script (no shebang), using python3 fallback');
-      return { python: 'python3', args: [] };
-    }
-    const shebang = firstLine.replace(/^#!\s*/, '').trim();
-    const parts = shebang.split(/\s+/);
-    if (parts[0].endsWith('/env') && parts.length > 1) {
-      return { python: parts[0], args: parts.slice(1) };
-    }
-    return { python: parts[0], args: [] };
-  } catch {
-    return { python: 'python3', args: [] };
-  }
-}
+const GRAPHIFY_PYTHON =
+  process.env.NEOKAI_BENCHMARK_GRAPHIFY_PYTHON ||
+  '/Users/lsm/.local/share/uv/tools/graphifyy/bin/python';
 
 function setupGraphify(): boolean {
-  const commitSha = resolveCommitSha();
-  const graphJson = join(GRAPHIFY_OUT, 'graph.json');
+  const graphJson = join(GRAPHIFY_OUT, 'graphify-out', 'graph.json');
 
-  // Check cache
-  if (existsSync(graphJson) && existsSync(join(GRAPHIFY_OUT, '.benchmark_worktree'))) {
-    const cachedWorktree = readFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), 'utf-8').trim();
-    const cachedCommit = existsSync(join(GRAPHIFY_OUT, '.benchmark_commit'))
-      ? readFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), 'utf-8').trim()
-      : '';
-    const cachedBackend = existsSync(join(GRAPHIFY_OUT, '.benchmark_backend'))
-      ? readFileSync(join(GRAPHIFY_OUT, '.benchmark_backend'), 'utf-8').trim()
-      : '';
-    if (
-      cachedWorktree === WORKTREE &&
-      cachedCommit === commitSha &&
-      cachedBackend === GRAPHIFY_BACKEND
-    ) {
-      console.log('  Graphify graph cached, skipping extraction');
-      return true;
-    }
-    console.log('  Graphify cache stale, rebuilding...');
+  if (existsSync(graphJson)) {
+    console.log('  Graphify graph found, skipping extraction');
+    return true;
   }
 
   console.log('Extracting Graphify graph...');
@@ -97,9 +59,6 @@ function setupGraphify(): boolean {
   }
   const elapsed = Date.now() - start;
   if (p.exitCode === 0 && existsSync(graphJson)) {
-    writeFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), WORKTREE);
-    writeFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), commitSha);
-    writeFileSync(join(GRAPHIFY_OUT, '.benchmark_backend'), GRAPHIFY_BACKEND);
     console.log(`  Graphify graph extracted in ${(elapsed / 1000).toFixed(1)}s`);
     return true;
   }
@@ -116,7 +75,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { python, args: pythonArgs } = resolveGraphifyPython();
+  const graphJson = join(GRAPHIFY_OUT, 'graphify-out', 'graph.json');
 
   console.log('Running Graphify arm');
   const start = Date.now();
@@ -127,8 +86,8 @@ async function main() {
     allowedTools: ['mcp__graphify__*'],
     mcpServers: {
       graphify: {
-        command: python,
-        args: [...pythonArgs, '-m', 'graphify.serve', join(GRAPHIFY_OUT, 'graph.json')],
+        command: GRAPHIFY_PYTHON,
+        args: ['-m', 'graphify.serve', graphJson],
       },
     },
   });
