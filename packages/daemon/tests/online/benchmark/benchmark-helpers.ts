@@ -233,8 +233,11 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 	});
 
 	const sdkMessages: Array<Record<string, unknown>> = [];
-	let resultUsage: { inputTokens: number; outputTokens: number } | undefined;
+	let resultUsage:
+		| { input_tokens: number; output_tokens: number; [key: string]: unknown }
+		| undefined;
 	let sessionId = '';
+	let gotResult = false;
 
 	for await (const msg of agentQuery) {
 		sdkMessages.push(msg as Record<string, unknown>);
@@ -242,7 +245,7 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 		if ((msg as { type?: string }).type === 'result') {
 			const result = msg as {
 				subtype?: string;
-				usage?: { inputTokens: number; outputTokens: number };
+				usage?: { input_tokens: number; output_tokens: number; [key: string]: unknown };
 				session_id?: string;
 			};
 			// Reject errored results — max_turns, auth failures, etc.
@@ -258,8 +261,17 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 			}
 			resultUsage = result.usage;
 			sessionId = result.session_id ?? '';
+			gotResult = true;
 			break;
 		}
+	}
+
+	// Fail fast if stream ended without a result message (interrupted/incomplete run)
+	if (!gotResult) {
+		throw new Error(
+			`Benchmark case "${name}" ended without a result message — ` +
+				'SDK stream terminated early. Run cannot be used for comparison.'
+		);
 	}
 
 	const wallTimeMs = Date.now() - startMs;
@@ -275,9 +287,9 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 	return {
 		caseName: name,
 		wallTimeMs,
-		totalTokens: (resultUsage?.inputTokens ?? 0) + (resultUsage?.outputTokens ?? 0),
-		inputTokens: resultUsage?.inputTokens ?? 0,
-		outputTokens: resultUsage?.outputTokens ?? 0,
+		totalTokens: (resultUsage?.input_tokens ?? 0) + (resultUsage?.output_tokens ?? 0),
+		inputTokens: resultUsage?.input_tokens ?? 0,
+		outputTokens: resultUsage?.output_tokens ?? 0,
 		toolCallCount: toolCalls.reduce((sum, t) => sum + t.count, 0),
 		toolCalls,
 		responseText,
@@ -429,8 +441,9 @@ function runAstGrep(pattern, lang) {
 function runAstGrepScan(rule) {
   const cmd = astGrepCmd(['scan', '--inline-rules', rule, '--json', WORKSPACE]);
   const r = spawnSync(cmd[0], cmd.slice(1), SPAWN_OPTS);
-  if (r.status === 1) return '(no matches)';
-  if (r.status !== 0) throw new Error(r.stderr || 'ast-grep scan exited with code ' + r.status);
+  // ast-grep scan: exit 0 = no matches or only warning matches, exit 1 = error-severity rule matched
+  // Either way, return stdout (contains JSON matches or empty array) — only fail on crash (exit 2+)
+  if (r.status !== 0 && r.status !== 1) throw new Error(r.stderr || 'ast-grep scan exited with code ' + r.status);
   return r.stdout || '(no output)';
 }
 function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
