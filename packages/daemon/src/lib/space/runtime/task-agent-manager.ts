@@ -125,14 +125,15 @@ const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo re
 function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
 	if (sourceAgentName === 'task-agent') return 'task-agent';
 	if (sourceAgentName === 'space-agent') return 'space-agent';
+	if (sourceAgentName === 'space-member') return 'session-agent';
 	return 'node-agent';
 }
 
-function expectedEnvelopeSenderName(sourceAgentName: string): string {
-	return sourceAgentName === 'space-agent' ? 'Space Agent' : sourceAgentName;
+function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
+	return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
 }
 
-function hasAgentMessageEnvelope(
+export function hasAgentMessageEnvelopeForTest(
 	message: string,
 	sourceAgentName: string,
 	toLevel: AgentMessageLevel
@@ -141,9 +142,14 @@ function hasAgentMessageEnvelope(
 	if (!match) return false;
 
 	const fromLevel = pendingSourceLevel(sourceAgentName);
-	const expectedSender = expectedEnvelopeSenderName(sourceAgentName);
+	const expectedSenders = expectedEnvelopeSenderNames(sourceAgentName);
 	const headerSender = match[1];
-	if (headerSender !== expectedSender && !headerSender.startsWith(`${expectedSender} (task #`)) {
+	if (
+		!expectedSenders.some(
+			(expectedSender) =>
+				headerSender === expectedSender || headerSender.startsWith(`${expectedSender} (task #`)
+		)
+	) {
 		return false;
 	}
 
@@ -1156,7 +1162,7 @@ export class TaskAgentManager {
 		for (const row of pending) {
 			const isSyntheticMessage = row.sourceAgentName !== 'human';
 			const message = isSyntheticMessage
-				? hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'node-agent')
+				? hasAgentMessageEnvelopeForTest(row.message, row.sourceAgentName, 'node-agent')
 					? row.message
 					: formatAgentMessage({
 							fromLevel: pendingSourceLevel(row.sourceAgentName),
@@ -1243,7 +1249,11 @@ export class TaskAgentManager {
 		);
 
 		for (const row of pending) {
-			const message = hasAgentMessageEnvelope(row.message, row.sourceAgentName, 'space-agent')
+			const message = hasAgentMessageEnvelopeForTest(
+				row.message,
+				row.sourceAgentName,
+				'space-agent'
+			)
 				? row.message
 				: formatAgentMessage({
 						fromLevel: pendingSourceLevel(row.sourceAgentName),
