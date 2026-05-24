@@ -53,7 +53,7 @@ async function main() {
     mcpServers: {
       codegraph: {
         command: 'npx',
-        args: ['-y', '@colbymchenry/codegraph', 'mcp'],
+        args: ['-y', '@colbymchenry/codegraph', 'serve', '--mcp'],
       },
     },
   });
