@@ -120,6 +120,21 @@ function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
 }
 
+function handleFromName(value: string): string {
+	const slug = value
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9_-]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+	return slug ? `@${slug}` : '@space-agent';
+}
+
+function normalizeReplyTargetHandle(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed) return '@space-agent';
+	return trimmed.startsWith('@') ? trimmed : handleFromName(trimmed);
+}
+
 function normalizeSpaceAgentUpdateArgs(args: SpaceAgentUpdateArgs) {
 	return {
 		name: args.name,
@@ -377,15 +392,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			: myAgentName || !mySessionId
 				? 'space-agent'
 				: 'session-agent';
-	const outboundSenderDisplayName =
-		outboundSenderName === 'space-agent'
-			? (myAgentNameAliases?.[0] ?? outboundSenderName)
-			: outboundSenderName;
+	const outboundSenderDisplayName = outboundSenderName;
 	const outboundReplyTargetHandle = myAgentName
-		? `@${outboundSenderDisplayName}`
+		? normalizeReplyTargetHandle(myAgentNameAliases?.[0] ?? outboundSenderName)
 		: mySessionId
 			? `@session:${mySessionId}`
-			: `@${outboundSenderDisplayName}`;
+			: normalizeReplyTargetHandle(outboundSenderName);
 
 	function requireGoalService() {
 		if (!config.goalService) throw new Error('Goal management not available');
