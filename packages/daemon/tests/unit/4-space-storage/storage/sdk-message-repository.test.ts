@@ -209,6 +209,37 @@ describe('SDKMessageRepository', () => {
 		});
 	});
 
+	describe('getRenderableTextMessages', () => {
+		it('continues past empty renderable rows until the text limit is reached', async () => {
+			repository.saveSDKMessage('session-1', createUserMessage('Older text'));
+			repository.saveSDKMessage('session-1', {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tool-1', name: 'Read' }] },
+			} as unknown as SDKMessage);
+			repository.saveSDKMessage('session-1', createAssistantMessage('Newest text'));
+
+			const messages = repository.getRenderableTextMessages('session-1', 2);
+
+			expect(messages.map((message) => message.text)).toEqual(['Older text', 'Newest text']);
+		});
+		it('caps scanned renderable rows while collecting text messages', () => {
+			repository.saveSDKMessage('session-1', createUserMessage('Too old text'));
+			for (let i = 0; i < 250; i++) {
+				repository.saveSDKMessage('session-1', {
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: `tool-${i}`, name: 'Read' }],
+					},
+				} as unknown as SDKMessage);
+			}
+
+			const messages = repository.getRenderableTextMessages('session-1', 1);
+
+			expect(messages).toEqual([]);
+		});
+	});
+
 	describe('getSDKMessages', () => {
 		it('should return messages in chronological order', async () => {
 			repository.saveSDKMessage('session-1', createUserMessage('First'));

@@ -14,10 +14,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, SDKMessage, Session } from '@neokai/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import type {
 	DaemonInternalEventMap,
 	InternalEventBus,
@@ -92,6 +94,63 @@ function createMockSpaceManager(): {
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
+function createTestDatabaseFacade(db: Database) {
+	const sessionRepo = new SessionRepository(db as any);
+	const sdkMessageRepo = new SDKMessageRepository(db as any);
+	return {
+		getSession: (id: string) => sessionRepo.getSession(id),
+		getRenderableTextMessages: (sessionId: string, limit?: number) =>
+			sdkMessageRepo.getRenderableTextMessages(sessionId, limit),
+	} as any;
+}
+
+function insertSession(db: Database, session: Partial<Session> & { id: string }): void {
+	const now = new Date().toISOString();
+	db.prepare(
+		`INSERT INTO sessions (
+			id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+			is_worktree, type, session_context
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		session.id,
+		session.title ?? session.id,
+		session.workspacePath ?? null,
+		session.createdAt ?? now,
+		session.lastActiveAt ?? now,
+		session.status ?? 'active',
+		JSON.stringify(
+			session.config ?? {
+				model: 'claude-sonnet-4-5',
+				maxTokens: 4096,
+				temperature: 0,
+			}
+		),
+		JSON.stringify(session.metadata ?? {}),
+		session.worktree?.isWorktree ? 1 : 0,
+		session.type ?? 'space_chat',
+		session.context ? JSON.stringify(session.context) : null
+	);
+}
+
+function insertMessage(db: Database, sessionId: string, id: string, message: SDKMessage): void {
+	db.prepare(
+		`INSERT INTO sdk_messages (
+			id, session_id, message_type, sdk_message, timestamp, send_status, is_renderable, is_terminal,
+			parent_tool_use_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	).run(
+		id,
+		sessionId,
+		message.type,
+		JSON.stringify(message),
+		new Date(Date.now() + Number(id.replace(/\D/g, '') || 0)).toISOString(),
+		'consumed',
+		1,
+		0,
+		null
+	);
+}
+
 /** Call a registered handler and cast the result */
 async function call<T>(
 	handlers: Map<string, RequestHandler>,
@@ -130,7 +189,8 @@ describe('Space Agent RPC Handlers', () => {
 			hubData.hub,
 			daemonData.internalEventBus,
 			manager,
-			spaceManagerData.spaceManager
+			spaceManagerData.spaceManager,
+			createTestDatabaseFacade(db)
 		);
 	});
 
@@ -181,6 +241,201 @@ describe('Space Agent RPC Handlers', () => {
 			await expect(
 				call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', { spaceId: 'missing-space' })
 			).rejects.toThrow('Space not found: missing-space');
+		});
+	});
+
+	describe('spaceAgent.promotion', () => {
+		it('generates a draft from recent renderable session messages', async () => {
+			insertSession(db, {
+				id: 'session-1',
+				title: 'Release captain',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					thinkingLevel: 'think8k',
+					allowedTools: ['Read', 'Grep', 'UnknownTool'],
+				},
+			});
+			insertMessage(db, 'session-1', 'msg-1', {
+				type: 'user',
+				message: { role: 'user', content: [{ type: 'text', text: 'Track release blockers.' }] },
+			} as SDKMessage);
+			insertMessage(db, 'session-1', 'msg-2', {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'I will monitor CI.' }] },
+			} as SDKMessage);
+
+			const result = await call<{
+				draft: { name: string; customPrompt: string; tools?: string[] };
+			}>(hubData.handlers, 'spaceAgent.getPromotionDraft', {
+				spaceId: 'space-1',
+				sessionId: 'session-1',
+			});
+
+			expect(result.draft.name).toBe('Release captain');
+			expect(result.draft.tools).toBeUndefined();
+			expect(result.draft.customPrompt).toContain('## Responsibility');
+			expect(result.draft.customPrompt).toContain('## Event Subscriptions');
+			expect(result.draft.customPrompt).toContain('User: Track release blockers.');
+			expect(result.draft.customPrompt).toContain('Assistant: I will monitor CI.');
+		});
+
+		it('preserves explicit empty setting sources in the draft', async () => {
+			insertSession(db, {
+				id: 'session-empty-settings',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					settingSources: [],
+					tools: { settingSources: ['user'] },
+				},
+			});
+
+			const result = await call<{ draft: { settingSources?: string[] } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-empty-settings' }
+			);
+
+			expect(result.draft.settingSources).toEqual([]);
+		});
+
+		it('preserves explicit sdk tool presets in the draft', async () => {
+			insertSession(db, {
+				id: 'session-read-only-tools',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					sdkToolsPreset: ['Read', 'Grep'],
+					allowedTools: ['Bash'],
+				},
+			});
+
+			const result = await call<{ draft: { tools?: string[] } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-read-only-tools' }
+			);
+
+			expect(result.draft.tools).toEqual(['Read', 'Grep']);
+		});
+
+		it('preserves disallowed tool restrictions in the draft', async () => {
+			insertSession(db, {
+				id: 'session-disallowed-tools',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+				config: {
+					model: 'claude-sonnet-4-5',
+					maxTokens: 4096,
+					temperature: 0,
+					sdkToolsPreset: { type: 'preset', preset: 'claude_code' },
+					disallowedTools: ['Bash', 'Write', 'UnknownTool'],
+				},
+			});
+
+			const result = await call<{ draft: { tools?: string[] } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-disallowed-tools' }
+			);
+
+			expect(result.draft.tools).not.toContain('Bash');
+			expect(result.draft.tools).not.toContain('Write');
+			expect(result.draft.tools).toContain('Read');
+		});
+
+		it('keeps the newest standing context when truncating long drafts', async () => {
+			insertSession(db, {
+				id: 'session-long-context',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+			});
+			insertMessage(db, 'session-long-context', 'msg-1', {
+				type: 'user',
+				message: { role: 'user', content: [{ type: 'text', text: 'old '.repeat(3000) }] },
+			} as SDKMessage);
+			insertMessage(db, 'session-long-context', 'msg-2', {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'newest marker' }] },
+			} as SDKMessage);
+
+			const result = await call<{ draft: { customPrompt: string } }>(
+				hubData.handlers,
+				'spaceAgent.getPromotionDraft',
+				{ spaceId: 'space-1', sessionId: 'session-long-context' }
+			);
+
+			expect(result.draft.customPrompt).toContain('…');
+			expect(result.draft.customPrompt).toContain('Assistant: newest marker');
+		});
+
+		it('rejects drafts for sessions outside the requested space', async () => {
+			insertSession(db, {
+				id: 'session-2',
+				type: 'space_chat',
+				context: { spaceId: 'space-other' },
+			});
+
+			await expect(
+				call(hubData.handlers, 'spaceAgent.getPromotionDraft', {
+					spaceId: 'space-1',
+					sessionId: 'session-2',
+				})
+			).rejects.toThrow('Session not found: session-2');
+		});
+
+		it('rejects promotion when the target space no longer exists', async () => {
+			insertSession(db, {
+				id: 'session-deleted-space',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+			});
+			spaceManagerData.getSpaceMock.mockResolvedValue(null as never);
+
+			await expect(
+				call(hubData.handlers, 'spaceAgent.promoteSession', {
+					spaceId: 'space-1',
+					sessionId: 'session-deleted-space',
+					name: 'Deleted Space Agent',
+				})
+			).rejects.toThrow('Space not found: space-1');
+		});
+
+		it('creates an agent from a reviewed promotion draft', async () => {
+			insertSession(db, {
+				id: 'session-3',
+				type: 'space_chat',
+				context: { spaceId: 'space-1' },
+			});
+
+			const result = await call<{ agent: { name: string; customPrompt: string | null } }>(
+				hubData.handlers,
+				'spaceAgent.promoteSession',
+				{
+					spaceId: 'space-1',
+					sessionId: 'session-3',
+					name: 'Release Agent',
+					customPrompt: 'Reviewed profile',
+					tools: ['Read'],
+				}
+			);
+
+			expect(result.agent.name).toBe('Release Agent');
+			expect(result.agent.customPrompt).toBe('Reviewed profile');
+			expect(daemonData.publishMock).toHaveBeenCalledWith(
+				'spaceAgent.created',
+				expect.objectContaining({ spaceId: 'space-1' })
+			);
 		});
 	});
 

@@ -29,6 +29,8 @@ const ROOM_SESSION_PREFIXES = ['room:chat:', 'planner:', 'coder:', 'leader:', 'g
 const ROOM_SESSION_TYPES = new Set(['room_chat', 'planner', 'coder', 'leader', 'general']);
 const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed']);
 const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
+const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
+const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 
 function isOlderThanMessageSearchTtl(value: string | number | null | undefined): boolean {
 	if (value === null || value === undefined) return false;
@@ -422,6 +424,58 @@ export class SDKMessageRepository {
 		hasMore: boolean;
 	} {
 		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
+	}
+
+	getRenderableTextMessages(
+		sessionId: string,
+		limit = 20
+	): Array<{ id: string; type: string; text: string; timestamp: number }> {
+		const messages: Array<{ id: string; type: string; text: string; timestamp: number }> = [];
+		const stmt = this.db.prepare(
+			`SELECT id, message_type, sdk_message, timestamp FROM sdk_messages
+			 WHERE session_id = ?
+			   AND parent_tool_use_id IS NULL
+			   AND is_renderable = 1
+			   AND message_type IN ('user', 'assistant')
+			   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+			 ORDER BY timestamp DESC, rowid DESC
+			 LIMIT ? OFFSET ?`
+		);
+		const maxScan = Math.max(limit, RENDERABLE_TEXT_MESSAGE_MAX_SCAN);
+		let scanned = 0;
+
+		while (messages.length < limit && scanned < maxScan) {
+			const batchSize = Math.min(RENDERABLE_TEXT_MESSAGE_BATCH_SIZE, maxScan - scanned);
+			const rows = stmt.all(sessionId, batchSize, scanned) as Array<{
+				id: string;
+				message_type: string;
+				sdk_message: string;
+				timestamp: string;
+			}>;
+			if (rows.length === 0) break;
+
+			for (const row of rows) {
+				let message: SDKMessage;
+				try {
+					message = JSON.parse(row.sdk_message) as SDKMessage;
+				} catch {
+					continue;
+				}
+				const text = this.extractVisibleText(message as unknown as Record<string, unknown>);
+				if (text.length === 0) continue;
+				messages.push({
+					id: row.id,
+					type: row.message_type,
+					text,
+					timestamp: new Date(row.timestamp).getTime(),
+				});
+				if (messages.length >= limit) break;
+			}
+			scanned += rows.length;
+			if (rows.length < batchSize) break;
+		}
+
+		return messages.reverse();
 	}
 
 	/**
@@ -1118,6 +1172,10 @@ export class SDKMessageRepository {
 	}
 
 	private extractAssistantText(msg: Record<string, unknown>): string {
+		return this.extractVisibleText(msg);
+	}
+
+	private extractVisibleText(msg: Record<string, unknown>): string {
 		const parts: string[] = [];
 		const message = msg.message as Record<string, unknown> | undefined;
 		const content = message?.content;

@@ -60,6 +60,48 @@ export function createSpaceAgentSchema(db: Database): void {
 	db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
 
 	db.exec(`
+		CREATE TABLE sessions (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			workspace_path TEXT,
+			created_at TEXT NOT NULL,
+			last_active_at TEXT NOT NULL,
+			status TEXT NOT NULL,
+			config TEXT NOT NULL,
+			metadata TEXT NOT NULL,
+			is_worktree INTEGER NOT NULL DEFAULT 0,
+			worktree_path TEXT,
+			main_repo_path TEXT,
+			worktree_branch TEXT,
+			git_branch TEXT,
+			sdk_session_id TEXT,
+			sdk_origin_path TEXT,
+			available_commands TEXT,
+			processing_state TEXT,
+			archived_at TEXT,
+			type TEXT,
+			session_context TEXT
+		)
+	`);
+
+	db.exec(`
+		CREATE TABLE sdk_messages (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			message_type TEXT NOT NULL,
+			message_subtype TEXT,
+			sdk_message TEXT NOT NULL,
+			timestamp TEXT NOT NULL,
+			send_status TEXT,
+			origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
+			is_renderable INTEGER NOT NULL DEFAULT 1,
+			is_terminal INTEGER NOT NULL DEFAULT 0,
+			parent_tool_use_id TEXT,
+			task_id TEXT
+		)
+	`);
+
+	db.exec(`
 		CREATE TABLE space_workflows (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,

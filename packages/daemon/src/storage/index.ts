@@ -211,6 +211,13 @@ export class Database {
 		return this.sdkMessageRepo.getSDKMessagesByType(sessionId, messageType, messageSubtype, limit);
 	}
 
+	getRenderableTextMessages(
+		sessionId: string,
+		limit?: number
+	): Array<{ id: string; type: string; text: string; timestamp: number }> {
+		return this.sdkMessageRepo.getRenderableTextMessages(sessionId, limit);
+	}
+
 	getSDKMessageCount(sessionId: string): number {
 		return this.sdkMessageRepo.getSDKMessageCount(sessionId);
 	}
