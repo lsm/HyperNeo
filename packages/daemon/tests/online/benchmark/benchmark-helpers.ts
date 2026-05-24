@@ -1,15 +1,17 @@
 /**
  * Benchmark helpers for graph tool comparison.
  *
- * Shared constants, types, and runner function used by benchmark-graph-tools.test.ts.
+ * Uses Claude Agent SDK directly (no daemon) with GLM provider routing
+ * via environment variables. Each benchmark arm isolates its target tool
+ * by setting `tools: []` to disable all built-ins.
+ *
  * Must be importable from `bun test` without special loaders.
  */
 
 import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
-import type { DaemonServerContext } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // ---------------------------------------------------------------------------
 // Prompts
@@ -73,32 +75,6 @@ export const BENCHMARK_PROMPT_TEXT_ONLY = (BENCHMARK_PROMPT_UNSEDED +
 
 IMPORTANT: Respond with text only. Do NOT use any tools (no Bash, Read, Write, Glob, Grep, or any other tool). Produce your plan based on your understanding of typical agent runtime architectures.`) as const;
 
-/**
- * Build the mixed-discovery prompt. Instructs the agent to first use built-in
- * search (Read/Grep/Glob) to identify likely files, then use the named tool
- * for deeper context.
- */
-export function makeMixedPrompt(toolName: string): string {
-	return (
-		BENCHMARK_PROMPT_UNSEDED +
-		`
-
-## Additional instructions for this run
-
-You are in a **mixed discovery** configuration. You have access to:
-
-1. **Built-in tools** (Read, Grep, Glob) — use these FIRST to do minimal search
-   and identify the core runtime files related to: stuck, idle, blocked, waiting,
-   retry, notification, recovery, tick loop, completion, autonomy.
-
-2. **${toolName}** — after your initial built-in search, use ${toolName} to get
-   deeper structural context on the files and symbols you discovered.
-
-Produce an implementation plan grounded in actual NeoKai file paths, function names,
-and type names. Mark inferences clearly.`
-	);
-}
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -126,11 +102,59 @@ export interface BenchmarkOutput {
 
 export interface BenchmarkCaseOptions {
 	name: string;
-	workspacePath: string;
+	/** Absolute path to the workspace/repo */
+	cwd: string;
 	prompt: string;
-	mcpServers?: Record<string, { command: string; args: string[] }>;
-	/** Tool names to disable for this case (e.g. built-in tools to force MCP-only usage) */
-	disallowedTools?: string[];
+	/** MCP servers to attach. Baseline passes empty/undefined. */
+	mcpServers?: Record<string, { command: string; args?: string[] }>;
+	/**
+	 * Built-in tools to make available. Use `[]` to disable all built-ins
+	 * and force MCP-only usage. Omit for default tool set.
+	 */
+	tools?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// GLM provider env var helpers
+// ---------------------------------------------------------------------------
+
+const GLM_ENV_VARS = [
+	'ANTHROPIC_AUTH_TOKEN',
+	'ANTHROPIC_BASE_URL',
+	'API_TIMEOUT_MS',
+	'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+	'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+	'ANTHROPIC_DEFAULT_SONNET_MODEL',
+	'ANTHROPIC_DEFAULT_OPUS_MODEL',
+] as const;
+
+/** Set GLM routing env vars. Returns originals for restoration. */
+export function setGlmEnvVars(apiKey: string, model: string): Map<string, string | undefined> {
+	const originals = new Map<string, string | undefined>();
+	for (const key of GLM_ENV_VARS) {
+		originals.set(key, process.env[key]);
+	}
+
+	process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+	process.env.API_TIMEOUT_MS = '3000000';
+	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+	process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+	process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+
+	return originals;
+}
+
+/** Restore env vars from a previous setGlmEnvVars call. */
+export function restoreEnvVars(originals: Map<string, string | undefined>): void {
+	for (const [key, value] of originals.entries()) {
+		if (value !== undefined) {
+			process.env[key] = value;
+		} else {
+			delete process.env[key];
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -138,9 +162,9 @@ export interface BenchmarkCaseOptions {
 // ---------------------------------------------------------------------------
 
 /** Count tool_use blocks across all SDK messages. */
-export function extractToolCalls(sdkMessages: Array<Record<string, unknown>>): Map<string, number> {
+export function extractToolCalls(messages: Array<Record<string, unknown>>): Map<string, number> {
 	const counts = new Map<string, number>();
-	for (const msg of sdkMessages) {
+	for (const msg of messages) {
 		if ((msg as { type?: string }).type !== 'assistant') continue;
 		const content = (msg as { message?: { content?: unknown[] } }).message?.content;
 		if (!Array.isArray(content)) continue;
@@ -155,9 +179,9 @@ export function extractToolCalls(sdkMessages: Array<Record<string, unknown>>): M
 }
 
 /** Extract concatenated assistant text from SDK messages. */
-export function extractResponseText(sdkMessages: Array<Record<string, unknown>>): string {
+export function extractResponseText(messages: Array<Record<string, unknown>>): string {
 	const parts: string[] = [];
-	for (const msg of sdkMessages) {
+	for (const msg of messages) {
 		if ((msg as { type?: string }).type !== 'assistant') continue;
 		const content = (msg as { message?: { content?: unknown[] } }).message?.content;
 		if (!Array.isArray(content)) continue;
@@ -176,90 +200,65 @@ export function extractResponseText(sdkMessages: Array<Record<string, unknown>>)
 // ---------------------------------------------------------------------------
 
 /**
- * Run a single benchmark case: create session, send prompt, wait for idle,
- * collect metrics.
+ * Run a single benchmark case using the Claude Agent SDK directly.
+ *
+ * Caller must set GLM env vars before calling and restore after.
+ * Uses `query()` from the SDK with the provided MCP servers and tool config.
  */
-export async function runBenchmarkCase(
-	daemon: DaemonServerContext,
-	options: BenchmarkCaseOptions
-): Promise<BenchmarkResult> {
-	const { name, workspacePath, prompt, mcpServers, disallowedTools } = options;
+export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<BenchmarkResult> {
+	const { name, cwd, prompt, mcpServers, tools } = options;
 
-	// 1. Create session
-	//
-	// NOTE: GLM-5.x models generate tool_use responses that are incompatible with
-	// the Claude Agent SDK's internal context-fetcher, causing sessions to hang.
-	// GLM-4.7 works reliably when tools are available for the SDK to execute.
-	// The baseline test uses a text-only prompt variant that avoids triggering tool_use.
-	const createResult = (await daemon.messageHub.request('session.create', {
-		workspacePath,
-		title: `Benchmark: ${name}`,
-		config: {
-			model: 'glm-4.7',
-			provider: 'glm',
-			permissionMode: 'bypassPermissions',
-			...(mcpServers ? { mcpServers } : {}),
-			...(disallowedTools?.length ? { disallowedTools } : {}),
-		},
-	})) as { sessionId: string };
-
-	const { sessionId } = createResult;
-	daemon.trackSession(sessionId);
-
-	// 2. Send prompt and time it
 	const startMs = Date.now();
-	await sendMessage(daemon, sessionId, prompt);
-	await waitForIdle(daemon, sessionId, 360_000);
-	const wallTimeMs = Date.now() - startMs;
-
-	// 3. Collect SDK messages
-	// Wait for at least 2 messages (user prompt + assistant response).
-	// minCount:1 can snapshot before the assistant has responded.
-	const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-		minCount: 2,
-		timeout: 30_000,
+	const agentQuery = query({
+		prompt,
+		options: {
+			model: 'default',
+			cwd,
+			permissionMode: 'bypassPermissions',
+			allowDangerouslySkipPermissions: true,
+			settingSources: [],
+			mcpServers: mcpServers ?? {},
+			strictMcpConfig: true,
+			tools: tools ?? [],
+			maxTurns: 20,
+		},
 	});
 
-	// Fetch full transcript (default pagination is 100, which may truncate
-	// long sessions with many tool round-trips)
-	const fullResult = (await daemon.messageHub.request('message.sdkMessages', {
-		sessionId,
-		limit: 10_000,
-	})) as { sdkMessages: Array<Record<string, unknown>> };
-	const allSdkMessages =
-		fullResult.sdkMessages.length > sdkMessages.length ? fullResult.sdkMessages : sdkMessages;
+	const sdkMessages: Array<Record<string, unknown>> = [];
+	let resultUsage: { inputTokens: number; outputTokens: number } | undefined;
+	let sessionId = '';
 
-	// 4. Get session metadata for token counts
-	const sessionResult = (await daemon.messageHub.request('session.get', {
-		sessionId,
-	})) as {
-		session: {
-			metadata?: {
-				totalTokens?: number;
-				inputTokens?: number;
-				outputTokens?: number;
-				toolCallCount?: number;
+	for await (const msg of agentQuery) {
+		sdkMessages.push(msg as Record<string, unknown>);
+
+		if ((msg as { type?: string }).type === 'result') {
+			const result = msg as {
+				usage?: { inputTokens: number; outputTokens: number };
+				session_id?: string;
 			};
-		};
-	};
-	const meta = sessionResult.session?.metadata ?? {};
+			resultUsage = result.usage;
+			sessionId = result.session_id ?? '';
+			break;
+		}
+	}
 
-	// 5. Parse tool calls and response text
-	const toolCallMap = extractToolCalls(allSdkMessages ?? []);
-	const responseText = extractResponseText(allSdkMessages ?? []);
+	const wallTimeMs = Date.now() - startMs;
 
-	const toolCalls = Array.from(toolCallMap.entries()).map(([name, count]) => ({
-		name,
+	const toolCallMap = extractToolCalls(sdkMessages);
+	const responseText = extractResponseText(sdkMessages);
+
+	const toolCalls = Array.from(toolCallMap.entries()).map(([toolName, count]) => ({
+		name: toolName,
 		count,
 	}));
 
 	return {
 		caseName: name,
 		wallTimeMs,
-		totalTokens: meta.totalTokens ?? 0,
-		inputTokens: meta.inputTokens ?? 0,
-		outputTokens: meta.outputTokens ?? 0,
-		toolCallCount: meta.toolCallCount ?? 0,
+		totalTokens: (resultUsage?.inputTokens ?? 0) + (resultUsage?.outputTokens ?? 0),
+		inputTokens: resultUsage?.inputTokens ?? 0,
+		outputTokens: resultUsage?.outputTokens ?? 0,
+		toolCallCount: toolCalls.reduce((sum, t) => sum + t.count, 0),
 		toolCalls,
 		responseText,
 		responseLength: responseText.length,

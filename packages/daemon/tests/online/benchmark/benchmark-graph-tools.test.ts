@@ -1,9 +1,10 @@
 /**
- * Graph Tool Benchmark — Agent Session Integration Test
+ * Graph Tool Benchmark — Direct SDK Integration Test
  *
  * Compares CodeGraph, code-review-graph, Graphify, and ast-grep against a plain
  * GLM baseline for task #394 ("Refactor task event source as Layer-2 anti-stuck
- * mechanism"). Uses real NeoKai daemon sessions with MCP tool servers attached.
+ * mechanism"). Uses the Claude Agent SDK directly with MCP tool servers attached.
+ * No daemon required — GLM provider routing via environment variables.
  *
  * REQUIREMENTS:
  *   - GLM_API_KEY or ZHIPU_API_KEY must be set
@@ -11,30 +12,31 @@
  *
  * Run:
  *   cd packages/daemon
- *   NEOKAI_BENCHMARK_RUN=1 DB_PATH=/tmp/neokai-bench.db bun test tests/online/benchmark/benchmark-graph-tools.test.ts
+ *   NEOKAI_BENCHMARK_RUN=1 bun test tests/online/benchmark/benchmark-graph-tools.test.ts
  *
  * Run single case:
  *   bun test -t 'CodeGraph' tests/online/benchmark/benchmark-graph-tools.test.ts
  *
  * This entire suite is `describe.skip` by default — it makes real API calls,
  * takes 10-20 minutes, and requires manual opt-in via NEOKAI_BENCHMARK_RUN=1.
+ * Not included in CI.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-import type { DaemonServerContext } from '../../helpers/daemon-server';
-import { createDaemonServer } from '../../helpers/daemon-server';
 import {
 	BENCHMARK_PROMPT_UNSEDED,
 	BENCHMARK_PROMPT_TEXT_ONLY,
 	runBenchmarkCase,
 	writeBenchmarkResults,
 	makeAstGrepMcpServerScript,
+	setGlmEnvVars,
+	restoreEnvVars,
 	type BenchmarkResult,
 } from './benchmark-helpers';
 
@@ -57,28 +59,6 @@ const GRAPHIFY_OUT =
 const CRG_TOOLS =
 	'get_minimal_context_tool,get_review_context_tool,get_impact_radius_tool,query_graph_tool,semantic_search_nodes_tool,list_graph_stats_tool,detect_changes_tool';
 
-// Built-in tools to disable in MCP-only benchmark arms to ensure isolation
-const DISABLED_BUILTINS = [
-	'Read',
-	'Write',
-	'Edit',
-	'Bash',
-	'Grep',
-	'Glob',
-	'WebFetch',
-	'WebSearch',
-	'Task',
-	'TaskOutput',
-	'TaskStop',
-	'NotebookEdit',
-	'TodoWrite',
-	'AskUserQuestion',
-	'EnterPlanMode',
-	'ExitPlanMode',
-	'Skill',
-	'ToolSearch',
-];
-
 const RESULTS_PATH = '/tmp/graph-tool-benchmark-results.json';
 
 // Defer heavy resolution until benchmark is enabled to avoid failing unrelated test runs
@@ -92,23 +72,21 @@ function resolveConfig() {
 	COMMIT_SHA = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
 
 	// Resolve Graphify python env (same executable used for extraction and MCP serve)
-	// First resolve the binary path via PATH lookup, then read its shebang for the Python interpreter
+	// Always try PATH resolution first, fall back to absolute path.
+	let resolvedBin = GRAPHIFY_BIN;
 	try {
-		// Always try PATH resolution first — treat GRAPHIFY_BIN as a command name,
-		// not a file path. Falls back to the literal value for absolute paths.
-		let resolvedBin = GRAPHIFY_BIN;
-		try {
-			resolvedBin = execFileSync('which', [GRAPHIFY_BIN], { encoding: 'utf-8' }).trim();
-		} catch {
-			// Not on PATH — assume it's an absolute path
-		}
+		resolvedBin = execFileSync('which', [GRAPHIFY_BIN], { encoding: 'utf-8' }).trim();
+	} catch {
+		// Not on PATH — assume it's an absolute path
+	}
+	try {
 		const shebang = readFileSync(resolvedBin, 'utf-8')
 			.split('\n')[0]
 			.replace(/^#!\s*/, '')
 			.trim();
 		if (shebang) {
-			// Handle env-style shebangs: "#!/usr/bin/env python3" → command=env, args=[python3]
-			// Direct shebangs: "#!/path/to/python3" → command=/path/to/python3, args=[]
+			// Handle env-style shebangs: "#!/usr/bin/env python3" -> command=env, args=[python3]
+			// Direct shebangs: "#!/path/to/python3" -> command=/path/to/python3, args=[]
 			const parts = shebang.split(/\s+/);
 			if (parts[0].endsWith('/env') && parts.length > 1) {
 				graphifyPython = parts[0];
@@ -126,7 +104,6 @@ function resolveConfig() {
 // State
 // ---------------------------------------------------------------------------
 
-let daemon: DaemonServerContext;
 const results: BenchmarkResult[] = [];
 
 // Tool readiness flags
@@ -139,7 +116,7 @@ let astGrepServerPath: string | null = null;
 // Tool setup helpers
 // ---------------------------------------------------------------------------
 
-async function buildCodeGraph() {
+function buildCodeGraph() {
 	console.log('Building CodeGraph index...');
 	const start = Date.now();
 	const p = Bun.spawnSync(['npx', '-y', '@colbymchenry/codegraph', 'init', WORKTREE, '-i'], {
@@ -156,7 +133,7 @@ async function buildCodeGraph() {
 	}
 }
 
-async function buildCRG() {
+function buildCRG() {
 	console.log('Building code-review-graph...');
 	const start = Date.now();
 	const p = Bun.spawnSync(
@@ -182,10 +159,10 @@ async function buildCRG() {
 	}
 }
 
-async function setupGraphify() {
+function setupGraphify() {
 	const graphJson = join(GRAPHIFY_OUT, 'graph.json');
 
-	// Verify cache belongs to current worktree AND commit - rebuild if stale
+	// Verify cache belongs to current worktree AND commit AND backend - rebuild if stale
 	if (existsSync(graphJson) && existsSync(join(GRAPHIFY_OUT, '.benchmark_worktree'))) {
 		const cachedWorktree = readFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), 'utf-8').trim();
 		const cachedCommit = existsSync(join(GRAPHIFY_OUT, '.benchmark_commit'))
@@ -197,12 +174,14 @@ async function setupGraphify() {
 		if (cachedWorktree !== WORKTREE) {
 			console.log('  Graphify graph is from a different worktree, forcing rebuild...');
 		} else if (cachedCommit && cachedCommit === COMMIT_SHA && cachedBackend === GRAPHIFY_BACKEND) {
-			// Same worktree and commit - keep cached graph
+			// Same worktree, commit, and backend - keep cached graph
 			graphifyReady = true;
-			console.log('  Graphify graph already exists for this worktree@commit, skipping extraction');
+			console.log(
+				'  Graphify graph already exists for this worktree@commit@backend, skipping extraction'
+			);
 			return;
 		} else {
-			console.log('  Graphify graph commit mismatch, forcing rebuild...');
+			console.log('  Graphify graph commit/backend mismatch, forcing rebuild...');
 		}
 	}
 
@@ -224,7 +203,7 @@ async function setupGraphify() {
 	);
 	const elapsed = Date.now() - start;
 	if (p.exitCode === 0 && existsSync(graphJson)) {
-		// Tag the cache with worktree + commit for staleness detection
+		// Tag the cache with worktree + commit + backend for staleness detection
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_worktree'), WORKTREE);
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_commit'), COMMIT_SHA);
 		writeFileSync(join(GRAPHIFY_OUT, '.benchmark_backend'), GRAPHIFY_BACKEND);
@@ -247,6 +226,23 @@ function setupAstGrep() {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: run case with GLM env vars
+// ---------------------------------------------------------------------------
+
+const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY || '';
+
+async function runWithGlm(
+	options: Omit<import('./benchmark-helpers').BenchmarkCaseOptions, 'cwd'>
+): Promise<BenchmarkResult> {
+	const envVars = setGlmEnvVars(GLM_API_KEY, 'glm-4.7');
+	try {
+		return await runBenchmarkCase({ ...options, cwd: WORKTREE });
+	} finally {
+		restoreEnvVars(envVars);
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
 
@@ -255,7 +251,7 @@ const ENABLE_BENCHMARK = process.env.NEOKAI_BENCHMARK_RUN === '1';
 const describeSkip = ENABLE_BENCHMARK ? describe : describe.skip;
 
 describeSkip('Graph Tool Benchmark', () => {
-	beforeAll(async () => {
+	beforeAll(() => {
 		// Validate credentials
 		if (!process.env.GLM_API_KEY && !process.env.ZHIPU_API_KEY) {
 			throw new Error('GLM_API_KEY or ZHIPU_API_KEY must be set');
@@ -265,23 +261,16 @@ describeSkip('Graph Tool Benchmark', () => {
 		console.log(`Worktree: ${WORKTREE}`);
 		console.log(`Commit: ${COMMIT_SHA}`);
 
-		// Build tool indexes BEFORE daemon start (avoids transport PONG timeout
-		// during long index builds — default pongTimeout is 45s, builds take ~100s)
+		// Build tool indexes before running cases
+		// Note: build helpers use Bun.spawnSync internally so they run sequentially.
 		console.log('Building tool indexes...');
-		// Note: build helpers use Bun.spawnSync internally so they run sequentially
-		// despite the Promise.allSettled wrapper. This is intentional — index builds
-		// are CPU/IO heavy and parallelizing would not improve wall time meaningfully
-		// on a single machine. Keep the allSettled pattern for future async migration.
-		await Promise.allSettled([buildCodeGraph(), buildCRG(), setupGraphify()]);
+		buildCodeGraph();
+		buildCRG();
+		setupGraphify();
 		setupAstGrep();
-
-		// Start daemon AFTER indexes are ready
-		console.log('Starting daemon...');
-		daemon = await createDaemonServer();
-		console.log('Daemon started.');
 	}, 420_000);
 
-	afterAll(async () => {
+	afterAll(() => {
 		// Write results
 		if (results.length > 0) {
 			const path = writeBenchmarkResults(results, WORKTREE, RESULTS_PATH, COMMIT_SHA);
@@ -300,23 +289,18 @@ describeSkip('Graph Tool Benchmark', () => {
 				);
 			}
 		}
-
-		// Tear down daemon
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
 	}, 30_000);
 
 	// -----------------------------------------------------------------------
-	// Unseeded round
+	// Benchmark arms
 	// -----------------------------------------------------------------------
 
 	test('baseline: plain GLM (text-only)', async () => {
-		const result = await runBenchmarkCase(daemon, {
+		const result = await runWithGlm({
 			name: 'baseline: plain GLM (text-only)',
-			workspacePath: WORKTREE,
 			prompt: BENCHMARK_PROMPT_TEXT_ONLY,
+			// No MCP servers, no built-in tools — pure text response
+			tools: [],
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -324,17 +308,17 @@ describeSkip('Graph Tool Benchmark', () => {
 
 	test('CodeGraph', async () => {
 		if (!codegraphReady) return expect.unreachable('CodeGraph index not built');
-		const result = await runBenchmarkCase(daemon, {
+		const result = await runWithGlm({
 			name: 'CodeGraph',
-			workspacePath: WORKTREE,
 			prompt: BENCHMARK_PROMPT_UNSEDED,
+			// Only CodeGraph MCP available — no built-in tools
+			tools: [],
 			mcpServers: {
 				codegraph: {
 					command: 'npx',
 					args: ['-y', '@colbymchenry/codegraph', 'mcp'],
 				},
 			},
-			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -342,10 +326,10 @@ describeSkip('Graph Tool Benchmark', () => {
 
 	test('code-review-graph', async () => {
 		if (!crgReady) return expect.unreachable('CRG graph not built');
-		const result = await runBenchmarkCase(daemon, {
+		const result = await runWithGlm({
 			name: 'code-review-graph',
-			workspacePath: WORKTREE,
 			prompt: BENCHMARK_PROMPT_UNSEDED,
+			tools: [],
 			mcpServers: {
 				'code-review-graph': {
 					command: 'uvx',
@@ -363,7 +347,6 @@ describeSkip('Graph Tool Benchmark', () => {
 					],
 				},
 			},
-			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -371,17 +354,16 @@ describeSkip('Graph Tool Benchmark', () => {
 
 	test('Graphify', async () => {
 		if (!graphifyReady) return expect.unreachable('Graphify graph not extracted');
-		const result = await runBenchmarkCase(daemon, {
+		const result = await runWithGlm({
 			name: 'Graphify',
-			workspacePath: WORKTREE,
 			prompt: BENCHMARK_PROMPT_UNSEDED,
+			tools: [],
 			mcpServers: {
 				graphify: {
 					command: graphifyPython,
 					args: [...graphifyPythonArgs, '-m', 'graphify.serve', join(GRAPHIFY_OUT, 'graph.json')],
 				},
 			},
-			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
@@ -389,28 +371,18 @@ describeSkip('Graph Tool Benchmark', () => {
 
 	test('ast-grep', async () => {
 		if (!astGrepServerPath) return expect.unreachable('ast-grep wrapper not created');
-		const result = await runBenchmarkCase(daemon, {
+		const result = await runWithGlm({
 			name: 'ast-grep',
-			workspacePath: WORKTREE,
 			prompt: BENCHMARK_PROMPT_UNSEDED,
+			tools: [],
 			mcpServers: {
 				'ast-grep': {
 					command: 'node',
 					args: [astGrepServerPath],
 				},
 			},
-			disallowedTools: DISABLED_BUILTINS,
 		});
 		results.push(result);
 		expect(result.responseText.length).toBeGreaterThan(100);
 	}, 420_000);
-
-	// -----------------------------------------------------------------------
-	// Mixed round SKIPPED — GLM's tool_use responses are incompatible with
-	// the Claude Agent SDK's internal context-fetcher.  Multi-step tool use
-	// (built-in + MCP) causes the session to hang.  Single-tool MCP sessions
-	// (the unseeded round above) work reliably.  The mixed round requires an
-	// Anthropic model or a fix to the SDK's context-fetcher for non-Anthropic
-	// providers.
-	// -----------------------------------------------------------------------
 });
