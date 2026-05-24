@@ -23,6 +23,8 @@ The repository already has strong pieces:
 
 Those pieces are not yet one coherent design system. The target is to make `packages/ui` the canonical UI system package while keeping product-specific NeoKai compositions in `packages/web`.
 
+This is not a redesign mandate. The first design-system migration should preserve NeoKai's current product language: dark operational surfaces, dense workflow-oriented layouts, current app shell proportions, and the established Space/Forge/chat feel. The current app is the source of truth for initial tokens and component variants. `packages/ui/demo` is a reference harness, not a replacement visual direction.
+
 ---
 
 ## 2. Current State
@@ -114,9 +116,11 @@ This makes it easy for new UI work to drift.
 5. **No big-bang rewrite:** migrate surfaces gradually while preserving existing product behavior.
 6. **Feature UI consistency:** new feature components should compose system components instead of creating one-off controls.
 7. **Visual reference:** the UI demo should remain the living reference for primitives, base components, and app composition examples.
+8. **Visual parity first:** initial migrations should keep the current NeoKai look and feel unless a visual change is explicitly approved.
 
 ## 4. Non-Goals
 
+- Redesigning NeoKai's visual language as part of the design-system extraction.
 - Rewriting the entire web app in one pass.
 - Forcing product-specific components such as `DeliveryStateBadge` into `packages/ui` before they are reusable.
 - Making `packages/ui` React-compatible. NeoKai is Preact-first.
@@ -329,6 +333,7 @@ The design system is not just atomic components. It should include the patterns 
 - Classify every `packages/web/src/components/ui` component as `generic`, `product-composition`, or `legacy`.
 - Classify current `packages/ui` exports as `primitive`, `base`, or `demo-only`.
 - Document visual/token gaps between local web components and `@neokai/ui`.
+- Capture current screenshots or visual references for the first migrated surfaces so parity can be reviewed.
 
 ### Phase 1: Token Authority
 
@@ -355,6 +360,7 @@ For each component:
 - define the canonical `@neokai/ui` API
 - compare current web-local behavior and visual variants
 - add missing variants to `packages/ui`
+- derive initial styling from current NeoKai web components, not from demo-only examples
 - migrate one narrow app surface
 - keep the local wrapper only if product behavior remains
 
@@ -399,7 +405,8 @@ Recommended first slice:
 Success criteria:
 
 - the migrated surface has no local one-off implementations for migrated controls
-- visual behavior matches the existing app closely enough that the change is not a redesign
+- visual behavior matches the existing app; any intentional visual difference is listed in the PR
+- before/after screenshots are reviewed for layout, spacing, color, focus, and interaction parity
 - `packages/ui` tests cover the canonical behavior
 - web tests for the migrated surface still pass
 - the migration pattern is documented for the next surface
@@ -415,6 +422,8 @@ The UI design system cleanup is complete when:
 - Generic controls such as button, icon button, dialog, tooltip, tabs, menu, popover, toast, spinner, skeleton, input, and badge are imported from `@neokai/ui` in new feature code.
 - `packages/web/src/components/ui` contains product-specific compositions only, plus explicitly temporary compatibility wrappers.
 - New feature components do not create reusable one-off controls with raw Tailwind class strings.
+- Initial migrations preserve the current NeoKai product look and feel unless a visual change is explicitly approved.
+- PRs that migrate UI components list any intentional visual or interaction differences.
 - Public `@neokai/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
 - The design system package can be evolved without editing Space, Forge, or chat feature code except where product composition changes are intentional.
