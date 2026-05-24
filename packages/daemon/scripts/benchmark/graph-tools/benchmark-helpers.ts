@@ -359,7 +359,7 @@ export function writeBenchmarkResults(
   const output: BenchmarkOutput = {
     timestamp: new Date().toISOString(),
     neokaiCommit: commitSha ?? 'unknown',
-    model: model ?? process.env.NEOKAI_BENCHMARK_MODEL ?? 'glm-4.7',
+    model: model ?? process.env.NEOKAI_BENCHMARK_MODEL ?? 'glm-5.1',
     worktreePath,
     results,
   };

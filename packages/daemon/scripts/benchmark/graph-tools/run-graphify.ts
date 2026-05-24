@@ -22,10 +22,31 @@ import {
 const GRAPHIFY_BIN = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BIN || 'graphify';
 const GRAPHIFY_BACKEND = process.env.NEOKAI_BENCHMARK_GRAPHIFY_BACKEND || 'ollama';
 
-/** Discover the Python interpreter that has graphify installed. */
+/** Verify interpreter has graphify.serve (MCP extra). */
+function checkGraphifyServe(python: string): boolean {
+  try {
+    execFileSync(python, ['-c', 'import graphify.serve'], { encoding: 'utf-8' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Discover the Python interpreter that has graphify + graphify.serve installed. */
 function resolveGraphifyPython(): string {
   const env = process.env.NEOKAI_BENCHMARK_GRAPHIFY_PYTHON;
-  if (env) return env;
+  if (env) {
+    if (!checkGraphifyServe(env)) {
+      console.error(
+        `Error: NEOKAI_BENCHMARK_GRAPHIFY_PYTHON (${env}) does not have graphify.serve. ` +
+          'Install with: pip install "graphifyy[mcp]"'
+      );
+      process.exit(1);
+    }
+    return env;
+  }
+
+  const candidates: string[] = [];
 
   // Try reading shebang from graphify binary
   try {
@@ -35,30 +56,29 @@ function resolveGraphifyPython(): string {
       const shebang = first.replace(/^#!\s*/, '').trim();
       const parts = shebang.split(/\s+/);
       const python = parts[0].endsWith('/env') && parts.length > 1 ? parts[1] : parts[0];
-      const r = execFileSync(python, ['-c', 'import graphify; import sys; print(sys.executable)'], {
-        encoding: 'utf-8',
-      });
-      if (r.trim()) return r.trim();
+      try {
+        const r = execFileSync(python, ['-c', 'import sys; print(sys.executable)'], {
+          encoding: 'utf-8',
+        });
+        if (r.trim()) candidates.push(r.trim());
+      } catch {
+        candidates.push(python);
+      }
     }
   } catch {
     // fall through
   }
 
-  // Try python3
-  try {
-    const r = execFileSync(
-      'python3',
-      ['-c', 'import graphify; import sys; print(sys.executable)'],
-      { encoding: 'utf-8' }
-    );
-    if (r.trim()) return r.trim();
-  } catch {
-    // fall through
+  candidates.push('python3');
+
+  for (const python of candidates) {
+    if (checkGraphifyServe(python)) return python;
   }
 
   console.error(
-    'Error: Could not find a Python interpreter with graphify installed.\n' +
-      'Set NEOKAI_BENCHMARK_GRAPHIFY_PYTHON to the correct python path.'
+    'Error: Could not find a Python interpreter with graphify.serve.\n' +
+      'Install the MCP extra: pip install "graphifyy[mcp]"\n' +
+      'Or set NEOKAI_BENCHMARK_GRAPHIFY_PYTHON to the correct python path.'
   );
   process.exit(1);
 }
@@ -72,20 +92,65 @@ const GRAPHIFY_OUT =
     .update(WORKTREE + '\0' + GRAPHIFY_BACKEND)
     .digest('hex')}`;
 
+/** Get graphify CLI version string for cache invalidation. */
+function getGraphifyVersion(): string {
+  try {
+    return execFileSync(GRAPHIFY_BIN, ['--version'], { encoding: 'utf-8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Check if worktree has uncommitted changes. */
+function isWorktreeDirty(): boolean {
+  try {
+    const status = execFileSync('git', ['status', '--porcelain'], {
+      encoding: 'utf-8',
+      cwd: WORKTREE,
+    }).trim();
+    return status.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function setupGraphify(): boolean {
   const commitSha = resolveCommitSha();
   const graphJson = join(GRAPHIFY_OUT, 'graphify-out', 'graph.json');
-  const commitFile = join(GRAPHIFY_OUT, '.benchmark_commit');
+  const markerFile = join(GRAPHIFY_OUT, '.benchmark_marker');
+  const marker = JSON.stringify({
+    commit: commitSha,
+    dirty: isWorktreeDirty(),
+    graphifyVersion: getGraphifyVersion(),
+    backend: GRAPHIFY_BACKEND,
+  });
 
-  if (existsSync(graphJson) && existsSync(commitFile)) {
-    const cachedCommit = readFileSync(commitFile, 'utf-8').trim();
-    if (cachedCommit === commitSha) {
-      console.log('  Graphify graph cached, skipping extraction');
-      return true;
+  if (existsSync(graphJson) && existsSync(markerFile)) {
+    try {
+      const cached = JSON.parse(readFileSync(markerFile, 'utf-8'));
+      if (
+        cached.commit === commitSha &&
+        cached.dirty === false &&
+        cached.graphifyVersion === getGraphifyVersion() &&
+        cached.backend === GRAPHIFY_BACKEND
+      ) {
+        console.log('  Graphify graph cached, skipping extraction');
+        return true;
+      }
+      if (cached.commit !== commitSha) {
+        console.log('  Graphify cache stale (commit changed), rebuilding...');
+      } else if (cached.dirty !== false) {
+        console.log('  Graphify cache stale (dirty worktree), rebuilding...');
+      } else if (cached.graphifyVersion !== getGraphifyVersion()) {
+        console.log('  Graphify cache stale (graphify version changed), rebuilding...');
+      } else {
+        console.log('  Graphify cache stale (backend changed), rebuilding...');
+      }
+    } catch {
+      console.log('  Graphify cache marker corrupt, rebuilding...');
     }
-    console.log('  Graphify cache stale (commit changed), rebuilding...');
   } else if (existsSync(graphJson)) {
-    console.log('  Graphify graph found but no commit marker, rebuilding...');
+    console.log('  Graphify graph found but no marker, rebuilding...');
   }
 
   console.log('Extracting Graphify graph...');
@@ -112,7 +177,7 @@ function setupGraphify(): boolean {
   }
   const elapsed = Date.now() - start;
   if (p.exitCode === 0 && existsSync(graphJson)) {
-    writeFileSync(commitFile, commitSha);
+    writeFileSync(markerFile, marker);
     console.log(`  Graphify graph extracted in ${(elapsed / 1000).toFixed(1)}s`);
     return true;
   }
