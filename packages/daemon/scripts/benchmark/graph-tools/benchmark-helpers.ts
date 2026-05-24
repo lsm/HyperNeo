@@ -20,37 +20,37 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 /** Resolve the repo root (3 levels up from this file). */
 export const WORKTREE =
-	process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
+  process.env.NEOKAI_BENCHMARK_WORKTREE || join(import.meta.dir, '..', '..', '..', '..', '..');
 
 /** GLM model to benchmark. Default: glm-5.1. */
 export const BENCHMARK_MODEL = process.env.NEOKAI_BENCHMARK_MODEL || 'glm-5.1';
 
 /** Get git commit SHA. */
 export function resolveCommitSha(): string {
-	return execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
+  return execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: WORKTREE }).trim();
 }
 
 /** GLM API key from env. */
 export function getGlmApiKey(): string {
-	const key = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY || '';
-	if (!key) {
-		console.error('Error: GLM_API_KEY or ZHIPU_API_KEY must be set');
-		process.exit(1);
-	}
-	return key;
+  const key = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY || '';
+  if (!key) {
+    console.error('Error: GLM_API_KEY or ZHIPU_API_KEY must be set');
+    process.exit(1);
+  }
+  return key;
 }
 
 /** Run a benchmark case with GLM env vars set/restored. */
 export async function runWithGlm(
-	options: Omit<BenchmarkCaseOptions, 'cwd'>
+  options: Omit<BenchmarkCaseOptions, 'cwd'>
 ): Promise<BenchmarkResult> {
-	const apiKey = getGlmApiKey();
-	const envVars = setGlmEnvVars(apiKey, BENCHMARK_MODEL);
-	try {
-		return await runBenchmarkCase({ ...options, cwd: WORKTREE });
-	} finally {
-		restoreEnvVars(envVars);
-	}
+  const apiKey = getGlmApiKey();
+  const envVars = setGlmEnvVars(apiKey, BENCHMARK_MODEL);
+  try {
+    return await runBenchmarkCase({ ...options, cwd: WORKTREE });
+  } finally {
+    restoreEnvVars(envVars);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ export async function runWithGlm(
 // ---------------------------------------------------------------------------
 
 export const BENCHMARK_PROMPT_UNSEDED =
-	`We need to improve NeoKai's Space task/workflow runtime so stuck or idle task agents do not loop forever or spam operators.
+  `We need to improve NeoKai's Space task/workflow runtime so stuck or idle task agents do not loop forever or spam operators.
 
 Current behavior: when task agents appear idle, blocked, waiting, or completed, the system can emit many task/workflow events to the Space Agent. These events are noisy and do not reliably recover stuck work. Successful workflow completions can also create notification noise. Real stuck tasks can retry or wait repeatedly until a human manually intervenes.
 
@@ -109,44 +109,44 @@ Produce an implementation plan with:
 // ---------------------------------------------------------------------------
 
 export interface BenchmarkResult {
-	caseName: string;
-	wallTimeMs: number;
-	totalTokens: number;
-	inputTokens: number;
-	outputTokens: number;
-	toolCallCount: number;
-	toolCalls: Array<{ name: string; count: number }>;
-	responseText: string;
-	responseLength: number;
-	sessionId: string;
+  caseName: string;
+  wallTimeMs: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  toolCallCount: number;
+  toolCalls: Array<{ name: string; count: number }>;
+  responseText: string;
+  responseLength: number;
+  sessionId: string;
 }
 
 export interface BenchmarkOutput {
-	timestamp: string;
-	neokaiCommit: string;
-	model: string;
-	worktreePath: string;
-	results: BenchmarkResult[];
+  timestamp: string;
+  neokaiCommit: string;
+  model: string;
+  worktreePath: string;
+  results: BenchmarkResult[];
 }
 
 export interface BenchmarkCaseOptions {
-	name: string;
-	/** Absolute path to the workspace/repo */
-	cwd: string;
-	prompt: string;
-	/** MCP servers to attach. Baseline passes empty/undefined. */
-	mcpServers?: Record<string, { command: string; args?: string[] }>;
-	/**
-	 * Built-in tools to make available. Use `[]` to disable all built-ins
-	 * and force MCP-only usage. Omit for default tool set.
-	 */
-	tools?: string[];
-	/**
-	 * Tool name patterns to auto-approve (e.g. ["mcp__codegraph__*"]).
-	 * Required for MCP tools — without this, the model sees them but
-	 * cannot call them, even with bypassPermissions.
-	 */
-	allowedTools?: string[];
+  name: string;
+  /** Absolute path to the workspace/repo */
+  cwd: string;
+  prompt: string;
+  /** MCP servers to attach. Baseline passes empty/undefined. */
+  mcpServers?: Record<string, { command: string; args?: string[] }>;
+  /**
+   * Built-in tools to make available. Use `[]` to disable all built-ins
+   * and force MCP-only usage. Omit for default tool set.
+   */
+  tools?: string[];
+  /**
+   * Tool name patterns to auto-approve (e.g. ["mcp__codegraph__*"]).
+   * Required for MCP tools — without this, the model sees them but
+   * cannot call them, even with bypassPermissions.
+   */
+  allowedTools?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -154,45 +154,45 @@ export interface BenchmarkCaseOptions {
 // ---------------------------------------------------------------------------
 
 const GLM_ENV_VARS = [
-	'ANTHROPIC_AUTH_TOKEN',
-	'ANTHROPIC_BASE_URL',
-	'ANTHROPIC_API_KEY',
-	'API_TIMEOUT_MS',
-	'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-	'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-	'ANTHROPIC_DEFAULT_SONNET_MODEL',
-	'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_API_KEY',
+  'API_TIMEOUT_MS',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
 ] as const;
 
 /** Set GLM routing env vars. Returns originals for restoration. */
 export function setGlmEnvVars(apiKey: string, model: string): Map<string, string | undefined> {
-	const originals = new Map<string, string | undefined>();
-	for (const key of GLM_ENV_VARS) {
-		originals.set(key, process.env[key]);
-	}
+  const originals = new Map<string, string | undefined>();
+  for (const key of GLM_ENV_VARS) {
+    originals.set(key, process.env[key]);
+  }
 
-	// Clear ANTHROPIC_API_KEY to prevent SDK from using wrong credential source
-	delete process.env.ANTHROPIC_API_KEY;
-	process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
-	process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
-	process.env.API_TIMEOUT_MS = '3000000';
-	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
-	process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
-	process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
-	process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+  // Clear ANTHROPIC_API_KEY to prevent SDK from using wrong credential source
+  delete process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+  process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+  process.env.API_TIMEOUT_MS = '3000000';
+  process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+  process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+  process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
 
-	return originals;
+  return originals;
 }
 
 /** Restore env vars from a previous setGlmEnvVars call. */
 export function restoreEnvVars(originals: Map<string, string | undefined>): void {
-	for (const [key, value] of originals.entries()) {
-		if (value !== undefined) {
-			process.env[key] = value;
-		} else {
-			delete process.env[key];
-		}
-	}
+  for (const [key, value] of originals.entries()) {
+    if (value !== undefined) {
+      process.env[key] = value;
+    } else {
+      delete process.env[key];
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,41 +201,41 @@ export function restoreEnvVars(originals: Map<string, string | undefined>): void
 
 /** Count tool_use blocks across all SDK messages. */
 export function extractToolCalls(messages: Array<Record<string, unknown>>): Map<string, number> {
-	const counts = new Map<string, number>();
-	for (const msg of messages) {
-		if ((msg as { type?: string }).type !== 'assistant') continue;
-		const content = (msg as { message?: { content?: unknown[] } }).message?.content;
-		if (!Array.isArray(content)) continue;
-		for (const block of content) {
-			const b = block as { type?: string; name?: string };
-			if (b.type === 'tool_use' && b.name) {
-				counts.set(b.name, (counts.get(b.name) || 0) + 1);
-			}
-		}
-	}
-	return counts;
+  const counts = new Map<string, number>();
+  for (const msg of messages) {
+    if ((msg as { type?: string }).type !== 'assistant') continue;
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      const b = block as { type?: string; name?: string };
+      if (b.type === 'tool_use' && b.name) {
+        counts.set(b.name, (counts.get(b.name) || 0) + 1);
+      }
+    }
+  }
+  return counts;
 }
 
 /** Extract text from the final assistant message only (excludes interim narration). */
 export function extractResponseText(messages: Array<Record<string, unknown>>): string {
-	// Find the last assistant message — that's the final answer
-	let lastAssistantContent: unknown[] | null = null;
-	for (const msg of messages) {
-		if ((msg as { type?: string }).type !== 'assistant') continue;
-		const content = (msg as { message?: { content?: unknown[] } }).message?.content;
-		if (Array.isArray(content)) {
-			lastAssistantContent = content;
-		}
-	}
-	if (!lastAssistantContent) return '';
-	const parts: string[] = [];
-	for (const block of lastAssistantContent) {
-		const b = block as { type?: string; text?: string };
-		if (b.type === 'text' && b.text) {
-			parts.push(b.text);
-		}
-	}
-	return parts.join('\n');
+  // Find the last assistant message — that's the final answer
+  let lastAssistantContent: unknown[] | null = null;
+  for (const msg of messages) {
+    if ((msg as { type?: string }).type !== 'assistant') continue;
+    const content = (msg as { message?: { content?: unknown[] } }).message?.content;
+    if (Array.isArray(content)) {
+      lastAssistantContent = content;
+    }
+  }
+  if (!lastAssistantContent) return '';
+  const parts: string[] = [];
+  for (const block of lastAssistantContent) {
+    const b = block as { type?: string; text?: string };
+    if (b.type === 'text' && b.text) {
+      parts.push(b.text);
+    }
+  }
+  return parts.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -249,105 +249,105 @@ export function extractResponseText(messages: Array<Record<string, unknown>>): s
  * Uses `query()` from the SDK with the provided MCP servers and tool config.
  */
 export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<BenchmarkResult> {
-	const { name, cwd, prompt, mcpServers, tools, allowedTools } = options;
+  const { name, cwd, prompt, mcpServers, tools, allowedTools } = options;
 
-	const startMs = Date.now();
-	// Build SDK options — only include `tools` when explicitly set.
-	// Omitting `tools` uses SDK defaults; passing `[]` disables all built-ins.
-	const sdkOptions: Record<string, unknown> = {
-		model: 'default',
-		cwd,
-		permissionMode: 'bypassPermissions',
-		allowDangerouslySkipPermissions: true,
-		settingSources: [],
-		mcpServers: mcpServers ?? {},
-		strictMcpConfig: true,
-		maxTurns: 40,
-	};
-	if (tools !== undefined) {
-		sdkOptions.tools = tools;
-	}
-	if (allowedTools && allowedTools.length > 0) {
-		sdkOptions.allowedTools = allowedTools;
-	}
-	const agentQuery = query({
-		prompt,
-		options: sdkOptions as Parameters<typeof query>[0]['options'],
-	});
+  const startMs = Date.now();
+  // Build SDK options — only include `tools` when explicitly set.
+  // Omitting `tools` uses SDK defaults; passing `[]` disables all built-ins.
+  const sdkOptions: Record<string, unknown> = {
+    model: 'default',
+    cwd,
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    settingSources: [],
+    mcpServers: mcpServers ?? {},
+    strictMcpConfig: true,
+    maxTurns: 40,
+  };
+  if (tools !== undefined) {
+    sdkOptions.tools = tools;
+  }
+  if (allowedTools && allowedTools.length > 0) {
+    sdkOptions.allowedTools = allowedTools;
+  }
+  const agentQuery = query({
+    prompt,
+    options: sdkOptions as Parameters<typeof query>[0]['options'],
+  });
 
-	const sdkMessages: Array<Record<string, unknown>> = [];
-	let resultUsage:
-		| { input_tokens: number; output_tokens: number; [key: string]: unknown }
-		| undefined;
-	let sessionId = '';
-	let resultText = '';
-	let gotResult = false;
+  const sdkMessages: Array<Record<string, unknown>> = [];
+  let resultUsage:
+    | { input_tokens: number; output_tokens: number; [key: string]: unknown }
+    | undefined;
+  let sessionId = '';
+  let resultText = '';
+  let gotResult = false;
 
-	for await (const msg of agentQuery) {
-		sdkMessages.push(msg as Record<string, unknown>);
+  for await (const msg of agentQuery) {
+    sdkMessages.push(msg as Record<string, unknown>);
 
-		if ((msg as { type?: string }).type === 'result') {
-			const result = msg as {
-				subtype?: string;
-				usage?: { input_tokens: number; output_tokens: number; [key: string]: unknown };
-				session_id?: string;
-				result?: string;
-			};
-			// Accept max_turns (model was actively working) - record partial data.
-			// Reject other errors (auth, execution failures).
-			if (
-				result.subtype !== undefined &&
-				result.subtype !== 'success' &&
-				result.subtype !== 'error_max_turns'
-			) {
-				throw new Error(
-					`Benchmark case "${name}" ended with non-success subtype: ${result.subtype}. ` +
-						'Run is contaminated and cannot be used for comparison.'
-				);
-			}
-			if (result.subtype === 'error_max_turns') {
-				console.warn(`  Warning: "${name}" hit max turns, recording partial data.`);
-			}
-			resultUsage = result.usage;
-			sessionId = result.session_id ?? '';
-			resultText = result.result ?? '';
-			gotResult = true;
-			break;
-		}
-	}
+    if ((msg as { type?: string }).type === 'result') {
+      const result = msg as {
+        subtype?: string;
+        usage?: { input_tokens: number; output_tokens: number; [key: string]: unknown };
+        session_id?: string;
+        result?: string;
+      };
+      // Accept max_turns (model was actively working) - record partial data.
+      // Reject other errors (auth, execution failures).
+      if (
+        result.subtype !== undefined &&
+        result.subtype !== 'success' &&
+        result.subtype !== 'error_max_turns'
+      ) {
+        throw new Error(
+          `Benchmark case "${name}" ended with non-success subtype: ${result.subtype}. ` +
+            'Run is contaminated and cannot be used for comparison.'
+        );
+      }
+      if (result.subtype === 'error_max_turns') {
+        console.warn(`  Warning: "${name}" hit max turns, recording partial data.`);
+      }
+      resultUsage = result.usage;
+      sessionId = result.session_id ?? '';
+      resultText = result.result ?? '';
+      gotResult = true;
+      break;
+    }
+  }
 
-	// Fail fast if stream ended without a result message (interrupted/incomplete run)
-	if (!gotResult) {
-		throw new Error(
-			`Benchmark case "${name}" ended without a result message — ` +
-				'SDK stream terminated early. Run cannot be used for comparison.'
-		);
-	}
+  // Fail fast if stream ended without a result message (interrupted/incomplete run)
+  if (!gotResult) {
+    throw new Error(
+      `Benchmark case "${name}" ended without a result message — ` +
+        'SDK stream terminated early. Run cannot be used for comparison.'
+    );
+  }
 
-	const wallTimeMs = Date.now() - startMs;
+  const wallTimeMs = Date.now() - startMs;
 
-	const toolCallMap = extractToolCalls(sdkMessages);
-	const streamedText = extractResponseText(sdkMessages);
-	// Use streamed text if available, fall back to result message text
-	const responseText = streamedText || resultText;
+  const toolCallMap = extractToolCalls(sdkMessages);
+  const streamedText = extractResponseText(sdkMessages);
+  // Use streamed text if available, fall back to result message text
+  const responseText = streamedText || resultText;
 
-	const toolCalls = Array.from(toolCallMap.entries()).map(([toolName, count]) => ({
-		name: toolName,
-		count,
-	}));
+  const toolCalls = Array.from(toolCallMap.entries()).map(([toolName, count]) => ({
+    name: toolName,
+    count,
+  }));
 
-	return {
-		caseName: name,
-		wallTimeMs,
-		totalTokens: (resultUsage?.input_tokens ?? 0) + (resultUsage?.output_tokens ?? 0),
-		inputTokens: resultUsage?.input_tokens ?? 0,
-		outputTokens: resultUsage?.output_tokens ?? 0,
-		toolCallCount: toolCalls.reduce((sum, t) => sum + t.count, 0),
-		toolCalls,
-		responseText,
-		responseLength: responseText.length,
-		sessionId,
-	};
+  return {
+    caseName: name,
+    wallTimeMs,
+    totalTokens: (resultUsage?.input_tokens ?? 0) + (resultUsage?.output_tokens ?? 0),
+    inputTokens: resultUsage?.input_tokens ?? 0,
+    outputTokens: resultUsage?.output_tokens ?? 0,
+    toolCallCount: toolCalls.reduce((sum, t) => sum + t.count, 0),
+    toolCalls,
+    responseText,
+    responseLength: responseText.length,
+    sessionId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -355,22 +355,22 @@ export async function runBenchmarkCase(options: BenchmarkCaseOptions): Promise<B
 // ---------------------------------------------------------------------------
 
 export function writeBenchmarkResults(
-	results: BenchmarkResult[],
-	worktreePath: string,
-	outputPath?: string,
-	commitSha?: string,
-	model?: string
+  results: BenchmarkResult[],
+  worktreePath: string,
+  outputPath?: string,
+  commitSha?: string,
+  model?: string
 ): string {
-	const output: BenchmarkOutput = {
-		timestamp: new Date().toISOString(),
-		neokaiCommit: commitSha ?? 'unknown',
-		model: model ?? process.env.NEOKAI_BENCHMARK_MODEL ?? 'glm-4.7',
-		worktreePath,
-		results,
-	};
-	const path = outputPath ?? '/tmp/graph-tool-benchmark-results.json';
-	writeFileSync(path, JSON.stringify(output, null, 2));
-	return path;
+  const output: BenchmarkOutput = {
+    timestamp: new Date().toISOString(),
+    neokaiCommit: commitSha ?? 'unknown',
+    model: model ?? process.env.NEOKAI_BENCHMARK_MODEL ?? 'glm-4.7',
+    worktreePath,
+    results,
+  };
+  const path = outputPath ?? '/tmp/graph-tool-benchmark-results.json';
+  writeFileSync(path, JSON.stringify(output, null, 2));
+  return path;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,12 +385,12 @@ export function writeBenchmarkResults(
  *                        or 'npx' to fall back to per-call npx invocation
  */
 export function makeAstGrepMcpServerScript(workspacePath: string, astGrepBin: string): string {
-	// When astGrepBin is 'npx', use npx-based invocation with the full package prefix
-	const useNpx = astGrepBin === 'npx';
-	const binExpr = JSON.stringify(astGrepBin);
-	const npxRunPrefix = useNpx ? `['npx', '-y', '-p', '@ast-grep/cli', 'ast-grep']` : `[${binExpr}]`;
-	const npxScanPrefix = npxRunPrefix;
-	return `
+  // When astGrepBin is 'npx', use npx-based invocation with the full package prefix
+  const useNpx = astGrepBin === 'npx';
+  const binExpr = JSON.stringify(astGrepBin);
+  const npxRunPrefix = useNpx ? `['npx', '-y', '-p', '@ast-grep/cli', 'ast-grep']` : `[${binExpr}]`;
+  const npxScanPrefix = npxRunPrefix;
+  return `
 const { spawnSync } = require('child_process');
 const rl = require('readline').createInterface({ input: process.stdin, terminal: false });
 const WORKSPACE = ${JSON.stringify(workspacePath)};
