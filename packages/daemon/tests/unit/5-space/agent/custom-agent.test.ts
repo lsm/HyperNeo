@@ -326,10 +326,12 @@ describe('buildCustomAgentTaskMessage', () => {
 
     expect(message).toContain('## Linked Goal');
     expect(message).toContain('Improve onboarding');
-    expect(message).toContain('**Progress:** 35%');
+    expect(message).not.toContain('**Progress:**');
     expect(message).toContain('**Metrics:** {"activated":10}');
     expect(message).toContain('- Audit current flow');
-    expect(message).toContain('mark_complete goal_update');
+    expect(message).toContain(
+      'mark_complete goal_update with a concise summary, metrics, and next steps.'
+    );
   });
 
   it('renders active scope lessons in task message', () => {

@@ -6,6 +6,11 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
+import {
+  formatGoalMetricSnapshot,
+  getGoalLastActivityAt,
+  getRecurringGoalActivityStatus,
+} from './goal-display-utils';
 
 interface GoalDetailPanelProps {
   spaceId: string;
@@ -84,6 +89,8 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
         task.goalId === goal.id || task.id === goal.activeTaskId || task.id === goal.lastTaskId
     )
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  const activityTask = linkedTasks[0] ?? null;
+  const lastActivityAt = getGoalLastActivityAt(goal, activityTask);
 
   const runAction = async (action: 'pause' | 'resume' | 'archive' | 'trigger') => {
     setActionLoading(true);
@@ -184,16 +191,38 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
             </p>
           </section>
 
-          <section>
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Progress</h3>
-            <div class="mt-2 h-2 rounded-full bg-dark-700">
-              <div
-                class="h-2 rounded-full bg-green-500"
-                style={{ width: `${Math.max(0, Math.min(100, goal.progress))}%` }}
-              />
-            </div>
-            <p class="mt-2 text-xs text-gray-500">{goal.progress}% complete</p>
-          </section>
+          {goal.type === 'recurring' ? (
+            <section>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Activity</h3>
+              <div class="mt-2 space-y-2 rounded-lg border border-dark-700 bg-dark-900/40 px-3 py-2 text-xs">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-gray-500">Status</span>
+                  <span class="capitalize text-gray-300">
+                    {getRecurringGoalActivityStatus(goal, activityTask)}
+                  </span>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-gray-500">Last activity</span>
+                  <span class="text-gray-300">{formatDate(lastActivityAt)}</span>
+                </div>
+                <div>
+                  <div class="text-gray-500">Metric trajectory</div>
+                  <div class="mt-1 text-gray-300">{formatGoalMetricSnapshot(goal, 4)}</div>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Progress</h3>
+              <div class="mt-2 h-2 rounded-full bg-dark-700">
+                <div
+                  class="h-2 rounded-full bg-green-500"
+                  style={{ width: `${Math.max(0, Math.min(100, goal.progress ?? 0))}%` }}
+                />
+              </div>
+              <p class="mt-2 text-xs text-gray-500">{goal.progress ?? 0}% complete</p>
+            </section>
+          )}
 
           <section class="grid grid-cols-2 gap-3 text-xs">
             <div>

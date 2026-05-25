@@ -131,6 +131,15 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   };
 }
 
+function formatGoalDate(ts: number): string {
+  return new Date(ts).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function makeEvent(overrides: Partial<SpaceGoalEvent> = {}): SpaceGoalEvent {
   return {
     id: 'event-1',
@@ -197,11 +206,45 @@ describe('SpaceGoals', () => {
     render(<SpaceGoals spaceId="space-1" />);
 
     expect(await screen.findByText('Keep release healthy')).toBeTruthy();
-    expect(screen.getByText('45% complete')).toBeTruthy();
+    expect(screen.queryByText('45% complete')).toBeNull();
+    expect(screen.getByText('Activity')).toBeTruthy();
+    expect(screen.getByText('Metrics: open_bugs: 3')).toBeTruthy();
     expect(screen.getByText('Builds are green')).toBeTruthy();
     expect(screen.getByText('Recurring')).toBeTruthy();
     await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe(goal.id));
     expect(mockListGoals).toHaveBeenCalledWith({ includeArchived: false });
+  });
+
+  it('uses active task time for recurring last activity', async () => {
+    const now = Date.now();
+    const goal = makeGoal({
+      activeTaskId: 'task-active',
+      lastTaskId: 'task-old',
+      lastCheckInAt: null,
+    });
+    const activeTask = makeTask({ id: 'task-active', title: 'Active goal task', updatedAt: now });
+    const oldTask = makeTask({
+      id: 'task-old',
+      title: 'Old goal task',
+      updatedAt: now - 86_400_000,
+    });
+    mockGoals.value = [goal];
+    mockTasks.value = [oldTask, activeTask];
+
+    render(<SpaceGoals spaceId="space-1" />);
+
+    expect(await screen.findByText('Keep release healthy')).toBeTruthy();
+    expect(screen.getByText(`Last activity: ${formatGoalDate(now)}`)).toBeTruthy();
+    expect(screen.getByText('Active goal task')).toBeTruthy();
+  });
+
+  it('keeps progress UI for one-shot and measurable goals', async () => {
+    mockGoals.value = [makeGoal({ type: 'one_shot' })];
+
+    render(<SpaceGoals spaceId="space-1" />);
+
+    expect(await screen.findByText('Keep release healthy')).toBeTruthy();
+    expect(screen.getByText('45% complete')).toBeTruthy();
   });
 
   it('writes the current goal selection for the right-panel toggle', async () => {

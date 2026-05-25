@@ -169,6 +169,74 @@ describe('SpaceGoalService', () => {
     expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(third.id);
   });
 
+  it('ignores progress updates and omits progress event state for recurring goals', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Keep releases healthy',
+      type: 'recurring',
+      progress: 25,
+    });
+
+    const updated = service.updateGoal(goal.id, {
+      summary: 'Release train green',
+      progress: 90,
+      metrics: { build_health: 'green' },
+      nextSteps: ['Watch flaky tests'],
+    });
+
+    expect(updated.progress).toBe(25);
+    expect(goalRepo.getById(goal.id)?.progress).toBe(25);
+    expect(updated.summary).toBe('Release train green');
+    expect(updated.metrics).toEqual({ build_health: 'green' });
+    expect(updated.nextSteps).toEqual(['Watch flaky tests']);
+    const updateEvent = goalEventRepo
+      .listByGoal(goal.id)
+      .find((event) => event.eventType === 'updated');
+    expect(updateEvent?.newState?.progress).toBeUndefined();
+    expect(updateEvent?.diff?.progress).toBeUndefined();
+  });
+
+  it('preserves supplied progress when converting a recurring goal to a non-recurring type', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Convert me',
+      type: 'recurring',
+      progress: 25,
+    });
+
+    const updated = service.updateGoal(goal.id, { type: 'one_shot', progress: 80 });
+
+    expect(updated.type).toBe('one_shot');
+    expect(updated.progress).toBe(80);
+    expect(goalRepo.getById(goal.id)?.progress).toBe(80);
+    const updateEvent = goalEventRepo
+      .listByGoal(goal.id)
+      .find((event) => event.eventType === 'updated');
+    expect(updateEvent?.previousState?.progress).toBeUndefined();
+    expect(updateEvent?.newState?.progress).toBe(80);
+    expect(updateEvent?.diff?.progress).toEqual({ previous: 25, current: 80 });
+  });
+
+  it('does not record a synthetic progress diff when leaving recurring type without progress', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Convert without progress',
+      type: 'recurring',
+      progress: 25,
+    });
+
+    const updated = service.updateGoal(goal.id, { type: 'one_shot' });
+
+    expect(updated.type).toBe('one_shot');
+    expect(updated.progress).toBe(25);
+    const updateEvent = goalEventRepo
+      .listByGoal(goal.id)
+      .find((event) => event.eventType === 'updated');
+    expect(updateEvent?.previousState?.progress).toBeUndefined();
+    expect(updateEvent?.newState?.progress).toBe(25);
+    expect(updateEvent?.diff?.progress).toBeUndefined();
+  });
+
   it('records goal update, status, task, and schedule events', () => {
     const goal = service.createGoal({ spaceId, title: 'Audit me', autoTriggerNext: true });
     const createdEvents = goalEventRepo.listByGoal(goal.id);

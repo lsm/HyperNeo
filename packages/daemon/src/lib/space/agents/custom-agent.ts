@@ -291,7 +291,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(`**Type:** ${goal.type}`);
     sections.push(`**Priority:** ${goal.priority}`);
     if (goal.labels.length > 0) sections.push(`**Labels:** ${goal.labels.join(', ')}`);
-    sections.push(`**Progress:** ${goal.progress}%`);
+    if (goal.type !== 'recurring') sections.push(`**Progress:** ${goal.progress}%`);
     if (goal.summary) sections.push(`**Current Summary:** ${goal.summary}`);
     if (Object.keys(goal.metrics).length > 0) {
       sections.push(`**Metrics:** ${JSON.stringify(goal.metrics)}`);
@@ -301,7 +301,9 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
       for (const step of goal.nextSteps) sections.push(`- ${step}`);
     }
     sections.push(
-      'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, progress, metrics, and next steps.'
+      goal.type === 'recurring'
+        ? 'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, metrics, and next steps.'
+        : 'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, progress, metrics, and next steps.'
     );
   }
 

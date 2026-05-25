@@ -144,7 +144,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
       setError('Goal title is required');
       return;
     }
-    if (parsedProgress === null) {
+    if (type !== 'recurring' && parsedProgress === null) {
       setError('Progress must be a number');
       return;
     }
@@ -160,7 +160,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         labels: parseLabels(labels),
         metrics: parseMetrics(metrics),
         summary: summary.trim(),
-        progress: parsedProgress,
+        ...(type !== 'recurring' ? { progress: parsedProgress ?? 0 } : {}),
         nextSteps: parseLines(nextSteps),
         preferredWorkflowId: preferredWorkflowId || null,
         autoTriggerNext,
@@ -256,17 +256,23 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
               ))}
             </select>
           </label>
-          <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-300">Progress</span>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={progress}
-              onInput={(e) => setProgress((e.target as HTMLInputElement).value)}
-              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
-            />
-          </label>
+          {type !== 'recurring' ? (
+            <label class="block">
+              <span class="mb-1.5 block text-sm font-medium text-gray-300">Progress</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={progress}
+                onInput={(e) => setProgress((e.target as HTMLInputElement).value)}
+                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+          ) : (
+            <div class="rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2 text-xs text-gray-500">
+              Recurring goals use activity and metrics instead of progress.
+            </div>
+          )}
         </div>
 
         <label class="block">
