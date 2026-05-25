@@ -515,7 +515,7 @@ export interface SpaceGoal {
   labels: string[];
   metrics: SpaceGoalMetrics;
   summary: string;
-  progress: number | null;
+  progress: number;
   nextSteps: string[];
   preferredWorkflowId: string | null;
   taskScheduleId: string | null;

@@ -106,11 +106,11 @@ export class SpaceGoalService {
 
   listGoals(params: SpaceGoalListParams): SpaceGoal[] {
     if (!params.spaceId) throw new Error('spaceId is required');
-    return this.deps.goalRepo.list(params).map((goal) => presentGoal(goal));
+    return this.deps.goalRepo.list(params);
   }
 
   getGoal(goalId: string): SpaceGoal | null {
-    return presentGoal(this.deps.goalRepo.getById(goalId));
+    return this.deps.goalRepo.getById(goalId);
   }
 
   updateGoal(
@@ -129,7 +129,10 @@ export class SpaceGoalService {
     if (params.title !== undefined && !params.title.trim()) throw new Error('title is required');
 
     const updateParams: UpdateSpaceGoalParams = { ...params };
-    if (isRecurringGoalUpdate(existing, updateParams)) {
+    if (
+      updateParams.type === 'recurring' ||
+      (existing.type === 'recurring' && updateParams.type === undefined)
+    ) {
       delete updateParams.progress;
     }
     if (params.status !== undefined && params.status !== existing.status) {
@@ -144,9 +147,8 @@ export class SpaceGoalService {
 
     this.syncScheduleTemplateIfNeeded(existing, updateParams);
 
-    const stored = this.deps.goalRepo.update(goalId, updateParams);
-    if (!stored) throw new Error(`Goal not found: ${goalId}`);
-    const updated = presentGoal(stored);
+    const updated = this.deps.goalRepo.update(goalId, updateParams);
+    if (!updated) throw new Error(`Goal not found: ${goalId}`);
     this.recordGoalEvent(
       updated,
       params.status !== undefined && params.status !== existing.status
@@ -495,17 +497,6 @@ export class SpaceGoalService {
     ].filter(Boolean);
     return sections.join('\n\n');
   }
-}
-
-function presentGoal(goal: SpaceGoal): SpaceGoal;
-function presentGoal(goal: SpaceGoal | null): SpaceGoal | null;
-function presentGoal(goal: SpaceGoal | null): SpaceGoal | null {
-  if (!goal || goal.type !== 'recurring') return goal;
-  return { ...goal, progress: null };
-}
-
-function isRecurringGoalUpdate(existing: SpaceGoal, params: UpdateSpaceGoalParams): boolean {
-  return existing.type === 'recurring' || params.type === 'recurring';
 }
 
 function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {

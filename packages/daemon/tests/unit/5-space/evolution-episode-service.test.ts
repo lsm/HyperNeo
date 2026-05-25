@@ -893,7 +893,7 @@ describe('EvolutionEpisodeService', () => {
     expect(updated?.rollupAppliedAt).toBe(result.episode.rollupAppliedAt);
     expect(result.goal).toMatchObject({
       summary: 'New rollup summary',
-      progress: null,
+      progress: 20,
       nextSteps: ['Create follow-up task'],
       metrics: { latency: 3 },
     });
@@ -1288,7 +1288,7 @@ describe('EvolutionEpisodeService', () => {
     expect(rollup.episode.rollupAppliedAt).toBeNumber();
     expect(rollup.goal).toMatchObject({
       summary: 'Forge lifecycle test accepted evidence and wrote rollup.',
-      progress: null,
+      progress: 40,
       nextSteps: ['Run follow-up proposal task with active lesson context'],
       metrics: { completedTasks: 1, rollups: 1 },
     });
@@ -1471,7 +1471,7 @@ describe('EvolutionEpisodeService', () => {
     expect(rollup.episode.rollupAppliedAt).toBeNumber();
     expect(rollup.goal).toMatchObject({
       summary: 'Forge MVP dogfood loop completed once.',
-      progress: null,
+      progress: 0,
       nextSteps: ['Run the created follow-up task with injected lesson context'],
       metrics: {
         completedTasks: 1,

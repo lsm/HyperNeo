@@ -102,8 +102,7 @@ describe('SpaceGoalService', () => {
     expect(goal.labels).toEqual(['product']);
     expect(goal.metrics).toEqual({ activated: 10 });
     expect(goal.summary).toBe('Initial state');
-    expect(goal.progress).toBeNull();
-    expect(goalRepo.getById(goal.id)?.progress).toBe(35);
+    expect(goal.progress).toBe(35);
     expect(goal.nextSteps).toEqual(['Audit current flow']);
     expect(goal.taskScheduleId).toBeString();
     expect(goal.nextCheckInAt).not.toBeNull();
@@ -185,7 +184,7 @@ describe('SpaceGoalService', () => {
       nextSteps: ['Watch flaky tests'],
     });
 
-    expect(updated.progress).toBeNull();
+    expect(updated.progress).toBe(25);
     expect(goalRepo.getById(goal.id)?.progress).toBe(25);
     expect(updated.summary).toBe('Release train green');
     expect(updated.metrics).toEqual({ build_health: 'green' });
@@ -195,6 +194,21 @@ describe('SpaceGoalService', () => {
       .find((event) => event.eventType === 'updated');
     expect(updateEvent?.newState?.progress).toBeUndefined();
     expect(updateEvent?.diff?.progress).toBeUndefined();
+  });
+
+  it('preserves supplied progress when converting a recurring goal to a non-recurring type', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Convert me',
+      type: 'recurring',
+      progress: 25,
+    });
+
+    const updated = service.updateGoal(goal.id, { type: 'one_shot', progress: 80 });
+
+    expect(updated.type).toBe('one_shot');
+    expect(updated.progress).toBe(80);
+    expect(goalRepo.getById(goal.id)?.progress).toBe(80);
   });
 
   it('records goal update, status, task, and schedule events', () => {
