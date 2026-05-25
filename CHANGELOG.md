@@ -2,6 +2,25 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.32.0] - 2026-05-25
+
+Goal/Forge automation triggers, Space session promotion, daemon log evidence capture, dynamic agent reply target fixes, and compressed agent output evaluation. 6 commits since v0.31.0.
+
+### Added
+
+- **Goal/Forge automation triggers**: Server-side triggers for completed-task thresholds, self-nag schedules, and external event subscriptions
+- **Space session promotion**: Promote recent Space session context into long-horizon agent profiles through the agent editor
+- **Daemon log evidence capture**: Structured daemon warning, error, crash, and uncaught exception events now feed Forge evidence
+- **Compressed agent output evaluation**: Documented Caveman-style compressed output primitives and rollout considerations
+
+### Changed
+
+- Repository formatting switched from tabs to spaces
+
+### Fixed
+
+- Dynamic inter-agent message footers now show actual sender names and reply targets
+
 ## [0.31.0] - 2026-05-23
 
 Long-horizon Space agents, Forge task dependencies, workflow gate validation, and Forge evidence fixes. 15 commits since v0.30.0.
