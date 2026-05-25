@@ -442,17 +442,37 @@ export function ContextPanel() {
           )}
           {navSection === 'spaces' && !isSpaceDetail && spaceSwitcherContent}
           {navSection === 'spaces' && isSpaceDetail && (
-            <>
-              <div class="md:hidden flex-1 flex flex-col overflow-hidden">
-                {spaceSwitcherContent}
+            <div class="flex-1 flex flex-col overflow-hidden">
+              <div class="md:hidden px-2 pt-2 pb-1 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigateToSpaces();
+                    contextPanelOpenSignal.value = false;
+                  }}
+                  class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors"
+                >
+                  <svg
+                    class="w-4 h-4 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width={2}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                  All Spaces
+                </button>
               </div>
-              <div class="hidden md:flex flex-1 overflow-hidden flex-col">
-                <SpaceDetailPanel
-                  spaceId={currentSpaceId!}
-                  onNavigate={() => (contextPanelOpenSignal.value = false)}
-                />
-              </div>
-            </>
+              <SpaceDetailPanel
+                spaceId={currentSpaceId!}
+                onNavigate={() => (contextPanelOpenSignal.value = false)}
+              />
+            </div>
           )}
           {navSection === 'settings' && (
             <div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">

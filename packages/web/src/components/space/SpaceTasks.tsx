@@ -16,8 +16,8 @@ import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
-import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 import { Dropdown } from '../ui/Dropdown';
+import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 type LegacyTaskFilterTab = TaskFilterTab | 'archived';
@@ -251,9 +251,8 @@ function MoreTabsDropdown({
       items={[]}
       isOpen={isOpen}
       onOpenChange={setIsOpen}
-      class="sm:hidden"
       customContent={
-        <div class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[180px]">
+        <div class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[160px]">
           {tabs.map((tab) => (
             <button
               key={tab.key}
@@ -720,30 +719,52 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
   // We always render the tab strip so users can navigate to the Scheduled tab
   // even when no tasks have been spawned yet.
   const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
+
+  const draftTab: TabConfig | null =
+    counts.draft > 0 ? { key: 'draft', label: 'Drafts', count: counts.draft } : null;
+  const scheduledTab: TabConfig = { key: 'scheduled', label: 'Scheduled', count: counts.scheduled };
+  const completedTab: TabConfig = {
+    key: 'completed',
+    label: 'Completed',
+    count: counts.completed,
+    variant: 'green',
+  };
   const primaryTabs: TabConfig[] = [
     { key: 'action', label: 'Action', count: counts.action, variant: 'amber' },
     { key: 'active', label: 'Active', count: counts.active },
   ];
-  const secondaryTabs: TabConfig[] = [
-    ...(counts.draft > 0 ? [{ key: 'draft' as const, label: 'Drafts', count: counts.draft }] : []),
-    { key: 'completed', label: 'Completed', count: counts.completed, variant: 'green' },
-  ];
-  const overflowTabs: TabConfig[] = [
-    ...secondaryTabs,
-    { key: 'scheduled', label: 'Scheduled', count: counts.scheduled },
-  ];
-  const desktopTabs = [
+  const allTabs: TabConfig[] = [
     ...primaryTabs,
-    ...secondaryTabs,
-    { key: 'scheduled' as const, label: 'Scheduled', count: counts.scheduled },
+    ...(draftTab ? [draftTab] : []),
+    scheduledTab,
+    completedTab,
   ];
+
+  // JS-driven mobile tab count — avoids Tailwind arbitrary-breakpoint ordering issues
+  const [mobileTabCount, setMobileTabCount] = useState(() => {
+    const w = typeof window !== 'undefined' ? window.innerWidth : 0;
+    return w > 420 ? 4 : w > 320 ? 3 : 2;
+  });
+
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      setMobileTabCount(w > 420 ? 4 : w > 320 ? 3 : 2);
+    };
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  const mobileTabs = allTabs.slice(0, mobileTabCount);
+  const mobileOverflowTabs = allTabs.slice(mobileTabCount);
 
   return (
     <div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
       <div class="min-h-[calc(100%+1px)] space-y-6">
         <div class="flex border-b border-dark-700">
+          {/* Mobile (<640px): JS-driven count */}
           <div class="flex sm:hidden">
-            {primaryTabs.map((tab) => (
+            {mobileTabs.map((tab) => (
               <TabButton
                 key={tab.key}
                 label={tab.label}
@@ -753,10 +774,13 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
                 variant={tab.variant}
               />
             ))}
-            <MoreTabsDropdown tabs={overflowTabs} activeTab={activeTab} spaceId={spaceId} />
+            {mobileOverflowTabs.length > 0 && (
+              <MoreTabsDropdown tabs={mobileOverflowTabs} activeTab={activeTab} spaceId={spaceId} />
+            )}
           </div>
+          {/* Desktop (640px+): all tabs inline */}
           <div class="hidden sm:flex">
-            {desktopTabs.map((tab) => (
+            {allTabs.map((tab) => (
               <TabButton
                 key={tab.key}
                 label={tab.label}

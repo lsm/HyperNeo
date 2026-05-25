@@ -228,9 +228,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
   }, [spaceId, onNavigate]);
 
   const handleTasksClick = useCallback(() => {
-    navigateToSpaceTasks(spaceId);
+    navigateToSpaceTasks(spaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [spaceId, actionCount, activeCount, onNavigate]);
 
   const handleSessionsClick = useCallback(() => {
     navigateToSpaceSessions(spaceId);

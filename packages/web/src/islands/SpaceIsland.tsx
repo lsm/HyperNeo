@@ -20,6 +20,7 @@ import { createSession } from '../lib/api-helpers';
 import {
   closeOverlayHistory,
   navigateToSpace,
+  navigateBack,
   navigateToSpaceSession,
   navigateToSpaceTask,
   pushOverlayHistory,
@@ -172,7 +173,7 @@ export default function SpaceIsland({
   }, [spaceId]);
 
   const handleTaskPaneClose = useCallback(() => {
-    navigateToSpace(spaceId);
+    navigateBack(() => navigateToSpace(spaceId));
   }, [spaceId]);
 
   const handleCreateSession = useCallback(

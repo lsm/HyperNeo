@@ -18,6 +18,8 @@ import {
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
 } from '../lib/router.ts';
+import { spaceStore } from '../lib/space-store';
+import { isActionRequired, isActiveTask } from '../lib/task-filters';
 
 interface TabItem {
   id:
@@ -178,6 +180,10 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
   const spaceSessionId = currentSpaceSessionIdSignal.value;
   const spaceTaskId = currentSpaceTaskIdSignal.value;
 
+  const tasks = spaceStore.tasks.value;
+  const actionCount = tasks.filter(isActionRequired).length;
+  const activeCount = tasks.filter(isActiveTask).length;
+
   const tabs = isInSpaceContext ? SPACE_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
 
   const handleTabClick = (id: TabItem['id']) => {
@@ -195,7 +201,8 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
         if (spaceId) navigateToSpace(spaceId);
         break;
       case 'space-tasks':
-        if (spaceId) navigateToSpaceTasks(spaceId);
+        if (spaceId)
+          navigateToSpaceTasks(spaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
         break;
       case 'space-sessions':
         if (spaceId) navigateToSpaceSessions(spaceId);
