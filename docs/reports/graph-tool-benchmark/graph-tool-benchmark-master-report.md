@@ -148,6 +148,7 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 |-----|--------------|---------------------|----------------------|---------------|-------|
 | baseline | 24/29 real | Exact | Excellent | 0 major | A |
 | CodeGraph | 13/21 real | Perfect (±0 lines) | Excellent | 0 major | A |
+| CodeGraph v2 | 6/6 real | Perfect (±0 lines) | Excellent | 0 | A |
 | CRG | 17/29 real | Excellent (±1 line) | Very Good | 1 minor | A- |
 | Graphify | 24/38 real | Good (ranges) | Very Good | 0 major | A- |
 | ast-grep | 12/29 real | N/A (AST-based) | Good | 2 minor | B+ |
@@ -254,6 +255,7 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 
 - Baseline: `docs/reports/graph-tool-benchmark/benchmark-data/graph-tool-benchmark-baseline.json`
 - CodeGraph: `docs/reports/graph-tool-benchmark/benchmark-data/graph-tool-benchmark-codegraph.json`
+- CodeGraph v2: `docs/reports/graph-tool-benchmark/benchmark-data/graph-tool-benchmark-codegraph-v2.json`
 - CRG: `docs/reports/graph-tool-benchmark/benchmark-data/graph-tool-benchmark-crg.json`
 - Graphify: `docs/reports/graph-tool-benchmark/benchmark-data/graph-tool-benchmark-graphify.json`
 - ast-grep: `docs/reports/graph-tool-benchmark/benchmark-data/graph-tool-benchmark-ast-grep.json`
@@ -332,7 +334,7 @@ For tasks beyond planning — actual code modification — the ranking changes:
 - `codegraph_impact` — analyze affected code when changing a symbol
 - `codegraph_trace` — trace call paths
 
-The benchmark model (GLM-5.1) **did not use them** — it only used `codegraph_callees` (2 calls) and `codegraph_explore` (2 calls). The model discovered relationships through exploration rather than explicit impact analysis.
+The benchmark model (GLM-5.1) **did not use them in v1** — it only used `codegraph_callees` (2 calls) and `codegraph_explore` (2 calls). In the **v2 rerun with enhanced prompt**, the model used `codegraph_impact` (1 call) and `codegraph_files` (1 call), demonstrating that prompt guidance unlocks these tools. See Section 10 for details.
 
 **Graphify**'s `get_neighbors` can show blast radius through edge traversal, but the AST-only graph lacks `calls` edges (only `imports`, `contains`, `imports_from`). Semantic extraction would add `calls` edges, but extraction failed.
 
@@ -373,4 +375,57 @@ Graphify's 44 `get_node` calls were cheapest per call (458 input tokens) because
 
 4. **Graphify fix needed:** Add a `get_source` MCP tool that reads `source_file` at `source_location` and returns actual code. This would close the gap with CodeGraph for editing.
 
-5. **Graphify semantic extraction:** Requires either Gemini (`pip install 
+5. **Graphify semantic extraction:** Requires either Gemini (`pip install 'graphifyy[gemini]'`) or a capable local model. The AST-only graph is viable for planning but lacks semantic `calls` edges.
+
+---
+
+## 10. CodeGraph v2: Enhanced Prompt Results
+
+We reran the CodeGraph arm with an enhanced prompt that explicitly described all available tools and their preferred use order (`codegraph_context` as primary, `codegraph_impact` for blast radius, `codegraph_trace` for data flow, etc.).
+
+### 10.1 v2 vs v1 Comparison
+
+| Metric | v1 (default prompt) | v2 (enhanced prompt) | Delta |
+|---|---|---|---|
+| Wall time | 426.9s | 417.1s | -9.8s |
+| Total tokens | 45,214 | 55,671 | +10,457 |
+| Tool calls | 34 | 44 | +10 |
+| Response length | 16,354 chars | 16,282 chars | -72 chars |
+
+### 10.2 Tool Call Breakdown (v2)
+
+| Tool | v1 | v2 |
+|---|---|---|
+| `mcp__codegraph__codegraph_context` | 4 | 3 |
+| `mcp__codegraph__codegraph_search` | 8 | 18 |
+| `mcp__codegraph__codegraph_explore` | 2 | 3 |
+| `mcp__codegraph__codegraph_node` | 18 | 17 |
+| `mcp__codegraph__codegraph_callees` | 2 | 1 |
+| `mcp__codegraph__codegraph_impact` | **0** | **1** |
+| `mcp__codegraph__codegraph_files` | **0** | **1** |
+
+### 10.3 Key Improvements
+
+1. **Used `codegraph_impact`** — analyzed blast radius of changing `processRunTick` (exactly the capability Section 9.4 said was unused)
+2. **Used `codegraph_files`** — browsed indexed file structure
+3. **Zero hallucinations** — v1 invented `notification-rate-limiter.ts` and `recovery-tracker.ts` (do not exist); v2 only names real files
+4. **Correct event types** — v2 correctly identifies `workflow_run_needs_attention` and `needs_attention`; v1 missed both
+5. **Better architecture description** — v2 correctly describes the 5-level autonomy model and actual data flow
+
+### 10.4 What Did Not Improve
+
+`escalation-reasons.ts` still missing in v2. Semantic search coverage gap persists — the file's enum values (`ESCALATION_REASON_INSUFFICIENT_CONTEXT`) do not vector-match query terms about "stuck/idle task agents".
+
+### 10.5 Cost Impact
+
+| | v1 | v2 |
+|---|---|---|
+| Input cost | ¥195 | ¥251 |
+| Output cost | ¥93 | ¥83 |
+| **Total** | **¥288** | **¥334** |
+
++¥46 (+16%) for +10 tool calls, better accuracy, and blast-radius analysis.
+
+### 10.6 Takeaway
+
+Prompt engineering matters for CodeGraph. The enhanced prompt increased tool diversity from 5 to 7 tools and eliminated hallucinations. The cost increase (+16%) is modest for the accuracy gain. However, the semantic coverage gap (`escalation-reasons.ts`) is an architectural limitation of `codegraph_search`, not a prompt issue — neighbor traversal (like Graphify) or explicit call-graph walking (`codegraph_trace` from a known entry point) would be needed to find it.
