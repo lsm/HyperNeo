@@ -261,6 +261,56 @@ describe('Forge evidence capture on task completion', () => {
     ).toBe(1);
   });
 
+  it('records clean-trace diagnostics through the normal task completion path', async () => {
+    const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Clean normal completion path',
+      objective: 'Record diagnostics when completed task trace has no friction',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Finish clean trace task',
+      description: 'Normal completion should record no-friction trace diagnostics',
+      evolutionScopeId: scope.id,
+    });
+    insertToolExchange(
+      task.id,
+      'session-clean-normal',
+      'tool-clean-normal',
+      'Bash',
+      { command: 'bun test packages/daemon/tests/unit/5-space/forge-evidence-capture.test.ts' },
+      false,
+      { text: '1 pass' }
+    );
+    await taskRepo.updateTask(task.id, {
+      status: 'in_progress',
+      result: 'Clean trace validation complete',
+    });
+
+    await manager.setTaskStatus(task.id, 'done');
+
+    const evidence = evolutionRepo.listEvidence(scope.id);
+    const diagnostic = evidence.find(
+      (item) => item.kind === 'session' && item.metadata.traceDiagnostic === true
+    );
+    expect(evidence.some((item) => item.kind === 'task_result')).toBe(true);
+    expect(diagnostic?.metadata.status).toBe('no_friction');
+    expect(diagnostic?.metadata.toolCallCount).toBe(1);
+    expect(diagnostic?.metadata.failedToolCallCount).toBe(0);
+    expect(
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM job_queue
+							 WHERE queue = 'space.conversationFriction.analyze' AND json_extract(payload, '$.taskId') = ?`
+          )
+          .get(task.id) as { count: number }
+      ).count
+    ).toBe(1);
+  });
+
   it('auto-captured task_result evidence includes summary populated from result artifact', async () => {
     const scope = evolutionRepo.createScope({
       spaceId,
