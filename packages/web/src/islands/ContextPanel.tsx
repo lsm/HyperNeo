@@ -4,7 +4,6 @@ import {
   contextPanelOpenSignal,
   currentSpaceIdSignal,
   currentSpaceConfigureTabSignal,
-  currentSpaceSessionIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
   settingsSectionSignal,
@@ -191,8 +190,6 @@ export function ContextPanel() {
   const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
-  const currentSpaceSessionId = currentSpaceSessionIdSignal.value;
-
   // When a specific space is selected in the spaces section, show space-specific panel
   const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
   const headerTitle = spaceStore.space.value?.name ?? 'Space';
@@ -202,30 +199,29 @@ export function ContextPanel() {
   };
 
   const handleSpaceSwitch = (spaceId: string) => {
-    if (currentSpaceSessionId === `space:chat:${currentSpaceId}`) {
-      navigateToSpaceAgent(spaceId);
-    } else {
-      switch (currentSpaceViewMode) {
-        case 'tasks':
-          navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
-          break;
-        case 'sessions':
-          navigateToSpaceSessions(spaceId);
-          break;
-        case 'goals':
-          navigateToSpaceGoals(spaceId);
-          break;
-        case 'forge':
-          navigateToSpaceForge(spaceId);
-          break;
-        case 'configure':
-          navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
-          break;
-        case 'overview':
-        default:
-          navigateToSpace(spaceId);
-          break;
-      }
+    switch (currentSpaceViewMode) {
+      case 'agents':
+        navigateToSpaceAgent(spaceId);
+        break;
+      case 'tasks':
+        navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
+        break;
+      case 'sessions':
+        navigateToSpaceSessions(spaceId);
+        break;
+      case 'goals':
+        navigateToSpaceGoals(spaceId);
+        break;
+      case 'forge':
+        navigateToSpaceForge(spaceId);
+        break;
+      case 'configure':
+        navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
+        break;
+      case 'overview':
+      default:
+        navigateToSpace(spaceId);
+        break;
     }
     contextPanelOpenSignal.value = false;
   };

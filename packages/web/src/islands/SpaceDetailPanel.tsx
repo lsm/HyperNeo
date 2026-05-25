@@ -151,8 +151,6 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
-  const spaceAgentSessionId = `space:chat:${spaceId}`;
-
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
   // Auto-switch tab when the selected task changes (not on every task update)
@@ -170,7 +168,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
     selectedSessionId === null &&
     selectedTaskId === null &&
     currentSpaceViewModeSignal.value === 'overview';
-  const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
+  const isSpaceAgentSelected = currentSpaceViewModeSignal.value === 'agents';
   const isGoalsSelected = currentSpaceViewModeSignal.value === 'goals';
   const isForgeSelected = currentSpaceViewModeSignal.value === 'forge';
   const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';

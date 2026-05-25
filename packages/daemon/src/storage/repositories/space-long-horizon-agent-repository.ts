@@ -291,6 +291,10 @@ export class SpaceLongHorizonAgentRepository {
     return row ? rowToSubscription(row) : null;
   }
 
+  deleteReminder(id: string): void {
+    this.db.prepare(`DELETE FROM space_long_horizon_agent_reminders WHERE id = ?`).run(id);
+  }
+
   listSubscriptions(agentId: string): SpaceLongHorizonAgentEventSubscription[] {
     const rows = this.db
       .prepare(

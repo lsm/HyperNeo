@@ -61,6 +61,11 @@ const SpaceOverview = lazy(() =>
 const SpaceTaskPane = lazy(() =>
   import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
 );
+const SpaceLongHorizonAgents = lazy(() =>
+  import('../components/space/SpaceLongHorizonAgents').then((m) => ({
+    default: m.SpaceLongHorizonAgents,
+  }))
+);
 
 /** Shared Suspense fallback for lazy-loaded space views. */
 const lazyFallback = (
@@ -414,6 +419,25 @@ export default function SpaceIsland({
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceSessionsPage spaceId={spaceId} />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
+
+  if (viewMode === 'agents' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-agents-view"
+        >
+          <SpacePageHeader pageTitle="Agents" />
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceLongHorizonAgents spaceId={spaceId} />
             </Suspense>
           </div>
         </div>

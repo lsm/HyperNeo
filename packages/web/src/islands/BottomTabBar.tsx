@@ -4,7 +4,6 @@ import {
   navSectionSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
-  currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   type NavSection,
 } from '../lib/signals.ts';
@@ -177,7 +176,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
   const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 
   const spaceViewMode = currentSpaceViewModeSignal.value;
-  const spaceSessionId = currentSpaceSessionIdSignal.value;
   const spaceTaskId = currentSpaceTaskIdSignal.value;
 
   const tasks = spaceStore.tasks.value;
@@ -220,14 +218,9 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
     if (isInSpaceContext) {
       if (id === 'space-settings') return spaceViewMode === 'configure';
       if (id === 'space-sessions') return spaceViewMode === 'sessions';
-      if (id === 'space-agent') return spaceSessionId === `space:chat:${spaceId}`;
+      if (id === 'space-agent') return spaceViewMode === 'agents';
       if (id === 'space-tasks') return spaceViewMode === 'tasks' && spaceTaskId === null;
-      if (id === 'space-overview')
-        return (
-          spaceViewMode === 'overview' &&
-          spaceTaskId === null &&
-          spaceSessionId !== `space:chat:${spaceId}`
-        );
+      if (id === 'space-overview') return spaceViewMode === 'overview' && spaceTaskId === null;
     }
     return navSection === id;
   };

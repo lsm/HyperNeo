@@ -611,7 +611,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     deps.db
   );
-  setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager);
+  setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager, longHorizonAgentRepo);
 
   setupSpaceWorkflowHandlers(
     deps.messageHub,
