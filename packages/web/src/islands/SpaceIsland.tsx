@@ -345,6 +345,7 @@ export default function SpaceIsland({
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-goals-view"
         >
+          <SpacePageHeader pageTitle="Goals" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceGoals spaceId={spaceId} />
@@ -363,6 +364,7 @@ export default function SpaceIsland({
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-forge-view"
         >
+          <SpacePageHeader pageTitle="Forge" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceForge spaceId={spaceId} />
