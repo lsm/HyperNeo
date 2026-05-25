@@ -258,3 +258,119 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 - Graphify: `docs/reports/benchmark-data/graph-tool-benchmark-graphify.json`
 - ast-grep: `docs/reports/benchmark-data/graph-tool-benchmark-ast-grep.json`
 - Combined: `docs/reports/benchmark-data/graph-tool-benchmark-results.json`
+
+---
+
+## 9. Deep-Dive: Tool Architecture & Editing Suitability
+
+### 9.1 Source Code Return Model
+
+A critical architectural difference emerged between tools:
+
+| Tool | Returns Source Code? | Data Model |
+|------|---------------------|------------|
+| **CodeGraph** | **Yes** — full symbol source per `codegraph_node` | SQLite index stores complete function/class bodies |
+| **Baseline** | **Yes** — full file per `Read` | Direct filesystem access |
+| **CRG** | **Partial** — semantic snippets | Graph stores contextualized excerpts |
+| **ast-grep** | **Partial** — AST match snippets | Pattern match results with context |
+| **Graphify** | **No** — metadata only | Graph nodes: `id, label, file_type, source_file, source_location` |
+
+**Graphify's `get_node` response:**
+```
+Node: .processRunTick()
+  ID: runtime_space_runtime_spaceruntime_processruntick
+  Source: space-runtime.ts L4234
+  Type: code
+  Community: 12
+  Degree: 8
+```
+
+No source code, no signature, no implementation. The model knew *where* symbols exist but not *what they do*.
+
+**CodeGraph's `codegraph_node` response:**
+Returns complete function/class source code with inline line numbers — effectively a targeted `Read` call.
+
+### 9.2 Why Graphify Had Broad Coverage Without Line Precision
+
+Graphify discovered the most files (38) because `get_neighbors` traverses edge relationships:
+- `processRunTick` → `attemptBlockedRunRecovery` → `handleAliveStuckExecutions` → ...
+- Traversal surfaces related components without explicit search
+
+But the model never read source code, so it cited ranges ("~line 4200 area") instead of exact lines. Graphify **has** line numbers in its data (`source_location: L4234`) — the MCP server just buries them on the `Source:` line instead of making them prominent.
+
+**Fix:** Change `get_node` output format from:
+```
+Source: file.ts L4234
+```
+to:
+```
+Node: .processRunTick() at line 4234
+  File: file.ts
+```
+This would make exact line citation natural for the model.
+
+### 9.3 Editing Suitability
+
+For tasks beyond planning — actual code modification — the ranking changes:
+
+| Tool | Sees Code? | Exact Lines? | Editable? | Verdict |
+|------|-----------|-------------|-----------|---------|
+| **CodeGraph** | Full symbol source | Perfect (±0) | Yes | Best for editing |
+| **Baseline** | Full file | Perfect | Yes | Good, more calls |
+| **CRG** | Semantic snippets | ±1 line | Partial | Limited |
+| **ast-grep** | AST matches | N/A | Pattern only | Specialized |
+| **Graphify** | **No source code** | Ranges | **No** | Planning only |
+
+**Example:** "Add retry count to `attemptBlockedRunRecovery`"
+- **CodeGraph**: `codegraph_node` returns full function → sees where to inject → edits directly
+- **Graphify**: `get_node` returns metadata only → must call `Read` to see code → loses tool isolation advantage
+
+### 9.4 Blast Radius Analysis
+
+**CodeGraph** has dedicated blast-radius tools:
+- `codegraph_callers` — find what calls a function
+- `codegraph_impact` — analyze affected code when changing a symbol
+- `codegraph_trace` — trace call paths
+
+The benchmark model (GLM-5.1) **did not use them** — it only used `codegraph_callees` (2 calls) and `codegraph_explore` (2 calls). The model discovered relationships through exploration rather than explicit impact analysis.
+
+**Graphify**'s `get_neighbors` can show blast radius through edge traversal, but the AST-only graph lacks `calls` edges (only `imports`, `contains`, `imports_from`). Semantic extraction would add `calls` edges, but extraction failed.
+
+**Baseline** handles blast radius via `Grep` for all references + `Read` of affected files.
+
+### 9.5 Graphify Semantic Extraction: Backend Findings
+
+Graphify's semantic phase (LLM-powered docs/images extraction) failed with every backend we tested:
+
+| Backend | Result | Root Cause |
+|---------|--------|------------|
+| **ollama local** | 404 — model not found | Default `qwen2.5-coder:7b` not installed |
+| **ollama cloud free** | Hollow responses, invalid JSON | `gemma3:4b` too small for JSON extraction |
+| **ollama cloud paid** | 403 — subscription required | `glm-5.1` requires Pro ($20/mo) |
+| **openai → GLM** | 401 — wrong endpoint | Graphify hardcodes `api.openai.com`, ignores `OPENAI_BASE_URL` |
+| **kimi native** | 401 — invalid auth | `KIMI_API_KEY` is for Anthropic endpoint, not Moonshot OpenAI endpoint |
+| **kimi anthropic** | Invalid JSON, truncated | Kimi K2.6 generates reasoning content instead of clean JSON |
+
+**Graphify's `BACKENDS` dict is not extensible** — no env var to override `base_url` for arbitrary providers. Monkey-patching required for GLM/Kimi custom endpoints.
+
+**Official backends supported:** `gemini`, `openai`, `ollama`, `claude`, `kimi`, `bedrock`
+
+**No native GLM support.**
+
+### 9.6 Token Efficiency Revisited
+
+The baseline's 34 `Read` calls returned full file contents (~800 tokens each = 27K input tokens). CodeGraph's 18 `codegraph_node` calls returned targeted symbol sources — smaller payloads per call. This explains why CodeGraph achieved same accuracy with fewer input tokens (39K vs 66K).
+
+Graphify's 44 `get_node` calls were cheapest per call (458 input tokens) because each returned only ~400 tokens of metadata. But without source code, the model couldn't produce exact citations.
+
+### 9.7 Updated Recommendations
+
+1. **For planning tasks:** CodeGraph or Graphify AST-only both work. Graphify has broader coverage; CodeGraph has exact lines.
+
+2. **For editing tasks:** CodeGraph is the only graph tool that avoids extra `Read` calls. Graphify would need `Read` fallback, losing its cost advantage.
+
+3. **For blast radius:** CodeGraph has the right tools (`impact`, `callers`), but models need prompting to discover them. Consider adding tool-use examples in prompts.
+
+4. **Graphify fix needed:** Add a `get_source` MCP tool that reads `source_file` at `source_location` and returns actual code. This would close the gap with CodeGraph for editing.
+
+5. **Graphify semantic extraction:** Requires either Gemini (`pip install 
