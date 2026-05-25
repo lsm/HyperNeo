@@ -73,3 +73,5 @@ packages/daemon/.embedded-sdk-cli
 
 # Local research artifacts
 research-papers/
+.codegraph/
+graphify-out/
