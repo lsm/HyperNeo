@@ -11,6 +11,17 @@ export function formatGoalMetricSnapshot(goal: SpaceGoal, limit = 3): string {
     .join(' · ');
 }
 
+export function getGoalActivityTask(goal: SpaceGoal, tasks: SpaceTask[]): SpaceTask | null {
+  return (
+    tasks
+      .filter(
+        (task) =>
+          task.id === goal.activeTaskId || task.id === goal.lastTaskId || task.goalId === goal.id
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+  );
+}
+
 export function getGoalLastActivityAt(goal: SpaceGoal, lastTask?: SpaceTask | null): number | null {
   const lastActivityAt = Math.max(goal.lastCheckInAt ?? 0, lastTask?.updatedAt ?? 0);
   return lastActivityAt || null;

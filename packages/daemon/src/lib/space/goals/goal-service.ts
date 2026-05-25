@@ -456,9 +456,11 @@ export class SpaceGoalService {
       source: context?.source ?? 'system',
       sourceTaskId: context?.sourceTaskId ?? null,
       sourceSessionId: context?.sourceSessionId ?? null,
-      previousState,
-      newState,
-      diff,
+      previousState: previous
+        ? presentSnapshot(previous, previousState as SpaceGoalEventSnapshot)
+        : null,
+      newState: presentSnapshot(current, newState),
+      diff: presentDiff(previous, current, diff),
       note: context?.note ?? null,
     });
   }
@@ -500,7 +502,7 @@ export class SpaceGoalService {
 }
 
 function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
-  const snapshot: SpaceGoalEventSnapshot = {
+  return {
     title: goal.title,
     description: goal.description,
     status: goal.status,
@@ -509,7 +511,7 @@ function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
     labels: goal.labels,
     metrics: goal.metrics,
     summary: goal.summary,
-    progress: goal.type === 'recurring' ? null : goal.progress,
+    progress: goal.progress,
     nextSteps: goal.nextSteps,
     preferredWorkflowId: goal.preferredWorkflowId,
     taskScheduleId: goal.taskScheduleId,
@@ -521,8 +523,25 @@ function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
     nextCheckInAt: goal.nextCheckInAt,
     completedAt: goal.completedAt,
   };
-  if (goal.type === 'recurring') delete snapshot.progress;
-  return snapshot;
+}
+
+function presentSnapshot(
+  goal: SpaceGoal,
+  snapshot: SpaceGoalEventSnapshot
+): SpaceGoalEventSnapshot {
+  if (goal.type !== 'recurring') return snapshot;
+  const { progress: _progress, ...presented } = snapshot;
+  return presented;
+}
+
+function presentDiff(
+  previous: SpaceGoal | null,
+  current: SpaceGoal,
+  diff: SpaceGoalEventDiff | null
+): SpaceGoalEventDiff | null {
+  if (!diff || current.type !== 'recurring' || previous?.type !== 'recurring') return diff;
+  const { progress: _progress, ...presented } = diff;
+  return presented;
 }
 
 function diffSnapshots(

@@ -209,6 +209,32 @@ describe('SpaceGoalService', () => {
     expect(updated.type).toBe('one_shot');
     expect(updated.progress).toBe(80);
     expect(goalRepo.getById(goal.id)?.progress).toBe(80);
+    const updateEvent = goalEventRepo
+      .listByGoal(goal.id)
+      .find((event) => event.eventType === 'updated');
+    expect(updateEvent?.previousState?.progress).toBeUndefined();
+    expect(updateEvent?.newState?.progress).toBe(80);
+    expect(updateEvent?.diff?.progress).toEqual({ previous: 25, current: 80 });
+  });
+
+  it('does not record a synthetic progress diff when leaving recurring type without progress', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Convert without progress',
+      type: 'recurring',
+      progress: 25,
+    });
+
+    const updated = service.updateGoal(goal.id, { type: 'one_shot' });
+
+    expect(updated.type).toBe('one_shot');
+    expect(updated.progress).toBe(25);
+    const updateEvent = goalEventRepo
+      .listByGoal(goal.id)
+      .find((event) => event.eventType === 'updated');
+    expect(updateEvent?.previousState?.progress).toBeUndefined();
+    expect(updateEvent?.newState?.progress).toBe(25);
+    expect(updateEvent?.diff?.progress).toBeUndefined();
   });
 
   it('records goal update, status, task, and schedule events', () => {

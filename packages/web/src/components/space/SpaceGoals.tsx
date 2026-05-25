@@ -8,6 +8,7 @@ import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
 import {
   formatGoalMetricSnapshot,
+  getGoalActivityTask,
   getGoalLastActivityAt,
   getRecurringGoalActivityStatus,
 } from './goal-display-utils';
@@ -46,6 +47,10 @@ function formatGoalCount(count: number): string {
 function goalTask(tasks: SpaceTask[], taskId: string | null): SpaceTask | null {
   if (!taskId) return null;
   return tasks.find((task) => task.id === taskId) ?? null;
+}
+
+function goalDisplayTask(goal: SpaceGoal, tasks: SpaceTask[]): SpaceTask | null {
+  return getGoalActivityTask(goal, tasks) ?? goalTask(tasks, goal.lastTaskId);
 }
 
 function eventLabel(event: SpaceGoalEvent): string {
@@ -192,6 +197,7 @@ export function GoalDetail({
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const activeTask = goalTask(tasks, goal.activeTaskId);
   const lastTask = goalTask(tasks, goal.lastTaskId);
+  const activityTask = getGoalActivityTask(goal, tasks);
 
   return (
     <div class="flex h-full flex-col overflow-hidden">
@@ -284,11 +290,11 @@ export function GoalDetail({
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-500">Activity status</span>
                   <span class="capitalize text-gray-300">
-                    {getRecurringGoalActivityStatus(goal, lastTask)}
+                    {getRecurringGoalActivityStatus(goal, activityTask)}
                   </span>
                 </div>
                 <div class="mt-2 text-gray-500">
-                  Last activity: {lastActivityLabel(goal, lastTask)}
+                  Last activity: {lastActivityLabel(goal, activityTask)}
                 </div>
                 <div class="mt-2 text-gray-400">
                   Metric trajectory: {formatGoalMetricSnapshot(goal)}
@@ -516,7 +522,7 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
                 key={goal.id}
                 goal={goal}
                 selected={selectedGoalId === goal.id}
-                lastTask={goalTask(tasks, goal.lastTaskId)}
+                lastTask={goalDisplayTask(goal, tasks)}
                 onSelect={() => openGoal(goal.id)}
               />
             ))}

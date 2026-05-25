@@ -6,7 +6,11 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
-import { formatGoalMetricSnapshot, getRecurringGoalActivityStatus } from './goal-display-utils';
+import {
+  formatGoalMetricSnapshot,
+  getGoalLastActivityAt,
+  getRecurringGoalActivityStatus,
+} from './goal-display-utils';
 
 interface GoalDetailPanelProps {
   spaceId: string;
@@ -85,6 +89,8 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
         task.goalId === goal.id || task.id === goal.activeTaskId || task.id === goal.lastTaskId
     )
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  const activityTask = linkedTasks[0] ?? null;
+  const lastActivityAt = getGoalLastActivityAt(goal, activityTask);
 
   const runAction = async (action: 'pause' | 'resume' | 'archive' | 'trigger') => {
     setActionLoading(true);
@@ -192,12 +198,12 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-500">Status</span>
                   <span class="capitalize text-gray-300">
-                    {getRecurringGoalActivityStatus(goal)}
+                    {getRecurringGoalActivityStatus(goal, activityTask)}
                   </span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-500">Last activity</span>
-                  <span class="text-gray-300">{formatDate(goal.lastCheckInAt)}</span>
+                  <span class="text-gray-300">{formatDate(lastActivityAt)}</span>
                 </div>
                 <div>
                   <div class="text-gray-500">Metric trajectory</div>
