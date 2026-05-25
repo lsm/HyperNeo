@@ -368,7 +368,8 @@ export class EvolutionEpisodeService {
     ) {
       throw new Error('Episode scope is not linked to a recurring goal');
     }
-    const goal = this.deps.goalService.updateGoal(scope.spaceGoalId, params.goalUpdate, {
+    const { progress: _ignoredProgress, ...goalUpdate } = params.goalUpdate;
+    const goal = this.deps.goalService.updateGoal(scope.spaceGoalId, goalUpdate, {
       source: 'rpc',
       note: `Forge rollup accepted: ${episode.title}`,
     });

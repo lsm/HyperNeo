@@ -172,6 +172,24 @@ describe('GoalDetailPanel', () => {
     await waitFor(() => expect(mockArchiveGoal).toHaveBeenCalledWith('goal-1'));
   });
 
+  it('shows recurring activity and metrics instead of progress', () => {
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getByText('Activity')).toBeTruthy();
+    expect(screen.getByText('Metric trajectory')).toBeTruthy();
+    expect(screen.getByText('open_bugs: 3')).toBeTruthy();
+    expect(screen.queryByText('45% complete')).toBeNull();
+  });
+
+  it('shows progress for one-shot goals', () => {
+    mockGoals.value = [makeGoal({ type: 'one_shot' })];
+
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getByText('Progress')).toBeTruthy();
+    expect(screen.getByText('45% complete')).toBeTruthy();
+  });
+
   it('opens the edit dialog from the right panel', async () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
 

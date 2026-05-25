@@ -197,11 +197,22 @@ describe('SpaceGoals', () => {
     render(<SpaceGoals spaceId="space-1" />);
 
     expect(await screen.findByText('Keep release healthy')).toBeTruthy();
-    expect(screen.getByText('45% complete')).toBeTruthy();
+    expect(screen.queryByText('45% complete')).toBeNull();
+    expect(screen.getByText('Activity')).toBeTruthy();
+    expect(screen.getByText('Metrics: open_bugs: 3')).toBeTruthy();
     expect(screen.getByText('Builds are green')).toBeTruthy();
     expect(screen.getByText('Recurring')).toBeTruthy();
     await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe(goal.id));
     expect(mockListGoals).toHaveBeenCalledWith({ includeArchived: false });
+  });
+
+  it('keeps progress UI for one-shot and measurable goals', async () => {
+    mockGoals.value = [makeGoal({ type: 'one_shot' })];
+
+    render(<SpaceGoals spaceId="space-1" />);
+
+    expect(await screen.findByText('Keep release healthy')).toBeTruthy();
+    expect(screen.getByText('45% complete')).toBeTruthy();
   });
 
   it('writes the current goal selection for the right-panel toggle', async () => {

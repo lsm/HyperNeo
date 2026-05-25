@@ -448,7 +448,7 @@ export type SpaceGoalEventSnapshot = Partial<{
   labels: string[];
   metrics: SpaceGoalMetrics;
   summary: string;
-  progress: number;
+  progress: number | null;
   nextSteps: string[];
   preferredWorkflowId: string | null;
   taskScheduleId: string | null;
@@ -515,7 +515,7 @@ export interface SpaceGoal {
   labels: string[];
   metrics: SpaceGoalMetrics;
   summary: string;
-  progress: number;
+  progress: number | null;
   nextSteps: string[];
   preferredWorkflowId: string | null;
   taskScheduleId: string | null;

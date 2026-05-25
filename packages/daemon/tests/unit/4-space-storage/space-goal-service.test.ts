@@ -102,7 +102,8 @@ describe('SpaceGoalService', () => {
     expect(goal.labels).toEqual(['product']);
     expect(goal.metrics).toEqual({ activated: 10 });
     expect(goal.summary).toBe('Initial state');
-    expect(goal.progress).toBe(35);
+    expect(goal.progress).toBeNull();
+    expect(goalRepo.getById(goal.id)?.progress).toBe(35);
     expect(goal.nextSteps).toEqual(['Audit current flow']);
     expect(goal.taskScheduleId).toBeString();
     expect(goal.nextCheckInAt).not.toBeNull();
@@ -167,6 +168,33 @@ describe('SpaceGoalService', () => {
     expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(first.id);
     expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(second.id);
     expect(timestampOnlySpacePage.map((event) => event.id)).not.toContain(third.id);
+  });
+
+  it('ignores progress updates and omits progress event state for recurring goals', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Keep releases healthy',
+      type: 'recurring',
+      progress: 25,
+    });
+
+    const updated = service.updateGoal(goal.id, {
+      summary: 'Release train green',
+      progress: 90,
+      metrics: { build_health: 'green' },
+      nextSteps: ['Watch flaky tests'],
+    });
+
+    expect(updated.progress).toBeNull();
+    expect(goalRepo.getById(goal.id)?.progress).toBe(25);
+    expect(updated.summary).toBe('Release train green');
+    expect(updated.metrics).toEqual({ build_health: 'green' });
+    expect(updated.nextSteps).toEqual(['Watch flaky tests']);
+    const updateEvent = goalEventRepo
+      .listByGoal(goal.id)
+      .find((event) => event.eventType === 'updated');
+    expect(updateEvent?.newState?.progress).toBeUndefined();
+    expect(updateEvent?.diff?.progress).toBeUndefined();
   });
 
   it('records goal update, status, task, and schedule events', () => {

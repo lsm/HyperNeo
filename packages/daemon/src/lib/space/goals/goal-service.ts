@@ -92,7 +92,8 @@ export class SpaceGoalService {
       }
 
       const createdGoal = this.getGoal(goal.id) as SpaceGoal;
-      this.recordGoalEvent(createdGoal, 'created', null, createdGoal, context);
+      const storedCreatedGoal = this.deps.goalRepo.getById(goal.id) as SpaceGoal;
+      this.recordGoalEvent(createdGoal, 'created', null, storedCreatedGoal, context);
       if (!params.triggerImmediately) return { goal: createdGoal, task: null };
       const created = this.createImmediateTaskInternal(goal.id, undefined, {
         emitTaskCreated: false,
@@ -105,11 +106,11 @@ export class SpaceGoalService {
 
   listGoals(params: SpaceGoalListParams): SpaceGoal[] {
     if (!params.spaceId) throw new Error('spaceId is required');
-    return this.deps.goalRepo.list(params);
+    return this.deps.goalRepo.list(params).map((goal) => presentGoal(goal));
   }
 
   getGoal(goalId: string): SpaceGoal | null {
-    return this.deps.goalRepo.getById(goalId);
+    return presentGoal(this.deps.goalRepo.getById(goalId));
   }
 
   updateGoal(
@@ -128,6 +129,9 @@ export class SpaceGoalService {
     if (params.title !== undefined && !params.title.trim()) throw new Error('title is required');
 
     const updateParams: UpdateSpaceGoalParams = { ...params };
+    if (isRecurringGoalUpdate(existing, updateParams)) {
+      delete updateParams.progress;
+    }
     if (params.status !== undefined && params.status !== existing.status) {
       this.synchronizeScheduleForStatus(existing, params.status);
       if (params.status !== 'active') {
@@ -140,8 +144,9 @@ export class SpaceGoalService {
 
     this.syncScheduleTemplateIfNeeded(existing, updateParams);
 
-    const updated = this.deps.goalRepo.update(goalId, updateParams);
-    if (!updated) throw new Error(`Goal not found: ${goalId}`);
+    const stored = this.deps.goalRepo.update(goalId, updateParams);
+    if (!stored) throw new Error(`Goal not found: ${goalId}`);
+    const updated = presentGoal(stored);
     this.recordGoalEvent(
       updated,
       params.status !== undefined && params.status !== existing.status
@@ -492,8 +497,19 @@ export class SpaceGoalService {
   }
 }
 
+function presentGoal(goal: SpaceGoal): SpaceGoal;
+function presentGoal(goal: SpaceGoal | null): SpaceGoal | null;
+function presentGoal(goal: SpaceGoal | null): SpaceGoal | null {
+  if (!goal || goal.type !== 'recurring') return goal;
+  return { ...goal, progress: null };
+}
+
+function isRecurringGoalUpdate(existing: SpaceGoal, params: UpdateSpaceGoalParams): boolean {
+  return existing.type === 'recurring' || params.type === 'recurring';
+}
+
 function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
-  return {
+  const snapshot: SpaceGoalEventSnapshot = {
     title: goal.title,
     description: goal.description,
     status: goal.status,
@@ -502,7 +518,7 @@ function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
     labels: goal.labels,
     metrics: goal.metrics,
     summary: goal.summary,
-    progress: goal.progress,
+    progress: goal.type === 'recurring' ? null : goal.progress,
     nextSteps: goal.nextSteps,
     preferredWorkflowId: goal.preferredWorkflowId,
     taskScheduleId: goal.taskScheduleId,
@@ -514,6 +530,8 @@ function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
     nextCheckInAt: goal.nextCheckInAt,
     completedAt: goal.completedAt,
   };
+  if (goal.type === 'recurring') delete snapshot.progress;
+  return snapshot;
 }
 
 function diffSnapshots(
