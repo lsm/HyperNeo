@@ -2,11 +2,11 @@
 
 ## Executive summary
 
-Recommendation: implement a NeoKai-native compressed output injection as the first built-in template in a generic prompt injection registry, applying to all agent sessions — user chat, Space tasks, and SDK subagents — then measure before adapting Caveman tools.
+Recommendation: implement a NeoKai-native compressed output policy as the first built-in template in a generic prompt policy registry, applying to all agent sessions — user chat, Space tasks, and SDK subagents — then measure before adapting Caveman tools.
 
 Do **not** bundle Caveman wholesale. Caveman's highest-value primitive is a small style contract: terse status, no filler, code/identifier preservation, short failures, and normal-prose escape hatches for safety/approval/clarity. Its hooks, installer, statusline, memory compressor, MCP shrink proxy, and branded slash commands solve Claude Code/plugin distribution problems that do not map cleanly to NeoKai's runtime.
 
-Best first integration point: add a generic prompt injection resolver/composer/renderer in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/space/agents/custom-agent.ts`. Compressed output should be enabled by scoped `prompt_injections` records, not by typed `outputMode` fields on `GlobalSettings`, `SessionConfig`, `AgentSessionInit`, `Space`, or `SpaceAgent`. The same mechanism should apply to every `AgentSession` created by NeoKai.
+Best first integration point: add a generic prompt policy resolver/composer/renderer in the general session-init/query-options path before the SDK query starts, not only in `packages/daemon/src/lib/space/agents/custom-agent.ts`. Compressed output should be enabled by scoped `prompt_policy_records` rows, not by typed `outputMode` fields on `GlobalSettings`, `SessionConfig`, `AgentSessionInit`, `Space`, or `SpaceAgent`. The same mechanism should apply to every `AgentSession` created by NeoKai.
 
 Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, Space task, and subagent outputs without lower task quality.
 
@@ -27,7 +27,7 @@ Target: 50%+ output-token reduction on representative user chat, ad-hoc worker, 
   - `packages/daemon/src/lib/agent/context-fetcher.ts`
   - `packages/web/src/components/space/thread/space-task-thread-events.ts`
 - Caveman upstream repo metadata and README via GitHub.
-- Generic prompt injection spec: `docs/research/token-efficiency/prompt-injection-registry-spec.md`.
+- Generic prompt policy spec: `docs/research/token-efficiency/prompt-policy-registry-spec.md`.
 
 ## Caveman primitives: essential vs non-essential
 
@@ -68,7 +68,7 @@ Candidate NeoKai prompt fragment:
 ```text
 ## Output style
 
-When the compressed output injection is active, be terse and action-first.
+When the compressed output policy is active, be terse and action-first.
 
 - Drop filler, pleasantries, hedging, and recap prose.
 - Prefer fragments and bullets over paragraphs.
@@ -91,13 +91,13 @@ Prompt-only is enough for first adoption because NeoKai centralizes SDK session 
 - `SettingsManager.prepareSDKOptions()` already writes file-only display settings such as SDK `outputStyle` into `.claude/settings.local.json`.
 - Space `buildCustomAgentSystemPrompt()` should supply only Space-agent behavior; generic output compression should sit upstream so user chat and subagents get the same mechanism.
 
-A native output-style fragment should be represented as a built-in `PromptInjection` record, then rendered into the effective session system prompt and scoped subagent prompts by the generic injection renderer.
+A native output-style fragment should be represented as a built-in `PromptPolicyRecord`, then rendered into the effective session system prompt and scoped subagent prompts by the generic prompt policy renderer.
 
 Benefits:
 
 - No external dependency.
 - No plugin/hook compatibility burden.
-- One deterministic injection path for future prompt features.
+- One deterministic prompt policy path for future prompt features.
 - Data/provenance model for debugging active prompt additions.
 - A/B testing using existing SDK usage fields.
 
@@ -124,12 +124,12 @@ Do not adapt Caveman's installer/hooks/statusline directly; NeoKai has its own d
 
 ## Where compressed output should live
 
-Compressed output should be a generic prompt injection record, not a typed setting copied across product objects.
+Compressed output should be a generic prompt policy record, not a typed setting copied across product objects.
 
 Use the registry as the activation mechanism at every scope:
 
 1. **Global/user default**
-   - Global `prompt_injections` row enables `neokai.output-mode.compressed` for all new matching sessions.
+   - Global `prompt_policy_records` row enables `neokai.output-mode.compressed` for all new matching sessions.
    - No `GlobalSettings.outputMode` field.
 2. **Per-session override**
    - Session-scoped row enables or suppresses `neokai.output-mode.compressed` for one session.
@@ -150,7 +150,7 @@ Avoid a Space-only implementation. Token-efficiency preference varies by chat/se
 
 ## Scope precedence
 
-Use the prompt injection system's scope and priority model. Do not create output-mode-specific precedence code.
+Use the prompt policy system's scope and priority model. Do not create output-mode-specific precedence code.
 
 Recommended scope order for resolving same-template enable/suppress records:
 
@@ -163,25 +163,25 @@ Recommended scope order for resolving same-template enable/suppress records:
 | 5 | Space agent | Reusable preference for a specific `SpaceAgent`. |
 | 6 | Space | Bulk preference for Space sessions/agents when no narrower record exists. |
 | 7 | Global/user | User-level preference for all new matching sessions. |
-| 8 | App default | No compressed injection active. |
+| 8 | App default | No compressed output policy active. |
 
-Narrower scope wins over broader scope for activation conflicts: task wins over session, and workflow-node wins over workflow. Normal mode is represented by absence of the compressed injection or by a narrower suppressing injection record with `record_type = 'suppress'` and `suppresses_template_id = 'neokai.output-mode.compressed'`. Persist provenance in debug metadata so output-style surprises are explainable.
+Narrower scope wins over broader scope for activation conflicts: task wins over session, and workflow-node wins over workflow. Normal mode is represented by absence of the compressed output policy or by a narrower suppressing policy record with `record_type = 'suppress'` and `suppresses_template_id = 'neokai.output-mode.compressed'`. Persist provenance in debug metadata so output-style surprises are explainable.
 
 Key inheritance behavior: if a Space-scoped compressed-output record exists and a new SpaceAgent has no Space-agent-scoped record, sessions for that agent inherit the Space record dynamically. If the Space record is later disabled or suppressed, that agent follows the new Space behavior until it gets its own scoped record.
 
 ## NeoKai implementation sketch, if approved
 
-Minimal native behavior now depends on the generic prompt injection registry spec.
+Minimal native behavior now depends on the generic prompt policy registry spec.
 
-1. Add generic prompt injection infrastructure:
+1. Add generic prompt policy infrastructure:
 
-- `PromptInjectionResolver`
-- `PromptInjectionComposer`
-- `PromptInjectionRenderer`
-- shared `PromptInjection` types and channels
+- `PromptPolicyResolver`
+- `PromptPolicyComposer`
+- `PromptPolicyRenderer`
+- shared `PromptPolicyRecord` types and channels
 - built-in template provider support
 
-2. Register compressed output through scoped prompt injection records:
+2. Register compressed output through scoped prompt policy records:
 
 - global row for user default
 - session row for one chat/worker session
@@ -193,10 +193,10 @@ Minimal native behavior now depends on the generic prompt injection registry spe
 
 Do **not** add `AgentOutputMode`, `GlobalSettings.outputMode`, `SessionConfig.outputMode`, `AgentSessionInit.outputMode`, `Space.outputMode`, `SpaceAgent.outputMode`, or `WorkflowNodeAgent.outputMode`.
 
-3. Store all activation state in `prompt_injections`:
+3. Store all activation state in `prompt_policy_records`:
 
 ```sql
--- Example scoped activation records; exact columns come from prompt-injection-registry-spec.md.
+-- Example scoped activation records; exact columns come from prompt-policy-registry-spec.md.
 -- Global default:
 (id = 'global.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'global', scope_id = NULL, enabled = 1)
 
@@ -210,35 +210,35 @@ Do **not** add `AgentOutputMode`, `GlobalSettings.outputMode`, `SessionConfig.ou
 (id = 'workflow-node.<workflow-id>.<node-id>.<agent-name>.neokai.output-mode.compressed', template_id = 'neokai.output-mode.compressed', scope_type = 'workflow_node', scope_id = '<workflow-id>:<node-id>:<agent-name>', enabled = 1)
 ```
 
-No `spaces.output_mode` or `space_agents.output_mode` migration is needed. Workflow templates should preserve scoped prompt-injection records or template metadata that materializes those records during import/instantiation; they should not add `nodes[*].agents[*].outputMode`.
+No `spaces.output_mode` or `space_agents.output_mode` migration is needed. Workflow templates should preserve scoped prompt policy records or template metadata that materializes those records during import/instantiation; they should not add `nodes[*].agents[*].outputMode`.
 
-4. Have `BuiltinOutputModeInjectionProvider` emit `neokai.output-mode.compressed` when the registry resolver finds an enabled scoped record that is not suppressed:
+4. Have `BuiltinOutputModePolicyProvider` emit `neokai.output-mode.compressed` when the registry resolver finds an enabled scoped record that is not suppressed:
 
 - channel: `system.append`
 - priority: output-style band
 - scope: applies to matching session types; can also render to subagents when `appliesToSubagents` is true
 - content: prompt fragment above
 
-5. Render prompt injections in the general query-options path after session-specific options are assembled:
+5. Render prompt policy records in the general query-options path after session-specific options are assembled:
 
 - apply `system.prepend` / `system.append` to top-level `systemPrompt`
 - apply scoped `agent.prompt.append` to `queryOptions.agents[*].prompt` because SDK subagents do not inherit parent `systemPrompt.append`
 
-Reason: output style is behavioral and agent-agnostic. Space `buildCustomAgentSystemPrompt()` should not be the primary injection point because user chat, ad-hoc workers, and subagents would be missed.
+Reason: output style is behavioral and agent-agnostic. Space `buildCustomAgentSystemPrompt()` should not be the primary prompt policy render point because user chat, ad-hoc workers, and subagents would be missed.
 
-6. Preserve escape hatch explicitly in the compressed output injection.
+6. Preserve escape hatch explicitly in the compressed output policy.
 
-7. Add tests around injection record scope resolution, suppression, prompt rendering for custom-string and Claude Code preset prompts, subagent prompt rendering, scoped activation records, and provenance.
+7. Add tests around policy record scope resolution, suppression, prompt rendering for custom-string and Claude Code preset prompts, subagent prompt rendering, scoped activation records, and provenance.
 
 8. Add UI only after backend exists:
 
-- Settings UI: global compressed-output injection toggle.
+- Settings UI: global compressed-output policy toggle.
 - Session creation / session tools UI: session-scoped compressed-output toggle.
 - Space settings: Space-scoped compressed-output toggle.
 - Agent editor: Space-agent-scoped compressed-output toggle.
 - Workflow editor: workflow-scoped and workflow-node-scoped compressed-output toggles.
 - Task-run advanced option later.
-- Debug/preview endpoint or panel showing applied/suppressed prompt injections.
+- Debug/preview endpoint or panel showing applied/suppressed prompt policy records.
 
 ## SDK `outputStyle` interaction
 
@@ -253,9 +253,9 @@ Compressed mode should not blindly reuse SDK `outputStyle` as the only mechanism
 Recommended approach:
 
 1. Do not add NeoKai `outputMode` typed fields.
-2. Implement compression via scoped `prompt_injections` records that activate a built-in template rendered by the generic injection registry/composer in the common session prompt path.
-3. Optionally map the compressed-output injection to SDK `outputStyle` later only if SDK supports user-defined styles or a built-in concise style with compatible semantics.
-4. If both exist, NeoKai prompt injection wins for the safety/clarity contract; SDK `outputStyle` can be treated as additive display preference.
+2. Implement compression via scoped `prompt_policy_records` rows that activate a built-in template rendered by the generic prompt policy registry/composer in the common session prompt path.
+3. Optionally map the compressed-output policy to SDK `outputStyle` later only if SDK supports user-defined styles or a built-in concise style with compatible semantics.
+4. If both exist, NeoKai prompt policy wins for the safety/clarity contract; SDK `outputStyle` can be treated as additive display preference.
 
 ## Measurement plan
 
@@ -335,12 +335,12 @@ Maintenance risk of wholesale adoption is high because Caveman includes provider
 
 ## Decision
 
-Adopt minimal native compressed output mode as the first consumer of a generic prompt injection registry.
+Adopt minimal native compressed output mode as the first consumer of a generic prompt policy registry.
 
 Do now:
 
-- Generic prompt injection registry/composer/renderer first.
-- Built-in compressed output injection template activated by scoped `prompt_injections` records.
+- Generic prompt policy registry/composer/renderer first.
+- Built-in compressed output policy template activated by scoped `prompt_policy_records` rows.
 - Generic all-session mechanism: global, session, Space, SpaceAgent, workflow, workflow-node, and task scopes all use same registry path.
 - Top-level system prompt rendering plus scoped subagent prompt rendering.
 - Escape hatch required.
@@ -358,8 +358,8 @@ Defer:
 ## Acceptance criteria mapping
 
 - Caveman reviewed: yes; prompt, hooks, stats, memory compression, MCP shrink, Cavecrew, licensing.
-- Recommendation: prompt-only native compressed mode first for all agent sessions, implemented as a built-in prompt injection template; selected tool/skill ideas later.
-- Minimal native behavior: recommended; no wholesale bundle; use generic prompt injection registry in common session-init/query-options path rather than Space-only or feature-specific prompt injection.
+- Recommendation: prompt-only native compressed mode first for all agent sessions, implemented as a built-in prompt policy template; selected tool/skill ideas later.
+- Minimal native behavior: recommended; no wholesale bundle; use generic prompt policy registry in common session-init/query-options path rather than Space-only or feature-specific prompt policy.
 - Escape hatch: required in prompt fragment and tests.
 - Measurement: actual NeoKai measurements deferred to implementation because this research PR does not add runnable output-mode behavior. This document provides a concrete paired-task plan targeting 50%+ output reduction without quality regression; implementation acceptance should require recorded normal-vs-compressed results before enabling defaults.
 
@@ -377,4 +377,4 @@ Defer:
 - NeoKai generic session config types: `packages/shared/src/types/sdk-config.ts`
 - NeoKai settings/output style types: `packages/shared/src/types/settings.ts`
 - NeoKai context usage extraction: `packages/daemon/src/lib/agent/context-fetcher.ts`
-- NeoKai prompt injection registry spec: `docs/research/token-efficiency/prompt-injection-registry-spec.md`
+- NeoKai prompt policy registry spec: `docs/research/token-efficiency/prompt-policy-registry-spec.md`

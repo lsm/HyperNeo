@@ -22,7 +22,7 @@ Verify that the room runtime correctly wires all restructured agents. Ensure the
 3. Verify that when `coordinatorMode` is ON, the coordinator agents are used instead (this path should be unchanged)
 4. Add unit test: verify `QueryOptionsBuilder` preserves agent/agents from session config
 5. Add unit test: verify `coordinatorMode` does not interfere with room agent configurations
-6. Verify worktree isolation text injection works correctly when agents are always present (the worktree prompt injection in coordinator mode iterates over agents — verify this also works for room agents)
+6. Verify worktree isolation text append works correctly when agents are always present (the worktree prompt append in coordinator mode iterates over agents — verify this also works for room agents)
 
 **Acceptance Criteria:**
 - No bugs found in QueryOptionsBuilder's handling of always-on agents
