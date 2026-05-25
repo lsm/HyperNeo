@@ -252,8 +252,9 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 
 ## 8. Raw Data Files
 
-- Baseline: `/tmp/graph-tool-benchmark-baseline.json`
-- CodeGraph: `/tmp/graph-tool-benchmark-codegraph.json`
-- CRG: `/tmp/graph-tool-benchmark-crg.json`
-- Graphify: `/tmp/graph-tool-benchmark-graphify.json`
-- ast-grep: `/tmp/graph-tool-benchmark-ast-grep.json`
+- Baseline: `docs/reports/benchmark-data/graph-tool-benchmark-baseline.json`
+- CodeGraph: `docs/reports/benchmark-data/graph-tool-benchmark-codegraph.json`
+- CRG: `docs/reports/benchmark-data/graph-tool-benchmark-crg.json`
+- Graphify: `docs/reports/benchmark-data/graph-tool-benchmark-graphify.json`
+- ast-grep: `docs/reports/benchmark-data/graph-tool-benchmark-ast-grep.json`
+- Combined: `docs/reports/benchmark-data/graph-tool-benchmark-results.json`
