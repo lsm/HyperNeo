@@ -6,6 +6,11 @@ import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/sign
 import { spaceStore } from '../../lib/space-store';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
+import {
+  formatGoalMetricSnapshot,
+  getGoalLastActivityAt,
+  getRecurringGoalActivityStatus,
+} from './goal-display-utils';
 
 interface SpaceGoalsProps {
   spaceId: string;
@@ -47,24 +52,8 @@ function eventLabel(event: SpaceGoalEvent): string {
   return event.eventType.replace(/_/g, ' ');
 }
 
-function metricSnapshot(goal: SpaceGoal): string {
-  const entries = Object.entries(goal.metrics);
-  if (entries.length === 0) return 'No metrics recorded';
-  return entries
-    .slice(0, 3)
-    .map(([key, value]) => `${key}: ${String(value ?? '—')}`)
-    .join(' · ');
-}
-
-function activityStatus(goal: SpaceGoal, lastTask: SpaceTask | null): 'active' | 'idle' | 'paused' {
-  if (goal.status === 'paused') return 'paused';
-  if (goal.activeTaskId) return 'active';
-  const lastActivityAt = Math.max(goal.lastCheckInAt ?? 0, lastTask?.updatedAt ?? 0);
-  return lastActivityAt > Date.now() - 24 * 60 * 60 * 1000 ? 'active' : 'idle';
-}
-
 function lastActivityLabel(goal: SpaceGoal, lastTask: SpaceTask | null): string {
-  const lastActivityAt = Math.max(goal.lastCheckInAt ?? 0, lastTask?.updatedAt ?? 0);
+  const lastActivityAt = getGoalLastActivityAt(goal, lastTask);
   return lastActivityAt ? formatDate(lastActivityAt) : '—';
 }
 
@@ -102,7 +91,7 @@ function GoalCard({
   lastTask: SpaceTask | null;
   onSelect: () => void;
 }) {
-  const recurringActivityStatus = activityStatus(goal, lastTask);
+  const recurringActivityStatus = getRecurringGoalActivityStatus(goal, lastTask);
   return (
     <button
       type="button"
@@ -139,7 +128,7 @@ function GoalCard({
             <span class="capitalize text-gray-300">{recurringActivityStatus}</span>
           </div>
           <div class="text-gray-500">Last activity: {lastActivityLabel(goal, lastTask)}</div>
-          <div class="line-clamp-2 text-gray-400">Metrics: {metricSnapshot(goal)}</div>
+          <div class="line-clamp-2 text-gray-400">Metrics: {formatGoalMetricSnapshot(goal)}</div>
         </div>
       ) : (
         <div class="mt-auto space-y-2 pt-4">
@@ -294,12 +283,16 @@ export function GoalDetail({
               <div class="rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2 text-xs">
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-500">Activity status</span>
-                  <span class="capitalize text-gray-300">{activityStatus(goal, lastTask)}</span>
+                  <span class="capitalize text-gray-300">
+                    {getRecurringGoalActivityStatus(goal, lastTask)}
+                  </span>
                 </div>
                 <div class="mt-2 text-gray-500">
                   Last activity: {lastActivityLabel(goal, lastTask)}
                 </div>
-                <div class="mt-2 text-gray-400">Metric trajectory: {metricSnapshot(goal)}</div>
+                <div class="mt-2 text-gray-400">
+                  Metric trajectory: {formatGoalMetricSnapshot(goal)}
+                </div>
               </div>
             ) : (
               <div>

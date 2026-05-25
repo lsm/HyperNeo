@@ -35,6 +35,7 @@ import { toast } from '../../lib/toast';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { formatGoalMetricSnapshot } from './goal-display-utils';
 import {
   WorkflowModelSelect,
   type WorkflowModelSelection,
@@ -95,15 +96,6 @@ function formatDate(value: number): string {
 
 function formatKind(kind: string): string {
   return kind.replace(/_/g, ' ');
-}
-
-function metricSnapshot(goal: SpaceGoal): string {
-  const entries = Object.entries(goal.metrics);
-  if (entries.length === 0) return 'No metrics recorded';
-  return entries
-    .slice(0, 3)
-    .map(([key, value]) => `${key}: ${String(value ?? '—')}`)
-    .join(' · ');
 }
 
 function formatScopeCount(count: number): string {
@@ -469,7 +461,9 @@ function GoalSummary({ goal }: { goal: SpaceGoal }) {
         </div>
         <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">Metrics</span>
       </div>
-      <p class="mb-3 text-xs text-blue-100/80">Metric trajectory: {metricSnapshot(goal)}</p>
+      <p class="mb-3 text-xs text-blue-100/80">
+        Metric trajectory: {formatGoalMetricSnapshot(goal)}
+      </p>
       {goal.summary && <p class="text-sm text-gray-300">{goal.summary}</p>}
       {goal.nextSteps.length > 0 && (
         <ul class="mt-3 space-y-1 text-xs text-gray-400">

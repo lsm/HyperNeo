@@ -6,6 +6,7 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
+import { formatGoalMetricSnapshot, getRecurringGoalActivityStatus } from './goal-display-utils';
 
 interface GoalDetailPanelProps {
   spaceId: string;
@@ -59,21 +60,6 @@ function formatDate(ts: number | null): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function metricSnapshot(goal: SpaceGoal): string {
-  const entries = Object.entries(goal.metrics);
-  if (entries.length === 0) return 'No metrics recorded';
-  return entries
-    .slice(0, 4)
-    .map(([key, value]) => `${key}: ${String(value ?? '—')}`)
-    .join(' · ');
-}
-
-function activityStatus(goal: SpaceGoal): 'active' | 'idle' | 'paused' {
-  if (goal.status === 'paused') return 'paused';
-  if (goal.activeTaskId) return 'active';
-  return (goal.lastCheckInAt ?? 0) > Date.now() - 24 * 60 * 60 * 1000 ? 'active' : 'idle';
 }
 
 export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
@@ -205,7 +191,9 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
               <div class="mt-2 space-y-2 rounded-lg border border-dark-700 bg-dark-900/40 px-3 py-2 text-xs">
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-500">Status</span>
-                  <span class="capitalize text-gray-300">{activityStatus(goal)}</span>
+                  <span class="capitalize text-gray-300">
+                    {getRecurringGoalActivityStatus(goal)}
+                  </span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-gray-500">Last activity</span>
@@ -213,7 +201,7 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
                 </div>
                 <div>
                   <div class="text-gray-500">Metric trajectory</div>
-                  <div class="mt-1 text-gray-300">{metricSnapshot(goal)}</div>
+                  <div class="mt-1 text-gray-300">{formatGoalMetricSnapshot(goal, 4)}</div>
                 </div>
               </div>
             </section>
