@@ -156,9 +156,16 @@ check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
 # These are directories covered by directory-level test_path (auto-discover).
 KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp providers rewind rpc sandbox sdk space websocket"
 
+# Directories intentionally excluded from CI (manual-only, describe.skip by default).
+EXEMPT_DIRS="benchmark"
+
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue
   dirname=$(basename "$dir")
+  # Skip explicitly exempted directories
+  if echo "$EXEMPT_DIRS" | grep -qw "$dirname"; then
+    continue
+  fi
   if ! echo "$KNOWN_DIRS" | grep -qw "$dirname"; then
     echo "ERROR: New module directory '$dirname' is not in the CI matrix"
     echo "  → Add it to the test-daemon-online matrix in .github/workflows/main.yml"
