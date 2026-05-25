@@ -144,14 +144,18 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 
 ### 4.1 Accuracy Summary
 
-| Arm | File Accuracy | Line Number Accuracy | Architectural Accuracy | Hallucinations | Grade |
-|-----|--------------|---------------------|----------------------|---------------|-------|
-| baseline | 24/29 real | Exact | Excellent | 0 major | A |
-| CodeGraph | 13/21 real | Perfect (±0 lines) | Excellent | 0 major | A |
-| CodeGraph v2 | 6/6 real | Perfect (±0 lines) | Excellent | 0 | A |
-| CRG | 17/29 real | Excellent (±1 line) | Very Good | 1 minor | A- |
-| Graphify | 24/38 real | Good (ranges) | Very Good | 0 major | A- |
-| ast-grep | 12/29 real | N/A (AST-based) | Good | 2 minor | B+ |
+File citations categorized as **real** (exists in repo), **suggested new** (legitimate plan output — the prompt asks for "new modules or types if needed"), or **hallucinated** (cited as existing but does not exist).
+
+| Arm | Real Files | Suggested New | Hallucinations | Line Accuracy | Architecture | Grade |
+|-----|-----------|--------------|---------------|--------------|-------------|-------|
+| baseline | 22 | 7 | **0** | Exact | Excellent | A |
+| CodeGraph | 21 | 5 | 4* | Perfect (±0) | Excellent | A |
+| CodeGraph v2 | 16 | 2 | **1** | Perfect (±0) | Excellent | A |
+| CRG | 31 | 13 | **1** | Excellent (±1) | Very Good | A |
+| Graphify | 39 | 11 | **1** | Good (ranges) | Very Good | A |
+| ast-grep | 26 | 10 | 4 | N/A (AST) | Good | A- |
+
+\* CodeGraph v1 hallucinations are all variants of `notification-rate-limiter.ts` (3 path prefixes of the same non-existent file) plus one test file. Counted as 4 distinct citations, 1 conceptual hallucination.
 
 ### 4.2 Verified Claims
 
@@ -173,10 +177,22 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 
 ### 4.3 Hallucinations Found
 
+**Note:** Most "not real" files in earlier analysis were actually **suggested new files** (legitimate plan output). The prompt explicitly asks for "new modules or types if needed." True hallucinations are files cited as **existing** when they do not exist.
+
 | Arm | Hallucination | Severity |
 |-----|--------------|----------|
+| **CodeGraph v1** | `notification-rate-limiter.ts` cited as existing module (3 path variants). Does not exist. | Minor |
+| **CodeGraph v1** | `space-runtime-stuck-recovery.test.ts` cited as existing test. Does not exist. | Minor |
 | **CRG** | Claims SpaceAgentNotificationService "already skips `space.workflowRun.completed` for routine completions" — **FALSE**. No such skip logic exists. | Minor |
-| **ast-grep** | Cites `goal-repository.ts` as defining `AutonomyLevel` (5-level) — unverified. | Minor |
+| **CRG** | `autonomy-recovery-policy.test.ts` cited as existing test. Does not exist. | Minor |
+| **Graphify** | `notification-rate-limiter.test.ts` cited as existing test. Does not exist. | Minor |
+| **Graphify** | `packages/daemon/src/lib/sspace/runtime/constants.ts` — typo "sspace". | Trivial |
+| **ast-grep** | `goal-repository.ts` cited as defining `AutonomyLevel` — does not exist. | Minor |
+| **ast-grep** | `migration-NNN_stuck_detection.ts` — template placeholder cited as real. | Minor |
+| **ast-grep** | `notification-throttle.ts` cited as existing (2 path variants). Does not exist. | Minor |
+| **ast-grep** | `notification-throttle.test.ts` cited as existing test. Does not exist. | Minor |
+
+**Hallucination-free arms:** baseline (0), CodeGraph v2 (1 test file — near-perfect).
 
 ### 4.4 Per-Arm Strengths
 
@@ -185,18 +201,23 @@ Approximate pricing: Input ¥0.005 / 1K tokens, Output ¥0.015 / 1K tokens.
 | **baseline** | Most accurate file-level detail | Exact line numbers for all recovery maps |
 | **CodeGraph** | Best precision with fewest calls | `processRunTick` at exact line 4234 with only 34 calls |
 | **CRG** | Best quantitative accuracy | File sizes within 1 line each; function counts accurate |
-| **Graphify** | Broadest coverage | 38 files cited; neighbor traversal finds related components |
+| **Graphify** | Broadest coverage | 39 real files cited; neighbor traversal finds related components |
 | **ast-grep** | Best structural relationships | Found `channel-router.ts` and `agent-message-router.ts` autonomy connections |
 
 ### 4.5 What Each Tool Missed
 
-| Tool | Miss | Impact |
-|------|------|--------|
-| **baseline** | None major | — |
-| **CodeGraph** | `escalation-reasons.ts` | Minor |
+**Relevant files not cited by each arm** (among the core runtime files for this task):
+
+| Tool | Missed Files | Impact |
+|------|-------------|--------|
+| **baseline** | `escalation-reasons.ts` | Minor |
+| **CodeGraph v1** | `escalation-reasons.ts` | Minor |
+| **CodeGraph v2** | `escalation-reasons.ts`, `last-message-classifier.ts`, `retry-utils.ts` | Minor |
 | **CRG** | `last-message-classifier.ts`, `constants.ts` in primary list | Moderate |
-| **Graphify** | Exact line numbers | Minor |
+| **Graphify** | None major (broadest coverage) | — |
 | **ast-grep** | `constants.ts`, `space-agent-notification-service.ts`, `last-message-classifier.ts`, `escalation-reasons.ts`, `internal-event-bus.ts` | Significant |
+
+**Note:** Earlier analysis overstated misses by counting suggested new files as "not real." The prompt asks for "new modules or types if needed" — suggesting `recovery-policy.ts`, `stuck-detector.ts`, etc. is correct behavior, not a miss.
 
 ---
 
