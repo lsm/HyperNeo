@@ -4,8 +4,8 @@
 **Status:** Draft Design
 **Related:**
 - [Unified Message Fabric Architecture Design](./unified-message-fabric-design.md)
-- [Space Actor Communication Design](../design/space-actor-communication-design.md)
-- [Internal Event, Command, and Query Architecture](../plans/internal-event-command-query-architecture.md)
+- [Space Actor Communication Design](../../design/space-actor-communication-design.md)
+- [Internal Event, Command, and Query Architecture](../../plans/internal-event-command-query-architecture.md)
 
 ---
 

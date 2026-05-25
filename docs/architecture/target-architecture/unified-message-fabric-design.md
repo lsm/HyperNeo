@@ -3,9 +3,9 @@
 **Date:** 2026-05-21
 **Status:** Draft Design
 **Related:**
-- [Internal Event, Command, and Query Architecture](../plans/internal-event-command-query-architecture.md)
-- [Live Query and Job Queue Architecture](../adr/0001-live-query-and-job-queue.md)
-- [Space Actor Communication Design](../design/space-actor-communication-design.md)
+- [Internal Event, Command, and Query Architecture](../../plans/internal-event-command-query-architecture.md)
+- [Live Query and Job Queue Architecture](../../adr/0001-live-query-and-job-queue.md)
+- [Space Actor Communication Design](../../design/space-actor-communication-design.md)
 
 ---
 
