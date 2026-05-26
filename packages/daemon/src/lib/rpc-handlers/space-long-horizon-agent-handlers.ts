@@ -34,6 +34,8 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.spaceId) throw new Error('spaceId is required');
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+    // Seed coordinator for spaces that predate the long-horizon agents feature.
+    repo.ensureCoordinator(params.spaceId);
     return { agents: repo.listBySpaceId(params.spaceId) };
   });
 
