@@ -266,6 +266,37 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     toolPermissions: {},
   },
   {
+    key: 'research.default',
+    handle: 'research',
+    displayName: 'Research',
+    description:
+      'Deep-dives topics, synthesizes sources, and delivers structured findings with evidence.',
+    instructions:
+      'Conduct thorough research. Search broadly, synthesize sources critically, surface contradictions, and deliver structured findings with citations. Prefer depth over speed, flag uncertainty explicitly, and create tasks for follow-up investigation when needed.',
+    suggestedAutonomyLevel: 2,
+    suggestedEventSubscriptions: [
+      {
+        source: 'space',
+        topic: 'task.created',
+        filter: { labels: ['research', 'investigate', 'analysis'] },
+      },
+    ],
+    reminderDefaults: [],
+    ownershipPatterns: [
+      {
+        target: 'goal',
+        relationship: 'owner',
+        description: 'Own research goals and maintain structured findings summaries.',
+      },
+      {
+        target: 'forge_scope',
+        relationship: 'watcher',
+        description: 'Watch knowledge scopes for gaps and outdated findings.',
+      },
+    ],
+    toolPermissions: {},
+  },
+  {
     key: 'family-ops-chores.default',
     handle: 'family-ops-chores',
     displayName: 'Family Ops/Chores',

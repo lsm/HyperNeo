@@ -1,6 +1,6 @@
 import type { SpaceLongHorizonAgent, SpaceLongHorizonAgentTemplate } from '@neokai/shared';
-import { useCallback, useEffect, useState } from 'preact/hooks';
-import { pushOverlayHistory } from '../../lib/router';
+import { useEffect, useState } from 'preact/hooks';
+import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -16,80 +16,6 @@ const AUTONOMY_LABELS: Record<number, string> = {
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
-}
-
-// ── Template picker ──────────────────────────────────────────────────────────
-
-interface TemplatePanelProps {
-  templates: SpaceLongHorizonAgentTemplate[];
-  existingHandles: Set<string>;
-  onSelect: (template: SpaceLongHorizonAgentTemplate) => void;
-  onCustom: () => void;
-  onCancel: () => void;
-}
-
-function TemplatePanel({
-  templates,
-  existingHandles,
-  onSelect,
-  onCustom,
-  onCancel,
-}: TemplatePanelProps) {
-  return (
-    <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4">
-      <div class="w-full max-w-lg rounded-xl border border-white/10 bg-dark-900 shadow-2xl">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <p class="text-sm font-semibold text-gray-100">Add agent</p>
-          <button
-            type="button"
-            onClick={onCancel}
-            class="rounded p-1 text-gray-500 hover:text-gray-300 hover:bg-white/5"
-          >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </div>
-        <div class="p-4 space-y-2 max-h-[60vh] overflow-y-auto">
-          {templates.map((t) => {
-            const alreadyAdded = existingHandles.has(t.handle);
-            return (
-              <button
-                key={t.key}
-                type="button"
-                disabled={alreadyAdded}
-                onClick={() => onSelect(t)}
-                class={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${
-                  alreadyAdded
-                    ? 'border-white/5 bg-white/[0.02] opacity-40 cursor-not-allowed'
-                    : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
-                }`}
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-sm font-medium text-gray-100">{t.displayName}</span>
-                  {alreadyAdded && <span class="text-xs text-gray-600">Added</span>}
-                </div>
-                <p class="mt-0.5 text-xs text-gray-500 line-clamp-2">{t.description}</p>
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={onCustom}
-            class="w-full text-left rounded-lg border border-dashed border-white/10 px-3 py-2.5 hover:border-white/20 hover:bg-white/[0.03] transition-colors"
-          >
-            <span class="text-sm font-medium text-gray-300">Custom agent</span>
-            <p class="mt-0.5 text-xs text-gray-500">Start from scratch with a blank agent.</p>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ── Agent editor ─────────────────────────────────────────────────────────────
@@ -248,13 +174,13 @@ function AgentEditor({ template, agent, onSave, onCancel }: AgentEditorProps) {
 
 interface AgentCardProps {
   agent: SpaceLongHorizonAgent;
+  spaceId: string;
   reminderCount: number;
   onEdit: () => void;
   onDelete: () => void;
-  onChat: () => void;
 }
 
-function AgentCard({ agent, reminderCount, onEdit, onDelete, onChat }: AgentCardProps) {
+function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCardProps) {
   const coordinator = isCoordinator(agent);
   const statusColors: Record<string, string> = {
     active: 'bg-green-500',
@@ -263,71 +189,54 @@ function AgentCard({ agent, reminderCount, onEdit, onDelete, onChat }: AgentCard
     archived: 'bg-gray-700',
   };
 
+  const sessionId = agent.sessionId ?? (coordinator ? `space:chat:${spaceId}` : null);
+
   return (
     <div
-      class={`group rounded-lg border px-3 py-3 ${
+      class={`group flex flex-col rounded-lg border px-3 py-3 ${
         coordinator
           ? 'border-purple-400/30 bg-purple-500/[0.06]'
           : 'border-white/10 bg-white/[0.025]'
       }`}
     >
-      <div class="flex items-start gap-3">
-        <div class="flex-1 min-w-0">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-sm font-medium text-gray-100">{agent.displayName}</span>
+            <span class="text-sm font-medium text-gray-100 truncate">{agent.displayName}</span>
             {coordinator && (
-              <span class="rounded bg-purple-500/15 px-1.5 py-0.5 text-xs font-medium text-purple-200">
+              <span class="flex-shrink-0 rounded bg-purple-500/15 px-1.5 py-0.5 text-xs font-medium text-purple-200">
                 Coordinator
               </span>
             )}
-            <span class="flex items-center gap-1 text-xs text-gray-600">
-              <span
-                class={`w-1.5 h-1.5 rounded-full ${statusColors[agent.status] ?? 'bg-gray-600'}`}
-              />
-              {agent.status}
-            </span>
+          </div>
+          <div class="mt-1 flex items-center gap-2 text-xs text-gray-600">
+            <span
+              class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColors[agent.status] ?? 'bg-gray-600'}`}
+            />
+            <span>{agent.status}</span>
             {agent.autonomyLevel && (
-              <span class="rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-500">
-                L{agent.autonomyLevel} · {AUTONOMY_LABELS[agent.autonomyLevel]}
-              </span>
+              <>
+                <span>·</span>
+                <span>
+                  L{agent.autonomyLevel} {AUTONOMY_LABELS[agent.autonomyLevel]}
+                </span>
+              </>
             )}
           </div>
           {agent.instructions && (
-            <p class="mt-1 text-xs text-gray-500 line-clamp-2 leading-relaxed">
+            <p class="mt-1.5 text-xs text-gray-500 line-clamp-2 leading-relaxed">
               {agent.instructions}
             </p>
           )}
-          <div class="mt-2 flex items-center gap-3 text-xs text-gray-600">
-            <span>
-              {reminderCount} reminder{reminderCount !== 1 ? 's' : ''}
-            </span>
-            {agent.handle && <span class="font-mono">@{agent.handle}</span>}
-          </div>
         </div>
-        <div class="flex flex-shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            onClick={onChat}
-            class="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
-            title="Open chat"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-            Chat
-          </button>
+        <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
           <button
             type="button"
             onClick={onEdit}
             class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
-            title="Edit agent"
+            title="Edit"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -341,9 +250,9 @@ function AgentCard({ agent, reminderCount, onEdit, onDelete, onChat }: AgentCard
               type="button"
               onClick={onDelete}
               class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
-              title="Delete agent"
+              title="Delete"
             >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
                   stroke-linejoin="round"
@@ -355,7 +264,83 @@ function AgentCard({ agent, reminderCount, onEdit, onDelete, onChat }: AgentCard
           )}
         </div>
       </div>
+
+      <div class="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+        <span class="text-xs text-gray-700">
+          {reminderCount > 0
+            ? `${reminderCount} reminder${reminderCount !== 1 ? 's' : ''}`
+            : 'No reminders'}
+        </span>
+        {sessionId ? (
+          <button
+            type="button"
+            onClick={() => navigateToSpaceSession(spaceId, sessionId)}
+            class="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+              />
+            </svg>
+            Chat
+          </button>
+        ) : (
+          <span class="text-xs text-gray-700">No session</span>
+        )}
+      </div>
     </div>
+  );
+}
+
+// ── Template card ─────────────────────────────────────────────────────────────
+
+function TemplateCard({
+  template,
+  alreadyAdded,
+  onClick,
+}: {
+  template: SpaceLongHorizonAgentTemplate;
+  alreadyAdded: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={alreadyAdded}
+      onClick={onClick}
+      class={`text-left rounded-lg border px-3 py-2.5 transition-colors ${
+        alreadyAdded
+          ? 'border-white/5 bg-white/[0.02] opacity-40 cursor-not-allowed'
+          : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.05]'
+      }`}
+    >
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-xs font-medium text-gray-200">{template.displayName}</span>
+        {alreadyAdded ? (
+          <span class="flex-shrink-0 text-xs text-gray-600">Added</span>
+        ) : (
+          <svg
+            class="w-3.5 h-3.5 flex-shrink-0 text-gray-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M12 4v16m8-8H4"
+            />
+          </svg>
+        )}
+      </div>
+      <p class="mt-0.5 text-xs text-gray-600 line-clamp-2 leading-relaxed">
+        {template.description}
+      </p>
+    </button>
   );
 }
 
@@ -367,7 +352,6 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const loading = spaceStore.loading.value;
 
   const [reminderCounts, setReminderCounts] = useState<Record<string, number>>({});
-  const [showTemplates, setShowTemplates] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
     null
   );
@@ -377,7 +361,6 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Load reminder counts for all agents
   useEffect(() => {
     if (agents.length === 0) return;
     const load = async () => {
@@ -397,26 +380,6 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
     load().catch(() => {});
   }, [agents.length, spaceId]);
 
-  const handleChat = useCallback(
-    (agent: SpaceLongHorizonAgent) => {
-      const sessionId = agent.sessionId ?? `space:chat:${spaceId}`;
-      pushOverlayHistory(sessionId, agent.displayName);
-    },
-    [spaceId]
-  );
-
-  const handleTemplateSelect = (template: SpaceLongHorizonAgentTemplate) => {
-    setSelectedTemplate(template);
-    setShowTemplates(false);
-    setShowEditor(true);
-  };
-
-  const handleCustom = () => {
-    setSelectedTemplate(null);
-    setShowTemplates(false);
-    setShowEditor(true);
-  };
-
   const handleEditorSave = () => {
     setShowEditor(false);
     setSelectedTemplate(null);
@@ -427,11 +390,6 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
     setShowEditor(false);
     setSelectedTemplate(null);
     setEditingAgent(null);
-  };
-
-  const handleEdit = (agent: SpaceLongHorizonAgent) => {
-    setEditingAgent(agent);
-    setShowEditor(true);
   };
 
   const handleDeleteConfirm = async () => {
@@ -452,7 +410,6 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const coordinator = agents.find(isCoordinator);
   const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
-
   const existingHandles = new Set(agents.map((a) => a.handle));
 
   if (loading) {
@@ -464,70 +421,72 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   }
 
   return (
-    <div class="flex flex-col h-full min-h-0 px-4 py-4 gap-4 overflow-y-auto scrollbar-dark">
-      {/* Header row */}
-      <div class="flex items-center justify-between gap-3 flex-shrink-0">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            {agents.length} agent{agents.length !== 1 ? 's' : ''} configured
+    <div class="h-full overflow-y-auto scrollbar-dark">
+      <div class="max-w-3xl mx-auto px-4 py-4 space-y-6">
+        {/* Configured agents */}
+        <section>
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">
+            Configured · {sortedAgents.length}
           </p>
-          <p class="mt-0.5 text-xs text-gray-600">
-            Long-horizon agents run continuously, managing goals, reminders, and events across this
-            space.
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setShowTemplates(true)}>
-          <svg class="w-3.5 h-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          Add agent
-        </Button>
-      </div>
+          {sortedAgents.length === 0 ? (
+            <p class="text-xs text-gray-600 py-4">
+              No agents yet — add one from the templates below.
+            </p>
+          ) : (
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {sortedAgents.map((agent) => (
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  spaceId={spaceId}
+                  reminderCount={reminderCounts[agent.id] ?? 0}
+                  onEdit={() => {
+                    setEditingAgent(agent);
+                    setSelectedTemplate(null);
+                    setShowEditor(true);
+                  }}
+                  onDelete={() => {
+                    setDeletingAgent(agent);
+                    setDeleteError(null);
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </section>
 
-      {/* Agent list */}
-      {sortedAgents.length === 0 ? (
-        <div class="flex flex-col items-center justify-center py-16 text-center">
-          <p class="text-sm font-medium text-gray-400">No agents yet</p>
-          <p class="mt-1 text-xs text-gray-600">Add a template or create a custom agent.</p>
-          <div class="mt-4">
-            <Button size="sm" variant="secondary" onClick={() => setShowTemplates(true)}>
-              Add agent
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div class="space-y-2">
-          {sortedAgents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              reminderCount={reminderCounts[agent.id] ?? 0}
-              onChat={() => handleChat(agent)}
-              onEdit={() => handleEdit(agent)}
-              onDelete={() => {
-                setDeletingAgent(agent);
-                setDeleteError(null);
+        {/* Templates */}
+        <section>
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Templates</p>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedTemplate(null);
+                setEditingAgent(null);
+                setShowEditor(true);
               }}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Modals */}
-      {showTemplates && (
-        <TemplatePanel
-          templates={templates}
-          existingHandles={existingHandles}
-          onSelect={handleTemplateSelect}
-          onCustom={handleCustom}
-          onCancel={() => setShowTemplates(false)}
-        />
-      )}
+              class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              + Custom
+            </button>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {templates.map((t) => (
+              <TemplateCard
+                key={t.key}
+                template={t}
+                alreadyAdded={existingHandles.has(t.handle)}
+                onClick={() => {
+                  setSelectedTemplate(t);
+                  setEditingAgent(null);
+                  setShowEditor(true);
+                }}
+              />
+            ))}
+          </div>
+        </section>
+      </div>
 
       {showEditor && (
         <AgentEditor
