@@ -11,6 +11,7 @@
 - [Storage Unit Of Work And Outbox Design](./storage-unit-of-work-and-outbox.md)
 - [Agent Runtime And Provider Compatibility Design](./agent-runtime-and-provider-compatibility.md)
 - [UI Design System Architecture Design](./ui-design-system-architecture.md)
+- [Prompt Policy Registry Spec](../../research/token-efficiency/prompt-policy-registry-spec.md)
 
 ---
 
@@ -22,6 +23,7 @@ This document is the capstone map for the architecture cleanup. It does not intr
 - `MessageHub` as a compatibility transport during migration.
 - `StorageUnitOfWork` plus outbox/inbox as the durable write boundary.
 - Space runtime decomposition as the workflow orchestration boundary.
+- Prompt Policy Registry as the scoped prompt-behavior composition boundary.
 - Agent Runtime and provider compatibility as independent execution/model axes.
 - Client stores as read-model caches, not command owners.
 - UI design system boundaries as the frontend component and token authority.
@@ -34,7 +36,7 @@ The diagrams are target architecture diagrams. They are intentionally not a grap
 
 ## 2. Architecture In One Sentence
 
-NeoKai is a local-first agent runtime where every cross-boundary interaction is a typed command, query, or event on `MessageFabric`, every durable mutation commits through one SQLite-backed unit of work with outbox/inbox semantics, agent execution is mediated by runtime/provider compatibility boundaries, and every client or worker observes the system through read models and fabric events instead of direct service coupling.
+NeoKai is a local-first agent runtime where every cross-boundary interaction is a typed command, query, or event on `MessageFabric`, every durable mutation commits through one SQLite-backed unit of work with outbox/inbox semantics, agent behavior is composed through scoped prompt policy before runtime/provider execution, and every client or worker observes the system through read models and fabric events instead of direct service coupling.
 
 ---
 
@@ -66,6 +68,7 @@ flowchart LR
     Space["Space Domain<br/>runtime, tasks, goals, schedules"]
     Forge["Forge Domain<br/>evidence, episodes, lessons, proposals"]
     Sessions["Agent Runtime Domain<br/>sessions, messages, lifecycle"]
+    PromptPolicy["Prompt Policy Registry<br/>scoped behavior records, composition, rendering"]
     Tools["MCP And Tool Runtime<br/>skills, permissions, server attachment"]
     Providers["Provider And Bridge Boundary<br/>models, credentials, model IO"]
     ExternalEvents["External Event Intake<br/>GitHub and future sources"]
@@ -89,6 +92,7 @@ flowchart LR
   Fabric <--> Space
   Fabric <--> Forge
   Fabric <--> Sessions
+  Fabric <--> PromptPolicy
   Fabric <--> Tools
   Fabric <--> Providers
   Fabric <--> ExternalEvents
@@ -96,8 +100,12 @@ flowchart LR
   Space --> UOW
   Forge --> UOW
   Sessions --> UOW
+  PromptPolicy --> UOW
   Tools --> UOW
   ExternalEvents --> UOW
+  Space --> PromptPolicy
+  Forge --> PromptPolicy
+  PromptPolicy --> Sessions
   UOW --> DB
   UOW --> Jobs
   UOW --> Outbox
@@ -114,6 +122,7 @@ flowchart LR
 
 - `MessageFabric` is the semantic center. It owns command/query/event contracts and routes across transports.
 - Domain modules own business behavior. They do not own WebSocket protocol details.
+- `PromptPolicyRegistry` resolves scoped prompt-behavior records and renders them for Agent Runtime. Space, Forge, Workflow, and Task code may create scoped records, but they do not render prompt policy themselves.
 - `StorageUnitOfWork` is the write center. Durable state, jobs, command receipts, and outbox messages commit together.
 - `LiveQuery` is not the event bus. It is an ephemeral subscribed-query mechanism backed by committed DB state.
 - `MessageHub` remains behind the WebSocket compatibility adapter until client and daemon call sites migrate.
@@ -144,9 +153,17 @@ flowchart TB
     SpaceDomain["Space Domain"]
     ForgeDomain["Forge Domain"]
     SessionDomain["Agent Runtime Domain"]
+    PromptPolicyDomain["Prompt Policy Domain"]
     ToolDomain["MCP And Skills Domain"]
     ProviderDomain["Provider And Bridge Domain"]
     ExternalDomain["External Event Domain"]
+  end
+
+  subgraph PromptPolicyDetail["Prompt Policy Internals"]
+    PromptPolicyRegistry["PromptPolicyRegistry"]
+    PromptPolicyResolver["PromptPolicyResolver"]
+    PromptPolicyComposer["PromptPolicyComposer"]
+    PromptPolicyRenderer["PromptPolicyRenderer"]
   end
 
   subgraph SpaceDetail["Space Domain Internals"]
@@ -190,14 +207,21 @@ flowchart TB
   CommandRouter --> SpaceDomain
   CommandRouter --> ForgeDomain
   CommandRouter --> SessionDomain
+  CommandRouter --> PromptPolicyDomain
   CommandRouter --> ToolDomain
   QueryRouter --> SpaceDomain
   QueryRouter --> ForgeDomain
   QueryRouter --> SessionDomain
+  QueryRouter --> PromptPolicyDomain
   QueryRouter --> ToolDomain
   EventRouter --> Projectors
 
   SpaceDomain --> SpaceFacade
+  PromptPolicyDomain --> PromptPolicyRegistry
+  PromptPolicyRegistry --> PromptPolicyResolver
+  PromptPolicyResolver --> PromptPolicyComposer
+  PromptPolicyComposer --> PromptPolicyRenderer
+  SessionDomain --> PromptPolicyRegistry
   SpaceFacade --> RuntimeScheduler
   SpaceFacade --> RunCoordinator
   RunCoordinator --> NodeSupervisor
@@ -209,6 +233,7 @@ flowchart TB
   SpaceDomain --> UOWRunner
   ForgeDomain --> UOWRunner
   SessionDomain --> UOWRunner
+  PromptPolicyDomain --> UOWRunner
   ToolDomain --> UOWRunner
   ExternalDomain --> UOWRunner
 
@@ -346,6 +371,7 @@ flowchart TB
   Recovery["RuntimeRecoverySupervisor"]
   AgentGateway["AgentSessionGateway<br/>runtime-neutral port"]
   SessionDomain["Agent Runtime Domain"]
+  PromptPolicy["Prompt Policy Registry<br/>resolve scoped behavior"]
   RuntimeGateway["AgentRuntimeGateway"]
   RuntimeAdapter["AgentRuntimeAdapter<br/>Claude today, others later"]
   Provider["Provider Bridge<br/>model IO compatibility"]
@@ -370,7 +396,8 @@ flowchart TB
   Nodes --> AgentGateway
   AgentGateway --> RuntimeGateway
   RuntimeGateway --> SessionDomain
-  SessionDomain --> RuntimeAdapter
+  SessionDomain --> PromptPolicy
+  PromptPolicy --> RuntimeAdapter
   RuntimeAdapter --> Provider
   RuntimeAdapter --> MCP
   MCP --> Fabric
@@ -390,6 +417,7 @@ flowchart TB
 - `SpaceRuntimeFacade` is the boundary; outside modules should not coordinate workflow internals directly.
 - Runtime state transitions are decided by runtime components and committed through UoW.
 - Agent SDK mechanics are behind `AgentSessionGateway` and the Agent Session domain.
+- Prompt behavior is resolved by `PromptPolicyRegistry` before runtime adapter invocation. Space and Workflow scopes can affect the selected records, but the final render happens in the Agent Runtime boundary.
 - MCP tools call fabric commands or runtime facade methods, not arbitrary repositories.
 - Runtime events that matter for recovery or read models are durable outbox events.
 
@@ -535,9 +563,10 @@ After that, the next slices should be:
 1. `space.task.update` and archive/cancel paths.
 2. schedule fire path because it already needs transactional job/task/schedule behavior.
 3. Forge proposal task creation and rollup application.
-4. runtime run/task/node transitions.
-5. client focused stores and read models.
-6. shared package root export reduction and enforcement.
+4. prompt policy records and effective preview.
+5. runtime run/task/node transitions.
+6. client focused stores and read models.
+7. shared package root export reduction and enforcement.
 
 ---
 
@@ -629,7 +658,16 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Public `@neokai/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
 
-### 11.9 Legacy Exit Gate
+### 11.9 Prompt Policy Registry Gate
+
+- Prompt behavior that can vary by global, session, Space, SpaceAgent, workflow, workflow-node, or task scope is represented as `prompt_policy_records`, not feature-specific fields copied across settings, Space, agent, workflow, and session objects.
+- `PromptPolicyResolver`, `PromptPolicyComposer`, and `PromptPolicyRenderer` live in the Agent Runtime boundary and are invoked before runtime adapter option construction.
+- Space, Forge, Workflow, and Task domains may create or suppress scoped prompt policy records, but they do not directly render prompt fragments into SDK/runtime prompts.
+- Effective prompt policy can be queried for preview/debug with applied records, suppressed records, inherited source, active built-ins, and channel preview.
+- Built-in policies such as `neokai.output-mode.compressed` are versioned in code and activated by scoped records; arbitrary user-authored content remains internal until provenance, validation, and preview are stable.
+- Worktree isolation and workflow runtime contracts are either explicitly retained on existing code paths or migrated into Prompt Policy Registry with tests that prove ordering, suppression, and subagent rendering behavior.
+
+### 11.10 Legacy Exit Gate
 
 - A compatibility surface is allowed only when it has a named target replacement and no new feature depends on its internals.
 - Migrated slices have no direct RPC -> service -> repository shortcut that bypasses fabric/UoW for durable cross-boundary behavior.

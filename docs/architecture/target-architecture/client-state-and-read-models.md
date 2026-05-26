@@ -16,6 +16,8 @@ The client should not preserve the old backend shape by keeping one broad mutabl
 
 The Forge system must be treated as a first-class Space domain slice. Forge scopes, evidence, metric snapshots, episodes, lessons, task proposals, and rollups are not component-local state. They are read models connected to goals, tasks, workflow runs, and runtime events.
 
+Prompt Policy Registry state should also be a read-model surface. The UI should not infer effective output behavior by inspecting global settings, Space settings, workflow JSON, and session config separately. It should query an effective prompt policy preview that reports applied records, suppressed records, inherited source, and active built-ins.
+
 ---
 
 ## 2. Current State
@@ -87,6 +89,7 @@ flowchart TD
   Schedules["TaskScheduleStore"]
   Forge["ForgeStore"]
   Sessions["SpaceSessionStore"]
+  PromptPolicy["PromptPolicyStore"]
 
   Components["Space UI Components"]
   Projectors["Client Event Projectors"]
@@ -103,6 +106,7 @@ flowchart TD
   Projectors --> Schedules
   Projectors --> Forge
   Projectors --> Sessions
+  Projectors --> PromptPolicy
 
   Commands --> Components
   Queries --> Spaces
@@ -114,6 +118,7 @@ flowchart TD
   Queries --> Schedules
   Queries --> Forge
   Queries --> Sessions
+  Queries --> PromptPolicy
 
   Route --> Components
   Spaces --> Components
@@ -125,6 +130,7 @@ flowchart TD
   Schedules --> Components
   Forge --> Components
   Sessions --> Components
+  PromptPolicy --> Components
 ```
 
 The store layer is not a second backend. It is a cache of read models derived from fabric queries and events.
@@ -459,7 +465,47 @@ Notes:
 
 - Current `spaceSessions.bySpace` LiveQuery moves behind `space.session.list` subscribed query.
 
-### 7.10 ForgeStore
+### 7.10 PromptPolicyStore
+
+Owns effective prompt policy preview state and scoped prompt policy commands.
+
+Read models:
+
+- `promptPolicy.effective.preview`
+- `promptPolicy.record.list`
+
+State:
+
+- applied records by preview scope;
+- suppressed records with reasons;
+- inherited source summary, such as global, Space, SpaceAgent, workflow, workflow-node, task, or session;
+- active built-ins such as `neokai.output-mode.compressed`;
+- channel previews for `system.prepend`, `system.append`, and `agent.prompt.append`;
+- loading/error state per preview target.
+
+Commands:
+
+- `promptPolicy.record.create`
+- `promptPolicy.record.update`
+- `promptPolicy.record.enable`
+- `promptPolicy.record.disable`
+- `promptPolicy.record.delete`
+- `promptPolicy.builtin.activate`
+- `promptPolicy.builtin.suppress`
+
+Events:
+
+- `promptPolicy.record.created`
+- `promptPolicy.record.updated`
+- `promptPolicy.record.deleted`
+- `promptPolicy.effective.changed`
+
+Notes:
+
+- The UI should show inherited effective behavior from the preview query rather than duplicating scope precedence logic client-side.
+- Session, Space, SpaceAgent, workflow, workflow-node, and task controls should write scoped records through commands; they should not add feature-specific `outputMode` fields to local state.
+
+### 7.11 ForgeStore
 
 Owns Forge evolution read models and commands.
 
@@ -610,6 +656,7 @@ This policy should be implemented once in a small helper rather than repeatedly 
 | `evolution.evidence.list` | `forge.evidence.list` |
 | `evolution.metricSnapshot.list` | `forge.metricSnapshot.list` |
 | `evolution.review.get` | `forge.reviewBundle.get` |
+| prompt/output behavior assembled from settings, Space, workflow, and session state | `promptPolicy.effective.preview` |
 
 ### New Queries To Add
 
@@ -620,6 +667,8 @@ This policy should be implemented once in a small helper rather than repeatedly 
 | `forge.scope.detail` | Consistent scope detail snapshot. |
 | `forge.scope.timeline` | Evidence, metric, episode, lesson, and proposal timeline. |
 | `forge.scope.byGoal` | Resolve recurring goal to scope without manual client filtering. |
+| `promptPolicy.effective.preview` | Applied/suppressed prompt policy records and inherited source for a session/task/scope chain. |
+| `promptPolicy.record.list` | Inspect scoped prompt policy rows for settings/debug UI. |
 
 ---
 
@@ -681,6 +730,7 @@ Suggested facade mapping:
 | `goals`, `goalEvents` | `SpaceGoalStore` |
 | `schedules` | `TaskScheduleStore` |
 | Forge local state in `SpaceForge` | `ForgeStore` |
+| output/prompt behavior controls and previews | `PromptPolicyStore` |
 
 ---
 
@@ -705,6 +755,7 @@ packages/web/src/lib/stores/
   task-schedule-store.ts
   space-session-store.ts
   forge-store.ts
+  prompt-policy-store.ts
   space-store-facade.ts
 ```
 
@@ -744,7 +795,14 @@ Keep Preact Signals as the store primitive. The main change is ownership, not th
 - Route Forge rollup and proposal-created-task effects through events into `SpaceGoalStore` and `SpaceTaskStore`.
 - Keep component-local form/dialog state in `SpaceForge`.
 
-### Phase 5: Component Migration
+### Phase 5: Prompt Policy Store
+
+- Introduce `PromptPolicyStore`.
+- Add effective policy preview queries for session, Space, SpaceAgent, workflow, workflow-node, and task scopes.
+- Move compressed-output controls to scoped prompt policy commands.
+- Show inherited source and suppressed records from the preview query instead of reimplementing precedence in UI state.
+
+### Phase 6: Component Migration
 
 - Migrate Space views one at a time:
   1. Forge view.
@@ -756,7 +814,7 @@ Keep Preact Signals as the store primitive. The main change is ownership, not th
 
 Forge should move early because it is new, self-contained, and currently duplicates store patterns that will otherwise harden into another monolith.
 
-### Phase 6: Remove Facade
+### Phase 7: Remove Facade
 
 - Block new imports from `packages/web/src/lib/space-store.ts`.
 - Remove migrated members from the facade.
@@ -772,8 +830,9 @@ Forge should move early because it is new, self-contained, and currently duplica
 4. Command responses may inform UX, but durable state comes from events or subscribed queries.
 5. Cross-domain state updates happen through explicit events, not direct store imports.
 6. Forge data is not component-local except for transient form and tab state.
-7. Every selected-space or selected-scope fetch has a stale-response guard.
-8. Store tests should assert reducer behavior and stale-response behavior independently from component rendering.
+7. Prompt policy UI reads effective previews from `PromptPolicyStore`; it does not duplicate precedence or suppression logic.
+8. Every selected-space or selected-scope fetch has a stale-response guard.
+9. Store tests should assert reducer behavior and stale-response behavior independently from component rendering.
 
 ---
 

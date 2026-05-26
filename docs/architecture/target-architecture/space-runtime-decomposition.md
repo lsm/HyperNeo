@@ -71,6 +71,7 @@ flowchart TD
   Registry["ActiveRunRegistry<br/>rehydratable in-memory run metadata"]
   Nodes["NodeExecutionSupervisor<br/>pending/in_progress/idle/blocked"]
   Agents["AgentSessionGateway<br/>port to Agent SDK sessions"]
+  PromptPolicy["PromptPolicyRegistry<br/>scoped behavior records"]
   Channels["ChannelDeliveryService<br/>target resolution + delivery plan"]
   Gates["GateOrchestrator<br/>gate data, scripts, polls, approvals"]
   Completion["CompletionCoordinator<br/>completion + post approval"]
@@ -98,6 +99,7 @@ flowchart TD
   Coordinator --> Completion
   Coordinator --> Stores
   Nodes --> Agents
+  Agents --> PromptPolicy
   Nodes --> Stores
   Channels --> Gates
   Channels --> Stores
@@ -112,6 +114,8 @@ flowchart TD
 ```
 
 `SpaceRuntimeFacade` is the module boundary. Everything outside the runtime talks to the facade through MessageFabric contracts or temporary compatibility methods. Inside the module, components may call each other directly when they are in the same consistency boundary.
+
+Prompt policy is intentionally outside the Space runtime core. Space, workflow, node-agent, and task code can create or suppress scoped `prompt_policy_records`, but `PromptPolicyRegistry` resolves and renders those records through the Agent Runtime boundary when a concrete session starts or resumes.
 
 ---
 
@@ -250,8 +254,11 @@ Responsibilities:
 - Interrupt, cancel, or restart a session by ID.
 - Answer liveness checks.
 - Attach node-agent MCP servers and memory/db-query servers via an implementation detail.
+- Pass Space, workflow, node execution, and task scope IDs to Agent Runtime so Prompt Policy Registry can resolve effective behavior.
 
 `TaskAgentManager` initially implements this gateway. Over time, SDK-specific setup, MCP merging, worktree setup, and session registration stay behind the gateway so `WorkflowRunCoordinator` and `NodeExecutionSupervisor` do not depend on `TaskAgentManager` directly.
+
+The gateway must not render prompt policy itself. It supplies scope context and delegates behavior composition to Agent Runtime.
 
 ### 6.9 ChannelDeliveryService
 
@@ -632,7 +639,8 @@ Existing files can move gradually. For example, `ChannelRouter` can first become
 6. Runtime state changes emit fabric events; projectors decide who needs to hear about them.
 7. In-memory state must be reconstructable or explicitly marked ephemeral.
 8. Fabric contracts are the boundary between Space runtime and the rest of the daemon.
-9. Existing public behavior must migrate behind facades before direct call sites are changed.
+9. Space runtime may write scoped prompt policy records, but Agent Runtime owns effective prompt policy resolution and rendering.
+10. Existing public behavior must migrate behind facades before direct call sites are changed.
 
 ---
 

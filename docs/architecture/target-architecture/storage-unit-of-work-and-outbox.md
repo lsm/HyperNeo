@@ -6,6 +6,8 @@ This spec assumes the target `MessageFabric` exists and the current `MessageHub`
 
 The goal is to define the persistence boundary that lets commands, runtime transitions, Forge writes, read-model updates, jobs, and durable events move together without losing consistency.
 
+Prompt policy records are part of this durability boundary. Global, session, Space, SpaceAgent, workflow, workflow-node, and task scoped prompt behavior should be stored as `prompt_policy_records` rows and mutated through UoW-backed repositories, not copied into feature-specific settings fields.
+
 ## Why This Exists
 
 The daemon already has substantial persistence infrastructure:
@@ -131,6 +133,7 @@ flowchart TB
   Uow["StorageUnitOfWork"]
   Repos["Repositories<br/>domain tables"]
   Jobs["JobQueueRepository"]
+  PromptPolicy["PromptPolicyRecordRepository"]
   Outbox["MessageOutboxRepository"]
   Inbox["MessageInboxRepository"]
   Receipts["CommandReceiptRepository"]
@@ -149,6 +152,7 @@ flowchart TB
   UowRunner --> Uow
   Uow --> Repos
   Uow --> Jobs
+  Uow --> PromptPolicy
   Uow --> Outbox
   Uow --> Receipts
   Uow --> Changes
@@ -232,6 +236,7 @@ export interface StorageUnitOfWork {
   readonly schedules: TaskScheduleRepository;
   readonly forge: EvolutionRepository;
   readonly sessions: SessionRepository;
+  readonly promptPolicyRecords: PromptPolicyRecordRepository;
   readonly jobs: JobQueueRepository;
 
   readonly outbox: MessageOutboxWriter;
@@ -302,6 +307,20 @@ Responsibilities:
 - record failure when the command contract chooses durable failure semantics
 
 Command receipts are not a replacement for domain constraints. They are the fabric-level retry boundary.
+
+### `PromptPolicyRecordRepository`
+
+Persists scoped prompt behavior records used by the Agent Runtime prompt policy resolver.
+
+Responsibilities:
+
+- create, update, enable, disable, and suppress policy records in global, session, Space, SpaceAgent, workflow, workflow-node, and task scopes
+- enforce row shape for `template`, `content`, and `suppress` records
+- reject stored `user.prepend` records until message-level rendering exists
+- prevent same-scope conflicts for enabled rows targeting the same template or suppression target
+- return records by scope chain for effective policy preview and Agent Runtime resolution
+
+Repository methods mutate only durable rows. They do not render prompts, resolve precedence, or query Space/workflow state outside the scope IDs they are given.
 
 ### `OutboxDispatcher`
 
@@ -479,6 +498,51 @@ CREATE TABLE read_model_cursors (
 ```
 
 This table supports asynchronous durable projectors later. Synchronous SQL-backed live queries do not need it, but server-side materialized read models will.
+
+### `prompt_policy_records`
+
+```sql
+CREATE TABLE prompt_policy_records (
+  id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL
+    CHECK(scope_type IN ('global', 'session', 'space', 'space_agent', 'workflow', 'workflow_node', 'task')),
+  scope_id TEXT,
+  record_type TEXT NOT NULL CHECK(record_type IN ('template', 'content', 'suppress')),
+  template_id TEXT,
+  suppresses_template_id TEXT,
+  channel TEXT NOT NULL CHECK(channel IN ('system.prepend', 'system.append', 'agent.prompt.append')),
+  priority INTEGER NOT NULL CHECK(priority BETWEEN 500 AND 799),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+  content TEXT,
+  source_kind TEXT NOT NULL
+    CHECK(source_kind IN ('settings', 'session', 'space', 'space-agent', 'workflow', 'task', 'runtime')),
+  source_ref TEXT,
+  constraints_json TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK(
+    (scope_type = 'global' AND scope_id IS NULL)
+    OR (scope_type <> 'global' AND scope_id IS NOT NULL AND length(scope_id) > 0)
+  ),
+  CHECK(
+    (record_type = 'template' AND template_id IS NOT NULL AND suppresses_template_id IS NULL AND content IS NULL)
+    OR (record_type = 'content' AND template_id IS NULL AND suppresses_template_id IS NULL AND content IS NOT NULL AND length(content) > 0)
+    OR (record_type = 'suppress' AND template_id IS NULL AND suppresses_template_id IS NOT NULL AND content IS NULL)
+  ),
+  CHECK(constraints_json IS NULL OR json_valid(constraints_json))
+);
+
+CREATE INDEX idx_prompt_policy_records_scope
+  ON prompt_policy_records(scope_type, scope_id, enabled);
+
+CREATE INDEX idx_prompt_policy_records_template
+  ON prompt_policy_records(template_id, enabled);
+
+CREATE INDEX idx_prompt_policy_records_suppresses
+  ON prompt_policy_records(suppresses_template_id, enabled);
+```
+
+This table stores activation, suppression, and future internal content records. Built-in prompt text stays in code; rows reference stable template IDs such as `neokai.output-mode.compressed`.
 
 ### Optional `message_outbox_deliveries`
 
@@ -789,6 +853,7 @@ Initial candidates:
 - selected Space dashboard summary
 - workflow runtime canvas by run
 - Forge scope detail/read bundle
+- effective prompt policy preview by session/task/scope chain
 - task board sidebar groups
 - global schedule overview
 
@@ -812,6 +877,17 @@ Outbox, inbox, and command receipts should store:
 - command/event name
 
 This gives durable audit trails without turning every domain table into an audit log.
+
+Prompt policy commands should emit durable events when records change. Suggested events:
+
+| Event | Meaning |
+| --- | --- |
+| `promptPolicy.record.created` | A scoped prompt policy row was created. |
+| `promptPolicy.record.updated` | A scoped prompt policy row changed. |
+| `promptPolicy.record.deleted` | A scoped prompt policy row was removed. |
+| `promptPolicy.effective.changed` | A scope chain may resolve to a different effective policy. |
+
+The effective-change event can be coarse-grained by scope because clients and Agent Runtime can recompute previews from committed records.
 
 ## Ordering
 
@@ -878,7 +954,7 @@ Do not run the repo root `bun test`. Use targeted scripts following the reposito
 
 ### Phase 0: Schema And Repositories
 
-- Add migrations for `message_outbox`, `message_inbox`, `command_receipts`, and `read_model_cursors`.
+- Add migrations for `message_outbox`, `message_inbox`, `command_receipts`, `read_model_cursors`, and `prompt_policy_records`.
 - Add repositories for those tables.
 - Add low-level claim/retry helpers for outbox and inbox.
 - No behavior changes yet.

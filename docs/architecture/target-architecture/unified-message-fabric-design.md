@@ -82,6 +82,7 @@ flowchart TD
   Space["Space / Workflow module"]
   Sessions["Agent SDK Session module"]
   Providers["AI Provider module"]
+  PromptPolicy["Prompt Policy module"]
   MCP["MCP / Skills module"]
   DB["DB / Repositories / LiveQuery"]
   Jobs["Job Queue"]
@@ -98,6 +99,7 @@ flowchart TD
   InProc <--> Space
   InProc <--> Sessions
   InProc <--> Providers
+  InProc <--> PromptPolicy
   InProc <--> MCP
   InProc <--> DB
   InProc <--> Jobs
@@ -285,6 +287,7 @@ packages/messaging/src/
   contracts/
     space.ts
     session.ts
+    prompt-policy.ts
     agent.ts
     provider.ts
     mcp.ts
@@ -510,6 +513,7 @@ Inbox can be deferred until the first cross-process durable transport, but the e
 | `LiveQueryEngine` | Backend for subscribed DB-backed named queries. Not exposed as arbitrary SQL over the fabric. |
 | `JobQueueProcessor` | Durable command execution backend for accepted async commands. |
 | `ExternalEventService` | Producer and normalizer of trusted `externalEvent.*` domain events. |
+| `PromptPolicyRegistry` | Domain module for scoped prompt behavior records, effective policy preview, and policy-change events. |
 | `setupRPCHandlers` | Should shrink into module registration. Each module registers contracts, handlers, and compatibility aliases. |
 | Direct service calls | Still allowed within a cohesive module. Cross-module and cross-process boundaries should move to fabric contracts. |
 
@@ -625,6 +629,65 @@ export const spaceTaskCreated = defineEvent({
 });
 ```
 
+### 13.4 Prompt Policy Contracts
+
+Prompt policy is managed through the same command/query/event surface as other cross-boundary state. Settings UI, Space configuration, workflow editors, and task-run options should not write feature-specific prompt fields; they should create or suppress scoped policy records.
+
+Example command:
+
+```typescript
+export const promptPolicyBuiltinActivate = defineCommand({
+  name: 'promptPolicy.builtin.activate',
+  version: 1,
+  input: PromptPolicyBuiltinActivateSchema,
+  output: PromptPolicyRecordSchema,
+  subject: {
+    fromInput: (input) => `promptPolicy/${input.scopeType}/${input.scopeId ?? 'global'}`,
+  },
+  auth: {
+    action: 'promptPolicy.record.write',
+    resource: 'space',
+    resourceIdFrom: (input) => input.spaceId ?? null,
+  },
+  durability: {
+    delivery: 'durable',
+    replay: 'none',
+    ordering: 'bySubject',
+  },
+});
+```
+
+Example query:
+
+```typescript
+export const promptPolicyEffectivePreview = defineQuery({
+  name: 'promptPolicy.effective.preview',
+  version: 1,
+  input: PromptPolicyPreviewSchema,
+  output: PromptPolicyPreviewResultSchema,
+  subject: {
+    fromInput: (input) => `promptPolicy/preview/${input.sessionId ?? input.spaceId ?? 'global'}`,
+  },
+  auth: {
+    action: 'promptPolicy.preview',
+    resource: 'space',
+    resourceIdFrom: (input) => input.spaceId ?? null,
+  },
+  supportsSubscribe: true,
+});
+```
+
+Example events:
+
+| Event | Durability | Purpose |
+| --- | --- | --- |
+| `promptPolicy.record.created` | Durable | A scoped policy record was created. |
+| `promptPolicy.record.updated` | Durable | A scoped policy record changed. |
+| `promptPolicy.record.deleted` | Durable | A scoped policy record was removed. |
+| `promptPolicy.effective.changed` | Durable or ephemeral by scope | A scope chain may resolve to a different effective policy. |
+
+Handlers store and mutate `prompt_policy_records`; the Agent Runtime prompt policy resolver performs precedence, suppression, and rendering.
+
 ---
 
 ## 14. Migration Strategy
@@ -673,13 +736,20 @@ Migrate one bounded slice, preferably `space.task.*`:
 - Add retry and status tracking.
 - Connect accepted command results to existing `JobQueueProcessor` where useful.
 
-### Phase 6: Module Lifecycle Cleanup
+### Phase 6: Prompt Policy Slice
+
+- Define `promptPolicy.*` command/query/event contracts.
+- Route compressed-output settings through scoped `prompt_policy_records`.
+- Add effective preview query and `promptPolicy.effective.changed` event.
+- Keep prompt rendering inside Agent Runtime; fabric only manages commands, queries, events, and durable state changes.
+
+### Phase 7: Module Lifecycle Cleanup
 
 - Split `setupRPCHandlers` into module registration and module startup.
 - Move Space, Session, Provider, MCP, External Event, and Job surfaces into modules.
 - Reduce direct cross-module references where fabric contracts are the intended boundary.
 
-### Phase 7: External Transports
+### Phase 8: External Transports
 
 - Add NATS or gRPC before Kafka if low-latency request/reply is the first need.
 - Add Kafka for durable event streams and async commands.

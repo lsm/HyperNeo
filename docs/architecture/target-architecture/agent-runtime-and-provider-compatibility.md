@@ -9,6 +9,7 @@
 - [Space Runtime Decomposition Design](./space-runtime-decomposition.md)
 - [Storage Unit Of Work And Outbox Design](./storage-unit-of-work-and-outbox.md)
 - [Shared Package Boundaries Design](./shared-package-boundaries.md)
+- [Prompt Policy Registry Spec](../../research/token-efficiency/prompt-policy-registry-spec.md)
 
 ---
 
@@ -90,6 +91,8 @@ The **Model IO Compatibility Layer** is the conceptual boundary that normalizes 
 - tool guards
 
 The same behavior should be runnable on different runtimes and providers when capabilities allow.
+
+Prompt policy is the scoped, inspectable mechanism that contributes some of these behavior inputs. A Space, workflow, task, or session may activate policy records such as `neokai.output-mode.compressed`, but the Agent Runtime boundary resolves and renders those records before invoking a runtime adapter.
 
 ### Runtime Profile
 
@@ -192,6 +195,7 @@ flowchart TB
   CapabilityResolver["CapabilityResolver<br/>runtime + provider + bridge + model"]
   ProfileStore["RuntimeProfileStore"]
   BehaviorResolver["AgentBehaviorResolver<br/>instructions, tools, memory, policy"]
+  PromptPolicy["PromptPolicyRegistry<br/>scoped prompt records"]
 
   subgraph RuntimeAdapters["Agent Runtime Adapters"]
     ClaudeRuntime["Claude Agent Runtime Adapter"]
@@ -227,6 +231,7 @@ flowchart TB
   RuntimeGateway --> ProfileStore
   RuntimeGateway --> CapabilityResolver
   RuntimeGateway --> BehaviorResolver
+  BehaviorResolver --> PromptPolicy
   RuntimeGateway --> RuntimeAdapters
 
   RuntimeAdapters --> RuntimeModelIO
@@ -242,6 +247,7 @@ flowchart TB
 - Provider bridges make providers look like the API shape a runtime expects.
 - `CapabilityResolver` decides whether a selected runtime/provider/model/bridge pair is native, bridged, degraded, or unsupported.
 - `AgentBehaviorResolver` keeps prompts/tools/policy separate from execution mechanics.
+- `PromptPolicyRegistry` resolves scoped prompt records and renders prompt fragments into the behavior profile before runtime-native options are built.
 
 ---
 
@@ -417,6 +423,7 @@ Inputs:
 - requested bridge mode
 - behavior requirements
 - tool policy
+- prompt policy requirements
 - workspace/session context
 
 Output:
@@ -507,6 +514,21 @@ Runtime adapters then map behavior into native runtime concepts:
 | subagents | `agents` + Task tools | agents/handoffs if supported | runtime-specific |
 | permissions | `canUseTool`, hooks, permission mode | approval hooks/policy | runtime-specific |
 | sandbox | SDK sandbox/options | runtime sandbox | runtime-specific |
+
+### 7.9 PromptPolicyRegistry
+
+Prompt policy is a cross-cutting behavior layer inside Agent Runtime. It must not live inside Space runtime, workflow execution, provider adapters, or UI settings objects.
+
+Responsibilities:
+
+- resolve effective `PromptPolicyRecord` rows for the current global, session, Space, SpaceAgent, workflow, workflow-node, and task scopes
+- apply precedence and suppression rules before runtime adapter option construction
+- compose ordered prompt fragments by channel, priority, and provenance
+- render supported channels into runtime-neutral behavior fields and runtime-native prompt shapes
+- copy eligible policies to SDK subagent prompts when `appliesToSubagents` is true
+- expose preview/debug metadata without putting provenance into the model prompt
+
+Runtime adapters receive the resolved behavior profile and should not query Space/workflow/task state directly to discover prompt policy. Provider bridges do not own prompt policy; they only preserve or degrade the final rendered prompt according to capability rules.
 
 ---
 
@@ -658,6 +680,8 @@ Current code already handles a few of these:
 - context-window overrides for non-native providers
 - thinking block stripping on cross-provider model switches
 - explicit provider id to avoid ambiguous model ownership
+
+Prompt policy can also affect effective capability. For example, a policy may require normal prose for security/approval clarity, require structured output, or request compact output. `CapabilityResolver` should report whether a runtime/provider/profile can honor those requirements natively, through prompt rendering, through SDK settings, or only with degradation.
 
 The target makes these a formal resolver result.
 
@@ -856,54 +880,64 @@ The architecture can still start with Claude Agent SDK as the first runtime, but
 
 - Add `agent-runtime` shared contract/domain types.
 - Define `AgentRuntimeId`, `RuntimeProfile`, `AgentBehavior`, and compatibility result types.
+- Define prompt policy as part of the Agent Runtime behavior boundary, while keeping durable records and preview contracts under shared prompt-policy contracts/read models.
 - Keep current `AgentSession` implementation unchanged.
 - Add docs and names that treat Claude Agent SDK as one runtime.
 
-### Phase 1: Claude Agent Runtime Adapter
+### Phase 1: Prompt Policy Registry Core
+
+- Add `PromptPolicyRecord` shared types, repository, resolver, composer, and renderer.
+- Wire prompt policy rendering into the current Claude Agent SDK option path before adapter extraction.
+- Ship `neokai.output-mode.compressed` as the first built-in policy.
+- Add preview metadata for applied/suppressed policy records.
+- Keep worktree isolation and workflow runtime contracts on existing code paths until renderer tests and runtime mileage justify migration.
+
+### Phase 2: Claude Agent Runtime Adapter
 
 - Wrap current `AgentSession`, `QueryRunner`, `QueryOptionsBuilder`, `SDKRuntimeConfig`, and message handling behind `ClaudeAgentRuntimeAdapter`.
 - Rename internal interfaces where practical without breaking compatibility.
 - Expose runtime-neutral events while still storing raw SDK messages.
 
-### Phase 2: Capability Resolver
+### Phase 3: Capability Resolver
 
 - Build resolver on top of current provider registry.
 - Include runtime capabilities for Claude Agent SDK.
 - Include bridge capabilities from existing provider bridges.
 - Surface native/bridged/degraded/unsupported in settings/model selection UI.
+- Include prompt policy requirements in compatibility results when policy affects output shape, structured output, or safety/approval clarity.
 
-### Phase 3: Runtime Profiles
+### Phase 4: Runtime Profiles
 
 - Add runtime profile persistence.
 - Store runtime id + provider id + model id + bridge mode.
 - Add profile resolution precedence for workflow node, Space agent, Space default, user default, daemon default.
 - Ensure existing sessions can be mapped to a default Claude Agent SDK profile.
 
-### Phase 4: Runtime-Neutral Session Commands
+### Phase 5: Runtime-Neutral Session Commands
 
 - Add fabric commands/queries for runtime session start, send, interrupt, config update, status, and capability resolution.
 - Route current session RPC handlers through the gateway.
 - Keep MessageHub compatibility for existing clients.
 
-### Phase 5: Normalized Runtime Events
+### Phase 6: Normalized Runtime Events
 
 - Add normalized runtime message/event shapes.
 - Project current SDK messages into normalized runtime events/read models.
 - Keep raw SDK payloads for diagnostics and current UI compatibility.
 
-### Phase 6: Second Runtime Adapter
+### Phase 7: Second Runtime Adapter
 
 - Add one non-Claude runtime adapter.
 - Codex SDK/server is a strong candidate because the codebase already has Codex bridge/provider work and auth import patterns.
 - Validate that Space runtime and client stores do not need runtime-specific changes.
 
-### Phase 7: Provider Bridge Generalization
+### Phase 8: Provider Bridge Generalization
 
 - Move bridge metadata into provider registry.
 - Add bridge selection and compatibility diagnostics.
 - Support future bridge directions such as Anthropic provider behind OpenAI runtime expected IO.
 
-### Phase 8: Enforcement
+### Phase 9: Enforcement
 
 - New domain code calls `AgentRuntimeGateway`, not `AgentSession` or Claude SDK APIs.
 - New UI code reads runtime/provider capabilities from read models.

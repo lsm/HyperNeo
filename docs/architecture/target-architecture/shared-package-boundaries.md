@@ -97,6 +97,7 @@ The target can be implemented as subpath exports inside `@neokai/shared` first.
     "./domain/forge": "./src/domain/forge/index.ts",
     "./domain/session": "./src/domain/session/index.ts",
     "./domain/settings": "./src/domain/settings/index.ts",
+    "./domain/prompt-policy": "./src/domain/prompt-policy/index.ts",
     "./provider": "./src/provider/index.ts",
     "./sdk/*": "./src/sdk/*",
     "./messaging/protocol": "./src/messaging/protocol.ts",
@@ -126,6 +127,7 @@ Target path:
 @neokai/shared/contracts/space
 @neokai/shared/contracts/forge
 @neokai/shared/contracts/session
+@neokai/shared/contracts/prompt-policy
 @neokai/shared/contracts/provider
 @neokai/shared/contracts/settings
 ```
@@ -175,6 +177,7 @@ Target path:
 @neokai/shared/read-models/space
 @neokai/shared/read-models/forge
 @neokai/shared/read-models/session
+@neokai/shared/read-models/prompt-policy
 ```
 
 Rules:
@@ -206,6 +209,7 @@ Target paths:
 @neokai/shared/domain/forge
 @neokai/shared/domain/session
 @neokai/shared/domain/settings
+@neokai/shared/domain/prompt-policy
 ```
 
 Rules:
@@ -224,6 +228,7 @@ Current candidates:
 | `EvolutionScope`, `EvidenceRef`, `EvolutionEpisode`, `EvolutionLesson`, `TaskProposal`, `MetricSnapshot` | `domain/forge` |
 | `Session`, `SessionContext`, `SessionFeatures` | `domain/session` |
 | settings types | `domain/settings` |
+| `PromptPolicyRecord`, prompt policy scope/source/channel types | `domain/prompt-policy` |
 
 ### 7.4 Messaging
 
@@ -295,6 +300,26 @@ Rules:
 - If daemon owns prompt assembly, prompt templates should move to daemon or a daemon-facing subpath.
 - If prompts are user-visible templates, expose them through a clear product/template namespace.
 
+### 7.9 Prompt Policy
+
+Prompt policy types are shared contracts and domain/read-model shapes, but prompt policy resolution and rendering are daemon-side Agent Runtime behavior.
+
+Target paths:
+
+```text
+@neokai/shared/domain/prompt-policy
+@neokai/shared/contracts/prompt-policy
+@neokai/shared/read-models/prompt-policy
+```
+
+Rules:
+
+- `domain/prompt-policy` owns serializable row/domain types such as `PromptPolicyRecord`, `PromptPolicyScope`, `PromptPolicySource`, and channel names.
+- `contracts/prompt-policy` owns command/query/event payloads such as `promptPolicy.builtin.activate`, `promptPolicy.record.update`, and `promptPolicy.effective.preview`.
+- `read-models/prompt-policy` owns preview results: applied records, suppressed records, active built-ins, inherited source, and channel previews.
+- `PromptPolicyResolver`, `PromptPolicyComposer`, `PromptPolicyRenderer`, and built-in prompt text live in daemon Agent Runtime code, not shared.
+- Prompt policy is not the same as user-visible prompt templates. Shared policy types describe durable records and read models; rendered prompt fragments are daemon behavior.
+
 ---
 
 ## 8. File Organization Target
@@ -314,11 +339,13 @@ packages/shared/src/
     session.ts
     provider.ts
     settings.ts
+    prompt-policy.ts
   read-models/
     index.ts
     space.ts
     forge.ts
     session.ts
+    prompt-policy.ts
   domain/
     space/
       index.ts
@@ -338,6 +365,8 @@ packages/shared/src/
     session/
       index.ts
     settings/
+      index.ts
+    prompt-policy/
       index.ts
   messaging/
     protocol.ts
@@ -476,6 +505,7 @@ Target split:
 | config/settings requests | `contracts/settings` |
 | MCP registry requests | `contracts/mcp` |
 | Forge evolution requests | `contracts/forge` |
+| prompt policy requests | `contracts/prompt-policy` |
 | provider requests | `contracts/provider` |
 | skill requests | `contracts/skills` |
 
@@ -491,6 +521,8 @@ Allowed dependencies:
 contracts -> domain, read-models, messaging/protocol
 read-models -> domain
 domain -> pure utilities only
+contracts/prompt-policy -> domain/prompt-policy, read-models/prompt-policy
+read-models/prompt-policy -> domain/prompt-policy
 messaging/protocol -> pure utilities only
 messaging/client -> messaging/protocol
 provider -> models, pure utilities
@@ -546,26 +578,32 @@ Forge is a good first slice because it is new, comparatively contained, and alre
 - Move MessageHub runtime implementation to `compat/message-hub`.
 - Update daemon and web code to import protocol/client types from `messaging/*`.
 
-### Phase 4: Space Domain Split
+### Phase 4: Prompt Policy Boundaries
+
+- Add `domain/prompt-policy`, `contracts/prompt-policy`, and `read-models/prompt-policy`.
+- Keep resolver/composer/renderer and built-in prompt text in daemon Agent Runtime code.
+- Update token-efficiency/output-mode work to use prompt-policy subpaths instead of settings/session-specific fields.
+
+### Phase 5: Space Domain Split
 
 - Split `types/space.ts` into domain modules.
 - Add read models from the client-state design.
 - Add Space command/query/event contracts.
 - Update Space runtime, Space stores, and Space components gradually.
 
-### Phase 5: API Split
+### Phase 6: API Split
 
 - Move `api.ts` sections into contract modules.
 - Keep `api.ts` as a compatibility re-export file.
 - Make legacy RPC adapters depend on compatibility API names while new MessageFabric handlers use contract modules.
 
-### Phase 6: Root Barrel Reduction
+### Phase 7: Root Barrel Reduction
 
 - Replace direct root imports package by package.
 - Prefer daemon first for implementation clarity, then web stores/components, then tests.
 - Stop exporting MessageHub internals, prompts, and daemon-only params from the root barrel.
 
-### Phase 7: Enforce Boundaries
+### Phase 8: Enforce Boundaries
 
 - Add lint/import checks:
   - no new root imports;
@@ -600,8 +638,9 @@ This gives immediate value without forcing a full Space type split.
 4. Root `@neokai/shared` imports are compatibility-only.
 5. MessageHub runtime classes are compatibility internals, not the future public messaging API.
 6. Forge must use the same domain/contract/read-model split as Space.
-7. Daemon-only params and service dependency types do not belong in shared.
-8. Pure utilities are shared only when both daemon and web actually use them.
+7. Prompt policy shared exports contain serializable records, contracts, and read models only; resolver/composer/renderer stay daemon-side.
+8. Daemon-only params and service dependency types do not belong in shared.
+9. Pure utilities are shared only when both daemon and web actually use them.
 
 ---
 
