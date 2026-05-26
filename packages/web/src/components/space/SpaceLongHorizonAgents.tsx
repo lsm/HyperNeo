@@ -359,7 +359,12 @@ function TemplateCard({
 export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const agents = spaceStore.longHorizonAgents.value;
   const templates = spaceStore.longHorizonAgentTemplates.value;
-  const loading = spaceStore.loading.value;
+  const loading = !spaceStore.configDataLoaded.value;
+
+  // Trigger lazy config load (agents + templates) if landing here on hard refresh
+  useEffect(() => {
+    spaceStore.ensureConfigData().catch(() => {});
+  }, [spaceId]);
 
   const [reminderCounts, setReminderCounts] = useState<Record<string, number>>({});
   const [selectedTemplate, setSelectedTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
