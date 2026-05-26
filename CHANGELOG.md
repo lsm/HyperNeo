@@ -2,6 +2,19 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.33.0] - 2026-05-26
+
+Recurring goal progress visibility, Forge trace diagnostics coverage, and graph tooling evaluation. 3 commits since v0.32.0.
+
+### Added
+
+- **Forge trace diagnostics coverage**: Clean scoped task traces now assert no-friction diagnostic capture and conversation-friction analysis enqueueing
+- **Graph tooling evaluation**: Benchmarked CodeGraph, code-review-graph, Graphify, and baseline exploration against task planning workflows
+
+### Changed
+
+- Recurring goals now hide progress bars and percentages, showing activity and metrics instead
+
 ## [0.32.0] - 2026-05-25
 
 Goal/Forge automation triggers, Space session promotion, daemon log evidence capture, dynamic agent reply target fixes, and compressed agent output evaluation. 6 commits since v0.31.0.
