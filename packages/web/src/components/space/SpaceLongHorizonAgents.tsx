@@ -20,17 +20,30 @@ function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
 
 // ── Agent editor ─────────────────────────────────────────────────────────────
 
+/** Returns the next free handle: base → base-2 → base-3 … */
+function nextFreeHandle(base: string, existingHandles: Set<string>): string {
+  if (!existingHandles.has(base)) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base}-${i}`;
+    if (!existingHandles.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
 interface AgentEditorProps {
   template?: SpaceLongHorizonAgentTemplate | null;
   agent?: SpaceLongHorizonAgent | null;
+  existingHandles: Set<string>;
   onSave: () => void;
   onCancel: () => void;
 }
 
-function AgentEditor({ template, agent, onSave, onCancel }: AgentEditorProps) {
+function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: AgentEditorProps) {
   const isEdit = !!agent;
   const [displayName, setDisplayName] = useState(agent?.displayName ?? template?.displayName ?? '');
-  const [handle, setHandle] = useState(agent?.handle ?? template?.handle ?? '');
+  const [handle, setHandle] = useState(
+    agent?.handle ?? (template ? nextFreeHandle(template.handle, existingHandles) : '')
+  );
   const [instructions, setInstructions] = useState(
     agent?.instructions ?? template?.instructions ?? ''
   );
@@ -299,28 +312,25 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
 
 function TemplateCard({
   template,
-  alreadyAdded,
+  addedCount,
   onClick,
 }: {
   template: SpaceLongHorizonAgentTemplate;
-  alreadyAdded: boolean;
+  addedCount: number;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
-      disabled={alreadyAdded}
       onClick={onClick}
-      class={`text-left rounded-lg border px-3 py-2.5 transition-colors ${
-        alreadyAdded
-          ? 'border-white/5 bg-white/[0.02] opacity-40 cursor-not-allowed'
-          : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.05]'
-      }`}
+      class="text-left rounded-lg border border-white/10 bg-white/[0.025] px-3 py-2.5 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
     >
       <div class="flex items-center justify-between gap-2">
         <span class="text-xs font-medium text-gray-200">{template.displayName}</span>
-        {alreadyAdded ? (
-          <span class="flex-shrink-0 text-xs text-gray-600">Added</span>
+        {addedCount > 0 ? (
+          <span class="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-500">
+            ×{addedCount}
+          </span>
         ) : (
           <svg
             class="w-3.5 h-3.5 flex-shrink-0 text-gray-600"
@@ -412,6 +422,12 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
+  // Count how many active instances exist per template handle
+  const templateHandleCounts = new Map<string, number>();
+  for (const a of agents.filter((a) => a.status !== 'archived')) {
+    templateHandleCounts.set(a.handle, (templateHandleCounts.get(a.handle) ?? 0) + 1);
+  }
+
   if (loading) {
     return (
       <div class="flex-1 flex items-center justify-center">
@@ -476,7 +492,7 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
               <TemplateCard
                 key={t.key}
                 template={t}
-                alreadyAdded={existingHandles.has(t.handle)}
+                addedCount={templateHandleCounts.get(t.handle) ?? 0}
                 onClick={() => {
                   setSelectedTemplate(t);
                   setEditingAgent(null);
@@ -492,6 +508,7 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
         <AgentEditor
           template={selectedTemplate}
           agent={editingAgent}
+          existingHandles={existingHandles}
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
         />
