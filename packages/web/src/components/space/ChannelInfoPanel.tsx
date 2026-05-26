@@ -87,7 +87,7 @@ export function ChannelInfoPanel({
             <span class="font-medium text-gray-100 truncate max-w-[120px]" title={fromNodeName}>
               {fromNodeName}
             </span>
-            <span class="text-gray-500 flex-shrink-0">{isBidirectional ? '⇄' : '→'}</span>
+            <span class="text-gray-400 flex-shrink-0">{isBidirectional ? '⇄' : '→'}</span>
             <span class="font-medium text-gray-100 truncate max-w-[120px]" title={toNodeName}>
               {toNodeName}
             </span>
@@ -123,7 +123,7 @@ export function ChannelInfoPanel({
               </div>
             )}
 
-            {!gateLabel && !statusConfig && <span class="text-xs text-gray-500">No gate</span>}
+            {!gateLabel && !statusConfig && <span class="text-xs text-gray-400">No gate</span>}
           </div>
 
           {(showApprovalActions || showViewArtifacts) && channel.gateId && (
@@ -174,7 +174,7 @@ export function ChannelInfoPanel({
         <button
           type="button"
           onClick={onClose}
-          class="flex-shrink-0 text-gray-500 hover:text-gray-300 transition-colors"
+          class="flex-shrink-0 text-gray-400 hover:text-gray-300 transition-colors"
           aria-label="Close channel info"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

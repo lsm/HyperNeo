@@ -84,7 +84,7 @@ export function SpaceTaskThreadMessageActions({
       }`}
     >
       <Tooltip content={formatFullTime(timestamp)} position={align === 'right' ? 'left' : 'right'}>
-        <span class="text-xs text-gray-500">{formatTime(timestamp)}</span>
+        <span class="text-xs text-gray-400">{formatTime(timestamp)}</span>
       </Tooltip>
 
       {/* Init / result dropdowns — to the LEFT of the copy button per

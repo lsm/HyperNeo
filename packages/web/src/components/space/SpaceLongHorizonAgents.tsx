@@ -100,7 +100,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           <button
             type="button"
             onClick={onCancel}
-            class="rounded p-1 text-gray-500 hover:text-gray-300 hover:bg-white/5"
+            class="rounded p-1 text-gray-400 hover:text-gray-300 hover:bg-white/5"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -157,7 +157,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                   class={`flex-1 rounded py-1 text-xs font-medium transition-colors ${
                     autonomyLevel === level
                       ? 'bg-blue-600 text-white'
-                      : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300'
+                      : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-300'
                   }`}
                 >
                   {level}
@@ -165,7 +165,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
               ))}
             </div>
             {autonomyLevel && (
-              <p class="mt-1 text-xs text-gray-600">{AUTONOMY_LABELS[autonomyLevel]}</p>
+              <p class="mt-1 text-xs text-gray-400">{AUTONOMY_LABELS[autonomyLevel]}</p>
             )}
           </div>
           {error && <p class="text-xs text-red-400">{error}</p>}
@@ -207,9 +207,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
   return (
     <div
       class={`group flex flex-col rounded-lg border px-3 py-3 ${
-        coordinator
-          ? 'border-purple-400/30 bg-purple-500/[0.06]'
-          : 'border-white/10 bg-white/[0.025]'
+        coordinator ? 'border-purple-400/30 bg-purple-500/10' : 'border-white/10 bg-white/[0.07]'
       }`}
     >
       <div class="flex items-start justify-between gap-2">
@@ -222,7 +220,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
               </span>
             )}
           </div>
-          <div class="mt-1 flex items-center gap-2 text-xs text-gray-600">
+          <div class="mt-1 flex items-center gap-2 text-xs text-gray-400">
             <span
               class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColors[agent.status] ?? 'bg-gray-600'}`}
             />
@@ -237,7 +235,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
             )}
           </div>
           {agent.instructions && (
-            <p class="mt-1.5 text-xs text-gray-500 line-clamp-2 leading-relaxed">
+            <p class="mt-1.5 text-xs text-gray-400 line-clamp-2 leading-relaxed">
               {agent.instructions}
             </p>
           )}
@@ -246,7 +244,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
           <button
             type="button"
             onClick={onEdit}
-            class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
+            class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-300"
             title="Edit"
           >
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -262,7 +260,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
             <button
               type="button"
               onClick={onDelete}
-              class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
+              class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
               title="Delete"
             >
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -279,7 +277,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
       </div>
 
       <div class="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-white/5">
-        <span class="text-xs text-gray-700">
+        <span class="text-xs text-gray-400">
           {reminderCount > 0
             ? `${reminderCount} reminder${reminderCount !== 1 ? 's' : ''}`
             : 'No reminders'}
@@ -301,7 +299,7 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
             Chat
           </button>
         ) : (
-          <span class="text-xs text-gray-700">No session</span>
+          <span class="text-xs text-gray-400">No session</span>
         )}
       </div>
     </div>
@@ -323,17 +321,17 @@ function TemplateCard({
     <button
       type="button"
       onClick={onClick}
-      class="text-left rounded-lg border border-white/10 bg-white/[0.025] px-3 py-2.5 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
+      class="text-left rounded-lg border border-blue-800/40 bg-blue-950/40 px-3 py-2.5 transition-colors hover:border-blue-700/60 hover:bg-blue-900/50"
     >
       <div class="flex items-center justify-between gap-2">
         <span class="text-xs font-medium text-gray-200">{template.displayName}</span>
         {addedCount > 0 ? (
-          <span class="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-500">
+          <span class="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400">
             ×{addedCount}
           </span>
         ) : (
           <svg
-            class="w-3.5 h-3.5 flex-shrink-0 text-gray-600"
+            class="w-3.5 h-3.5 flex-shrink-0 text-gray-400"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -347,7 +345,7 @@ function TemplateCard({
           </svg>
         )}
       </div>
-      <p class="mt-0.5 text-xs text-gray-600 line-clamp-2 leading-relaxed">
+      <p class="mt-0.5 text-xs text-gray-400 line-clamp-2 leading-relaxed">
         {template.description}
       </p>
     </button>
@@ -436,7 +434,7 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   if (loading) {
     return (
       <div class="flex-1 flex items-center justify-center">
-        <span class="text-xs text-gray-600 animate-pulse">Loading agents…</span>
+        <span class="text-xs text-gray-400 animate-pulse">Loading agents…</span>
       </div>
     );
   }
@@ -445,12 +443,12 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
     <div class="h-full overflow-y-auto scrollbar-dark">
       <div class="max-w-3xl mx-auto px-4 py-4 space-y-6">
         {/* Configured agents */}
-        <section>
-          <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">
+        <section class="rounded-xl border border-white/8 bg-white/[0.03] p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
             Configured · {sortedAgents.length}
           </p>
           {sortedAgents.length === 0 ? (
-            <p class="text-xs text-gray-600 py-4">
+            <p class="text-xs text-gray-400 py-4">
               No agents yet — add one from the templates below.
             </p>
           ) : (
@@ -477,9 +475,9 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
         </section>
 
         {/* Templates */}
-        <section>
+        <section class="rounded-xl border border-blue-900/30 bg-blue-950/20 p-4">
           <div class="flex items-center justify-between mb-3">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Templates</p>
+            <p class="text-xs font-semibold uppercase tracking-wider text-blue-300/70">Templates</p>
             <button
               type="button"
               onClick={() => {
@@ -487,7 +485,7 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
                 setEditingAgent(null);
                 setShowEditor(true);
               }}
-              class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              class="text-xs text-blue-300/70 hover:text-blue-200 transition-colors"
             >
               + Custom
             </button>

@@ -234,7 +234,7 @@ export function FileDiffView({
 
         {!loading && !error && diffText !== null && parsedLines.length === 0 && (
           <div class="px-4 py-6 text-center" data-testid="diff-empty">
-            <p class="text-sm text-gray-500">No changes in this file</p>
+            <p class="text-sm text-gray-400">No changes in this file</p>
           </div>
         )}
 
@@ -273,7 +273,7 @@ export function FileDiffView({
                   case 'file-header':
                   case 'index':
                     rowClass = 'bg-dark-850';
-                    contentClass = 'text-gray-500';
+                    contentClass = 'text-gray-400';
                     break;
                   default:
                     break;
@@ -281,10 +281,10 @@ export function FileDiffView({
 
                 return (
                   <tr key={idx} class={rowClass}>
-                    <td class="px-2 py-0.5 text-gray-600 text-right select-none border-r border-dark-700 w-14">
+                    <td class="px-2 py-0.5 text-gray-400 text-right select-none border-r border-dark-700 w-14">
                       {line.oldLineNum ?? ''}
                     </td>
-                    <td class="px-2 py-0.5 text-gray-600 text-right select-none border-r border-dark-700 w-14">
+                    <td class="px-2 py-0.5 text-gray-400 text-right select-none border-r border-dark-700 w-14">
                       {line.newLineNum ?? ''}
                     </td>
                     <td class={cn('px-3 py-0.5 whitespace-pre', contentClass)}>

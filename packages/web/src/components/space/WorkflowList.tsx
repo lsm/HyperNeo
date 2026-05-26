@@ -58,7 +58,7 @@ const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
   if (workflow.nodeCount === 0) {
-    return <span class="text-xs text-gray-700 italic">No steps</span>;
+    return <span class="text-xs text-gray-400 italic">No steps</span>;
   }
 
   // Cap display at MAX_DOTS; show overflow count if needed
@@ -73,7 +73,7 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
           {i + 1 < display && <MiniConnector conditionType={undefined} />}
         </div>
       ))}
-      {overflow > 0 && <span class="text-xs text-gray-600 ml-1">+{overflow}</span>}
+      {overflow > 0 && <span class="text-xs text-gray-400 ml-1">+{overflow}</span>}
     </div>
   );
 }
@@ -241,12 +241,12 @@ function WorkflowCard({
             )}
           </div>
           {workflow.description && (
-            <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{workflow.description}</p>
+            <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-400">{workflow.description}</p>
           )}
           {/* Template badge + drift indicator */}
           {workflow.templateName && (
             <div class="mt-1.5 flex items-center gap-1.5">
-              <span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500">
+              <span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-400">
                 {workflow.templateName}
               </span>
               {driftDrifted === true && (
@@ -310,13 +310,13 @@ function WorkflowCard({
               )}
               <button
                 onClick={onEdit}
-                class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+                class="rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
               >
                 Edit
               </button>
               <button
                 onClick={handleExport}
-                class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200"
+                class="rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
                 title="Export workflow"
               >
                 <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -330,7 +330,7 @@ function WorkflowCard({
               </button>
               <button
                 onClick={() => setConfirmDelete(true)}
-                class="rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
+                class="rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
                 title="Delete workflow"
               >
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -348,17 +348,17 @@ function WorkflowCard({
       </div>
 
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <span class="text-xs text-gray-600">
+        <span class="text-xs text-gray-400">
           {workflow.nodeCount} {workflow.nodeCount === 1 ? 'step' : 'steps'}
         </span>
         <MiniStepViz workflow={workflow} />
         {workflow.tags.length > 0 && (
           <>
-            <span class="text-gray-700">·</span>
+            <span class="text-gray-400">·</span>
             {workflow.tags.map((tag) => (
               <span
                 key={tag}
-                class="rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-500"
+                class="rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-400"
               >
                 {tag}
               </span>
@@ -642,7 +642,7 @@ export function WorkflowList({
             <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
               {workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
             </p>
-            <p class="mt-1 text-xs text-gray-500">Reusable multi-agent pipelines for this space.</p>
+            <p class="mt-1 text-xs text-gray-400">Reusable multi-agent pipelines for this space.</p>
           </div>
         </div>
         <div class="flex items-center gap-2">
@@ -701,7 +701,7 @@ export function WorkflowList({
             <div class="text-center py-12">
               <div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
                 <svg
-                  class="w-5 h-5 text-gray-600"
+                  class="w-5 h-5 text-gray-400"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -714,8 +714,8 @@ export function WorkflowList({
                   />
                 </svg>
               </div>
-              <p class="text-sm text-gray-500">No workflows yet</p>
-              <p class="text-xs text-gray-600 mt-1">
+              <p class="text-sm text-gray-400">No workflows yet</p>
+              <p class="text-xs text-gray-400 mt-1">
                 Create a workflow to define multi-agent pipelines.
               </p>
               <button

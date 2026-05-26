@@ -81,7 +81,7 @@ export function AutonomyWorkflowSummary({
             type="button"
             onClick={() => setExpanded((prev) => !prev)}
             data-testid="autonomy-workflow-summary-toggle"
-            class="text-gray-500 hover:text-gray-300 transition-colors"
+            class="text-gray-400 hover:text-gray-300 transition-colors"
             aria-expanded={expanded}
           >
             {expanded ? 'Hide details' : 'Show details'}
@@ -91,7 +91,7 @@ export function AutonomyWorkflowSummary({
 
       {expanded && hasDetails && (
         <ul
-          class={cn('space-y-1 pl-2 border-l border-dark-700', textSize, 'text-gray-500')}
+          class={cn('space-y-1 pl-2 border-l border-dark-700', textSize, 'text-gray-400')}
           data-testid="autonomy-workflow-summary-details"
         >
           {blocking.map((wf) => (

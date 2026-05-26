@@ -267,7 +267,7 @@ export function GateEditorPanel({
 
       {/* Gate ID */}
       <div class="space-y-1">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Gate ID</label>
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Gate ID</label>
         <div class="text-xs font-mono bg-dark-800 rounded px-2 py-1.5 text-gray-400 border border-dark-700 truncate">
           {gate.id}
         </div>
@@ -275,7 +275,7 @@ export function GateEditorPanel({
 
       {/* Description */}
       <div class="space-y-1">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Description</label>
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Description</label>
         <input
           type="text"
           data-testid="gate-editor-description"
@@ -290,7 +290,7 @@ export function GateEditorPanel({
 
       {/* Badge Preview */}
       <div class="space-y-1">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Preview</label>
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Badge Preview</label>
         <div class="flex items-center justify-center py-2">
           <svg
             data-testid="gate-editor-badge-preview"
@@ -325,10 +325,10 @@ export function GateEditorPanel({
       {/* Badge Label */}
       <div class="space-y-1">
         <div class="flex items-center justify-between">
-          <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Label</label>
+          <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Badge Label</label>
           <span
             data-testid="gate-editor-label-count"
-            class="text-[10px] text-gray-600 tabular-nums"
+            class="text-[10px] text-gray-400 tabular-nums"
           >
             {(gate.label ?? '').length}/{LABEL_MAX_LENGTH}
           </span>
@@ -359,13 +359,13 @@ export function GateEditorPanel({
       {/* Badge Color */}
       <div class="space-y-1">
         <div class="flex items-center justify-between">
-          <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Badge Color</label>
+          <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Badge Color</label>
           {gate.color && (
             <button
               type="button"
               data-testid="gate-editor-color-reset"
               onClick={() => updateGate({ color: undefined })}
-              class="text-[10px] text-gray-500 hover:text-gray-300 underline transition-colors"
+              class="text-[10px] text-gray-400 hover:text-gray-300 underline transition-colors"
             >
               Reset
             </button>
@@ -411,9 +411,9 @@ export function GateEditorPanel({
 
       {/* Fields */}
       <div class="space-y-2">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Fields</label>
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Fields</label>
         {(gate.fields ?? []).length === 0 && (
-          <p class="text-xs text-gray-600 italic">
+          <p class="text-xs text-gray-400 italic">
             {scriptEnabled ? 'No fields defined' : 'No fields — gate always opens'}
           </p>
         )}
@@ -442,7 +442,7 @@ export function GateEditorPanel({
 
       {/* Presets */}
       <div class="space-y-1">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Presets</label>
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Presets</label>
         <div class="flex gap-2">
           <button
             type="button"
@@ -466,7 +466,7 @@ export function GateEditorPanel({
       {/* Script Check */}
       <div class="space-y-2">
         <div class="flex items-center justify-between">
-          <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Script Check</label>
+          <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Script Check</label>
           <button
             type="button"
             data-testid="gate-editor-script-enabled"
@@ -489,7 +489,7 @@ export function GateEditorPanel({
           <div class="space-y-2 pl-1 border-l-2 border-blue-500/30">
             {/* Interpreter */}
             <div class="space-y-0.5">
-              <label class="text-[10px] uppercase tracking-wider text-gray-600">Interpreter</label>
+              <label class="text-[10px] uppercase tracking-wider text-gray-400">Interpreter</label>
               <select
                 data-testid="gate-editor-script-interpreter"
                 value={scriptInterpreter}
@@ -522,7 +522,7 @@ export function GateEditorPanel({
 
             {/* Source */}
             <div class="space-y-0.5">
-              <label class="text-[10px] uppercase tracking-wider text-gray-600">
+              <label class="text-[10px] uppercase tracking-wider text-gray-400">
                 Script Source
               </label>
               <textarea
@@ -546,7 +546,7 @@ export function GateEditorPanel({
 
             {/* Timeout */}
             <div class="space-y-0.5">
-              <label class="text-[10px] uppercase tracking-wider text-gray-600">
+              <label class="text-[10px] uppercase tracking-wider text-gray-400">
                 Timeout (seconds)
               </label>
               <input
@@ -576,7 +576,7 @@ export function GateEditorPanel({
 
             {/* Script Presets */}
             <div class="space-y-1">
-              <label class="text-[10px] uppercase tracking-wider text-gray-600">
+              <label class="text-[10px] uppercase tracking-wider text-gray-400">
                 Script Presets
               </label>
               <div class="flex gap-2">
@@ -663,7 +663,7 @@ function PollSection({ gate, onChange }: PollSectionProps) {
   return (
     <div class="space-y-2" data-testid="gate-editor-poll-section">
       <div class="flex items-center justify-between">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-500">
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
           Poll (Periodic Script)
         </label>
         <button
@@ -688,7 +688,7 @@ function PollSection({ gate, onChange }: PollSectionProps) {
         <div class="space-y-2 pl-1 border-l-2 border-blue-500/30">
           {/* Interval */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">
               Interval (seconds)
             </label>
             <div class="flex gap-1.5 mb-1">
@@ -733,7 +733,7 @@ function PollSection({ gate, onChange }: PollSectionProps) {
 
           {/* Script */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">Poll Script</label>
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">Poll Script</label>
             <textarea
               data-testid="gate-editor-poll-script"
               value={pollScript}
@@ -757,7 +757,7 @@ function PollSection({ gate, onChange }: PollSectionProps) {
 
           {/* Target */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">Target Node</label>
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">Target Node</label>
             <select
               data-testid="gate-editor-poll-target"
               value={pollTarget}
@@ -771,7 +771,7 @@ function PollSection({ gate, onChange }: PollSectionProps) {
 
           {/* Message Template */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">
               Message Template
             </label>
             <input
@@ -834,16 +834,16 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
         class="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-dark-750 transition-colors"
         onClick={onToggle}
       >
-        <span class="text-gray-500">{expanded ? '\u25BC' : '\u25B6'}</span>
+        <span class="text-gray-400">{expanded ? '\u25BC' : '\u25B6'}</span>
         <span class="font-mono text-gray-200 truncate flex-1">{field.name || '(unnamed)'}</span>
-        <span class="text-gray-500 text-[11px]">{field.type}</span>
+        <span class="text-gray-400 text-[11px]">{field.type}</span>
       </button>
 
       {expanded && (
         <div class="px-3 pb-3 space-y-2 border-t border-dark-700 pt-2">
           {/* Name */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">Name</label>
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">Name</label>
             <input
               type="text"
               data-testid={`gate-field-name-${index}`}
@@ -856,7 +856,7 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 
           {/* Type */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">Type</label>
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">Type</label>
             <select
               data-testid={`gate-field-type-${index}`}
               value={field.type}
@@ -875,7 +875,7 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 
           {/* Writers */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">
               Writers (comma-separated)
             </label>
             <input
@@ -897,7 +897,7 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
 
           {/* Check config — adapts to type */}
           <div class="space-y-0.5">
-            <label class="text-[10px] uppercase tracking-wider text-gray-600">Check</label>
+            <label class="text-[10px] uppercase tracking-wider text-gray-400">Check</label>
             {field.type === 'map' ? (
               // Map check: match + min
               <div class="space-y-1">
@@ -914,7 +914,7 @@ function FieldCard({ field, index, expanded, onToggle, onChange, onDelete }: Fie
                   class="w-full text-xs bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700"
                 />
                 <div class="flex items-center gap-2">
-                  <label class="text-[10px] text-gray-600">Min count</label>
+                  <label class="text-[10px] text-gray-400">Min count</label>
                   <input
                     type="number"
                     min={1}

@@ -280,7 +280,7 @@ export function ReadOnlyWorkflowCanvas({
       data-mode="runtime"
     >
       {gateDataLoading && (
-        <div class="absolute top-2 right-2 z-10 text-xs text-gray-500 px-2 py-0.5 bg-dark-800 rounded">
+        <div class="absolute top-2 right-2 z-10 text-xs text-gray-400 px-2 py-0.5 bg-dark-800 rounded">
           Loading…
         </div>
       )}

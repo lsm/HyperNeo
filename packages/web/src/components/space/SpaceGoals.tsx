@@ -145,17 +145,17 @@ function GoalCard({
         </div>
       )}
 
-      <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-500">
+      <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-400">
         <div>
-          <span class="block text-gray-600">Next check-in</span>
+          <span class="block text-gray-400">Next check-in</span>
           <span class="text-gray-300">{formatDate(goal.nextCheckInAt)}</span>
         </div>
         <div>
-          <span class="block text-gray-600">Last task</span>
+          <span class="block text-gray-400">Last task</span>
           <span class="truncate text-gray-300">{lastTask?.title ?? goal.lastTaskId ?? '—'}</span>
         </div>
         <div>
-          <span class="block text-gray-600">Priority</span>
+          <span class="block text-gray-400">Priority</span>
           <span class="capitalize text-gray-300">{goal.priority}</span>
         </div>
       </div>
@@ -166,7 +166,7 @@ function GoalCard({
 function DetailSection({ title, children }: { title: string; children: ComponentChildren }) {
   return (
     <section class="rounded-lg bg-dark-900/65 p-4">
-      <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500">{title}</h3>
+      <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{title}</h3>
       {children}
     </section>
   );
@@ -288,12 +288,12 @@ export function GoalDetail({
             {goal.type === 'recurring' ? (
               <div class="rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2 text-xs">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-gray-500">Activity status</span>
+                  <span class="text-gray-400">Activity status</span>
                   <span class="capitalize text-gray-300">
                     {getRecurringGoalActivityStatus(goal, activityTask)}
                   </span>
                 </div>
-                <div class="mt-2 text-gray-500">
+                <div class="mt-2 text-gray-400">
                   Last activity: {lastActivityLabel(goal, activityTask)}
                 </div>
                 <div class="mt-2 text-gray-400">
@@ -302,28 +302,28 @@ export function GoalDetail({
               </div>
             ) : (
               <div>
-                <div class="mb-1 flex justify-between text-xs text-gray-500">
+                <div class="mb-1 flex justify-between text-xs text-gray-400">
                   <span>Progress</span>
                   <span>{goal.progress ?? 0}%</span>
                 </div>
                 <ProgressBar value={goal.progress ?? 0} />
               </div>
             )}
-            <div class="grid grid-cols-2 gap-3 text-xs text-gray-500">
+            <div class="grid grid-cols-2 gap-3 text-xs text-gray-400">
               <div>
-                <span class="block text-gray-600">Last check-in</span>
+                <span class="block text-gray-400">Last check-in</span>
                 <span class="text-gray-300">{formatDate(goal.lastCheckInAt)}</span>
               </div>
               <div>
-                <span class="block text-gray-600">Next check-in</span>
+                <span class="block text-gray-400">Next check-in</span>
                 <span class="text-gray-300">{formatDate(goal.nextCheckInAt)}</span>
               </div>
               <div>
-                <span class="block text-gray-600">Auto trigger next</span>
+                <span class="block text-gray-400">Auto trigger next</span>
                 <span class="text-gray-300">{goal.autoTriggerNext ? 'Enabled' : 'Off'}</span>
               </div>
               <div>
-                <span class="block text-gray-600">Concurrency state</span>
+                <span class="block text-gray-400">Concurrency state</span>
                 <span class="text-gray-300">
                   {activeTask
                     ? 'Active task running'
@@ -338,12 +338,12 @@ export function GoalDetail({
 
         <DetailSection title="Metrics">
           {Object.keys(goal.metrics).length === 0 ? (
-            <p class="text-sm text-gray-500">No metrics recorded</p>
+            <p class="text-sm text-gray-400">No metrics recorded</p>
           ) : (
             <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {Object.entries(goal.metrics).map(([key, value]) => (
                 <div key={key} class="rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2">
-                  <span class="block text-xs text-gray-500">{key}</span>
+                  <span class="block text-xs text-gray-400">{key}</span>
                   <span class="text-sm text-gray-200">{String(value ?? '—')}</span>
                 </div>
               ))}
@@ -353,12 +353,12 @@ export function GoalDetail({
 
         <DetailSection title="Next steps">
           {goal.nextSteps.length === 0 ? (
-            <p class="text-sm text-gray-500">No next steps recorded</p>
+            <p class="text-sm text-gray-400">No next steps recorded</p>
           ) : (
             <ul class="space-y-2 text-sm text-gray-300">
               {goal.nextSteps.map((step) => (
                 <li key={step} class="flex gap-2">
-                  <span class="text-gray-600">•</span>
+                  <span class="text-gray-400">•</span>
                   <span>{step}</span>
                 </li>
               ))}
@@ -368,7 +368,7 @@ export function GoalDetail({
 
         <DetailSection title="Linked tasks">
           {linkedTasks.length === 0 ? (
-            <p class="text-sm text-gray-500">No linked tasks yet</p>
+            <p class="text-sm text-gray-400">No linked tasks yet</p>
           ) : (
             <div class="space-y-2">
               {linkedTasks.map((task) => (
@@ -380,9 +380,9 @@ export function GoalDetail({
                 >
                   <div class="flex items-center justify-between gap-2">
                     <span class="truncate text-sm text-gray-200">{task.title}</span>
-                    <span class="text-xs text-gray-500">#{task.taskNumber}</span>
+                    <span class="text-xs text-gray-400">#{task.taskNumber}</span>
                   </div>
-                  <div class="mt-1 flex items-center gap-2 text-xs text-gray-500">
+                  <div class="mt-1 flex items-center gap-2 text-xs text-gray-400">
                     <span>{task.status}</span>
                     {task.result && <span class="truncate">{task.result}</span>}
                   </div>
@@ -391,13 +391,13 @@ export function GoalDetail({
             </div>
           )}
           {lastTask && !linkedTasks.some((task) => task.id === lastTask.id) && (
-            <p class="mt-2 text-xs text-gray-500">Last task: {lastTask.title}</p>
+            <p class="mt-2 text-xs text-gray-400">Last task: {lastTask.title}</p>
           )}
         </DetailSection>
 
         <DetailSection title="Recent goal events">
           {events.length === 0 ? (
-            <p class="text-sm text-gray-500">No events loaded</p>
+            <p class="text-sm text-gray-400">No events loaded</p>
           ) : (
             <div class="space-y-2">
               {events.slice(0, 6).map((event) => (
@@ -407,9 +407,9 @@ export function GoalDetail({
                 >
                   <div class="flex items-center justify-between gap-2 text-xs">
                     <span class="capitalize text-gray-300">{eventLabel(event)}</span>
-                    <span class="text-gray-500">{getRelativeTime(event.createdAt)}</span>
+                    <span class="text-gray-400">{getRelativeTime(event.createdAt)}</span>
                   </div>
-                  {event.note && <p class="mt-1 text-xs text-gray-500">{event.note}</p>}
+                  {event.note && <p class="mt-1 text-xs text-gray-400">{event.note}</p>}
                 </div>
               ))}
             </div>
@@ -482,7 +482,7 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
       <div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-dark-700 px-4">
         <div>
           <h2 class="text-sm font-semibold text-gray-100">Active objectives</h2>
-          <p class="text-xs text-gray-500">
+          <p class="text-xs text-gray-400">
             {formatGoalCount(visibleGoals.length)} tracking long-horizon Space outcomes
           </p>
         </div>
@@ -507,12 +507,12 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
             Show archived
           </label>
         </div>
-        {loading && <p class="text-sm text-gray-500">Loading goals...</p>}
+        {loading && <p class="text-sm text-gray-400">Loading goals...</p>}
         {error && <p class="text-sm text-red-400">{error}</p>}
         {!loading && visibleGoals.length === 0 && (
           <div class="rounded-lg border border-dashed border-dark-700 bg-dark-900/30 p-8 text-center">
             <p class="text-sm text-gray-400">No goals yet</p>
-            <p class="mt-1 text-xs text-gray-600">Create a goal to track long-horizon work.</p>
+            <p class="mt-1 text-xs text-gray-400">Create a goal to track long-horizon work.</p>
           </div>
         )}
         {visibleGoals.length > 0 && (

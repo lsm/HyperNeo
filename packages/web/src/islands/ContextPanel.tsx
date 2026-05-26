@@ -245,7 +245,7 @@ export function ContextPanel() {
       {activeSpaces.length === 0 ? (
         <div class="px-4 py-8 text-center">
           <svg
-            class="w-10 h-10 mx-auto text-gray-700 mb-3"
+            class="w-10 h-10 mx-auto text-gray-400 mb-3"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -258,7 +258,7 @@ export function ContextPanel() {
             />
           </svg>
           <p class="text-sm font-medium text-gray-300">No spaces yet</p>
-          <p class="text-xs text-gray-500 mt-1">
+          <p class="text-xs text-gray-400 mt-1">
             Create a Space to organize agents, missions, and project context.
           </p>
         </div>
@@ -280,7 +280,7 @@ export function ContextPanel() {
                 )}
               >
                 <svg
-                  class="w-5 h-5 flex-shrink-0 text-gray-500"
+                  class="w-5 h-5 flex-shrink-0 text-gray-400"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -295,7 +295,7 @@ export function ContextPanel() {
                 <div class="min-w-0 flex-1">
                   <div class="text-sm font-medium truncate">{space.name}</div>
                   {space.description && (
-                    <div class="text-xs text-gray-500 truncate mt-0.5">{space.description}</div>
+                    <div class="text-xs text-gray-400 truncate mt-0.5">{space.description}</div>
                   )}
                 </div>
                 {isCurrent && (
@@ -472,7 +472,7 @@ export function ContextPanel() {
           )}
           {navSection === 'settings' && (
             <div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
-              <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+              <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
                 Settings
               </div>
               <nav class="space-y-1" aria-label="Settings sections">
@@ -493,7 +493,7 @@ export function ContextPanel() {
                       <span
                         class={cn(
                           'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
-                          isActive ? section.accent : 'bg-white/[0.03] text-gray-500'
+                          isActive ? section.accent : 'bg-white/[0.03] text-gray-400'
                         )}
                       >
                         <SectionIcon type={section.icon} />

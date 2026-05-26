@@ -347,7 +347,7 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
 
         {!isEditing && (
           <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Check-in</p>
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Check-in</p>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label class="block">
                 <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>

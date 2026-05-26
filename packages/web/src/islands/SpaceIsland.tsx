@@ -248,7 +248,7 @@ export default function SpaceIsland({
       <div class="flex-1 flex items-center justify-center bg-app-content">
         <div class="text-center max-w-sm">
           <p class="text-sm text-red-400 mb-2">Failed to load space</p>
-          <p class="text-xs text-gray-600">{error}</p>
+          <p class="text-xs text-gray-400">{error}</p>
         </div>
       </div>
     );
@@ -294,7 +294,7 @@ export default function SpaceIsland({
               <button
                 type="button"
                 onClick={() => setCreateTaskOpen(true)}
-                class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
+                class="flex-shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
                 aria-label="Create task"
                 title="Create task"
               >
@@ -395,7 +395,7 @@ export default function SpaceIsland({
                 type="button"
                 onClick={handleCreateSession}
                 disabled={creatingSession}
-                class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                class="flex-shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Create session"
                 title="Create session"
               >

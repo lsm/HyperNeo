@@ -92,7 +92,7 @@ function LineNumberedTextarea({
       {/* Line numbers gutter */}
       <div
         aria-hidden="true"
-        class="flex flex-col items-end px-2 py-2 select-none text-gray-600 text-xs font-mono bg-dark-850 border-r border-dark-700 flex-shrink-0"
+        class="flex flex-col items-end px-2 py-2 select-none text-gray-400 text-xs font-mono bg-dark-850 border-r border-dark-700 flex-shrink-0"
         style="min-width: 2.5rem; line-height: 1.375rem;"
       >
         {Array.from({ length: displayLines }, (_, i) => (
@@ -330,7 +330,7 @@ export function SpaceAgentEditor({
             ))}
           </select>
           {builtInTemplates.length === 0 && (
-            <p class="mt-1 text-xs text-gray-500">
+            <p class="mt-1 text-xs text-gray-400">
               No built-in templates are available for this space.
             </p>
           )}
@@ -362,7 +362,7 @@ export function SpaceAgentEditor({
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Description
-            <span class="text-gray-500 text-xs ml-2">(optional)</span>
+            <span class="text-gray-400 text-xs ml-2">(optional)</span>
           </label>
           <input
             type="text"
@@ -397,7 +397,7 @@ export function SpaceAgentEditor({
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Thinking Level
-            <span class="text-gray-500 text-xs ml-2">(optional override)</span>
+            <span class="text-gray-400 text-xs ml-2">(optional override)</span>
           </label>
           <select
             value={thinkingLevel}
@@ -418,7 +418,7 @@ export function SpaceAgentEditor({
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Setting Sources
-            <span class="text-gray-500 text-xs ml-2">(optional)</span>
+            <span class="text-gray-400 text-xs ml-2">(optional)</span>
           </label>
           {isEdit && agent?.settingSources !== undefined && !clearSettingSources && (
             <button
@@ -455,7 +455,7 @@ export function SpaceAgentEditor({
                 class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
               />
               <span class="text-sm text-gray-200">User settings</span>
-              <span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+              <span class="text-xs text-gray-400">(~/.claude/settings.json)</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -472,7 +472,7 @@ export function SpaceAgentEditor({
                 class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
               />
               <span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
-              <span class="text-xs text-gray-500">(.claude/settings.json)</span>
+              <span class="text-xs text-gray-400">(.claude/settings.json)</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -487,7 +487,7 @@ export function SpaceAgentEditor({
                 class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
               />
               <span class="text-sm text-gray-200">Local settings</span>
-              <span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+              <span class="text-xs text-gray-400">(.claude/settings.local.json)</span>
             </label>
           </div>
         </div>
@@ -512,7 +512,7 @@ export function SpaceAgentEditor({
                   class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                     activePreset === preset
                       ? 'border-blue-600 bg-blue-900/20 text-blue-300'
-                      : 'border-dark-600 text-gray-500 hover:border-dark-500 hover:text-gray-300'
+                      : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
                   }`}
                 >
                   {preset}
@@ -529,7 +529,7 @@ export function SpaceAgentEditor({
                   class={`flex items-center gap-2 px-3 py-1.5 rounded border cursor-pointer text-xs transition-colors ${
                     checked
                       ? 'border-blue-700/60 bg-blue-900/15 text-blue-200'
-                      : 'border-dark-700 text-gray-500 hover:border-dark-600 hover:text-gray-300'
+                      : 'border-dark-700 text-gray-400 hover:border-dark-600 hover:text-gray-300'
                   }`}
                 >
                   <input
@@ -561,12 +561,12 @@ export function SpaceAgentEditor({
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-2">
             {isPromotion ? 'Long-Horizon Profile' : 'Custom Prompt'}
-            <span class="text-gray-500 text-xs ml-2">
+            <span class="text-gray-400 text-xs ml-2">
               (optional — appended after NeoKai contract)
             </span>
           </label>
           {isPromotion && (
-            <p class="mb-2 text-xs text-gray-500">
+            <p class="mb-2 text-xs text-gray-400">
               Edit responsibility, standing instructions, autonomy, managed goals/scopes, reminders,
               event subscriptions, and standing context here.
             </p>

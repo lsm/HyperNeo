@@ -253,7 +253,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
               aria-label={tab.label}
               onClick={() => handleTabClick(tab.id)}
               class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
-                isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
+                isActive ? 'text-indigo-400' : 'text-gray-400 active:text-gray-300'
               }`}
             >
               <tab.icon />

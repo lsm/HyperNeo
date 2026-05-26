@@ -125,7 +125,7 @@ function RuntimeControlBar({
         </div>
         <div>
           <span class="text-sm font-semibold text-gray-100">{style.label}</span>
-          {actionLoading && <span class="ml-2 text-xs text-gray-500 italic">Processing...</span>}
+          {actionLoading && <span class="ml-2 text-xs text-gray-400 italic">Processing...</span>}
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -194,7 +194,7 @@ function AutonomyLevelBar({
     <div class="rounded-xl border border-dark-700 bg-dark-850/80 px-5 py-4">
       <div class="flex items-center justify-between mb-2.5">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Autonomy</span>
-        <span class="text-xs text-gray-500">{AUTONOMY_LABELS[level]}</span>
+        <span class="text-xs text-gray-400">{AUTONOMY_LABELS[level]}</span>
       </div>
       <div class="flex gap-1.5">
         {([1, 2, 3, 4, 5] as SpaceAutonomyLevel[]).map((l) => (
@@ -232,7 +232,7 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
           Concurrency
         </span>
-        <span class="text-xs text-gray-500">
+        <span class="text-xs text-gray-400">
           {limit} task{limit !== 1 ? 's' : ''}
         </span>
       </div>
@@ -258,8 +258,8 @@ const STATUS_COLORS: Record<string, string> = {
   blocked: 'text-amber-400',
   review: 'text-purple-400',
   done: 'text-green-400',
-  cancelled: 'text-gray-500',
-  archived: 'text-gray-600',
+  cancelled: 'text-gray-400',
+  archived: 'text-gray-400',
 };
 
 function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => void }) {
@@ -282,7 +282,7 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
           </span>
         </div>
       </div>
-      <span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+      <span class="text-xs text-gray-400 flex-shrink-0 tabular-nums">
         {getRelativeTime(task.updatedAt)}
       </span>
     </button>
@@ -380,7 +380,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
       <div class="flex h-full items-center justify-center">
         <div class="text-center">
           <div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
-          <p class="text-sm text-gray-500">Loading space...</p>
+          <p class="text-sm text-gray-400">Loading space...</p>
         </div>
       </div>
     );
@@ -389,7 +389,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
   if (!space) {
     return (
       <div class="flex h-full items-center justify-center">
-        <p class="text-sm text-gray-500">Space not found</p>
+        <p class="text-sm text-gray-400">Space not found</p>
       </div>
     );
   }
@@ -502,7 +502,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
         {/* Recent Tasks */}
         <div>
           <div class="flex items-center justify-between mb-2 px-1">
-            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
               Recent Tasks
             </h3>
             <button
@@ -516,7 +516,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
           {recentTasks.length === 0 ? (
             <div class="flex flex-col items-center justify-center py-12 text-center">
               <svg
-                class="w-10 h-10 text-gray-700 mb-3"
+                class="w-10 h-10 text-gray-400 mb-3"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -528,8 +528,8 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
                   d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
                 />
               </svg>
-              <p class="text-sm text-gray-500">No tasks yet</p>
-              <p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
+              <p class="text-sm text-gray-400">No tasks yet</p>
+              <p class="text-xs text-gray-400 mt-1">Create a task to get started</p>
             </div>
           ) : (
             <div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
@@ -548,7 +548,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
         {recentSessions.length > 0 && (
           <div>
             <div class="flex items-center justify-between mb-2 px-1">
-              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
                 Recent Sessions
               </h3>
               <button
@@ -573,7 +573,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
                       {session.title || 'Untitled Session'}
                     </span>
                   </div>
-                  <span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+                  <span class="text-xs text-gray-400 flex-shrink-0 tabular-nums">
                     {getRelativeTime(session.lastActiveAt)}
                   </span>
                 </button>

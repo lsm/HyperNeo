@@ -95,7 +95,7 @@ export function ChannelRelationConfigPanel({
               type="button"
               data-testid="gate-editor-back-button"
               onClick={() => setEditingGateId(null)}
-              class="mt-0.5 p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+              class="mt-0.5 p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
               title="Back"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -114,7 +114,7 @@ export function ChannelRelationConfigPanel({
           <button
             data-testid="gate-editor-close-button"
             onClick={onClose}
-            class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+            class="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
             title="Close panel"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -142,7 +142,7 @@ export function ChannelRelationConfigPanel({
           : 'flex-1 overflow-y-auto px-4 py-4 space-y-3'
       }
     >
-      <p class="text-xs text-gray-500">{description}</p>
+      <p class="text-xs text-gray-400">{description}</p>
       {canConvertToBidirectional && (
         <button
           type="button"
@@ -157,7 +157,7 @@ export function ChannelRelationConfigPanel({
       {forwardLinks.length > 0 ? (
         <div class="space-y-3">
           {reverseLinks.length > 0 && (
-            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
               Forward links
             </p>
           )}
@@ -180,7 +180,7 @@ export function ChannelRelationConfigPanel({
 
       {reverseLinks.length > 0 && (
         <div class="space-y-3">
-          <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
             Reverse links
           </p>
           {reverseLinks.map(({ index, channel, shouldBeCyclic }) => (
@@ -201,7 +201,7 @@ export function ChannelRelationConfigPanel({
       )}
 
       {forwardLinks.length === 0 && reverseLinks.length === 0 && (
-        <p class="text-xs text-gray-600">No editable channel links found for this relation.</p>
+        <p class="text-xs text-gray-400">No editable channel links found for this relation.</p>
       )}
     </div>
   );
@@ -231,7 +231,7 @@ export function ChannelRelationConfigPanel({
               type="button"
               data-testid="channel-relation-back-button"
               onClick={onBack}
-              class="mt-0.5 p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+              class="mt-0.5 p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
               title="Back"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -246,13 +246,13 @@ export function ChannelRelationConfigPanel({
           )}
           <div class="min-w-0">
             <h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
-            <p class="mt-1 text-xs text-gray-500">{description}</p>
+            <p class="mt-1 text-xs text-gray-400">{description}</p>
           </div>
         </div>
         <button
           data-testid="channel-relation-close-button"
           onClick={onClose}
-          class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+          class="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
           title="Close panel"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

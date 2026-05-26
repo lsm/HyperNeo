@@ -355,7 +355,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
             testId="forge-scope-model-select"
             className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
           />
-          <p class="mt-1 text-xs text-gray-500">
+          <p class="mt-1 text-xs text-gray-400">
             Optional. Falls back to this Space&apos;s default model when unset.
           </p>
         </div>
@@ -364,14 +364,14 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
           <div class="flex items-center justify-between gap-3">
             <div>
               <h3 class="text-sm font-medium text-gray-200">Metric definitions</h3>
-              <p class="text-xs text-gray-500">Optional keys tracked by snapshots.</p>
+              <p class="text-xs text-gray-400">Optional keys tracked by snapshots.</p>
             </div>
             <Button type="button" variant="secondary" size="sm" onClick={addMetric}>
               Add metric
             </Button>
           </div>
           {metrics.length === 0 ? (
-            <p class="text-xs text-gray-600">No metrics yet.</p>
+            <p class="text-xs text-gray-400">No metrics yet.</p>
           ) : (
             <div class="space-y-2">
               {metrics.map((metric, index) => (
@@ -426,7 +426,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                   <button
                     type="button"
                     onClick={() => removeMetric(index)}
-                    class="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-white/5 hover:text-red-300"
+                    class="rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-white/5 hover:text-red-300"
                   >
                     Remove
                   </button>
@@ -556,14 +556,14 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
       <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div class="mb-3 flex items-center justify-between">
           <h3 class="text-sm font-medium text-gray-100">Evidence timeline</h3>
-          <span class="text-xs text-gray-500">{timeline.length} items</span>
+          <span class="text-xs text-gray-400">{timeline.length} items</span>
         </div>
         {loading ? (
-          <p class="text-sm text-gray-500">Loading evidence…</p>
+          <p class="text-sm text-gray-400">Loading evidence…</p>
         ) : timeline.length === 0 ? (
-          <div class="text-sm text-gray-500">
+          <div class="text-sm text-gray-400">
             <p>No evidence attached yet.</p>
-            <p class="mt-1 text-xs text-gray-600">
+            <p class="mt-1 text-xs text-gray-400">
               Attach a completed task, metric snapshot, or manual note before generating an episode.
             </p>
           </div>
@@ -575,7 +575,7 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
                   <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
                     {formatKind(item.kind)}
                   </span>
-                  <span class="text-xs text-gray-600">{formatDate(item.createdAt)}</span>
+                  <span class="text-xs text-gray-400">{formatDate(item.createdAt)}</span>
                 </div>
                 <p class="text-sm text-gray-200">{item.summary}</p>
               </div>
@@ -840,7 +840,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
         <div class="mb-3 flex items-start justify-between gap-3">
           <div>
             <h3 class="text-sm font-medium text-gray-100">Generate episode draft</h3>
-            <p class="mt-1 text-xs text-gray-500">
+            <p class="mt-1 text-xs text-gray-400">
               Select scoped evidence. Judge creates draft only; lessons and proposals remain
               candidates.
             </p>
@@ -855,9 +855,9 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
           </Button>
         </div>
         {evidence.length === 0 ? (
-          <div class="text-sm text-gray-500">
+          <div class="text-sm text-gray-400">
             <p>No evidence available.</p>
-            <p class="mt-1 text-xs text-gray-600">
+            <p class="mt-1 text-xs text-gray-400">
               Add evidence from the Evidence or Metrics tab, then return here to draft an episode.
             </p>
           </div>
@@ -937,11 +937,11 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
       )}
 
       {loading ? (
-        <p class="text-sm text-gray-500">Loading review…</p>
+        <p class="text-sm text-gray-400">Loading review…</p>
       ) : !latestEpisode ? (
-        <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
+        <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-400">
           <p>No episode drafts yet.</p>
-          <p class="mt-1 text-xs text-gray-600">
+          <p class="mt-1 text-xs text-gray-400">
             Select scoped evidence above to generate candidate lessons and next action proposals.
           </p>
         </div>
@@ -950,7 +950,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
           <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-xs uppercase tracking-wide text-gray-500">Outcome summary</p>
+                <p class="text-xs uppercase tracking-wide text-gray-400">Outcome summary</p>
                 <h3 class="mt-1 text-base font-semibold text-gray-100">{latestEpisode.title}</h3>
               </div>
               <span class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
@@ -1058,7 +1058,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
               render={(lesson) => (
                 <div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
                   <p class="text-sm text-gray-100">{lesson.rule}</p>
-                  <p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
+                  <p class="mt-1 text-xs text-gray-400">{lesson.why}</p>
                   <div class="mt-3 flex gap-2">
                     <Button
                       size="sm"
@@ -1170,7 +1170,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                           </span>
                         </div>
                         <p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
-                        <p class="mt-2 text-xs text-gray-500">Reason: {proposal.reason}</p>
+                        <p class="mt-2 text-xs text-gray-400">Reason: {proposal.reason}</p>
                       </>
                     )}
                     <div class="mt-3 flex flex-wrap gap-2">
@@ -1273,7 +1273,7 @@ function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
     <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div class="mb-3">
         <h3 class="text-sm font-medium text-gray-100">Active lessons</h3>
-        <p class="mt-1 text-xs text-gray-500">
+        <p class="mt-1 text-xs text-gray-400">
           Top active lessons from this scope are injected into future scoped task-agent messages.
         </p>
       </div>
@@ -1283,9 +1283,9 @@ function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
         </div>
       )}
       {loading ? (
-        <p class="text-sm text-gray-500">Loading active lessons…</p>
+        <p class="text-sm text-gray-400">Loading active lessons…</p>
       ) : lessons.length === 0 ? (
-        <p class="text-sm text-gray-500">No active lessons yet.</p>
+        <p class="text-sm text-gray-400">No active lessons yet.</p>
       ) : (
         <div class="space-y-3">
           {lessons.map((lesson) => (
@@ -1293,7 +1293,7 @@ function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
               <div class="flex items-start justify-between gap-3">
                 <div>
                   <p class="text-sm text-gray-100">{lesson.rule}</p>
-                  <p class="mt-1 text-xs text-gray-500">{lesson.why}</p>
+                  <p class="mt-1 text-xs text-gray-400">{lesson.why}</p>
                   {lesson.appliesTo.length > 0 && (
                     <p class="mt-2 text-xs text-cyan-300">
                       Applies to: {lesson.appliesTo.join(', ')}
@@ -1328,7 +1328,7 @@ function FindingCard({ finding }: { finding: EvolutionFinding }) {
       </div>
       <p class="text-sm text-gray-200">{finding.proposedAction}</p>
       {finding.evidence.length > 0 && (
-        <p class="mt-2 text-xs text-gray-500">Evidence: {finding.evidence.join(', ')}</p>
+        <p class="mt-2 text-xs text-gray-400">Evidence: {finding.evidence.join(', ')}</p>
       )}
     </div>
   );
@@ -1349,7 +1349,7 @@ function ReviewList<T>({
     <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <h3 class="mb-3 text-sm font-medium text-gray-100">{title}</h3>
       {items.length === 0 ? (
-        <p class="text-sm text-gray-500">{empty}</p>
+        <p class="text-sm text-gray-400">{empty}</p>
       ) : (
         <div class="space-y-3">{items.map(render)}</div>
       )}
@@ -1448,16 +1448,16 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
       <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <h3 class="mb-3 text-sm font-medium text-gray-100">Metric definitions</h3>
         {scope.metricDefinitions.length === 0 ? (
-          <p class="text-sm text-gray-500">No metric definitions for this scope.</p>
+          <p class="text-sm text-gray-400">No metric definitions for this scope.</p>
         ) : (
           <div class="grid gap-3 md:grid-cols-2">
             {scope.metricDefinitions.map((metric) => (
               <div key={metric.key} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
                 <div class="flex items-center justify-between gap-3">
                   <p class="text-sm font-medium text-gray-100">{metric.label}</p>
-                  <span class="text-xs text-gray-500">{metric.direction}</span>
+                  <span class="text-xs text-gray-400">{metric.direction}</span>
                 </div>
-                <p class="mt-1 text-xs text-gray-500">
+                <p class="mt-1 text-xs text-gray-400">
                   {metric.key}
                   {metric.unit ? ` · ${metric.unit}` : ''}
                 </p>
@@ -1517,16 +1517,16 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
       <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <h3 class="mb-3 text-sm font-medium text-gray-100">Snapshot history</h3>
         {loading ? (
-          <p class="text-sm text-gray-500">Loading snapshots…</p>
+          <p class="text-sm text-gray-400">Loading snapshots…</p>
         ) : snapshots.length === 0 ? (
-          <p class="text-sm text-gray-500">No metric snapshots yet.</p>
+          <p class="text-sm text-gray-400">No metric snapshots yet.</p>
         ) : (
           <div class="space-y-3">
             {snapshots.map((snapshot) => (
               <div key={snapshot.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
                 <div class="mb-2 flex items-center justify-between gap-3">
                   <span class="text-sm text-gray-200">{snapshot.source}</span>
-                  <span class="text-xs text-gray-600">{formatDate(snapshot.capturedAt)}</span>
+                  <span class="text-xs text-gray-400">{formatDate(snapshot.capturedAt)}</span>
                 </div>
                 <div class="flex flex-wrap gap-2">
                   {Object.entries(snapshot.values).map(([key, value]) => (
@@ -1642,7 +1642,7 @@ export function ScopeDetail({
                 'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium capitalize transition-colors',
                 tab === item
                   ? 'bg-dark-700 text-gray-100 shadow-sm'
-                  : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
               )}
             >
               {item}
@@ -1659,19 +1659,19 @@ export function ScopeDetail({
             {goal ? (
               <GoalSummary goal={goal} />
             ) : (
-              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-500">
+              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-400">
                 No recurring goal linked.
               </div>
             )}
             <div class="grid gap-3 md:grid-cols-2">
               <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                   Created
                 </p>
                 <p class="mt-1 text-sm text-gray-200">{getRelativeTime(scope.createdAt)}</p>
               </div>
               <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                   Metrics
                 </p>
                 <p class="mt-1 text-sm text-gray-200">
@@ -1682,7 +1682,7 @@ export function ScopeDetail({
             <section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
               <div class="mb-3">
                 <h3 class="text-sm font-medium text-gray-100">Episode judge model</h3>
-                <p class="mt-1 text-xs text-gray-500">
+                <p class="mt-1 text-xs text-gray-400">
                   Override model for episode judging, or clear to use Space default.
                 </p>
               </div>
@@ -1701,7 +1701,7 @@ export function ScopeDetail({
                 testId="scope-episode-judge-model-select"
                 className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
               />
-              {savingJudgeModel && <p class="mt-2 text-xs text-gray-500">Saving…</p>}
+              {savingJudgeModel && <p class="mt-2 text-xs text-gray-400">Saving…</p>}
               {settingsError && <p class="mt-2 text-xs text-red-400">{settingsError}</p>}
             </section>
           </div>
@@ -1799,7 +1799,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
       <div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
         <div>
           <h2 class="text-sm font-semibold text-gray-100">Forge scopes</h2>
-          <p class="text-xs text-gray-500">
+          <p class="text-xs text-gray-400">
             {formatScopeCount(scopes.length)} collecting evidence, metrics, and lessons
           </p>
         </div>
@@ -1817,11 +1817,11 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
           </div>
         )}
         {scopes.length === 0 && loading ? (
-          <p class="text-sm text-gray-500">Loading scopes...</p>
+          <p class="text-sm text-gray-400">Loading scopes...</p>
         ) : scopes.length === 0 ? (
           <div class="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
             <p class="text-sm text-gray-400">No Forge scopes yet.</p>
-            <p class="mt-1 text-xs text-gray-600">
+            <p class="mt-1 text-xs text-gray-400">
               Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
               tasks.
             </p>
@@ -1864,13 +1864,13 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
                   </p>
                   <div class="mt-auto grid grid-cols-2 gap-3 pt-4 text-xs">
                     <div class="min-w-0">
-                      <span class="block text-gray-600">Goal</span>
+                      <span class="block text-gray-400">Goal</span>
                       <span class="truncate text-blue-300">
                         {goal ? `Goal: ${goal.title}` : 'No linked goal'}
                       </span>
                     </div>
                     <div>
-                      <span class="block text-gray-600">Updated</span>
+                      <span class="block text-gray-400">Updated</span>
                       <span class="text-gray-300">{getRelativeTime(scope.updatedAt)}</span>
                     </div>
                   </div>

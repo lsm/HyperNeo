@@ -203,8 +203,8 @@ function TabButton({
       ? 'text-red-400 border-b-2 border-red-400'
       : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
     gray: isActive
-      ? 'text-gray-500 border-b-2 border-gray-500'
-      : 'text-gray-500 hover:text-gray-400 border-b-2 border-transparent',
+      ? 'text-gray-400 border-b-2 border-gray-500'
+      : 'text-gray-400 hover:text-gray-400 border-b-2 border-transparent',
   };
 
   return (
@@ -314,7 +314,7 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
   return (
     <div class="flex flex-col items-center justify-center py-12 text-center">
       <p class="text-sm text-gray-400 font-medium">{title}</p>
-      <p class="text-xs text-gray-500 mt-1">{description}</p>
+      <p class="text-xs text-gray-400 mt-1">{description}</p>
     </div>
   );
 }
@@ -349,7 +349,7 @@ function TaskDependencyBadges({
 
   return (
     <div class="flex items-center gap-1 flex-wrap mt-1" data-testid="task-dependency-badges">
-      <span class="text-xs text-gray-500 mr-0.5">deps:</span>
+      <span class="text-xs text-gray-400 mr-0.5">deps:</span>
       {visible.map((depId) => {
         const dep = taskById.get(depId);
         const isDone = dep?.status === 'done';
@@ -465,7 +465,7 @@ function TaskGroup({
     purple: 'text-purple-400',
     green: 'text-green-400',
     red: 'text-red-400',
-    gray: 'text-gray-500',
+    gray: 'text-gray-400',
   };
 
   const borderStyles: Record<string, string> = {
@@ -502,7 +502,7 @@ function TaskGroup({
       )}
     </div>
   ) : loading && tasks.length === 0 ? (
-    <div class="px-4 py-6 text-xs text-gray-500" data-testid="task-group-loading" aria-busy="true">
+    <div class="px-4 py-6 text-xs text-gray-400" data-testid="task-group-loading" aria-busy="true">
       Loading…
     </div>
   ) : (
@@ -585,7 +585,7 @@ export function TaskGroupPagination({
       >
         ← Prev
       </button>
-      <span class="text-xs text-gray-500" data-testid="task-group-range">
+      <span class="text-xs text-gray-400" data-testid="task-group-range">
         Showing {start}–{end} of {total}
       </span>
       <button
@@ -628,9 +628,9 @@ function TaskItem({
             </span>
           </div>
           <div class="flex items-center gap-2 mt-1">
-            <span class="text-xs text-gray-500">{STATUS_LABEL[task.status] ?? task.status}</span>
+            <span class="text-xs text-gray-400">{STATUS_LABEL[task.status] ?? task.status}</span>
             {task.updatedAt > 0 && (
-              <span class="text-xs text-gray-600">{getRelativeTime(task.updatedAt)}</span>
+              <span class="text-xs text-gray-400">{getRelativeTime(task.updatedAt)}</span>
             )}
           </div>
           <TaskDependencyBadges
@@ -645,7 +645,7 @@ function TaskItem({
           )}
         </div>
         <div class="ml-4 flex items-center flex-shrink-0">
-          {isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
+          {isClickable && <span class="text-xs text-gray-400">&rarr;</span>}
         </div>
       </div>
     </div>
@@ -796,7 +796,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
         {showGlobalEmpty ? (
           <div class="flex flex-col items-center justify-center py-16 text-center">
             <svg
-              class="w-10 h-10 text-gray-700 mb-3"
+              class="w-10 h-10 text-gray-400 mb-3"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -809,7 +809,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
               />
             </svg>
             <p class="text-sm text-gray-400 font-medium">No tasks yet</p>
-            <p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
+            <p class="text-xs text-gray-400 mt-1">Create a task to get started</p>
           </div>
         ) : activeTab === 'scheduled' ? (
           schedules.length === 0 ? (
@@ -895,13 +895,13 @@ function ScheduleList({
                     ? 'bg-green-900/40 text-green-400'
                     : s.status === 'paused'
                       ? 'bg-amber-900/40 text-amber-400'
-                      : 'bg-gray-800 text-gray-500'
+                      : 'bg-gray-800 text-gray-400'
                 }`}
               >
                 {s.status}
               </span>
             </div>
-            <div class="mt-1 flex items-center gap-3 text-xs text-gray-500">
+            <div class="mt-1 flex items-center gap-3 text-xs text-gray-400">
               <span title="Trigger">{formatTrigger(s)}</span>
               {s.nextRunAt && s.status === 'active' && (
                 <span>next: {formatNextRun(s.nextRunAt)}</span>

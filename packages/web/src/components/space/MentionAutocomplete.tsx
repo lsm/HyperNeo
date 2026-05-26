@@ -103,9 +103,9 @@ export default function MentionAutocomplete({
       {/* Footer hint */}
       <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
         {isMobile ? (
-          <p class="text-xs text-gray-500">Tap to select</p>
+          <p class="text-xs text-gray-400">Tap to select</p>
         ) : (
-          <p class="text-xs text-gray-500">
+          <p class="text-xs text-gray-400">
             <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
             <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
             <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close

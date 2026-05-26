@@ -116,7 +116,7 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
                 </svg>
                 <div class="flex-1 min-w-0">
                   <div class="text-sm text-gray-200 truncate">{label?.title ?? server.name}</div>
-                  <div class="text-xs text-gray-500 truncate">
+                  <div class="text-xs text-gray-400 truncate">
                     {label?.description ?? server.name}
                   </div>
                 </div>
