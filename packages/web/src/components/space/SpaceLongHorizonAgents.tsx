@@ -206,9 +206,21 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
 
   return (
     <div
-      class={`group flex flex-col rounded-lg border px-3 py-3 ${
-        coordinator ? 'border-purple-400/30 bg-purple-500/10' : 'border-white/10 bg-white/[0.07]'
-      }`}
+      role={sessionId ? 'button' : undefined}
+      tabIndex={sessionId ? 0 : undefined}
+      onClick={sessionId ? () => navigateToSpaceSession(spaceId, sessionId) : undefined}
+      onKeyDown={
+        sessionId
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') navigateToSpaceSession(spaceId, sessionId);
+            }
+          : undefined
+      }
+      class={`group flex flex-col rounded-lg border px-3 py-3 transition-colors ${
+        coordinator
+          ? 'border-purple-400/30 bg-purple-500/10 hover:bg-purple-500/15'
+          : 'border-white/10 bg-white/[0.07] hover:bg-white/[0.10]'
+      } ${sessionId ? 'cursor-pointer' : ''}`}
     >
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0 flex-1">
@@ -233,6 +245,14 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
                 </span>
               </>
             )}
+            {reminderCount > 0 && (
+              <>
+                <span>·</span>
+                <span>
+                  {reminderCount} reminder{reminderCount !== 1 ? 's' : ''}
+                </span>
+              </>
+            )}
           </div>
           {agent.instructions && (
             <p class="mt-1.5 text-xs text-gray-400 line-clamp-2 leading-relaxed">
@@ -243,7 +263,10 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
         <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
           <button
             type="button"
-            onClick={onEdit}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
             class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-300"
             title="Edit"
           >
@@ -259,7 +282,10 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
           {!coordinator && (
             <button
               type="button"
-              onClick={onDelete}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
               class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
               title="Delete"
             >
@@ -274,33 +300,6 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
             </button>
           )}
         </div>
-      </div>
-
-      <div class="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-white/5">
-        <span class="text-xs text-gray-400">
-          {reminderCount > 0
-            ? `${reminderCount} reminder${reminderCount !== 1 ? 's' : ''}`
-            : 'No reminders'}
-        </span>
-        {sessionId ? (
-          <button
-            type="button"
-            onClick={() => navigateToSpaceSession(spaceId, sessionId)}
-            class="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
-          >
-            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={2}
-                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-            Chat
-          </button>
-        ) : (
-          <span class="text-xs text-gray-400">No session</span>
-        )}
       </div>
     </div>
   );

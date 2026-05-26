@@ -181,6 +181,10 @@ export default function SpaceIsland({
     navigateBack(() => navigateToSpace(spaceId));
   }, [spaceId]);
 
+  const handleSessionBack = useCallback(() => {
+    navigateBack(() => navigateToSpace(spaceId));
+  }, [spaceId]);
+
   const handleCreateSession = useCallback(
     async (e: Event) => {
       e.stopPropagation();
@@ -231,6 +235,7 @@ export default function SpaceIsland({
           key={sessionViewId}
           sessionId={sessionViewId}
           titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
+          onBack={handleSessionBack}
         />
         {overlay}
       </>
