@@ -92,7 +92,8 @@ export class SpaceGoalService {
       }
 
       const createdGoal = this.getGoal(goal.id) as SpaceGoal;
-      this.recordGoalEvent(createdGoal, 'created', null, createdGoal, context);
+      const storedCreatedGoal = this.deps.goalRepo.getById(goal.id) as SpaceGoal;
+      this.recordGoalEvent(createdGoal, 'created', null, storedCreatedGoal, context);
       if (!params.triggerImmediately) return { goal: createdGoal, task: null };
       const created = this.createImmediateTaskInternal(goal.id, undefined, {
         emitTaskCreated: false,
@@ -128,6 +129,12 @@ export class SpaceGoalService {
     if (params.title !== undefined && !params.title.trim()) throw new Error('title is required');
 
     const updateParams: UpdateSpaceGoalParams = { ...params };
+    if (
+      updateParams.type === 'recurring' ||
+      (existing.type === 'recurring' && updateParams.type === undefined)
+    ) {
+      delete updateParams.progress;
+    }
     if (params.status !== undefined && params.status !== existing.status) {
       this.synchronizeScheduleForStatus(existing, params.status);
       if (params.status !== 'active') {
@@ -449,9 +456,11 @@ export class SpaceGoalService {
       source: context?.source ?? 'system',
       sourceTaskId: context?.sourceTaskId ?? null,
       sourceSessionId: context?.sourceSessionId ?? null,
-      previousState,
-      newState,
-      diff,
+      previousState: previous
+        ? presentSnapshot(previous, previousState as SpaceGoalEventSnapshot)
+        : null,
+      newState: presentSnapshot(current, newState),
+      diff: presentDiff(previous, current, diff),
       note: context?.note ?? null,
     });
   }
@@ -514,6 +523,25 @@ function snapshotGoal(goal: SpaceGoal): SpaceGoalEventSnapshot {
     nextCheckInAt: goal.nextCheckInAt,
     completedAt: goal.completedAt,
   };
+}
+
+function presentSnapshot(
+  goal: SpaceGoal,
+  snapshot: SpaceGoalEventSnapshot
+): SpaceGoalEventSnapshot {
+  if (goal.type !== 'recurring') return snapshot;
+  const { progress: _progress, ...presented } = snapshot;
+  return presented;
+}
+
+function presentDiff(
+  previous: SpaceGoal | null,
+  current: SpaceGoal,
+  diff: SpaceGoalEventDiff | null
+): SpaceGoalEventDiff | null {
+  if (!diff || current.type !== 'recurring' || previous?.type !== 'recurring') return diff;
+  const { progress: _progress, ...presented } = diff;
+  return presented;
 }
 
 function diffSnapshots(

@@ -626,7 +626,6 @@ describe('ScopeDetailPanel', () => {
     fireEvent.input(await screen.findByLabelText('Rollup summary'), {
       target: { value: 'Rollup summary' },
     });
-    fireEvent.input(screen.getByLabelText('Rollup progress'), { target: { value: '80' } });
     fireEvent.input(screen.getByLabelText('Rollup next steps'), {
       target: { value: 'Create follow-up\nMeasure again' },
     });
@@ -637,13 +636,12 @@ describe('ScopeDetailPanel', () => {
         episodeId: 'episode-1',
         goalUpdate: {
           summary: 'Rollup summary',
-          progress: 80,
           nextSteps: ['Create follow-up', 'Measure again'],
         },
       })
     );
     expect(mockUpsertGoal).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'goal-1', summary: 'Rollup summary', progress: 80 })
+      expect.objectContaining({ id: 'goal-1', summary: 'Rollup summary' })
     );
   });
 
@@ -655,7 +653,6 @@ describe('ScopeDetailPanel', () => {
     fireEvent.input(await screen.findByLabelText('Rollup summary'), {
       target: { value: 'Rollup summary' },
     });
-    fireEvent.input(screen.getByLabelText('Rollup progress'), { target: { value: '80' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply rollup' }));
     mockSpaceId.value = 'space-2';
 

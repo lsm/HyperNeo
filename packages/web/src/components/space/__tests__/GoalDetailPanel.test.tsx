@@ -125,6 +125,15 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
   };
 }
 
+function formatGoalDate(ts: number): string {
+  return new Date(ts).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 describe('GoalDetailPanel', () => {
   beforeEach(() => {
     mockSpaceId.value = 'space-1';
@@ -170,6 +179,35 @@ describe('GoalDetailPanel', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(mockArchiveGoal).toHaveBeenCalledWith('goal-1'));
+  });
+
+  it('shows recurring activity and metrics instead of progress', () => {
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getByText('Activity')).toBeTruthy();
+    expect(screen.getByText('Metric trajectory')).toBeTruthy();
+    expect(screen.getByText('open_bugs: 3')).toBeTruthy();
+    expect(screen.queryByText('45% complete')).toBeNull();
+  });
+
+  it('uses linked task activity for recurring goal status and last activity', () => {
+    const now = Date.now();
+    mockGoals.value = [makeGoal({ activeTaskId: null, lastTaskId: 'task-1', lastCheckInAt: null })];
+    mockTasks.value = [makeTask({ updatedAt: now })];
+
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getAllByText('active')).toHaveLength(2);
+    expect(screen.getByText(formatGoalDate(now))).toBeTruthy();
+  });
+
+  it('shows progress for one-shot goals', () => {
+    mockGoals.value = [makeGoal({ type: 'one_shot' })];
+
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    expect(screen.getByText('Progress')).toBeTruthy();
+    expect(screen.getByText('45% complete')).toBeTruthy();
   });
 
   it('opens the edit dialog from the right panel', async () => {

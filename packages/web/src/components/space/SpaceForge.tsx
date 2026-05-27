@@ -35,6 +35,7 @@ import { toast } from '../../lib/toast';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { formatGoalMetricSnapshot } from './goal-display-utils';
 import {
   WorkflowModelSelect,
   type WorkflowModelSelection,
@@ -86,7 +87,6 @@ interface ProposalEditDraft {
 
 interface RollupDraft {
   summary: string;
-  progress: string;
   nextSteps: string;
 }
 
@@ -459,16 +459,11 @@ function GoalSummary({ goal }: { goal: SpaceGoal }) {
           </p>
           <h3 class="mt-1 text-sm font-medium text-gray-100">{goal.title}</h3>
         </div>
-        <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
-          {goal.progress}%
-        </span>
+        <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">Metrics</span>
       </div>
-      <div class="mb-3 h-1.5 overflow-hidden rounded-full bg-dark-800">
-        <div
-          class="h-full rounded-full bg-blue-400 transition-[width]"
-          style={{ width: `${Math.max(0, Math.min(100, goal.progress))}%` }}
-        />
-      </div>
+      <p class="mb-3 text-xs text-blue-100/80">
+        Metric trajectory: {formatGoalMetricSnapshot(goal)}
+      </p>
       {goal.summary && <p class="text-sm text-gray-300">{goal.summary}</p>}
       {goal.nextSteps.length > 0 && (
         <ul class="mt-3 space-y-1 text-xs text-gray-400">
@@ -610,7 +605,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
   const [proposalDraft, setProposalDraft] = useState<ProposalEditDraft | null>(null);
   const [rollupDraft, setRollupDraft] = useState<RollupDraft>({
     summary: goal?.summary ?? '',
-    progress: String(goal?.progress ?? 0),
     nextSteps: goal?.nextSteps.join('\n') ?? '',
   });
   const requestVersion = useRef(0);
@@ -661,7 +655,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
   useEffect(() => {
     setRollupDraft({
       summary: goal?.summary ?? '',
-      progress: String(goal?.progress ?? 0),
       nextSteps: goal?.nextSteps.join('\n') ?? '',
     });
   }, [goal]);
@@ -817,11 +810,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 
   const applyRollup = async () => {
     if (!latestEpisode || !goal) return;
-    const progress = Number(rollupDraft.progress);
-    if (!Number.isFinite(progress)) {
-      setError('Progress must be a number');
-      return;
-    }
     try {
       setSubmitting(true);
       setError(null);
@@ -829,7 +817,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
         episodeId: latestEpisode.id,
         goalUpdate: {
           summary: rollupDraft.summary.trim(),
-          progress,
           nextSteps: nextStepsFromText(rollupDraft.nextSteps),
         },
       });
@@ -998,7 +985,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
               <p class="mt-1 text-xs text-blue-200/70">
                 Apply accepted episode state to linked recurring goal.
               </p>
-              <div class="mt-3 grid gap-3 md:grid-cols-[1fr_110px]">
+              <div class="mt-3">
                 <textarea
                   aria-label="Rollup summary"
                   value={rollupDraft.summary}
@@ -1011,18 +998,6 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                   placeholder="Goal summary after this rollup"
                   rows={3}
                   class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-                />
-                <input
-                  aria-label="Rollup progress"
-                  value={rollupDraft.progress}
-                  onInput={(event) =>
-                    setRollupDraft((current) => ({
-                      ...current,
-                      progress: (event.target as HTMLInputElement).value,
-                    }))
-                  }
-                  placeholder="0-100"
-                  class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
                 />
               </div>
               <textarea

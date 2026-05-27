@@ -6,6 +6,12 @@ import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/sign
 import { spaceStore } from '../../lib/space-store';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceGoalDialog } from './SpaceGoalDialog';
+import {
+  formatGoalMetricSnapshot,
+  getGoalActivityTask,
+  getGoalLastActivityAt,
+  getRecurringGoalActivityStatus,
+} from './goal-display-utils';
 
 interface SpaceGoalsProps {
   spaceId: string;
@@ -43,8 +49,17 @@ function goalTask(tasks: SpaceTask[], taskId: string | null): SpaceTask | null {
   return tasks.find((task) => task.id === taskId) ?? null;
 }
 
+function goalDisplayTask(goal: SpaceGoal, tasks: SpaceTask[]): SpaceTask | null {
+  return getGoalActivityTask(goal, tasks) ?? goalTask(tasks, goal.lastTaskId);
+}
+
 function eventLabel(event: SpaceGoalEvent): string {
   return event.eventType.replace(/_/g, ' ');
+}
+
+function lastActivityLabel(goal: SpaceGoal, lastTask: SpaceTask | null): string {
+  const lastActivityAt = getGoalLastActivityAt(goal, lastTask);
+  return lastActivityAt ? formatDate(lastActivityAt) : '—';
 }
 
 function GoalStatusBadge({ status }: { status: SpaceGoalStatus }) {
@@ -81,6 +96,7 @@ function GoalCard({
   lastTask: SpaceTask | null;
   onSelect: () => void;
 }) {
+  const recurringActivityStatus = getRecurringGoalActivityStatus(goal, lastTask);
   return (
     <button
       type="button"
@@ -110,13 +126,24 @@ function GoalCard({
         </p>
       </div>
 
-      <div class="mt-auto space-y-2 pt-4">
-        <div class="flex items-center justify-between text-xs">
-          <span class="font-medium text-gray-400">Progress</span>
-          <span class="text-gray-300">{goal.progress}% complete</span>
+      {goal.type === 'recurring' ? (
+        <div class="mt-auto space-y-2 pt-4 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium text-gray-400">Activity</span>
+            <span class="capitalize text-gray-300">{recurringActivityStatus}</span>
+          </div>
+          <div class="text-gray-500">Last activity: {lastActivityLabel(goal, lastTask)}</div>
+          <div class="line-clamp-2 text-gray-400">Metrics: {formatGoalMetricSnapshot(goal)}</div>
         </div>
-        <ProgressBar value={goal.progress} />
-      </div>
+      ) : (
+        <div class="mt-auto space-y-2 pt-4">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-gray-400">Progress</span>
+            <span class="text-gray-300">{goal.progress ?? 0}% complete</span>
+          </div>
+          <ProgressBar value={goal.progress ?? 0} />
+        </div>
+      )}
 
       <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-500">
         <div>
@@ -170,6 +197,7 @@ export function GoalDetail({
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const activeTask = goalTask(tasks, goal.activeTaskId);
   const lastTask = goalTask(tasks, goal.lastTaskId);
+  const activityTask = getGoalActivityTask(goal, tasks);
 
   return (
     <div class="flex h-full flex-col overflow-hidden">
@@ -257,13 +285,30 @@ export function GoalDetail({
         <DetailSection title="Rolling state">
           <div class="space-y-3">
             <p class="text-sm text-gray-300">{goal.summary || 'No summary yet'}</p>
-            <div>
-              <div class="mb-1 flex justify-between text-xs text-gray-500">
-                <span>Progress</span>
-                <span>{goal.progress}%</span>
+            {goal.type === 'recurring' ? (
+              <div class="rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2 text-xs">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-gray-500">Activity status</span>
+                  <span class="capitalize text-gray-300">
+                    {getRecurringGoalActivityStatus(goal, activityTask)}
+                  </span>
+                </div>
+                <div class="mt-2 text-gray-500">
+                  Last activity: {lastActivityLabel(goal, activityTask)}
+                </div>
+                <div class="mt-2 text-gray-400">
+                  Metric trajectory: {formatGoalMetricSnapshot(goal)}
+                </div>
               </div>
-              <ProgressBar value={goal.progress} />
-            </div>
+            ) : (
+              <div>
+                <div class="mb-1 flex justify-between text-xs text-gray-500">
+                  <span>Progress</span>
+                  <span>{goal.progress ?? 0}%</span>
+                </div>
+                <ProgressBar value={goal.progress ?? 0} />
+              </div>
+            )}
             <div class="grid grid-cols-2 gap-3 text-xs text-gray-500">
               <div>
                 <span class="block text-gray-600">Last check-in</span>
@@ -477,7 +522,7 @@ export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
                 key={goal.id}
                 goal={goal}
                 selected={selectedGoalId === goal.id}
-                lastTask={goalTask(tasks, goal.lastTaskId)}
+                lastTask={goalDisplayTask(goal, tasks)}
                 onSelect={() => openGoal(goal.id)}
               />
             ))}

@@ -701,7 +701,7 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     const updated = JSON.parse(updatedOut.content[0].text);
     expect(updated.success).toBe(true);
     expect(updated.goal.summary).toBe('Audit finished');
-    expect(updated.goal.progress).toBe(40);
+    expect(updated.goal.progress).toBe(10);
     expect(updated.goal.nextSteps).toEqual(['Ship improvements']);
 
     const paused = JSON.parse(
@@ -895,7 +895,7 @@ describe('createSpaceAgentToolHandlers — Forge tools', () => {
     );
     expect(rollup.episode.status).toBe('accepted');
     expect(rollup.goal.summary).toBe('Dogfood path complete');
-    expect(rollup.goal.progress).toBe(42);
+    expect(rollup.goal.progress).toBe(5);
   });
 
   test('covers untested Forge read tools', async () => {
