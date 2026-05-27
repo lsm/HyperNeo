@@ -306,7 +306,7 @@ describe('SyntheticMessageBlock', () => {
       );
 
       // The time span should exist
-      const timeSpan = container.querySelector('.text-xs.text-gray-500');
+      const timeSpan = container.querySelector('.text-xs.text-gray-400');
       expect(timeSpan).toBeTruthy();
     });
   });

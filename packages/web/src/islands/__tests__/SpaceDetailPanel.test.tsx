@@ -35,6 +35,7 @@ let mockSessionsSignal!: Signal<
 let mockGoalsSignal!: Signal<[]>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
+let mockCurrentSpaceViewModeSignal!: Signal<string>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
 let mockSpaceOverlayAgentNameSignal!: Signal<string | null>;
 
@@ -47,6 +48,7 @@ function initSignals() {
   mockGoalsSignal = signal([]);
   mockCurrentSpaceSessionIdSignal = signal(null);
   mockCurrentSpaceTaskIdSignal = signal(null);
+  mockCurrentSpaceViewModeSignal = signal('overview');
   mockSpaceOverlaySessionIdSignal = signal(null);
   mockSpaceOverlayAgentNameSignal = signal(null);
 }
@@ -84,6 +86,9 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
     },
     get currentSpaceTaskIdSignal() {
       return mockCurrentSpaceTaskIdSignal;
+    },
+    get currentSpaceViewModeSignal() {
+      return mockCurrentSpaceViewModeSignal;
     },
     get spaceOverlaySessionIdSignal() {
       return mockSpaceOverlaySessionIdSignal;
@@ -198,8 +203,8 @@ describe('SpaceDetailPanel', () => {
     expect(button?.className).toContain('bg-white/10');
   });
 
-  it('highlights Agents when the Coordinator synthetic session is selected', () => {
-    mockCurrentSpaceSessionIdSignal.value = 'space:chat:space-1';
+  it('highlights Agents when the agents view mode is active', () => {
+    mockCurrentSpaceViewModeSignal.value = 'agents';
     render(<SpaceDetailPanel spaceId="space-1" />);
     const button = screen.getByText('Agents').closest('button');
     expect(button?.className).toContain('bg-white/10');
