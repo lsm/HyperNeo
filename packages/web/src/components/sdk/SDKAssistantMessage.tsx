@@ -26,7 +26,6 @@ import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { QuestionPrompt } from '../QuestionPrompt.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
-import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { SubagentBlock } from './SubagentBlock.tsx';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { ToolResultCard } from './tools/index.ts';
@@ -45,10 +44,6 @@ interface Props {
     state: 'submitted' | 'cancelled',
     responses: QuestionDraftResponse[]
   ) => void;
-  // Rewind mode props
-  rewindMode?: boolean;
-  selectedMessages?: Set<string>;
-  onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
   /**
    * When true, child tool / thinking / subagent blocks in this message are
    * each wrapped in <RunningBorder> so the animated arc traces their border.
@@ -70,9 +65,6 @@ export function SDKAssistantMessage({
   resolvedQuestions,
   pendingQuestion,
   onQuestionResolved,
-  rewindMode,
-  selectedMessages,
-  onMessageCheckboxChange,
   isRunning,
   flattenSubagentTools = false,
 }: Props) {
@@ -237,69 +229,6 @@ export function SDKAssistantMessage({
 
   // Check if this assistant message has sub-agent children.
   // If so, we should not show a checkbox for this message (the sub-agent messages will have their own).
-  // Use the memoized parent_tool_use_id map instead of scanning the whole message array so
-  // streaming appends do not invalidate every memoized SDKMessageRenderer row.
-  const hasSubagentChild = message.uuid ? subagentMessagesMap?.has(message.uuid) || false : false;
-
-  // Checkbox rendering for rewind mode (using shared function)
-  const renderCheckbox = () =>
-    renderRewindCheckbox({
-      rewindMode,
-      messageUuid: message.uuid,
-      onMessageCheckboxChange,
-      selectedMessages,
-      hasSubagentChild,
-    });
-
-  // Wrap with checkbox if in rewind mode - simpler structure for proper alignment
-  if (rewindMode && message.uuid && onMessageCheckboxChange && !hasSubagentChild) {
-    return (
-      <div
-        class="py-2 space-y-3"
-        data-testid="assistant-message"
-        data-message-role="assistant"
-        data-message-uuid={message.uuid}
-        data-message-timestamp={messageWithTimestamp.timestamp || 0}
-      >
-        {/* Tool use blocks - full width, no checkbox alignment needed */}
-        {toolBlocks.map((block: Extract<ContentBlock, { type: 'tool_use' }>, idx: number) => {
-          const toolResult = toolResultsMap?.get(block.id);
-          const nestedMessages = subagentMessagesMap?.get(block.id) || [];
-          return (
-            <ToolUseBlock
-              key={`tool-${idx}`}
-              block={block}
-              toolResult={toolResult}
-              nestedMessages={nestedMessages}
-              toolResultsMap={toolResultsMap}
-              sessionId={sessionId}
-              resolvedQuestions={resolvedQuestions}
-              pendingQuestion={pendingQuestion}
-              onQuestionResolved={onQuestionResolved}
-              flattenSubagentTools={flattenSubagentTools}
-            />
-          );
-        })}
-
-        {/* Thinking blocks - full width, no checkbox alignment needed */}
-        {thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-          <ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
-        ))}
-
-        {/* Text blocks with checkbox - simpler structure for proper alignment */}
-        {textBlockBubble && (
-          <>
-            <div class="flex items-center gap-2">
-              {renderCheckbox()}
-              {textBlockBubble}
-            </div>
-            {textBlockActions}
-          </>
-        )}
-      </div>
-    );
-  }
-
   // Normal mode - original layout
   //
   // When isRunning, ALL blocks in this message receive the animated arc so

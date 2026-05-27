@@ -76,9 +76,6 @@ interface MessageInputProps {
   autoScroll?: boolean;
   onAutoScrollChange?: (autoScroll: boolean) => void;
   onOpenTools?: () => void;
-  onEnterRewindMode?: () => void;
-  rewindMode?: boolean;
-  onExitRewindMode?: () => void;
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   /** Override the default placeholder derived from sessionType */
   placeholder?: string;
@@ -100,9 +97,6 @@ export default function MessageInput({
   autoScroll,
   onAutoScrollChange,
   onOpenTools,
-  onEnterRewindMode,
-  rewindMode,
-  onExitRewindMode,
   agentMentionCandidates,
   placeholder: placeholderProp,
   leadingElement,
@@ -693,9 +687,6 @@ export default function MessageInput({
               onAutoScrollChange={(enabled) => onAutoScrollChange?.(enabled)}
               onOpenTools={() => onOpenTools?.()}
               onAttachFile={openFilePicker}
-              onEnterRewindMode={onEnterRewindMode}
-              rewindMode={rewindMode}
-              onExitRewindMode={onExitRewindMode}
               disabled={disabled}
             />
 

@@ -243,7 +243,6 @@ export function TaskSessionChatComposer({
         sandboxSwitching={false}
         isWaitingForInput={!canSend || isSending}
         isConnected={true}
-        rewindMode={false}
         onModelSwitch={switchModel}
         onAutoScrollChange={onAutoScrollChange}
         onCoordinatorModeChange={() => {}}
@@ -251,8 +250,6 @@ export function TaskSessionChatComposer({
         onSend={handleSend}
         onOpenTools={handleOpenTools}
         onThinkingLevelChange={setThinkingLevel}
-        onEnterRewindMode={() => {}}
-        onExitRewindMode={() => {}}
         agentMentionCandidates={mentionCandidates}
         inputPlaceholder={
           selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'
