@@ -60,7 +60,7 @@ describe('Space long-horizon agent handlers', () => {
         spaceId: 'space-1',
       });
 
-      expect(result.templates).toHaveLength(7);
+      expect(result.templates).toHaveLength(8);
       expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
       for (const template of result.templates) {
         expect(template.suggestedEventSubscriptions.length).toBeGreaterThan(0);

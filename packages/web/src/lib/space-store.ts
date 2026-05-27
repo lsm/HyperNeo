@@ -2142,6 +2142,8 @@ class SpaceStore {
     templateKey?: string | null;
     instructions?: string;
     autonomyLevel?: number | null;
+    model?: string | null;
+    thinkingLevel?: string | null;
   }): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2161,9 +2163,11 @@ class SpaceStore {
   ): Promise<SpaceLongHorizonAgent> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
     const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
       'spaceLongHorizonAgent.update',
-      { agentId, ...params }
+      { agentId, spaceId, ...params }
     );
     this.longHorizonAgents.value = this.longHorizonAgents.value.map((a) =>
       a.id === agentId ? agent : a
@@ -2174,7 +2178,9 @@ class SpaceStore {
   async deleteLongHorizonAgent(agentId: string): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
-    await hub.request('spaceLongHorizonAgent.delete', { agentId });
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    await hub.request('spaceLongHorizonAgent.delete', { agentId, spaceId });
     this.longHorizonAgents.value = this.longHorizonAgents.value.filter((a) => a.id !== agentId);
   }
 

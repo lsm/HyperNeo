@@ -1,10 +1,24 @@
-import type { SpaceLongHorizonAgent, SpaceLongHorizonAgentTemplate } from '@neokai/shared';
+import type {
+  SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplate,
+  ThinkingLevel,
+} from '@neokai/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
+
+const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
+  { value: '', label: 'Use app default' },
+  { value: 'off', label: 'Off' },
+  { value: 'think8k', label: 'Think 8k' },
+  { value: 'think16k', label: 'Think 16k' },
+  { value: 'think24k', label: 'Think 24k' },
+  { value: 'think32k', label: 'Think 32k' },
+];
 
 const AUTONOMY_LABELS: Record<number, string> = {
   1: 'Supervised',
@@ -50,6 +64,11 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   const [autonomyLevel, setAutonomyLevel] = useState<number | null>(
     agent?.autonomyLevel ?? template?.suggestedAutonomyLevel ?? null
   );
+  const [model, setModel] = useState(agent?.model ?? '');
+  const [modelProvider, setModelProvider] = useState<string | undefined>(undefined);
+  const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
+    agent?.thinkingLevel ?? ''
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +89,8 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           displayName: displayName.trim(),
           instructions: instructions.trim(),
           autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
+          model: model.trim() || null,
+          thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
         });
       } else {
         await spaceStore.createLongHorizonAgent({
@@ -78,6 +99,8 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           templateKey: template?.key ?? null,
           instructions: instructions.trim(),
           autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
+          model: model.trim() || null,
+          thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
         });
       }
       onSave();
@@ -167,6 +190,37 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
             {autonomyLevel && (
               <p class="mt-1 text-xs text-gray-400">{AUTONOMY_LABELS[autonomyLevel]}</p>
             )}
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-gray-400 mb-1">Model</label>
+              <WorkflowModelSelect
+                value={model || undefined}
+                provider={modelProvider}
+                onChange={(modelId, selection) => {
+                  setModel(modelId ?? '');
+                  setModelProvider(selection?.provider);
+                }}
+                testId="lh-agent-model-select"
+                className="w-full text-xs bg-white/[0.04] border border-white/10 rounded-lg px-2 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500/50"
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-400 mb-1">Thinking</label>
+              <select
+                value={thinkingLevel}
+                onChange={(e) =>
+                  setThinkingLevel((e.target as HTMLSelectElement).value as '' | ThinkingLevel)
+                }
+                class="w-full text-xs bg-white/[0.04] border border-white/10 rounded-lg px-2 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500/50"
+              >
+                {THINKING_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           {error && <p class="text-xs text-red-400">{error}</p>}
         </div>

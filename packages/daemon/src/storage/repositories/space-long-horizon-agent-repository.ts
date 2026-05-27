@@ -30,8 +30,8 @@ export class SpaceLongHorizonAgentRepository {
       .prepare(
         `INSERT INTO space_long_horizon_agents (
 					id, space_id, handle, display_name, template_key, status, session_id,
-					instructions, autonomy_level, tool_permissions_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					instructions, autonomy_level, model, thinking_level, tool_permissions_json, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -43,6 +43,8 @@ export class SpaceLongHorizonAgentRepository {
         params.sessionId ?? null,
         params.instructions ?? '',
         params.autonomyLevel ?? null,
+        params.model ?? null,
+        params.thinkingLevel ?? null,
         JSON.stringify(params.toolPermissions ?? DEFAULT_TOOL_PERMISSIONS),
         now,
         now
@@ -139,6 +141,14 @@ export class SpaceLongHorizonAgentRepository {
     if (params.autonomyLevel !== undefined) {
       fields.push('autonomy_level = ?');
       values.push(params.autonomyLevel ?? null);
+    }
+    if (params.model !== undefined) {
+      fields.push('model = ?');
+      values.push(params.model ?? null);
+    }
+    if (params.thinkingLevel !== undefined) {
+      fields.push('thinking_level = ?');
+      values.push(params.thinkingLevel ?? null);
     }
     if (params.toolPermissions !== undefined) {
       fields.push('tool_permissions_json = ?');
@@ -353,6 +363,8 @@ function rowToAgent(row: Record<string, unknown>): SpaceLongHorizonAgent {
     sessionId: (row.session_id as string | null) ?? null,
     instructions: (row.instructions as string | null) ?? '',
     autonomyLevel: (row.autonomy_level as SpaceAgentAutonomyLevel | null) ?? null,
+    model: (row.model as string | null) ?? null,
+    thinkingLevel: (row.thinking_level as SpaceLongHorizonAgent['thinkingLevel']) ?? null,
     toolPermissions: parseObject(row.tool_permissions_json),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,

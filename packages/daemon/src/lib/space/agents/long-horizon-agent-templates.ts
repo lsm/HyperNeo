@@ -281,7 +281,15 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
         filter: { labels: ['research', 'investigate', 'analysis'] },
       },
     ],
-    reminderDefaults: [],
+    reminderDefaults: [
+      {
+        title: 'Weekly research digest',
+        body: 'Summarize open research threads and surface any findings that need human review.',
+        triggerType: 'cron' as const,
+        cronExpression: '0 9 * * 1',
+        timezone: 'UTC',
+      },
+    ],
     ownershipPatterns: [
       {
         target: 'goal',

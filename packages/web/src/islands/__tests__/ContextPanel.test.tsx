@@ -220,6 +220,9 @@ describe('ContextPanel', () => {
     cleanup();
   });
 
+  // Space switching is only available from the space list (shown when no space is selected).
+  // When inside a space, the sidebar shows SpaceDetailPanel; users return to the list via
+  // the "All Spaces" button. Tests set currentSpaceIdSignal = null to show the list.
   it.each([
     ['overview', mockNavigateToSpace, ['space-2']],
     ['goals', mockNavigateToSpaceGoals, ['space-2']],
@@ -228,6 +231,7 @@ describe('ContextPanel', () => {
     ['configure', mockNavigateToSpaceConfigure, ['space-2', 'agents']],
   ] as const)('preserves the %s view mode when switching spaces', (viewMode, expectedNavigate, args) => {
     mockCurrentSpaceViewModeSignal.value = viewMode;
+    mockCurrentSpaceIdSignal.value = null; // show the space list
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -240,6 +244,7 @@ describe('ContextPanel', () => {
   it('preserves the current task filter when switching spaces from tasks', () => {
     mockCurrentSpaceViewModeSignal.value = 'tasks';
     mockCurrentSpaceTasksFilterTabSignal.value = 'completed';
+    mockCurrentSpaceIdSignal.value = null; // show the space list
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -251,6 +256,7 @@ describe('ContextPanel', () => {
   it('preserves the current configure subtab when switching spaces from configure', () => {
     mockCurrentSpaceViewModeSignal.value = 'configure';
     mockCurrentSpaceConfigureTabSignal.value = 'workflows';
+    mockCurrentSpaceIdSignal.value = null; // show the space list
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
@@ -259,27 +265,16 @@ describe('ContextPanel', () => {
     expect(mockContextPanelOpenSignal.value).toBe(false);
   });
 
-  it('routes to the space agent when the current in-space session is the chat agent', () => {
+  it('navigates to tasks view when switching spaces while tasks view is active', () => {
     mockCurrentSpaceViewModeSignal.value = 'tasks';
-    mockCurrentSpaceSessionIdSignal.value = 'space:chat:space-1';
-    render(<ContextPanel />);
-
-    fireEvent.click(screen.getByText('Beta'));
-
-    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-2');
-    expect(mockNavigateToSpaceTasks).not.toHaveBeenCalled();
-    expect(mockContextPanelOpenSignal.value).toBe(false);
-  });
-
-  it('does not treat another space chat session id as the current space agent', () => {
-    mockCurrentSpaceViewModeSignal.value = 'tasks';
-    mockCurrentSpaceSessionIdSignal.value = 'space:chat:space-2';
+    mockCurrentSpaceIdSignal.value = null; // show the space list
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Beta'));
 
     expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-2', 'active');
     expect(mockNavigateToSpaceAgent).not.toHaveBeenCalled();
+    expect(mockContextPanelOpenSignal.value).toBe(false);
   });
 
   it('renders the spaces list when no space is selected', () => {
@@ -307,6 +302,7 @@ describe('ContextPanel', () => {
   });
 
   it('opens the create space dialog directly from the mobile switcher', () => {
+    mockCurrentSpaceIdSignal.value = null; // show the space switcher so "Create Space" is visible
     render(<ContextPanel />);
 
     fireEvent.click(screen.getByText('Create Space'));

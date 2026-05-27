@@ -11,7 +11,7 @@
  * - spaceLongHorizonAgent.deleteReminder
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, SpaceLongHorizonAgent } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -47,6 +47,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       templateKey?: string | null;
       instructions?: string;
       autonomyLevel?: number | null;
+      model?: string | null;
+      thinkingLevel?: string | null;
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.handle) throw new Error('handle is required');
@@ -59,6 +61,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       templateKey: params.templateKey,
       instructions: params.instructions,
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
+      model: params.model,
+      thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
     });
     return { agent };
   });
@@ -66,16 +70,27 @@ export function setupSpaceLongHorizonAgentHandlers(
   messageHub.onRequest('spaceLongHorizonAgent.update', async (data) => {
     const params = data as {
       agentId: string;
+      spaceId?: string;
       displayName?: string;
       instructions?: string;
       autonomyLevel?: number | null;
+      model?: string | null;
+      thinkingLevel?: string | null;
       status?: string;
     };
     if (!params.agentId) throw new Error('agentId is required');
+    if (params.spaceId) {
+      const existing = repo.getById(params.agentId);
+      if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
+      if (existing.spaceId !== params.spaceId)
+        throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
     const agent = repo.update(params.agentId, {
       displayName: params.displayName,
       instructions: params.instructions,
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
+      model: params.model,
+      thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
@@ -83,10 +98,12 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.delete', async (data) => {
-    const params = data as { agentId: string };
+    const params = data as { agentId: string; spaceId?: string };
     if (!params.agentId) throw new Error('agentId is required');
     const existing = repo.getById(params.agentId);
     if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId)
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     repo.delete(params.agentId);
     return { success: true };
   });

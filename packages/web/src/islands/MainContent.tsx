@@ -12,7 +12,7 @@ import {
 import { sessions } from '../lib/state.ts';
 import { navigateToSpace, navigateToSpaceTask, navigateToSpaceSession } from '../lib/router.ts';
 import { spaceStore } from '../lib/space-store.ts';
-import { isActionRequired } from '../lib/task-filters.ts';
+import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
@@ -71,6 +71,7 @@ const lazyFallback = (
 );
 
 const TASK_STATUS_LABEL: Record<string, string> = {
+  open: 'Open',
   review: 'Review',
   blocked: 'Blocked',
   in_progress: 'In Progress',
@@ -79,7 +80,7 @@ const TASK_STATUS_LABEL: Record<string, string> = {
 
 function SpacesHome() {
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
-  const spaces = spaceStore.spacesWithTasks.value;
+  const spaces = spaceStore.spacesWithTasks.value.filter((s) => s.status !== 'archived');
 
   useEffect(() => {
     spaceStore.initGlobalList().catch(() => {});
@@ -90,9 +91,7 @@ function SpacesHome() {
   );
 
   const runningItems = spaces.flatMap((space) =>
-    space.tasks
-      .filter((t) => t.status === 'in_progress' || t.status === 'approved')
-      .map((task) => ({ task, space }))
+    space.tasks.filter(isActiveTask).map((task) => ({ task, space }))
   );
 
   const activeSessions = spaces
