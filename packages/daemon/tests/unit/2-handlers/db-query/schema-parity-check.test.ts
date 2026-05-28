@@ -6,7 +6,10 @@ import {
 } from '../../../../src/lib/db-query/scope-config';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { HELPER_SCHEMA_TABLES } from '../../../../../../scripts/check-db-schema-parity';
+import {
+  HELPER_SCHEMA_COLUMN_OVERRIDES,
+  HELPER_SCHEMA_TABLES,
+} from '../../../../../../scripts/check-db-schema-parity';
 
 type ColumnRow = {
   name: string;
@@ -14,10 +17,6 @@ type ColumnRow = {
 
 type TableRow = {
   name: string;
-};
-
-const helperColumnOverrides: Record<string, string[]> = {
-  sessions: ['id', 'type', 'session_context'],
 };
 
 function createProductionDb(): Database {
@@ -80,7 +79,8 @@ describe('DB schema parity check', () => {
     for (const tableName of HELPER_SCHEMA_TABLES) {
       expect(helperTables.has(tableName)).toBe(true);
 
-      const prodColumns = helperColumnOverrides[tableName] ?? getColumnNames(prodDb, tableName);
+      const prodColumns =
+        HELPER_SCHEMA_COLUMN_OVERRIDES[tableName] ?? getColumnNames(prodDb, tableName);
       const helperColumns = getColumnNames(helperDb, tableName);
       const missingColumns = prodColumns.filter(
         (columnName) => !helperColumns.includes(columnName)

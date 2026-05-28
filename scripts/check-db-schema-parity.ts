@@ -55,7 +55,7 @@ export const HELPER_SCHEMA_TABLES = [
   'workflow_run_artifacts',
 ];
 
-const HELPER_SCHEMA_COLUMN_OVERRIDES: Record<string, string[]> = {
+export const HELPER_SCHEMA_COLUMN_OVERRIDES: Record<string, string[]> = {
   sessions: ['id', 'type', 'session_context'],
 };
 
