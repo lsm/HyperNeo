@@ -161,6 +161,8 @@ export class AnthropicProvider implements Provider {
     );
   }
 
+  async shutdown(): Promise<void> {}
+
   /**
    * Get available models from Anthropic
    * Dynamically loads from SDK - no static fallback

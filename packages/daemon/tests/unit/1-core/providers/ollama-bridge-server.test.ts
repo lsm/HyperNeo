@@ -329,6 +329,82 @@ describe('Ollama Anthropic bridge server', () => {
     });
   });
 
+  it('rejects image blocks before forwarding to Ollama', async () => {
+    const fetchMock = mock(async () => new Response('', { status: 500 }));
+    const server = createOllamaAnthropicBridgeServer({
+      baseUrl: 'http://ollama.test',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama3.2',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'describe this' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.type).toBe('invalid_request_error');
+    expect(body.error.message).toContain('image content blocks');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects image blocks nested in Ollama tool results', async () => {
+    const fetchMock = mock(async () => new Response('', { status: 500 }));
+    const server = createOllamaAnthropicBridgeServer({
+      baseUrl: 'http://ollama.test',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama3.2',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_1',
+                content: [
+                  { type: 'text', text: 'screenshot:' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.type).toBe('invalid_request_error');
+    expect(body.error.message).toContain('image content blocks');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('maps upstream rate limits to Anthropic rate_limit_error', async () => {
     const fetchMock = mock(async () => new Response('Too Many Requests', { status: 429 }));
     const server = createOllamaAnthropicBridgeServer({

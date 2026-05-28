@@ -171,4 +171,6 @@ export class MinimaxProvider implements Provider {
   getTitleGenerationModel(): string {
     return 'MiniMax-M2.7';
   }
+
+  async shutdown(): Promise<void> {}
 }
