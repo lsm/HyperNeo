@@ -57,11 +57,11 @@ Builds custom agent system prompt by concatenating base SpaceAgent prompt and wo
 
 | Section | Est. Tokens | Notes |
 |---|---:|---|
-| Base `SpaceAgent.customPrompt` | ~30-1,600 | Preset Reviewer is largest at ~1,560; simple agents ~35-90. |
+| Base `SpaceAgent.customPrompt` | ~30-1,900 | Preset Reviewer is largest at ~1,890; simple agents ~35-90. |
 | Workflow slot `customPrompt` | ~100-2,000+ | Built-in workflow slots append long role/process/tool rules. |
 | Join overhead/provenance | ~0 | Hash/source only; not in prompt. |
 | Claude Code preset | external | SDK preset applied separately. |
-| **TOTAL typical** | **~150-3,600+** | Reviewer slots can combine ~1,560 base + ~1,000-2,000 slot tokens. |
+| **TOTAL typical** | **~150-3,900+** | Reviewer slots can combine ~1,890 base + ~1,000-2,000 slot tokens. |
 
 Key issue: append-only model preserves both preset persona and slot persona. That avoids replacing user-visible agent config, but duplicates instructions when both say same job.
 
@@ -76,9 +76,9 @@ Source: `packages/daemon/src/lib/space/agents/seed-agents.ts`
 | Planner | ~45 | Break down, write plan, commit. Duplicated by Plan workflow slot. |
 | Research | ~55 | Research, write markdown, commit, open PR. Duplicated by Research workflow slot. |
 | Coordinator | ~65 | Long-horizon Space coordination; overlaps long-horizon templates. |
-| Reviewer (`REVIEWER_CUSTOM_PROMPT`) | ~1,560 | Full review process, sub-agent delegation, severity, terminal actions, GitHub posting, output format. Duplicated by workflow reviewer slots. |
+| Reviewer (`REVIEWER_CUSTOM_PROMPT`) | ~1,890 | Full review process, sub-agent delegation, severity, terminal actions, GitHub posting, output format. Duplicated by workflow reviewer slots. |
 | QA | ~45 | Run full test suite and report failures. Duplicated by QA workflow slot. |
-| **TOTAL library** | **~1,885** | Only selected agent prompt is emitted per session. |
+| **TOTAL library** | **~2,215** | Only selected agent prompt is emitted per session. |
 
 Largest prompt is Reviewer. It includes detailed GitHub posting commands and terminal-action rules; workflow reviewer slots add more GitHub/tool/gate rules.
 
@@ -219,7 +219,7 @@ Savings: **~40-80 tokens per non-reviewer session**, **larger for Reviewer** if 
 
 Reviewer receives:
 
-1. Reviewer preset prompt (~1,560 tokens): sub-agent delegation, review process, severity levels, terminal preconditions, GitHub posting, required output format.
+1. Reviewer preset prompt (~1,890 tokens): sub-agent delegation, review process, severity levels, terminal preconditions, GitHub posting, required output format.
 2. Workflow reviewer slot (~500-1,350 tokens): review checklist, GitHub posting/gate writes, terminal action preconditions, save_artifact/approve/submit rules.
 3. Task message role section (~40-150 tokens): channels and writable gates.
 
@@ -233,7 +233,7 @@ Repeated themes:
 - Do not merge; post-approval handles merge.
 - Do not auto-merge.
 
-Savings: **~800-1,500 tokens per reviewer session** by moving generic reviewer policy to one reusable system layer and keeping workflow slot only delta (target node, gate fields, expected artifacts).
+Savings: **~900-1,800 tokens per reviewer session** by moving generic reviewer policy to one reusable system layer and keeping workflow slot only delta (target node, gate fields, expected artifacts).
 
 ### 3. Terminal-action semantics repeated across workflow prompts
 
@@ -286,7 +286,7 @@ Savings: **~30-80 tokens per task message** by keeping only PR/worktree ID in us
 
 ### 1. Factor reviewer/terminal-action contract into central node-agent system contract
 
-**Current cost:** ~1,560-token Reviewer preset + ~500-1,350-token workflow slot per reviewer.
+**Current cost:** ~1,890-token Reviewer preset + ~500-1,350-token workflow slot per reviewer.
 
 **Change:** Put generic reviewer policy and terminal-action semantics in one reusable reviewer system prompt or node-agent contract. Workflow slot contains only:
 
@@ -296,7 +296,7 @@ Savings: **~30-80 tokens per task message** by keeping only PR/worktree ID in us
 - artifact data required
 - approval/failure branch delta
 
-**Estimated savings:** **~800-1,500 tokens per reviewer session**, **~3,000-6,000 tokens** in Plan & Decompose because four plan reviewers each receive shared review prose.
+**Estimated savings:** **~900-1,800 tokens per reviewer session**, **~3,000-6,000 tokens** in Plan & Decompose because four plan reviewers each receive shared review prose.
 
 ### 2. Move `approve_task` / `submit_for_approval` semantics into tool descriptions/runtime guard errors
 
