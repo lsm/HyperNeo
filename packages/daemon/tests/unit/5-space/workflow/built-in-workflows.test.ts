@@ -121,14 +121,16 @@ describe('CODING_WORKFLOW template', () => {
     expect(prompt).toContain('The reviewer handles the merge.');
   });
 
-  test('coder agent slot has toolGuards with gh pr merge deny rule', () => {
-    const guards = CODING_WORKFLOW.nodes[0].agents[0]?.toolGuards;
-    expect(guards).toBeDefined();
-    expect(guards).toHaveLength(1);
-    expect(guards![0].matcher).toBe('Bash');
-    expect(guards![0].decision).toBe('deny');
-    expect(guards![0].pattern).toContain('gh');
-    expect(guards![0].reason).toContain('merge');
+  test('coder and validator slots have toolGuards with gh pr merge deny rule', () => {
+    for (const agent of [CODING_WORKFLOW.nodes[0].agents[0], CODING_WORKFLOW.nodes[1].agents[0]]) {
+      const guards = agent?.toolGuards;
+      expect(guards).toBeDefined();
+      expect(guards).toHaveLength(1);
+      expect(guards![0].matcher).toBe('Bash');
+      expect(guards![0].decision).toBe('deny');
+      expect(guards![0].pattern).toContain('gh');
+      expect(guards![0].reason).toContain('merge');
+    }
   });
 
   test('has four channels', () => {
@@ -199,7 +201,8 @@ describe('CODING_WORKFLOW template', () => {
 
   test('validation-complete-gate accepts no-code-change completion evidence without pr_url', () => {
     const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
-    expect(gate.script).toBeUndefined();
+    expect(gate.script).toBeDefined();
+    expect(gate.script?.source).toContain('git status --porcelain=v1');
     expect(gate.resetOnCycle).toBe(true);
 
     const completionMode = gate.fields!.find((f) => f.name === 'completion_mode')!;
@@ -243,6 +246,31 @@ describe('CODING_WORKFLOW template', () => {
         changed_files: 0,
       }).open
     ).toBe(false);
+  });
+
+  test('validation-complete-gate script blocks dirty worktrees', async () => {
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    const tmp = mkdtempSync(join(tmpdir(), 'validation-gate-'));
+    try {
+      await Bun.$`git init`.cwd(tmp).quiet();
+      writeFileSync(join(tmp, 'changed.txt'), 'dirty');
+
+      const result = await executeGateScript(gate.script!, {
+        workspacePath: tmp,
+        gateId: gate.id,
+        runId: 'run-validation-dirty',
+        gateData: {
+          completion_mode: 'validation_only',
+          changed_files: 0,
+          validation_outcome: 'claimed clean',
+        },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('clean worktree');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('review-posted-gate has pr_url and review_url fields writable only by Review node', () => {
@@ -2080,14 +2108,22 @@ describe('seedBuiltInWorkflows()', () => {
     ).toBe(true);
   });
 
-  test('re-stamp does not append duplicate template nodes over renamed built-in nodes', () => {
+  test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
     const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    const legacyNodes = coding.nodes.filter((node) => node.name !== 'Validation Complete');
+    const legacyChannels = coding.channels!.filter(
+      (channel) => channel.from !== 'Coding' || channel.to !== 'Validation Complete'
+    );
     manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((node) =>
-        node.id === reviewNode.id ? { ...node, name: 'Human Review' } : node
-      ),
+      nodes: legacyNodes.map((node) => {
+        if (node.id === codingNode.id) return { ...node, name: 'Implementation' };
+        if (node.id === reviewNode.id) return { ...node, name: 'Human Review' };
+        return node;
+      }),
+      channels: legacyChannels,
     });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'renamed-node-drift',
@@ -2100,9 +2136,20 @@ describe('seedBuiltInWorkflows()', () => {
 
     const after = manager.getWorkflow(coding.id)!;
     expect(after.nodes.filter((node) => node.name === 'Review')).toHaveLength(0);
+    expect(after.nodes.filter((node) => node.name === 'Coding')).toHaveLength(0);
     expect(
       after.nodes.filter((node) => node.agents.some((agent) => agent.name === 'reviewer'))
     ).toHaveLength(1);
+    expect(
+      after.channels!.some(
+        (channel) => channel.from === 'Implementation' && channel.to === 'Validation Complete'
+      )
+    ).toBe(true);
+    expect(
+      after.channels!.some(
+        (channel) => channel.from === 'Validation Complete' && channel.to === 'Implementation'
+      )
+    ).toBe(true);
   });
 
   test('re-stamp preserves existing node rows, layout, and updates toolGuards in place', () => {

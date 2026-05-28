@@ -806,7 +806,8 @@ describe('space-workflow-handlers', () => {
       const [, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>).mock
         .calls[0] as [string, Record<string, unknown>];
       const calledNodes = calledParams.nodes as Array<{ id: string }>;
-      expect(calledNodes.map((node) => node.id)).toEqual(['existing-a', 'existing-b']);
+      expect(calledNodes.map((node) => node.id).slice(0, 2)).toEqual(['existing-a', 'existing-b']);
+      expect(calledNodes).toHaveLength(template.nodes.length);
       expect(new Set(calledNodes.map((node) => node.id)).size).toBe(calledNodes.length);
     });
 

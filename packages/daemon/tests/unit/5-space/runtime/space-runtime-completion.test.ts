@@ -1354,6 +1354,67 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(completedEvents).toHaveLength(1);
     });
 
+    test('non-end terminal source is preserved during sibling quiescing', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      mockTam.isSessionAlive = () => true;
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Validation Terminal Preserve ${Date.now()}`,
+        description: '',
+        nodes: [
+          { id: 'vt-code', name: 'Coding', agentId: AGENT_A },
+          { id: 'vt-validation', name: 'Validation Complete', agentId: AGENT_B },
+          { id: 'vt-review', name: 'Review', agentId: AGENT_C },
+        ],
+        startNodeId: 'vt-code',
+        endNodeId: 'vt-review',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        reportedStatus: 'done',
+        pendingCompletionSubmittedByNodeId: 'vt-validation',
+      });
+
+      const validationExecId = seedNodeExec(
+        db,
+        run.id,
+        'vt-validation',
+        'Validation Complete',
+        'in_progress'
+      );
+      const validationSessionId = 'validation-terminal-session-001';
+      db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+        validationSessionId,
+        validationExecId
+      );
+      const codingExecId = seedNodeExec(db, run.id, 'vt-code', 'Coding', 'in_progress');
+      const codingSessionId = 'coding-sibling-session-001';
+      db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+        codingSessionId,
+        codingExecId
+      );
+      seedNodeExec(db, run.id, 'vt-review', 'Review', 'idle');
+
+      await rt.executeTick();
+
+      const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+      const validationExec = execs.find((e) => e.workflowNodeId === 'vt-validation');
+      const codingExec = execs.find((e) => e.workflowNodeId === 'vt-code');
+      expect(validationExec?.status).toBe('in_progress');
+      expect(validationExec?.agentSessionId).toBe(validationSessionId);
+      expect(codingExec?.status).toBe('idle');
+      expect(mockTam.interruptedSessions).not.toContain(validationSessionId);
+      expect(mockTam.interruptedSessions).toContain(codingSessionId);
+    });
+
     test('canonical task blocked still quiesces siblings on run completion', async () => {
       // Regression: when the canonical task is `blocked` (treated as
       // already-resolved by the completion guard) but the run reaches

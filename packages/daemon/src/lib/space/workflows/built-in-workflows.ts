@@ -237,6 +237,19 @@ const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
   '}',
 ].join('\n');
 
+const VALIDATION_NO_CHANGES_BASH_SCRIPT = [
+  'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
+  '  echo "Workspace is not a git worktree; cannot verify validation-only no-change handoff" >&2',
+  '  exit 1',
+  'fi',
+  'if [ -n "$(git status --porcelain=v1 2>/dev/null)" ]; then',
+  '  echo "Validation-only handoff requires a clean worktree; code changes or untracked files are present" >&2',
+  '  git status --short >&2 || true',
+  '  exit 1',
+  'fi',
+  'jq -n --arg mode "validation_only" --argjson changed_files 0 \'{"completion_mode":$mode,"changed_files":$changed_files}\'',
+].join('\n');
+
 const PR_READY_BASH_SCRIPT = [
   REVIEW_THREAD_CHECK_BASH_FUNCTION,
   '# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
@@ -701,6 +714,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
             value:
               'You are the terminal validation-only completion agent in a Coding workflow. This node is only for tasks that produced no code changes: diagnostics, trace validation, manual checks, or other verification work.\n\nYour job is to verify the upstream coder recorded a result artifact with validation evidence, then close the task. Do NOT create commits, branches, or PRs. Do NOT merge anything.\n\nChecklist:\n1. Read the incoming message and list_artifacts({ type: "result" })\n2. Confirm the result artifact says `completion_mode: "validation_only"`, `changed_files: 0`, and includes a concrete validation outcome/evidence\n3. If evidence is missing or indicates code changes were made, send a message back to Coding explaining what is missing; do NOT approve\n4. If evidence is sufficient, call `save_artifact({ type: "result", append: true, summary: "Validation-only completion accepted: <outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" } })`\n5. Call `approve_task({})` as your final action to mark the task done. No `pr_url` is required for this path.',
           },
+          toolGuards: [CODER_NO_MERGE_GUARD],
         },
       ],
       postApproval: undefined,
@@ -841,6 +855,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           check: { op: 'exists' },
         },
       ],
+      script: {
+        interpreter: 'bash',
+        source: VALIDATION_NO_CHANGES_BASH_SCRIPT,
+        timeoutMs: 30000,
+      },
       resetOnCycle: true,
     },
     {
@@ -1693,19 +1712,63 @@ function mergeNodeStructuralFieldsFromTemplate(
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
 }
 
+function nodeReferences(node: WorkflowNode): Set<string> {
+  return new Set([
+    node.id,
+    node.name,
+    ...node.agents.flatMap((agent) => [agent.name, agent.agentId, `${node.id}/${agent.name}`]),
+  ]);
+}
+
+function remapTemplateChannelRef(
+  ref: string,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): string {
+  const templateNode = templateNodes.find((node) => nodeReferences(node).has(ref));
+  if (!templateNode) return ref;
+
+  const existingNode =
+    existingNodes.find((node) => node.name === templateNode.name) ??
+    existingNodes.find((node) =>
+      templateNode.agents.some((templateAgent) =>
+        node.agents.some((agent) => agent.name && agent.name === templateAgent.name)
+      )
+    );
+  return existingNode?.name ?? ref;
+}
+
+function remapTemplateChannel(
+  channel: NonNullable<SpaceWorkflow['channels']>[number],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): NonNullable<SpaceWorkflow['channels']>[number] {
+  const remapRef = (ref: string) => remapTemplateChannelRef(ref, templateNodes, existingNodes);
+  return {
+    ...channel,
+    from: remapRef(channel.from),
+    to: Array.isArray(channel.to) ? channel.to.map(remapRef) : remapRef(channel.to),
+  };
+}
+
 function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
-  templateChannels: SpaceWorkflow['channels']
+  templateChannels: SpaceWorkflow['channels'],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
 ): SpaceWorkflow['channels'] {
   if (!templateChannels) return existingChannels;
-  if (!existingChannels) return templateChannels;
+  const remappedTemplateChannels = templateChannels.map((channel) =>
+    remapTemplateChannel(channel, templateNodes, existingNodes)
+  );
+  if (!existingChannels) return remappedTemplateChannels;
 
   const existingKeys = new Set(
     existingChannels.map((channel) =>
       JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
     )
   );
-  const missingTemplateChannels = templateChannels.filter(
+  const missingTemplateChannels = remappedTemplateChannels.filter(
     (channel) =>
       !existingKeys.has(
         JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
@@ -1845,7 +1908,12 @@ export function seedBuiltInWorkflows(
           template.nodes,
           resolveAgentId
         );
-        const mergedChannels = mergeChannelsFromTemplate(row.channels, template.channels);
+        const mergedChannels = mergeChannelsFromTemplate(
+          row.channels,
+          template.channels,
+          template.nodes,
+          row.nodes
+        );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
         const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);

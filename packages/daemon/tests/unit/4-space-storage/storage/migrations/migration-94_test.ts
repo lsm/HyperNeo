@@ -151,6 +151,7 @@ function seedLegacyCodingWorkflow(
   if (!template) throw new Error('Coding Workflow template missing');
 
   const codingNodeId = `${opts.id}-n-coding`;
+  const validationNodeId = `${opts.id}-n-validation`;
   const reviewNodeId = `${opts.id}-n-review`;
 
   insertWorkflow(db, {
@@ -172,6 +173,13 @@ function seedLegacyCodingWorkflow(
     workflowId: opts.id,
     name: 'Coding',
     config: { agents: [{ agentId: 'a-coder', name: 'coder' }] },
+  });
+
+  insertNode(db, {
+    id: validationNodeId,
+    workflowId: opts.id,
+    name: 'Validation Complete',
+    config: { agents: [{ agentId: 'a-validator', name: 'validator' }] },
   });
 
   insertNode(db, {
@@ -286,6 +294,11 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
       endNodeId: reviewId,
     });
     insertNode(db, { id: codingId, workflowId: wfId, name: 'Coding' });
+    insertNode(db, {
+      id: 'n-d-validation',
+      workflowId: wfId,
+      name: 'Validation Complete',
+    });
     insertNode(db, { id: reviewId, workflowId: wfId, name: 'Review' });
 
     runMigration94(db);
