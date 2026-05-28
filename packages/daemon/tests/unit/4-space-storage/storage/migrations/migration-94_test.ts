@@ -232,18 +232,29 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     for (const [i, tpl] of templates.entries()) {
       const wfId = `wf-verify-${i}`;
       const endNodeId = `n-${i}-end`;
-      const nodeIds = tpl.nodes.map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
+      const nodeIds =
+        tpl.name === 'Coding Workflow'
+          ? [
+              { id: `n-${i}-Coding`, name: 'Coding' },
+              { id: `n-${i}-Review`, name: 'Review' },
+            ]
+          : tpl.nodes.map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
       const resolvedEndNodeId =
         nodeIds.find((n) => n.name === tpl.nodes.find((x) => x.id === tpl.endNodeId)?.name)?.id ??
         endNodeId;
+      const legacyCodingChannels = [
+        { from: 'Coding', to: 'Review' },
+        { from: 'Review', to: 'Coding' },
+      ];
+      const legacyCodingGates = (tpl.gates ?? []).filter((gate) => gate.id === 'code-ready-gate');
 
       insertWorkflow(db, {
         id: wfId,
         spaceId: 'sp-1',
         name: tpl.name,
         description: tpl.description,
-        channels: tpl.channels ?? [],
-        gates: tpl.gates ?? [],
+        channels: tpl.name === 'Coding Workflow' ? legacyCodingChannels : (tpl.channels ?? []),
+        gates: tpl.name === 'Coding Workflow' ? legacyCodingGates : (tpl.gates ?? []),
         endNodeId: resolvedEndNodeId,
       });
       for (const n of nodeIds) {

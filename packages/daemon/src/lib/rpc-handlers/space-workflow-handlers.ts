@@ -68,18 +68,27 @@ function buildTemplateUpdateParams(
     queue.push(existingNode.id);
     existingNodeIdQueuesByName.set(existingNode.name, queue);
   }
+  const exactExistingIdsByTemplateIndex = new Map<number, string>();
+  for (let i = 0; i < template.nodes.length; i++) {
+    const nameQueue = existingNodeIdQueuesByName.get(template.nodes[i].name);
+    const existingIdByName = nameQueue?.shift();
+    if (existingIdByName) exactExistingIdsByTemplateIndex.set(i, existingIdByName);
+  }
+
   const existingNodeIdsInOrder = existingWorkflow?.nodes.map((node) => node.id) ?? [];
+  const reservedExactExistingIds = new Set(exactExistingIdsByTemplateIndex.values());
   const usedExistingNodeIds = new Set<string>();
   const nodeIdMap = new Map<string, string>();
   for (let i = 0; i < template.nodes.length; i++) {
     const node = template.nodes[i];
-    const nameQueue = existingNodeIdQueuesByName.get(node.name);
-    const existingIdByName = nameQueue?.shift();
+    const existingIdByName = exactExistingIdsByTemplateIndex.get(i);
     const existingIdByPosition = existingNodeIdsInOrder[i];
     const existingId =
       existingIdByName && !usedExistingNodeIds.has(existingIdByName)
         ? existingIdByName
-        : existingIdByPosition && !usedExistingNodeIds.has(existingIdByPosition)
+        : existingIdByPosition &&
+            !usedExistingNodeIds.has(existingIdByPosition) &&
+            !reservedExactExistingIds.has(existingIdByPosition)
           ? existingIdByPosition
           : undefined;
     if (existingId) usedExistingNodeIds.add(existingId);

@@ -88,7 +88,7 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(updated.approvedAt).toBeGreaterThanOrEqual(before);
   });
 
-  test('review → approved stamps approvalSource=human + approvedAt', async () => {
+  test('review → approved stamps approvalSource=human + approvedAt and preserves submitting node', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
@@ -97,6 +97,12 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     });
     // in_progress → review
     await taskManager.setTaskStatus(task.id, 'review');
+    taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'validation-node',
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'needs human approval',
+    });
     // review → approved
     const updated = await taskManager.setTaskStatus(task.id, 'approved', {
       approvalSource: 'human',
@@ -105,6 +111,7 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(updated.status).toBe('approved');
     expect(updated.approvalSource).toBe('human');
     expect(updated.approvalReason).toBe('LGTM');
+    expect(updated.pendingCompletionSubmittedByNodeId).toBe('validation-node');
   });
 
   test('approved → done via mark_complete carries approvalSource through', async () => {

@@ -70,6 +70,7 @@ describe('buildRestrictedEnv', () => {
     process.env['NEOKAI_SECRET_X'] = 'neokai-secret';
     process.env['NEOKAI_PORT'] = '8080';
     process.env['NEOKAI_USE_DEV_PROXY'] = '1';
+    process.env['NEOKAI_VALIDATION_BASE_REF'] = 'origin/release';
     process.env['MY_SECRET_KEY'] = 'my-secret';
     process.env['DB_PASSWORD'] = 'db-secret';
     process.env['AWS_CREDENTIAL'] = 'aws-secret';
@@ -118,6 +119,10 @@ describe('buildRestrictedEnv', () => {
   test('strips broader NEOKAI_ prefixed env vars (internal ops)', () => {
     expect(buildRestrictedEnv(CTX)['NEOKAI_PORT']).toBeUndefined();
     expect(buildRestrictedEnv(CTX)['NEOKAI_USE_DEV_PROXY']).toBeUndefined();
+  });
+
+  test('allows NEOKAI_VALIDATION_BASE_REF for validation-only gate base override', () => {
+    expect(buildRestrictedEnv(CTX)['NEOKAI_VALIDATION_BASE_REF']).toBe('origin/release');
   });
 
   test('strips env vars matching SECRET key pattern', () => {
@@ -267,6 +272,15 @@ describe('buildRestrictedEnv', () => {
 
   test('user env with NEOKAI_ prefix is stripped', () => {
     expect(buildRestrictedEnv(CTX, { NEOKAI_CUSTOM: 'leak' })['NEOKAI_CUSTOM']).toBeUndefined();
+  });
+
+  test('user env can pass NEOKAI_VALIDATION_BASE_REF when process env omits it', () => {
+    delete process.env['NEOKAI_VALIDATION_BASE_REF'];
+    expect(
+      buildRestrictedEnv(CTX, { NEOKAI_VALIDATION_BASE_REF: 'origin/main' })[
+        'NEOKAI_VALIDATION_BASE_REF'
+      ]
+    ).toBe('origin/main');
   });
 
   test('user env with SECRET pattern is stripped', () => {

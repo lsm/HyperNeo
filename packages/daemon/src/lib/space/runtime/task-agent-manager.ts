@@ -133,6 +133,48 @@ function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
   return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
 }
 
+export function isWorkflowTerminalNode(
+  workflow: SpaceWorkflow | null | undefined,
+  workflowNodeId: string
+): boolean {
+  if (!workflow) return false;
+  if (workflow.endNodeId === workflowNodeId) return true;
+
+  const node = workflow.nodes.find((candidate) => candidate.id === workflowNodeId);
+  if (!node) return false;
+
+  const nodeAgents = resolveNodeAgents(node);
+  const fromRefs = new Set([
+    node.name,
+    node.id,
+    ...nodeAgents.flatMap((agent) => [agent.name, agent.agentId, `${node.id}/${agent.name}`]),
+  ]);
+  const outgoingChannels = (workflow.channels ?? []).filter(
+    (channel) => channel.from === '*' || fromRefs.has(channel.from)
+  );
+  if (outgoingChannels.some((channel) => channel.from === '*')) return false;
+  if (outgoingChannels.length === 0) return true;
+
+  const startNode = workflow.nodes.find((candidate) => candidate.id === workflow.startNodeId);
+  const startAgents = startNode ? resolveNodeAgents(startNode) : [];
+  const startRefs = new Set(
+    [
+      workflow.startNodeId,
+      startNode?.name,
+      ...startAgents.flatMap((agent) => [
+        agent.name,
+        agent.agentId,
+        `${workflow.startNodeId}/${agent.name}`,
+      ]),
+    ].filter(Boolean)
+  );
+
+  return outgoingChannels.every((channel) => {
+    const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+    return targets.every((target) => startRefs.has(target));
+  });
+}
+
 function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): string {
   const agentDisplayName = agentName ? agentName[0].toUpperCase() + agentName.slice(1) : '';
   const agentLabel = agentDisplayName ? ` — ${agentDisplayName}` : '';
@@ -2226,7 +2268,7 @@ export class TaskAgentManager {
     execution: NodeExecution,
     space: Space | null
   ): string {
-    const isEndNode = !!workflow?.endNodeId && execution.workflowNodeId === workflow.endNodeId;
+    const isEndNode = this.isTerminalNode(workflow, execution.workflowNodeId);
 
     // Compute whether approve_task is currently unlocked for this space.
     // The MCP handler re-checks at call time, so this is purely for prompt
@@ -2391,6 +2433,13 @@ export class TaskAgentManager {
       .replace(/^-+|-+$/g, '');
     if (kebab) variants.add(kebab);
     return [...variants];
+  }
+
+  private isTerminalNode(
+    workflow: SpaceWorkflow | null | undefined,
+    workflowNodeId: string
+  ): boolean {
+    return isWorkflowTerminalNode(workflow, workflowNodeId);
   }
 
   private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {
@@ -3568,7 +3617,7 @@ export class TaskAgentManager {
     //                          Only available to end-node agents.
     //   `submit_for_approval` — request human review of completion.
     //                           Only available to end-node agents.
-    const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
+    const isEndNode = this.isTerminalNode(workflow, workflowNodeId);
     // Bound SpaceTaskManager shared by the `submit_for_approval` and
     // `mark_complete` tool handlers — both rely on the centralised transition
     // validator so any illegal source status fails before fields get written.

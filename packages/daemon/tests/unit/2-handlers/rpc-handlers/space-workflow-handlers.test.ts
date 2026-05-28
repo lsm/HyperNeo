@@ -806,7 +806,38 @@ describe('space-workflow-handlers', () => {
       const [, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>).mock
         .calls[0] as [string, Record<string, unknown>];
       const calledNodes = calledParams.nodes as Array<{ id: string }>;
-      expect(calledNodes.map((node) => node.id)).toEqual(['existing-a', 'existing-b']);
+      expect(calledNodes.map((node) => node.id).slice(0, 2)).toEqual(['existing-a', 'existing-b']);
+      expect(calledNodes).toHaveLength(template.nodes.length);
+      expect(new Set(calledNodes.map((node) => node.id)).size).toBe(calledNodes.length);
+    });
+
+    it('preserves later exact-name node IDs when inserting new template nodes', async () => {
+      const [template] = getBuiltInWorkflows();
+      const agents = agentsForTemplate(template);
+      const wfLinked: SpaceWorkflow = {
+        ...mockWorkflow,
+        nodes: [
+          { id: 'existing-coding', name: 'Coding', agents: [] },
+          { id: 'existing-review', name: 'Review', agents: [] },
+        ],
+        startNodeId: 'existing-coding',
+        endNodeId: 'existing-review',
+        templateName: template.name,
+        templateHash: 'old-hash',
+      };
+      setup(mockSpace, wfLinked, agents);
+      (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
+
+      await call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' });
+
+      const [, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>).mock
+        .calls[0] as [string, Record<string, unknown>];
+      const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
+      expect(calledNodes.find((node) => node.name === 'Coding')?.id).toBe('existing-coding');
+      expect(calledNodes.find((node) => node.name === 'Review')?.id).toBe('existing-review');
+      const validationNode = calledNodes.find((node) => node.name === 'Validation Complete');
+      expect(validationNode?.id).not.toBe('existing-review');
+      expect(validationNode?.id).not.toBe('existing-coding');
       expect(new Set(calledNodes.map((node) => node.id)).size).toBe(calledNodes.length);
     });
 
