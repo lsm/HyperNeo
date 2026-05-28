@@ -1331,6 +1331,7 @@ describe('Forge evidence capture on task completion', () => {
     message: Record<string, unknown>,
     timestamp: number
   ) {
+    ensureSession(sessionId);
     const count = db.prepare('SELECT COUNT(*) AS count FROM sdk_messages').get() as {
       count: number;
     };
@@ -1347,6 +1348,20 @@ describe('Forge evidence capture on task completion', () => {
       JSON.stringify(message),
       new Date(timestamp).toISOString(),
       taskId
+    );
+  }
+
+  function ensureSession(sessionId: string) {
+    db.prepare(
+      `INSERT OR IGNORE INTO sessions (
+        id, title, workspace_path, created_at, last_active_at, status, config, metadata
+      ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}')`
+    ).run(
+      sessionId,
+      `Session ${sessionId}`,
+      '/workspace/forge-evidence-capture-test',
+      '2024-01-01T00:00:00.000Z',
+      '2024-01-01T00:00:00.000Z'
     );
   }
 

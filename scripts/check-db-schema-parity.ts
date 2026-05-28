@@ -126,11 +126,8 @@ function getTableSql(db: Database, tableName: string): string {
   return normalizeSchemaSql(row?.sql ?? '');
 }
 
-function getTableType(db: Database, tableName: string): string {
-  const row = db
-    .query(`SELECT type AS name FROM sqlite_schema WHERE name = ?`)
-    .get(tableName) as SchemaRow | null;
-  return row?.name ?? '';
+function isVirtualTable(db: Database, tableName: string): boolean {
+  return getTableSql(db, tableName).startsWith('CREATE VIRTUAL TABLE ');
 }
 
 function getColumnNames(db: Database, tableName: string): string[] {
@@ -410,7 +407,7 @@ export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): s
   for (const tableName of HELPER_SCHEMA_TABLES) {
     if (!prodTables.has(tableName) || !helperTables.has(tableName)) continue;
 
-    if (getTableType(prodDb, tableName) === 'virtual table') {
+    if (isVirtualTable(prodDb, tableName)) {
       const tableSqlDiff = diffLists(
         [getTableSql(prodDb, tableName)],
         [getTableSql(helperDb, tableName)]
