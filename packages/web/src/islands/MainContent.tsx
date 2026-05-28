@@ -368,6 +368,7 @@ export default function MainContent() {
         <Suspense fallback={lazyFallback}>
           <SpaceIsland
             spaceId={spaceId}
+            routeSpaceId={spaceRouteId}
             viewMode={spaceViewMode}
             sessionViewId={spaceSessionViewId}
             taskViewId={spaceTaskViewId}

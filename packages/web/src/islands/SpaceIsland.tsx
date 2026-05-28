@@ -76,6 +76,7 @@ const lazyFallback = (
 
 interface SpaceIslandProps {
   spaceId: string;
+  routeSpaceId?: string | null;
   viewMode: SpaceViewMode;
   sessionViewId?: string | null;
   taskViewId?: string | null;
@@ -83,10 +84,12 @@ interface SpaceIslandProps {
 
 export default function SpaceIsland({
   spaceId,
+  routeSpaceId,
   viewMode,
   sessionViewId,
   taskViewId,
 }: SpaceIslandProps) {
+  const navigationSpaceId = routeSpaceId ?? spaceId;
   // Overlay session — shown as a slide-over on top of the current view
   const overlaySessionId = spaceOverlaySessionIdSignal.value;
   const overlayAgentName = spaceOverlayAgentNameSignal.value;
@@ -178,12 +181,12 @@ export default function SpaceIsland({
   }, [spaceId]);
 
   const handleTaskPaneClose = useCallback(() => {
-    navigateBack(() => navigateToSpace(spaceId));
-  }, [spaceId]);
+    navigateBack(() => navigateToSpace(navigationSpaceId));
+  }, [navigationSpaceId]);
 
   const handleSessionBack = useCallback(() => {
-    navigateBack(() => navigateToSpace(spaceId));
-  }, [spaceId]);
+    navigateBack(() => navigateToSpace(navigationSpaceId));
+  }, [navigationSpaceId]);
 
   const handleCreateSession = useCallback(
     async (e: Event) => {
@@ -206,7 +209,7 @@ export default function SpaceIsland({
             spaceStore.space.value?.id === originSpaceId) &&
           currentSpaceViewModeSignal.value === originViewMode
         ) {
-          navigateToSpaceSession(spaceId, response.sessionId);
+          navigateToSpaceSession(navigationSpaceId, response.sessionId);
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to create session');
@@ -222,7 +225,7 @@ export default function SpaceIsland({
         });
       }
     },
-    [spaceId, space?.workspacePath, creatingSession, viewMode]
+    [spaceId, navigationSpaceId, space?.workspacePath, creatingSession, viewMode]
   );
 
   // Session/agent chat view — render immediately, don't block on space data
@@ -325,7 +328,7 @@ export default function SpaceIsland({
             <Suspense fallback={lazyFallback}>
               <SpaceTasks
                 spaceId={spaceId}
-                onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+                onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
               />
             </Suspense>
           </div>
@@ -340,7 +343,7 @@ export default function SpaceIsland({
               currentSpaceViewModeSignal.value === 'tasks' &&
               currentSpaceIdSignal.value === spaceId
             ) {
-              navigateToSpaceTask(spaceId, task.id);
+              navigateToSpaceTask(navigationSpaceId, task.id);
             }
           }}
         />
@@ -483,7 +486,7 @@ export default function SpaceIsland({
           <Suspense fallback={lazyFallback}>
             <SpaceOverview
               spaceId={spaceId}
-              onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+              onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
             />
           </Suspense>
         </div>

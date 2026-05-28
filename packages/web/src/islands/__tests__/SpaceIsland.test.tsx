@@ -43,8 +43,9 @@ const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
   }),
 }));
 
-const { mockNavigateToSpaceSession } = vi.hoisted(() => ({
+const { mockNavigateToSpaceSession, mockNavigateToSpaceTask } = vi.hoisted(() => ({
   mockNavigateToSpaceSession: vi.fn(),
+  mockNavigateToSpaceTask: vi.fn(),
 }));
 
 const { mockCreateSession } = vi.hoisted(() => ({
@@ -116,7 +117,16 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
 }));
 
 vi.mock('../../components/space/SpaceOverview', () => ({
-  SpaceOverview: () => <div data-testid="space-dashboard" />,
+  SpaceOverview: (props: { onSelectTask?: (taskId: string) => void }) => (
+    <div data-testid="space-dashboard">
+      <button
+        data-testid="overview-select-task"
+        onClick={() => props.onSelectTask?.('task-from-overview')}
+      >
+        Select Task
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('../../components/space/SpaceTaskPane', () => ({
@@ -169,7 +179,7 @@ vi.mock('../../lib/space-store', () => ({
 
 vi.mock('../../lib/router', () => ({
   navigateToSpace: vi.fn(),
-  navigateToSpaceTask: vi.fn(),
+  navigateToSpaceTask: mockNavigateToSpaceTask,
   navigateToSpaceSession: mockNavigateToSpaceSession,
   navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
   pushOverlayHistory: vi.fn(),
@@ -242,6 +252,7 @@ beforeEach(() => {
   idBridge.signal.value = null;
   mockNavigateToSpaceConfigure.mockClear();
   mockNavigateToSpaceSession.mockClear();
+  mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
 });
@@ -290,6 +301,16 @@ describe('SpaceIsland — overview content', () => {
     expect(queryByTestId('canvas-panel')).toBeNull();
     expect(queryByTestId('workflow-canvas')).toBeNull();
     expect(queryByTestId('dashboard-fallback')).toBeNull();
+  });
+
+  it('uses the route space id for overview task navigation', async () => {
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="overview" />
+    );
+
+    fireEvent.click(await findByTestId('overview-select-task'));
+
+    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'task-from-overview');
   });
 });
 
@@ -446,7 +467,7 @@ describe('SpaceIsland — sessions view', () => {
     mockCurrentSpaceViewModeSignal.value = 'sessions';
 
     const { getByLabelText, getByTestId } = render(
-      <SpaceIsland spaceId="space-1" viewMode="sessions" />
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
     );
     await waitFor(
       () => {
@@ -458,7 +479,7 @@ describe('SpaceIsland — sessions view', () => {
     fireEvent.click(getByLabelText('Create session'));
 
     await waitFor(() => {
-      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-slug', 'new-session-123');
     });
   });
 
