@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NeoKai flaky test registry",
+  "type": "object",
+  "required": ["schemaVersion", "policy", "tests"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "policy": {
+      "type": "object",
+      "required": [
+        "maxRetries",
+        "quarantineAfterFailures",
+        "createFixTaskAfterQuarantine",
+        "fixTaskLabel"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "maxRetries": { "type": "integer", "minimum": 0 },
+        "quarantineAfterFailures": { "type": "integer", "minimum": 1 },
+        "createFixTaskAfterQuarantine": { "type": "boolean" },
+        "fixTaskLabel": { "type": "string", "minLength": 1 }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "suite", "path", "namePattern", "reason", "addedAt"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "suite": {
+            "type": "string",
+            "enum": ["daemon-unit", "daemon-online", "web", "cli", "e2e"]
+          },
+          "path": { "type": "string", "minLength": 1 },
+          "namePattern": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "addedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+          "expiresAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+          "issueUrl": { "type": "string", "format": "uri" }
+        }
+      }
+    }
+  }
+}
