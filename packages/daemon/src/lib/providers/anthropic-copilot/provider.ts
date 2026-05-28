@@ -312,14 +312,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
-    const token = credentials.type === 'api_key' ? credentials.apiKey : credentials.refreshToken;
+    const token =
+      credentials.type === 'api_key'
+        ? credentials.apiKey
+        : (credentials.accessToken ?? credentials.refreshToken);
     if (!token) return;
     this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
   }
 
   getCredentials(): ProviderCredentials | null {
     if (!this.tokenCache?.token) return null;
-    return { type: 'oauth', refreshToken: this.tokenCache.token };
+    return { type: 'oauth', accessToken: this.tokenCache.token };
   }
 
   async isAvailable(): Promise<boolean> {

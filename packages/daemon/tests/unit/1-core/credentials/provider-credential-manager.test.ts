@@ -83,6 +83,49 @@ describe('ProviderCredentialManager', () => {
     }
   });
 
+  it('migrates Anthropic OAuth env key as OAuth credentials', async () => {
+    const db = createDb();
+    const store = new MemoryCredentialStore();
+    const manager = new ProviderCredentialManager(store, db, {
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+    });
+    try {
+      expect(await manager.migrateFromEnv('anthropic')).toBe(true);
+      expect(await manager.getCredentials('anthropic')).toEqual({
+        type: 'oauth',
+        accessToken: 'oauth-token',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('normalizes OAuth expires_in to absolute expiresAt', async () => {
+    const db = createDb();
+    const store = new MemoryCredentialStore();
+    const manager = new ProviderCredentialManager(store, db);
+    const now = Date.now();
+    try {
+      await manager.storeOAuthTokens('glm', {
+        access_token: 'oauth-token',
+        refresh_token: 'refresh-token',
+        expires_in: 60,
+      });
+
+      const credentials = await manager.getCredentials('glm');
+      expect(credentials).toMatchObject({
+        type: 'oauth',
+        accessToken: 'oauth-token',
+        refreshToken: 'refresh-token',
+      });
+      expect(
+        credentials?.type === 'oauth' ? credentials.expiresAt : undefined
+      ).toBeGreaterThanOrEqual(now + 60_000);
+    } finally {
+      db.close();
+    }
+  });
+
   it('lists provider ids from database credential store', async () => {
     const db = createDb();
     const store = new DatabaseCredentialStore(db, 'test-secret');

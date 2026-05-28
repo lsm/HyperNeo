@@ -33,7 +33,10 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager';
 import { GitHubEventExtension } from './lib/external-events/github';
+import { initializeProviders } from './lib/providers/factory.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
+import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
+import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
@@ -270,6 +273,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // MCP resolution and are not affected by this global instance.
     const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
+
+    const providerRegistry = initializeProviders();
+    const credentialManager = ProviderCredentialManager.create(db.getDatabase());
+    for (const provider of providerRegistry.getAll()) {
+      const credentials = await credentialManager.getCredentials(provider.id);
+      if (credentials && provider.setCredentials) {
+        provider.setCredentials(credentials);
+      }
+    }
+    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
+      registry: providerRegistry,
+    });
+    oauthRefreshScheduler.start();
 
     // Register user-defined OpenAI-compatible endpoints (LM Studio, vLLM, LiteLLM, etc.)
     // stored under `settings.customEndpoints`. Synchronous failure is non-fatal — bad
@@ -887,6 +903,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // Stop background processors before MessageHub cleanup
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
+        oauthRefreshScheduler.stop();
+        logInfo('[Daemon] OAuth refresh scheduler stopped');
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
 

@@ -9,7 +9,7 @@ import {
 const DEFAULT_ACCOUNT = 'default';
 
 const PROVIDER_ENV_KEYS: Record<string, string[]> = {
-  anthropic: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'],
+  anthropic: ['ANTHROPIC_API_KEY'],
   glm: ['GLM_API_KEY', 'ZHIPU_API_KEY'],
   kimi: ['KIMI_API_KEY', 'MOONSHOT_API_KEY'],
   minimax: ['MINIMAX_API_KEY'],
@@ -18,6 +18,10 @@ const PROVIDER_ENV_KEYS: Record<string, string[]> = {
   'ollama-cloud': ['OLLAMA_CLOUD_API_KEY'],
   'anthropic-codex': ['OPENAI_API_KEY'],
   'anthropic-copilot': ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN'],
+};
+
+const PROVIDER_ENV_OAUTH_KEYS: Record<string, string[]> = {
+  anthropic: ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'],
 };
 
 export class ProviderCredentialManager {
@@ -66,9 +70,15 @@ export class ProviderCredentialManager {
   }
 
   async migrateFromEnv(providerId: string): Promise<boolean> {
-    const apiKey = this.getEnvApiKey(providerId);
-    if (!apiKey) return false;
-    await this.storeApiKey(providerId, apiKey);
+    const apiKey = this.getEnvValue(PROVIDER_ENV_KEYS[providerId]);
+    if (apiKey) {
+      await this.storeApiKey(providerId, apiKey);
+      return true;
+    }
+
+    const accessToken = this.getEnvValue(PROVIDER_ENV_OAUTH_KEYS[providerId]);
+    if (!accessToken) return false;
+    await this.storeOAuthTokens(providerId, { type: 'oauth', accessToken });
     return true;
   }
 
@@ -88,8 +98,8 @@ export class ProviderCredentialManager {
       .run(healthStatus, Date.now(), Date.now(), providerId, providerId);
   }
 
-  private getEnvApiKey(providerId: string): string | undefined {
-    for (const key of PROVIDER_ENV_KEYS[providerId] ?? []) {
+  private getEnvValue(keys: string[] | undefined): string | undefined {
+    for (const key of keys ?? []) {
       const value = this.env[key]?.trim();
       if (value) return value;
     }
@@ -133,7 +143,8 @@ function normalizeOAuthCredentials(
     expiresAt:
       numberValue(tokenRecord.expiresAt) ??
       numberValue(tokenRecord.expires_at) ??
-      numberValue(tokenRecord.expires),
+      numberValue(tokenRecord.expires) ??
+      expiresAtFromTtl(tokenRecord.expires_in),
     raw: tokenRecord,
   };
 }
@@ -144,4 +155,9 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
+}
+
+function expiresAtFromTtl(value: unknown): number | undefined {
+  const ttlSeconds = numberValue(value);
+  return ttlSeconds === undefined ? undefined : Date.now() + ttlSeconds * 1000;
 }

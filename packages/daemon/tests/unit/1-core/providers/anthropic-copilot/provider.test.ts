@@ -317,6 +317,18 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
   });
 
+  describe('stored credentials', () => {
+    it('accepts OAuth access tokens', async () => {
+      provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
+
+      expect(await provider.isAvailable()).toBe(true);
+      expect(provider.getCredentials()).toEqual({
+        type: 'oauth',
+        accessToken: 'gho_access_token',
+      });
+    });
+  });
+
   describe('buildSdkConfig', () => {
     const fakeServerUrl = 'http://127.0.0.1:54321';
 
