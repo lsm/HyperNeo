@@ -17,6 +17,7 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -695,6 +696,63 @@ describe('SpaceRuntimeService', () => {
       expect(session.setRuntimeSystemPrompt).toHaveBeenCalled();
 
       await svc.stop();
+    });
+
+    test('long-term Space agent sessions use the agent name as title', async () => {
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({
+          id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+          metadata: {},
+          config: {},
+        })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => longTermAgentSessionId(mockSpace.id, 'agent-1'));
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const spaceManager = createMockSpaceManager(mockSpace);
+      const spaceAgentManager = {
+        getById: mock(() => ({
+          id: 'agent-1',
+          spaceId: mockSpace.id,
+          name: 'Researcher',
+          customPrompt: null,
+        })),
+        listBySpaceId: mock(() => []),
+      } as unknown as SpaceAgentManager;
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, spaceManager),
+        spaceAgentManager,
+        spaceAgentInboxRepo: {} as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      const delivery = svc.longTermAgentDeliveryCallbacks();
+      await delivery?.deliverToSession(
+        {
+          actorId: 'agent:agent-1',
+          kind: 'agent',
+          spaceId: mockSpace.id,
+          status: 'active',
+        } as ActorRef,
+        {
+          messageId: 'message-1',
+          spaceId: mockSpace.id,
+          senderActorId: 'space:space-1:human:user-1',
+          kind: 'message',
+          body: 'hello',
+          createdAt: Date.now(),
+        } as MessageRecord
+      );
+
+      expect(sessionManager.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Researcher' })
+      );
     });
 
     test('session.reset re-provisions reset long-term Space agents before query replay', async () => {

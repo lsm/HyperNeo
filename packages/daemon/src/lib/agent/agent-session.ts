@@ -121,6 +121,9 @@ export interface AgentSessionInit {
   /** Session ID (e.g., 'space:chat:abc123', or UUID for worker) */
   sessionId: string;
 
+  /** Optional display title for this session */
+  title?: string;
+
   /** Workspace path for this session */
   workspacePath: string;
 
@@ -663,12 +666,13 @@ export class AgentSession
       outputTokens: 0,
       totalCost: 0,
       toolCallCount: 0,
+      titleGenerated: Boolean(init.title),
       ...(init.promptProvenance ? { promptProvenance: init.promptProvenance } : {}),
     };
 
     return {
       id: init.sessionId,
-      title: 'New Session',
+      title: init.title ?? 'New Session',
       workspacePath: init.workspacePath,
       createdAt: now,
       lastActiveAt: now,

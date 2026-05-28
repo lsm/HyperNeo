@@ -39,7 +39,12 @@ import {
   type SessionConfig,
 } from '@github/copilot-sdk';
 import { isAnthropicRequest, type AnthropicMessage, type AnthropicRequest } from './types.js';
-import { formatAnthropicPrompt, extractSystemText, extractToolResultIds } from './prompt.js';
+import {
+  ensureNoImageBlocks,
+  formatAnthropicPrompt,
+  extractSystemText,
+  extractToolResultIds,
+} from './prompt.js';
 import { ConversationManager } from './conversation.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
 import { ContextUsageStore, countTokensResponse, estimateRequestUsage } from './context-usage.js';
@@ -290,9 +295,31 @@ async function handleMessages(
   // Note: the Anthropic spec does not require clients to re-send the `tools`
   // array on follow-up requests, so we check hasToolResults unconditionally.
   if (hasToolResults) {
-    const continuation = manager.findContinuation(body.messages);
+    let continuation: ReturnType<ConversationManager['findContinuation']>;
+    try {
+      continuation = manager.findContinuation(body.messages);
+    } catch (err) {
+      sendJsonError(
+        res,
+        400,
+        'invalid_request_error',
+        err instanceof Error ? err.message : 'Invalid tool result content'
+      );
+      return;
+    }
     if (continuation) {
       const { conv, toolResults } = continuation;
+      try {
+        ensureNoImageBlocks(body.messages);
+      } catch (err) {
+        sendJsonError(
+          res,
+          400,
+          'invalid_request_error',
+          err instanceof Error ? err.message : 'Invalid request content'
+        );
+        return;
+      }
       const usageKey = requestUsageKey(req, cwd, body.model);
       // Remove routing entries and cancel the TTL timer before resuming.
       // Actual Promise resolution happens inside resumeSessionStreaming.
