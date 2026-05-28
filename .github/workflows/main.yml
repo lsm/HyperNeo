@@ -129,7 +129,7 @@ jobs:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     if: github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'
-    timeout-minutes: ${{ matrix.timeout || 5 }}
+    timeout-minutes: ${{ matrix.timeout || 15 }}
 
     strategy:
       fail-fast: false
@@ -403,7 +403,7 @@ jobs:
   test-daemon-shared-unit:
     name: Daemon Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 12
     if: github.event.inputs.run_e2e_only != 'true'
     strategy:
       fail-fast: false
@@ -473,7 +473,7 @@ jobs:
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 9
     if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:

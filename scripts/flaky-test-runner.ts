@@ -1,6 +1,12 @@
-#!/usr/bin/env bun
-
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -86,7 +92,7 @@ export function parseJUnitFailures(xml: string): FailedTestCase[] {
     }
 
     failures.push({
-      file: readXmlAttribute(attrs, 'file') ?? '',
+      file: readXmlAttribute(attrs, 'file') ?? readXmlAttribute(attrs, 'classname') ?? '',
       name: readXmlAttribute(attrs, 'name') ?? '',
     });
   }
@@ -113,7 +119,7 @@ export function matchKnownFlakyFailures(
       (entry) =>
         entry.suite === suite &&
         samePath(entry.path, failure.file) &&
-        new RegExp(entry.namePattern).test(failure.name)
+        failure.name.includes(entry.namePattern)
     );
 
     if (matched) {
@@ -227,6 +233,12 @@ function discoverJUnitFiles(resultsDir: string): string[] {
   return files;
 }
 
+function clearJUnitFiles(resultsDir: string): void {
+  for (const file of discoverJUnitFiles(resultsDir)) {
+    rmSync(file, { force: true });
+  }
+}
+
 function runCommand(command: string[]): number {
   const [bin, ...args] = command;
   const result = spawnSync(bin, args, { stdio: 'inherit', env: process.env });
@@ -284,6 +296,7 @@ export function main(argv = process.argv.slice(2)): number {
   let lastKnown: FlakyTestEntry[] = [];
 
   for (let attempt = 0; attempt <= registry.policy.maxRetries; attempt += 1) {
+    clearJUnitFiles(options.resultsDir);
     const exitCode = runCommand(options.command);
     if (exitCode === 0) {
       if (attempt > 0) {
