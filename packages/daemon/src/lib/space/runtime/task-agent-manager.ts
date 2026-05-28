@@ -133,6 +133,12 @@ function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
   return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
 }
 
+function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): string {
+  const agentDisplayName = agentName ? agentName[0].toUpperCase() + agentName.slice(1) : '';
+  const agentLabel = agentDisplayName ? ` — ${agentDisplayName}` : '';
+  return `Task #${task.taskNumber}: ${task.title}${agentLabel}`;
+}
+
 export function hasAgentMessageEnvelopeForTest(
   message: string,
   sourceAgentName: string,
@@ -660,6 +666,7 @@ export class TaskAgentManager {
 
       init = {
         ...init,
+        title: formatWorkflowNodeSessionTitle(task, execution.agentName),
         mcpServers: {
           ...init.mcpServers,
           'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
@@ -994,8 +1001,13 @@ export class TaskAgentManager {
     }
 
     // --- First execution for this agent: create a new session.
+    const parentTask = this.config.taskRepo.getTask(taskId);
+    const subSessionInit =
+      parentTask && !init.title
+        ? { ...init, title: formatWorkflowNodeSessionTitle(parentTask, memberInfo?.agentName) }
+        : init;
     const subSession = AgentSession.fromInit(
-      init,
+      subSessionInit,
       this.config.db,
       this.config.messageHub,
       this.config.internalEventBus,
@@ -1026,7 +1038,7 @@ export class TaskAgentManager {
       }) ?? {};
     const mergedSubSessionMcpServers = {
       ...subSessionRegistryMcpServers,
-      ...init.mcpServers,
+      ...subSessionInit.mcpServers,
     };
     if (Object.keys(mergedSubSessionMcpServers).length > 0) {
       // Use merge semantics: the session is freshly created here so the map is
@@ -3890,6 +3902,7 @@ export class TaskAgentManager {
     );
     init = {
       ...init,
+      title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
       mcpServers: {
         ...init.mcpServers,
         'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,

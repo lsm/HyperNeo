@@ -2178,6 +2178,33 @@ describe('AgentSession', () => {
   });
 
   describe('createSessionFromInit', () => {
+    it('uses provided title when creating a session', () => {
+      const session = AgentSession.createSessionFromInit(
+        {
+          sessionId: 'node-agent:coder',
+          title: 'Task #427: Forge MVP 3 — Coder',
+          workspacePath: '/test/workspace',
+          type: 'worker',
+        },
+        'claude-sonnet-4-5-20250929'
+      );
+
+      expect(session.title).toBe('Task #427: Forge MVP 3 — Coder');
+    });
+
+    it('falls back to New Session when title is omitted', () => {
+      const session = AgentSession.createSessionFromInit(
+        {
+          sessionId: 'node-agent:untitled',
+          workspacePath: '/test/workspace',
+          type: 'worker',
+        },
+        'claude-sonnet-4-5-20250929'
+      );
+
+      expect(session.title).toBe('New Session');
+    });
+
     it('should create a session without mcpServers in config to avoid cyclic serialization errors', () => {
       // Simulate what createSdkMcpServer returns - an object with a non-serializable instance
       const mockMcpServer = {

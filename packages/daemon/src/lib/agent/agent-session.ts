@@ -121,6 +121,9 @@ export interface AgentSessionInit {
   /** Session ID (e.g., 'space:chat:abc123', or UUID for worker) */
   sessionId: string;
 
+  /** Optional display title for this session */
+  title?: string;
+
   /** Workspace path for this session */
   workspacePath: string;
 
@@ -668,7 +671,7 @@ export class AgentSession
 
     return {
       id: init.sessionId,
-      title: 'New Session',
+      title: init.title ?? 'New Session',
       workspacePath: init.workspacePath,
       createdAt: now,
       lastActiveAt: now,
