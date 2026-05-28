@@ -35,6 +35,7 @@ import type {
 } from './task-agent-tool-schemas';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 
 const log = new Logger('end-node-handlers');
 
@@ -89,6 +90,8 @@ export interface MarkCompleteHandlerDeps {
   spaceId: string;
   /** Task repository — used to read the current status before transitioning. */
   taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
+  /** Optional summary captured from the latest result artifact for this task's workflow run. */
+  resolveResultArtifactSummary?: (task: SpaceTask) => string | null;
   /** Task manager — used to transition and update the task atomically. */
   taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
   /** Optional hub for emitting `space.task.updated` events. */
@@ -105,7 +108,15 @@ export interface MarkCompleteHandlerDeps {
 export function createMarkCompleteHandler(
   deps: MarkCompleteHandlerDeps
 ): (args: MarkCompleteInput) => Promise<ToolResult> {
-  const { taskId, spaceId, taskRepo, taskManager, internalEventBus, goalService } = deps;
+  const {
+    taskId,
+    spaceId,
+    taskRepo,
+    taskManager,
+    internalEventBus,
+    goalService,
+    resolveResultArtifactSummary,
+  } = deps;
 
   const handleGoalTerminal = (task: SpaceTask): void => {
     if (!goalService) return;
@@ -171,8 +182,19 @@ export function createMarkCompleteHandler(
       // "exit approved" branch in `SpaceTaskManager.setTaskStatus` nulls
       // `postApprovalSessionId`, `postApprovalStartedAt`, and
       // `postApprovalBlockedReason` in the same UPDATE.
+      const artifactSummary = normalizeMeaningfulTaskResult(resolveResultArtifactSummary?.(task));
+      const reportedSummary = normalizeMeaningfulTaskResult(task.reportedSummary);
+      const existingResult = normalizeMeaningfulTaskResult(task.result);
+      const result = artifactSummary ?? reportedSummary ?? existingResult ?? 'Task completed.';
+      if (result !== task.result || (artifactSummary && artifactSummary !== task.reportedSummary)) {
+        await taskManager.updateTask(taskId, {
+          result,
+          reportedSummary: artifactSummary ?? reportedSummary ?? undefined,
+        });
+      }
       const updated = await taskManager.setTaskStatus(taskId, 'done', {
         approvalSource: task.approvalSource ?? 'agent',
+        result,
         onCascadedTasks: async (cascadedTasks) => {
           for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
         },

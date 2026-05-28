@@ -46,6 +46,7 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import type { ExternalEvent } from '../../external-events/types';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
@@ -1804,8 +1805,10 @@ export class SpaceRuntime {
           : undefined;
         return this.buildTaskOutcomeUpdates(
           task,
-          artifactSummary ?? (task.result?.trim() ? task.result : (task.reportedSummary ?? null)),
-          artifactSummary ?? task.reportedSummary ?? null
+          artifactSummary ??
+            normalizeMeaningfulTaskResult(task.result) ??
+            normalizeMeaningfulTaskResult(task.reportedSummary),
+          artifactSummary ?? normalizeMeaningfulTaskResult(task.reportedSummary)
         );
       },
       spawner: {
@@ -2447,8 +2450,8 @@ export class SpaceRuntime {
       const summaryFromSibling = runTasks
         .filter((task) => task.id !== canonicalTask.id)
         .find((task) => !!task.result)?.result;
-      const reportedSummary = canonicalTask.reportedSummary ?? null;
-      const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
+      const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
+      const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
       const freshSummary = summaryFromArtifact ?? summaryFromWorkflow ?? null;
       const nextResult =
         freshSummary ?? existingResult ?? reportedSummary ?? summaryFromSibling ?? null;
@@ -4534,8 +4537,8 @@ export class SpaceRuntime {
         await this.transitionRunStatusAndEmit(runId, 'done');
         const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
         const summary = this.resolveCompletionSummary(runId, meta.workflow);
-        const reportedSummary = canonicalTask.reportedSummary ?? null;
-        const existingResult = canonicalTask.result?.trim() ? canonicalTask.result : null;
+        const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
+        const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
         const freshSummary = summaryFromArtifact ?? summary ?? null;
         const nextTaskResult = freshSummary ?? existingResult ?? reportedSummary ?? null;
         const nextReportedSummary = freshSummary ?? reportedSummary ?? null;
