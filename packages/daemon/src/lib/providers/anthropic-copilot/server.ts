@@ -39,7 +39,12 @@ import {
   type SessionConfig,
 } from '@github/copilot-sdk';
 import { isAnthropicRequest, type AnthropicMessage, type AnthropicRequest } from './types.js';
-import { formatAnthropicPrompt, extractSystemText, extractToolResultIds } from './prompt.js';
+import {
+  ensureNoImageBlocks,
+  formatAnthropicPrompt,
+  extractSystemText,
+  extractToolResultIds,
+} from './prompt.js';
 import { ConversationManager } from './conversation.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
 import { ContextUsageStore, countTokensResponse, estimateRequestUsage } from './context-usage.js';
@@ -304,6 +309,17 @@ async function handleMessages(
     }
     if (continuation) {
       const { conv, toolResults } = continuation;
+      try {
+        ensureNoImageBlocks(body.messages);
+      } catch (err) {
+        sendJsonError(
+          res,
+          400,
+          'invalid_request_error',
+          err instanceof Error ? err.message : 'Invalid request content'
+        );
+        return;
+      }
       const usageKey = requestUsageKey(req, cwd, body.model);
       // Remove routing entries and cancel the TTL timer before resuming.
       // Actual Promise resolution happens inside resumeSessionStreaming.

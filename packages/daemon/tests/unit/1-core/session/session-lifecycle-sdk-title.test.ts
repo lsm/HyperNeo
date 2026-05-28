@@ -20,6 +20,7 @@ import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 // Only updated on calls that carry a `thinking` option (title generation),
 // not on model-loading calls (maxTurns: 0).
 let lastTitleQueryOptions: Record<string, unknown> | undefined;
+let lastTitleProcessEnv: Record<string, string | undefined> | undefined;
 
 // Mutable state controlling which messages the SDK query mock yields for
 // title generation. Set in beforeEach so each test starts from a known state.
@@ -64,6 +65,11 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
     // maxTurns: 0 with no thinking option and are not interesting here.
     if ('thinking' in opts) {
       lastTitleQueryOptions = opts;
+      lastTitleProcessEnv = {
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+      };
     }
     return makeQueryMock(mockSdkMessages);
   },
@@ -177,6 +183,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
   beforeEach(() => {
     lastTitleQueryOptions = undefined;
+    lastTitleProcessEnv = undefined;
     // Default: assistant message with a plain text block
     mockSdkMessages = [
       {
@@ -306,6 +313,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
     expect(lastTitleQueryOptions?.model).toBe('default');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
     const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');

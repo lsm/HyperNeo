@@ -1097,13 +1097,11 @@ describe('startEmbeddedServer', () => {
               {
                 type: 'tool_result',
                 tool_use_id: 'tc_image',
-                content: [
-                  { type: 'text', text: 'screenshot:' },
-                  {
-                    type: 'image',
-                    source: { type: 'base64', media_type: 'image/png', data: 'abc' },
-                  },
-                ],
+                content: 'screenshot captured',
+              },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'abc' },
               },
             ],
           },

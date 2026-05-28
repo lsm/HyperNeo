@@ -21,6 +21,24 @@ function isImageBlock(block: TextBlock | ImageBlock): block is ImageBlock {
   return block.type === 'image';
 }
 
+export function ensureNoImageBlocks(messages: AnthropicMessage[]): void {
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') continue;
+    for (const block of msg.content) {
+      if (block.type === 'image') {
+        throw new Error('Copilot bridge does not support image content blocks');
+      }
+      if (
+        block.type === 'tool_result' &&
+        Array.isArray(block.content) &&
+        block.content.some(isImageBlock)
+      ) {
+        throw new Error('Copilot bridge does not support image content blocks');
+      }
+    }
+  }
+}
+
 function extractToolResultText(
   content: string | Array<TextBlock | ImageBlock> | undefined
 ): string {

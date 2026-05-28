@@ -1107,9 +1107,15 @@ export class SessionLifecycle {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const providerService = getProviderService();
 
-    // Apply provider-specific environment variables to process.env
-    // Use explicit provider to avoid model ID detection issues with shorthands like 'haiku'
-    const originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
+    const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
+
+    // Apply provider-specific environment variables to process.env.
+    // Use provider-facing title model so SDK tier/default routing points at the
+    // provider's title override, not the session model.
+    const originalEnv = providerService.applyEnvVarsToProcessForProvider(
+      provider,
+      titleModels.providerModelId
+    );
 
     try {
       const prompt = `Based on the user's request below, generate a concise 3-7 word title that captures the main intent or topic.
@@ -1123,8 +1129,6 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 
 User's request:
 ${messageText.slice(0, 2000)}`;
-
-      const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
 
       // Get the environment variables to pass explicitly to SDK subprocess.
       // Pass the provider ID so that providers whose model IDs overlap with
