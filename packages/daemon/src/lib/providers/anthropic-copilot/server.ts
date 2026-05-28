@@ -290,7 +290,18 @@ async function handleMessages(
   // Note: the Anthropic spec does not require clients to re-send the `tools`
   // array on follow-up requests, so we check hasToolResults unconditionally.
   if (hasToolResults) {
-    const continuation = manager.findContinuation(body.messages);
+    let continuation: ReturnType<ConversationManager['findContinuation']>;
+    try {
+      continuation = manager.findContinuation(body.messages);
+    } catch (err) {
+      sendJsonError(
+        res,
+        400,
+        'invalid_request_error',
+        err instanceof Error ? err.message : 'Invalid tool result content'
+      );
+      return;
+    }
     if (continuation) {
       const { conv, toolResults } = continuation;
       const usageKey = requestUsageKey(req, cwd, body.model);

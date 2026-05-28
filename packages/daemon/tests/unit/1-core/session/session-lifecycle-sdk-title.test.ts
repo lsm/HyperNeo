@@ -252,9 +252,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
+    resetProviderRegistry();
     // Restore the empty API key set by unit-test setup.ts
     process.env.ANTHROPIC_API_KEY = '';
+    process.env.GLM_API_KEY = '';
   });
 
   it('should disable thinking when calling SDK query for title generation', async () => {
@@ -269,6 +272,44 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
     expect(lastTitleQueryOptions?.model).toBe('claude-sonnet-4-20250514');
+  });
+
+  it('should build title routing env from provider title model override', async () => {
+    const { GlmProvider } = await import('../../../../src/lib/providers/glm-provider');
+    const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+
+    process.env.GLM_API_KEY = 'test-glm-key';
+    const registry = getProviderRegistry();
+    registry.register(new GlmProvider(process.env));
+
+    const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
+    mockAgentSession.getSessionData = mock(() => ({
+      id: 'test-id',
+      title: 'New Session',
+      workspacePath: '/test',
+      status: 'active',
+      metadata: { titleGenerated: false, worktreeChoice: undefined },
+      config: { model: 'glm-5.1', provider: 'glm' },
+      worktree: undefined,
+    }));
+    lifecycle = new SessionLifecycle(
+      mockDb,
+      mockWorktreeManager,
+      sessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    expect(lastTitleQueryOptions?.model).toBe('default');
+    const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
   });
 
   it('should extract title from text blocks', async () => {

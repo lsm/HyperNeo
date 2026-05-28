@@ -1031,6 +1031,95 @@ describe('startEmbeddedServer', () => {
     }
   });
 
+  it('rejects image tool_result continuation with 400', async () => {
+    let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+    const toolSession = new MockCopilotSession();
+    const toolClient = makeMockClient(() => toolSession);
+
+    spyOn(toolClient, 'createSession').mockImplementation(async (cfg: unknown) => {
+      toolSession.capturedConfig = cfg;
+      const tools = (cfg as Record<string, unknown>)?.['tools'] as
+        | Array<{ name: string; handler: (args: unknown, inv: unknown) => Promise<unknown> }>
+        | undefined;
+      if (tools?.[0]) toolHandler = tools[0].handler;
+      return toolSession as unknown as CopilotSession;
+    });
+
+    toolSession.send = async function (opts) {
+      this.capturedPrompt = opts.prompt;
+      Promise.resolve().then(() => {
+        if (toolHandler) {
+          toolHandler(
+            { command: 'screenshot' },
+            {
+              sessionId: 's1',
+              toolCallId: 'tc_image',
+              toolName: 'screenshot',
+              arguments: { command: 'screenshot' },
+            }
+          ).catch(() => {});
+        }
+      });
+      return 'send-result';
+    };
+
+    const ts = await startEmbeddedServer(toolClient, '/tmp');
+    try {
+      const r1 = await postMessages(ts.url, {
+        model: 'x',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'take screenshot' }],
+        tools: [
+          { name: 'screenshot', description: 'Take screenshot', input_schema: { type: 'object' } },
+        ],
+      });
+      expect(r1.status).toBe(200);
+
+      const r2 = await postMessages(ts.url, {
+        model: 'x',
+        max_tokens: 100,
+        messages: [
+          { role: 'user', content: 'take screenshot' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tc_image',
+                name: 'screenshot',
+                input: { command: 'screenshot' },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tc_image',
+                content: [
+                  { type: 'text', text: 'screenshot:' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(r2.status).toBe(400);
+      const body = JSON.parse(r2.rawBody ?? '{}') as Record<string, unknown>;
+      const err = body['error'] as Record<string, unknown>;
+      expect(err['type']).toBe('invalid_request_error');
+      expect(err['message']).toContain('image content blocks');
+    } finally {
+      await ts.stop();
+    }
+  });
+
   it('routes tool_result continuation even when tools array is omitted from follow-up', async () => {
     // Verifies P1/3 fix: hasToolResults check must not require hasTools=true.
     let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;

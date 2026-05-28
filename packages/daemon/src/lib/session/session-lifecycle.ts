@@ -1124,11 +1124,16 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 User's request:
 ${messageText.slice(0, 2000)}`;
 
+      const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
+
       // Get the environment variables to pass explicitly to SDK subprocess.
       // Pass the provider ID so that providers whose model IDs overlap with
       // Anthropic (e.g. anthropic-copilot using claude-opus-4.6) are looked up
       // by ID rather than auto-detected, which would return the wrong provider.
-      const providerEnvVars = providerService.getEnvVarsForModel(modelId, provider);
+      const providerEnvVars = providerService.getEnvVarsForModel(
+        titleModels.providerModelId,
+        provider
+      );
 
       const cliPath = resolveSDKCliPath();
 
@@ -1137,12 +1142,10 @@ ${messageText.slice(0, 2000)}`;
       // while provider-specific vars (like ANTHROPIC_BASE_URL for GLM) override
       const mergedEnv = buildSdkQueryEnv(providerEnvVars);
 
-      const titleModelId = await providerService.getTitleGenerationModel(provider, modelId);
-
       const agentQuery = query({
         prompt,
         options: {
-          model: titleModelId,
+          model: titleModels.sdkModelId,
           maxTurns: 1,
           permissionMode: 'acceptEdits',
           allowDangerouslySkipPermissions: false,
