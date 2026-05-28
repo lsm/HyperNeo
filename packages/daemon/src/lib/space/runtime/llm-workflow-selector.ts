@@ -79,9 +79,9 @@ export async function selectWorkflowWithLlmDefault(
 
   const prompt = buildSelectionPrompt(task, workflows);
 
-  let originalEnv: ReturnType<typeof providerService.applyEnvVarsToProcessForProvider>;
+  let originalEnv: Awaited<ReturnType<typeof providerService.applyEnvVarsToProcessForProvider>>;
   try {
-    originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
+    originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   } catch (err) {
     log.warn('Failed to apply provider env vars for workflow selection:', err);
     return null;
@@ -89,7 +89,7 @@ export async function selectWorkflowWithLlmDefault(
 
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const providerEnvVars = providerService.getEnvVarsForModel(modelId, provider);
+    const providerEnvVars = await providerService.getEnvVarsForModel(modelId, provider);
     const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
     const cliPath = resolveSDKCliPath();
 

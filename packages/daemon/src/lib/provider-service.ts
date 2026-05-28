@@ -396,7 +396,8 @@ export class ProviderService {
    * @param modelId - The model ID (used for SDK config building)
    * @param providerId - The provider ID — must be explicit; routing is deterministic
    */
-  getEnvVarsForModel(modelId: string, providerId: string): ProviderEnvVars {
+  async getEnvVarsForModel(modelId: string, providerId: string): Promise<ProviderEnvVars> {
+    await this.getReadyRegistry();
     const registry = this.getRegistry();
     const provider = registry.detectProviderForModel(modelId, providerId);
 
@@ -489,8 +490,8 @@ export class ProviderService {
    * @param providerId - The provider ID — must be explicit; routing is deterministic
    * @returns Original env vars that should be restored after SDK query
    */
-  applyEnvVarsToProcess(modelId: string, providerId: string): OriginalEnvVars {
-    const envVars = this.getEnvVarsForModel(modelId, providerId);
+  async applyEnvVarsToProcess(modelId: string, providerId: string): Promise<OriginalEnvVars> {
+    const envVars = await this.getEnvVarsForModel(modelId, providerId);
 
     // For Anthropic (or any non-overriding provider), explicitly clear routing
     // overrides that may have leaked from a previous GLM query.
@@ -511,7 +512,11 @@ export class ProviderService {
    * @param modelId - The model ID for setting tier mappings
    * @returns Original env vars that should be restored after SDK query
    */
-  applyEnvVarsToProcessForProvider(providerId: string, modelId?: string): OriginalEnvVars {
+  async applyEnvVarsToProcessForProvider(
+    providerId: string,
+    modelId?: string
+  ): Promise<OriginalEnvVars> {
+    await this.getReadyRegistry();
     const registry = this.getRegistry();
     const provider = registry.get(providerId);
 

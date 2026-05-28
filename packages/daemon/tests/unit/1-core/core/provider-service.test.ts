@@ -342,57 +342,57 @@ describe('ProviderService', () => {
   });
 
   describe('getProviderApiKey', () => {
-    it('should return ANTHROPIC_API_KEY for anthropic provider', () => {
+    it('should return ANTHROPIC_API_KEY for anthropic provider', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
       const key = service.getProviderApiKey('anthropic');
       expect(key).toBe('test-anthropic-key');
     });
 
-    it('should return CLAUDE_CODE_OAUTH_TOKEN for anthropic if no API key', () => {
+    it('should return CLAUDE_CODE_OAUTH_TOKEN for anthropic if no API key', async () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-oauth-token';
       const key = service.getProviderApiKey('anthropic');
       expect(key).toBe('test-oauth-token');
     });
 
-    it('should return GLM_API_KEY for glm provider', () => {
+    it('should return GLM_API_KEY for glm provider', async () => {
       process.env.GLM_API_KEY = 'test-glm-key';
       const key = service.getProviderApiKey('glm');
       expect(key).toBe('test-glm-key');
     });
 
-    it('should return ZHIPU_API_KEY for glm if no GLM_API_KEY', () => {
+    it('should return ZHIPU_API_KEY for glm if no GLM_API_KEY', async () => {
       process.env.ZHIPU_API_KEY = 'test-zhipu-key';
       const key = service.getProviderApiKey('glm');
       expect(key).toBe('test-zhipu-key');
     });
 
-    it('should return OPENROUTER_API_KEY for openrouter provider', () => {
+    it('should return OPENROUTER_API_KEY for openrouter provider', async () => {
       registry.register(new MockProvider('openrouter', 'OpenRouter', true, 'openrouter/'));
       process.env.OPENROUTER_API_KEY = 'sk-or-test';
       const key = service.getProviderApiKey('openrouter');
       expect(key).toBe('sk-or-test');
     });
 
-    it('should return KIMI_API_KEY for kimi provider', () => {
+    it('should return KIMI_API_KEY for kimi provider', async () => {
       registry.register(new MockProvider('kimi', 'Kimi', true, 'moonshot-'));
       process.env.KIMI_API_KEY = 'kimi-key';
       const key = service.getProviderApiKey('kimi');
       expect(key).toBe('kimi-key');
     });
 
-    it('should return MOONSHOT_API_KEY for kimi if no KIMI_API_KEY', () => {
+    it('should return MOONSHOT_API_KEY for kimi if no KIMI_API_KEY', async () => {
       registry.register(new MockProvider('kimi', 'Kimi', true, 'moonshot-'));
       process.env.MOONSHOT_API_KEY = 'moonshot-key';
       const key = service.getProviderApiKey('kimi');
       expect(key).toBe('moonshot-key');
     });
 
-    it('should return undefined for unknown provider', () => {
+    it('should return undefined for unknown provider', async () => {
       const key = service.getProviderApiKey('unknown' as unknown as ProviderId);
       expect(key).toBeUndefined();
     });
 
-    it('should return undefined for unregistered provider', () => {
+    it('should return undefined for unregistered provider', async () => {
       registry.clear();
       const key = service.getProviderApiKey('anthropic');
       expect(key).toBeUndefined();
@@ -582,47 +582,50 @@ describe('ProviderService', () => {
   });
 
   describe('getEnvVarsForModel', () => {
-    it('should return empty object for anthropic model', () => {
-      const envVars = service.getEnvVarsForModel('claude-3-opus', 'anthropic');
+    it('should return empty object for anthropic model', async () => {
+      const envVars = await service.getEnvVarsForModel('claude-3-opus', 'anthropic');
       expect(envVars).toEqual({});
     });
 
-    it('should return env vars for GLM model', () => {
-      const envVars = service.getEnvVarsForModel('glm-4', 'glm');
+    it('should return env vars for GLM model', async () => {
+      const envVars = await service.getEnvVarsForModel('glm-4', 'glm');
 
       expect(envVars.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(envVars.API_TIMEOUT_MS).toBe('120000');
     });
 
-    it('should return empty object for unknown provider', () => {
-      const envVars = service.getEnvVarsForModel('unknown-model', 'anthropic');
+    it('should return empty object for unknown provider', async () => {
+      const envVars = await service.getEnvVarsForModel('unknown-model', 'anthropic');
       expect(envVars).toEqual({});
     });
 
-    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', async () => {
       registry.register(new ThrowingMockProvider());
 
       // Must not throw
-      const envVars = service.getEnvVarsForModel('throwing-model', 'throwing');
+      const envVars = await service.getEnvVarsForModel('throwing-model', 'throwing');
       expect(envVars).toEqual({});
     });
 
-    it('uses explicit providerId to route to the correct provider for colliding model IDs', () => {
+    it('uses explicit providerId to route to the correct provider for colliding model IDs', async () => {
       // Both AnthropicMockProvider and CopilotMockProvider claim 'claude-opus-4.6'.
       // The provider ID selects deterministically: 'anthropic' → {} (no extra env vars),
       // 'anthropic-copilot' → has ANTHROPIC_BASE_URL.
       registry.register(new CopilotMockProvider());
 
-      const envVarsAnthropic = service.getEnvVarsForModel('claude-opus-4.6', 'anthropic');
+      const envVarsAnthropic = await service.getEnvVarsForModel('claude-opus-4.6', 'anthropic');
       expect(envVarsAnthropic.ANTHROPIC_BASE_URL).toBeUndefined();
 
-      const envVarsWithId = service.getEnvVarsForModel('claude-opus-4.6', 'anthropic-copilot');
+      const envVarsWithId = await service.getEnvVarsForModel(
+        'claude-opus-4.6',
+        'anthropic-copilot'
+      );
       expect(envVarsWithId.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:54321');
     });
   });
 
   describe('getProviderEnvVars', () => {
-    it('should return empty object for anthropic session', () => {
+    it('should return empty object for anthropic session', async () => {
       const session: Session = {
         id: 'test-session',
         title: 'Test',
@@ -650,7 +653,7 @@ describe('ProviderService', () => {
       expect(envVars).toEqual({});
     });
 
-    it('should return env vars for GLM session', () => {
+    it('should return env vars for GLM session', async () => {
       const session: Session = {
         id: 'test-session',
         title: 'Test',
@@ -678,7 +681,7 @@ describe('ProviderService', () => {
       expect(envVars.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
     });
 
-    it('should use session config API key override', () => {
+    it('should use session config API key override', async () => {
       const session: Session = {
         id: 'test-session',
         title: 'Test',
@@ -709,7 +712,7 @@ describe('ProviderService', () => {
       expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('custom-api-key');
     });
 
-    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', async () => {
       registry.register(new ThrowingMockProvider());
 
       const session: Session = {
@@ -740,7 +743,7 @@ describe('ProviderService', () => {
       expect(envVars).toEqual({});
     });
 
-    it('passes session id and effective worktree path to session-aware providers', () => {
+    it('passes session id and effective worktree path to session-aware providers', async () => {
       const provider = new SessionAwareBridgeMockProvider();
       registry.register(provider);
       const session: Session = {
@@ -782,18 +785,18 @@ describe('ProviderService', () => {
   });
 
   describe('applyEnvVarsToProcess', () => {
-    it('should return empty object for anthropic model', () => {
-      const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+    it('should return empty object for anthropic model', async () => {
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
       expect(original).toEqual({});
     });
 
-    it('should clear leaked GLM routing vars for anthropic model without clearing OAuth auth', () => {
+    it('should clear leaked GLM routing vars for anthropic model without clearing OAuth auth', async () => {
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
       process.env.API_TIMEOUT_MS = '120000';
       process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'user-oauth-token';
 
-      const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
       expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(original.API_TIMEOUT_MS).toBe('120000');
@@ -804,11 +807,11 @@ describe('ProviderService', () => {
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('user-oauth-token');
     });
 
-    it('should apply GLM env vars and return original values', () => {
+    it('should apply GLM env vars and return original values', async () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
       process.env.ANTHROPIC_BASE_URL = 'original-url';
 
-      const original = service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
 
       // Check original values were saved
       expect(original.ANTHROPIC_AUTH_TOKEN).toBe('original-token');
@@ -818,7 +821,7 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
     });
 
-    it('applies session-scoped bridge env vars from the full session', () => {
+    it('applies session-scoped bridge env vars from the full session', async () => {
       const provider = new SessionAwareBridgeMockProvider();
       registry.register(provider);
       const session: Session = {
@@ -856,11 +859,11 @@ describe('ProviderService', () => {
       service.restoreEnvVars(original);
     });
 
-    it('clears CLAUDE_CODE_OAUTH_TOKEN when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
+    it('clears CLAUDE_CODE_OAUTH_TOKEN when provider returns empty-string sentinel, restores on restoreEnvVars', async () => {
       registry.register(new BridgeMockProvider());
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'real-oauth-token';
 
-      const original = service.applyEnvVarsToProcess('bridge-model', 'bridge');
+      const original = await service.applyEnvVarsToProcess('bridge-model', 'bridge');
 
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
       expect(original.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
@@ -870,13 +873,13 @@ describe('ProviderService', () => {
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('real-oauth-token');
     });
 
-    it('blanks ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
+    it('blanks ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', async () => {
       // Mirrors what AnthropicToCopilotBridgeProvider does: returning ANTHROPIC_API_KEY: ''
       // prevents the SDK subprocess from calling api.anthropic.com with the real key.
       registry.register(new CopilotMockProvider());
       process.env.ANTHROPIC_API_KEY = 'real-key';
 
-      const original = service.applyEnvVarsToProcess('claude-opus-4.6', 'anthropic-copilot');
+      const original = await service.applyEnvVarsToProcess('claude-opus-4.6', 'anthropic-copilot');
 
       // Key must be explicitly blank so SDK subprocess cannot call Anthropic directly.
       expect(process.env.ANTHROPIC_API_KEY).toBe('');
@@ -888,29 +891,32 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_API_KEY).toBe('real-key');
     });
 
-    it('should clear provider-leaked GLM base URL after GLM query', () => {
+    it('should clear provider-leaked GLM base URL after GLM query', async () => {
       // First simulate GLM was used (leaving its base URL)
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 
       // Apply GLM env vars
-      const originalFromGlm = service.applyEnvVarsToProcess('glm-4', 'glm');
+      const originalFromGlm = await service.applyEnvVarsToProcess('glm-4', 'glm');
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
       // Restore from GLM query
       service.restoreEnvVars(originalFromGlm);
 
       // Switch to anthropic - leaked GLM URL should be cleared
-      const originalFromAnthropic = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const originalFromAnthropic = await service.applyEnvVarsToProcess(
+        'claude-3-opus',
+        'anthropic'
+      );
 
       // The leaked GLM URL should be cleared
       expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
     });
 
-    it('clears PORT from process.env for Anthropic model and restores it afterward', () => {
+    it('clears PORT from process.env for Anthropic model and restores it afterward', async () => {
       // Security invariant: the daemon's PORT must not be visible to SDK subprocesses
       process.env.PORT = '9283';
 
-      const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
       expect(process.env.PORT).toBeUndefined(); // cleared — subprocess cannot lsof this port
       expect(original.PORT).toBe('9283'); // saved for restoration
@@ -919,10 +925,10 @@ describe('ProviderService', () => {
       expect(process.env.PORT).toBe('9283'); // restored for the daemon process itself
     });
 
-    it('clears NEOKAI_PORT from process.env for Anthropic model and restores it afterward', () => {
+    it('clears NEOKAI_PORT from process.env for Anthropic model and restores it afterward', async () => {
       process.env.NEOKAI_PORT = '9983';
 
-      const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
       expect(process.env.NEOKAI_PORT).toBeUndefined();
       expect(original.NEOKAI_PORT).toBe('9983');
@@ -931,12 +937,12 @@ describe('ProviderService', () => {
       expect(process.env.NEOKAI_PORT).toBe('9983');
     });
 
-    it('clears PORT and NEOKAI_PORT from process.env for GLM model and restores them', () => {
+    it('clears PORT and NEOKAI_PORT from process.env for GLM model and restores them', async () => {
       // The kill-chain protection must apply regardless of provider
       process.env.PORT = '8399';
       process.env.NEOKAI_PORT = '9983';
 
-      const original = service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
 
       expect(process.env.PORT).toBeUndefined();
       expect(process.env.NEOKAI_PORT).toBeUndefined();
@@ -950,11 +956,11 @@ describe('ProviderService', () => {
   });
 
   describe('applyEnvVarsToProcessForProvider', () => {
-    it('should clear leaked GLM routing vars for anthropic provider', () => {
+    it('should clear leaked GLM routing vars for anthropic provider', async () => {
       process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
       process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
 
-      const original = service.applyEnvVarsToProcessForProvider('anthropic');
+      const original = await service.applyEnvVarsToProcessForProvider('anthropic');
 
       expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(original.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4');
@@ -962,18 +968,18 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
     });
 
-    it('should apply GLM env vars for GLM provider', () => {
-      const original = service.applyEnvVarsToProcessForProvider('glm', 'glm-4');
+    it('should apply GLM env vars for GLM provider', async () => {
+      const original = await service.applyEnvVarsToProcessForProvider('glm', 'glm-4');
 
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
       expect(original).toBeDefined();
     });
 
-    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+    it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', async () => {
       registry.register(new ThrowingMockProvider());
 
       // Must not throw
-      const original = service.applyEnvVarsToProcessForProvider(
+      const original = await service.applyEnvVarsToProcessForProvider(
         'throwing' as unknown as ProviderId
       );
       expect(original).toEqual({});
@@ -981,12 +987,12 @@ describe('ProviderService', () => {
   });
 
   describe('restoreEnvVars', () => {
-    it('should restore original env vars', () => {
+    it('should restore original env vars', async () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
       process.env.ANTHROPIC_BASE_URL = 'original-url';
 
       // Apply GLM env vars
-      const original = service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
 
       // Verify env vars changed
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -999,13 +1005,13 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_BASE_URL).toBe('original-url');
     });
 
-    it('should delete env vars that were not originally set', () => {
+    it('should delete env vars that were not originally set', async () => {
       // Ensure env vars are not set
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.ANTHROPIC_BASE_URL;
 
       // Apply GLM env vars
-      const original = service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
 
       // Verify env vars were set
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -1018,7 +1024,7 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
     });
 
-    it('should do nothing for empty original object', () => {
+    it('should do nothing for empty original object', async () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'some-token';
 
       service.restoreEnvVars({});
@@ -1027,7 +1033,7 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('some-token');
     });
 
-    it('should only restore keys captured in original', () => {
+    it('should only restore keys captured in original', async () => {
       process.env.ANTHROPIC_AUTH_TOKEN = 'keep-me';
       process.env.ANTHROPIC_BASE_URL = 'to-be-restored';
 
@@ -1037,7 +1043,7 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('keep-me');
     });
 
-    it('should restore all supported env vars', () => {
+    it('should restore all supported env vars', async () => {
       // Set all supported env vars
       process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token';
       process.env.ANTHROPIC_BASE_URL = 'base-url';
@@ -1048,7 +1054,7 @@ describe('ProviderService', () => {
       process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'opus-model';
 
       // Apply GLM env vars
-      const original = service.applyEnvVarsToProcess('glm-4', 'glm');
+      const original = await service.applyEnvVarsToProcess('glm-4', 'glm');
 
       // Restore
       service.restoreEnvVars(original);
@@ -1094,7 +1100,7 @@ describe('getProviderService', () => {
     resetProviderFactory();
   });
 
-  it('should return singleton instance', () => {
+  it('should return singleton instance', async () => {
     const service1 = getProviderService();
     const service2 = getProviderService();
 
@@ -1104,7 +1110,7 @@ describe('getProviderService', () => {
     expect(Object.is(service1, service2) || hasSameMethods(service1, service2)).toBe(true);
   });
 
-  it('should return ProviderService instance', () => {
+  it('should return ProviderService instance', async () => {
     const service = getProviderService();
     // Check the expected API surface instead of instanceof, which
     // breaks when Bun loads the class from a different module instance.
@@ -1123,7 +1129,7 @@ function hasSameMethods(a: object, b: object): boolean {
 }
 
 describe('mergeProviderEnvVars', () => {
-  it('should spread provider env vars over process.env', () => {
+  it('should spread provider env vars over process.env', async () => {
     // Verify the function spreads correctly by testing with a known env var
     // that exists in CI (NODE_ENV is always set to 'test' by setup.ts)
     const merged = mergeProviderEnvVars({
@@ -1136,7 +1142,7 @@ describe('mergeProviderEnvVars', () => {
     expect(merged.NEW_VAR).toBe('new');
   });
 
-  it('should return a new object when provider env vars is empty', () => {
+  it('should return a new object when provider env vars is empty', async () => {
     const merged = mergeProviderEnvVars({});
     // Verify it returns a new object (not the same reference)
     expect(merged).not.toBe(process.env);
