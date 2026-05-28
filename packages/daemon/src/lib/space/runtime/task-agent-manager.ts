@@ -156,7 +156,18 @@ export function isWorkflowTerminalNode(
   if (outgoingChannels.length === 0) return true;
 
   const startNode = workflow.nodes.find((candidate) => candidate.id === workflow.startNodeId);
-  const startRefs = new Set([workflow.startNodeId, startNode?.name].filter(Boolean));
+  const startAgents = startNode ? resolveNodeAgents(startNode) : [];
+  const startRefs = new Set(
+    [
+      workflow.startNodeId,
+      startNode?.name,
+      ...startAgents.flatMap((agent) => [
+        agent.name,
+        agent.agentId,
+        `${workflow.startNodeId}/${agent.name}`,
+      ]),
+    ].filter(Boolean)
+  );
 
   return outgoingChannels.every((channel) => {
     if (!channel.maxCycles) return false;

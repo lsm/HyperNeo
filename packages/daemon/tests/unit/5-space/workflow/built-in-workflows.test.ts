@@ -2069,6 +2069,15 @@ describe('seedBuiltInWorkflows()', () => {
         codingNode.id
       )
     ).toBe(false);
+    expect(
+      isWorkflowTerminalNode(
+        {
+          ...CODING_WORKFLOW,
+          channels: [{ from: 'validator', to: 'coder', maxCycles: 5, label: 'Validator → coder' }],
+        },
+        validationNode.id
+      )
+    ).toBe(true);
   });
 
   test('re-stamp does not append duplicate template nodes over renamed built-in nodes', () => {

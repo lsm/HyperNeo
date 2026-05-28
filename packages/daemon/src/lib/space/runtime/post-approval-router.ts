@@ -225,6 +225,18 @@ function resolvePostApprovalRoute(
   };
 }
 
+function clearPendingCompletionState(
+  taskRepo: Pick<SpaceTaskRepository, 'updateTask'>,
+  taskId: string
+): void {
+  taskRepo.updateTask(taskId, {
+    pendingCheckpointType: null,
+    pendingCompletionSubmittedByNodeId: null,
+    pendingCompletionSubmittedAt: null,
+    pendingCompletionReason: null,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // PostApprovalRouter
 // ---------------------------------------------------------------------------
@@ -311,6 +323,7 @@ export class PostApprovalRouter {
     if (targetAgent === POST_APPROVAL_TASK_AGENT_TARGET) {
       const reason = `task ${task.id}: legacy task-agent post-approval target is no longer supported; skipping`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
+      clearPendingCompletionState(this.deps.taskRepo, task.id);
       return { mode: 'skipped', reason };
     }
     // -------------------------------------------------------------------
@@ -341,6 +354,7 @@ export class PostApprovalRouter {
     if (!interpolatedInstructions.trim()) {
       const reason = `task ${task.id}: node-agent post-approval has empty instructions template`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
+      clearPendingCompletionState(this.deps.taskRepo, task.id);
       return { mode: 'skipped', reason };
     }
     if (missingKeys.length > 0) {
@@ -351,6 +365,7 @@ export class PostApprovalRouter {
     if (!workflow) {
       const reason = `task ${task.id}: cannot spawn post-approval sub-session without workflow`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
+      clearPendingCompletionState(this.deps.taskRepo, task.id);
       return { mode: 'skipped', reason };
     }
     const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
