@@ -1,23 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import type { EpisodeJudgePromptInput } from '../../../src/lib/space/evolution-episode-service';
-import { EvolutionEpisodeService } from '../../../src/lib/space/evolution-episode-service';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
-import { GOAL_AUTOMATION_EXECUTE } from '../../../src/lib/job-queue-constants';
-import { handleGoalAutomationExecute } from '../../../src/lib/job-handlers/goal-automation-execute.handler';
-import { GoalAutomationService } from '../../../src/lib/space/goals/goal-automation-service';
-import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
-import { GoalAutomationCursorRepository } from '../../../src/storage/repositories/goal-automation-cursor-repository';
-import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
-import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
-import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
-import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
-import { WorkflowRunArtifactRepository } from '../../../src/storage/repositories/workflow-run-artifact-repository';
-import { createSpaceTables } from '../helpers/space-test-db';
+import type { EpisodeJudgePromptInput } from '../../../../src/lib/space/evolution-episode-service';
+import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service';
+import {
+  GOAL_AUTOMATION_EXECUTE,
+  TASK_SCHEDULE_FIRE,
+} from '../../../../src/lib/job-queue-constants';
+import { handleGoalAutomationExecute } from '../../../../src/lib/job-handlers/goal-automation-execute.handler';
+import { handleTaskScheduleFire } from '../../../../src/lib/job-handlers/task-schedule-fire.handler';
+import { GoalAutomationService } from '../../../../src/lib/space/goals/goal-automation-service';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
+import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/rpc-handlers';
+import { GateOpenStateRepository } from '../../../../src/storage/repositories/gate-open-state-repository';
+import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 function createJobQueueTable(db: Database): void {
   db.exec(`
@@ -50,6 +58,9 @@ describe('long-horizon agent lifecycle integration', () => {
   let goalAutomationService: GoalAutomationService;
   let goalRepo: SpaceGoalRepository;
   let jobQueue: JobQueueRepository;
+  let scheduleRepo: TaskScheduleRepository;
+  let scheduleService: ScheduleService;
+  let scopeService: EvolutionScopeService;
   let spaceRepo: SpaceRepository;
   let taskRepo: SpaceTaskRepository;
   let workflowRepo: SpaceWorkflowRepository;
@@ -66,6 +77,7 @@ describe('long-horizon agent lifecycle integration', () => {
     evolutionRepo = new EvolutionRepository(db as never);
     goalRepo = new SpaceGoalRepository(db as never);
     jobQueue = new JobQueueRepository(db as never);
+    scheduleRepo = new TaskScheduleRepository(db as never);
     spaceRepo = new SpaceRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
     workflowRepo = new SpaceWorkflowRepository(db as never);
@@ -79,7 +91,13 @@ describe('long-horizon agent lifecycle integration', () => {
       name: 'Long Horizon Agent Lifecycle',
     }).id;
 
-    const scopeService = new EvolutionScopeService({
+    scheduleService = new ScheduleService({
+      db: db as never,
+      scheduleRepo,
+      jobQueue,
+      spaceRepo,
+    });
+    scopeService = new EvolutionScopeService({
       evolutionRepo,
       spaceRepo,
       goalRepo,
@@ -110,9 +128,12 @@ describe('long-horizon agent lifecycle integration', () => {
           'The long-horizon agent completed scoped work and produced follow-up learning.',
         findings: [
           {
-            kind: 'success',
-            summary: 'Scoped task produced reviewable Forge evidence.',
-            evidenceIds: input.evidence.map((item) => item.id),
+            domain: 'workflow',
+            kind: 'optimization',
+            impact: 'medium',
+            confidence: 0.91,
+            evidence: input.evidence.map((item) => item.id),
+            proposedAction: 'Keep capturing agent progress artifacts before task completion.',
           },
         ],
         candidateLessons: [
@@ -140,15 +161,17 @@ describe('long-horizon agent lifecycle integration', () => {
   });
 
   it('runs from template-created agent through nudge, Forge trigger, episode, lesson, and proposal task', async () => {
+    const template = getLongHorizonAgentTemplate('product-quality-manager.default');
+    expect(template).toBeDefined();
     const agent = agentRepo.create({
       spaceId,
-      handle: 'product-quality-manager',
-      displayName: 'Product Quality Manager',
-      templateKey: 'product-quality.manager',
+      handle: template?.handle ?? 'product-quality-manager',
+      displayName: template?.displayName,
+      templateKey: template?.key,
       status: 'active',
-      instructions: 'Watch scoped product quality work and extract follow-up lessons.',
-      autonomyLevel: 2,
-      toolPermissions: { forge: { read: true, write: true } },
+      instructions: template?.instructions,
+      autonomyLevel: template?.suggestedAutonomyLevel,
+      toolPermissions: template?.toolPermissions,
     });
     const goal = goalRepo.create({
       spaceId,
@@ -184,7 +207,7 @@ describe('long-horizon agent lifecycle integration', () => {
     });
 
     expect(agent).toMatchObject({
-      templateKey: 'product-quality.manager',
+      templateKey: 'product-quality-manager.default',
       status: 'active',
       autonomyLevel: 2,
     });
@@ -226,22 +249,14 @@ describe('long-horizon agent lifecycle integration', () => {
       },
     });
 
-    await taskRepo.updateTask(task.id, { status: 'in_progress' });
+    taskRepo.updateTask(task.id, { status: 'in_progress' });
     expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
 
-    await taskRepo.updateTask(task.id, {
+    taskRepo.updateTask(task.id, {
       status: 'done',
       result: 'Quality signal capture complete; agent idle awaiting next trigger.',
     });
-    const evidenceCapture = new EvolutionScopeService({
-      evolutionRepo,
-      spaceRepo,
-      goalRepo,
-      taskRepo,
-      workflowRunRepo,
-      artifactRepo,
-      jobQueue,
-    }).captureCompletedTaskEvidence({ taskId: task.id });
+    const evidenceCapture = scopeService.captureCompletedTaskEvidence({ taskId: task.id });
 
     expect(taskRepo.getTask(task.id)).toMatchObject({
       status: 'done',
@@ -254,15 +269,36 @@ describe('long-horizon agent lifecycle integration', () => {
       'task_result',
     ]);
 
-    const nudge = goalAutomationService.onSelfNag(goal.id, reminder.id, scope.id);
-    expect(nudge).toMatchObject({ enqueued: true, reason: 'queued' });
+    syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope, db });
+    const [schedule] = scheduleService.listSchedules(spaceId, 'active');
+    expect(schedule).toMatchObject({
+      goalId: goal.id,
+      createdByAgent: 'goal-automation-service',
+      cronExpression: '0 * * * *',
+    });
+    expect(schedule.labels).toContain(`scope:${scope.id}`);
+    const scheduleFireJob = jobQueue.getJob(schedule.pendingJobId as string);
+    expect(scheduleFireJob?.queue).toBe(TASK_SCHEDULE_FIRE);
+    const scheduleFire = await handleTaskScheduleFire(
+      scheduleFireJob as NonNullable<typeof scheduleFireJob>,
+      {
+        db: db as never,
+        scheduleRepo,
+        jobQueue,
+        spaceRepo,
+        taskRepo,
+        goalRepo,
+        goalAutomationService,
+      }
+    );
+    expect(scheduleFire).toMatchObject({ scheduleId: schedule.id, skipped: false });
     const [selfNagJob] = jobQueue.dequeue(GOAL_AUTOMATION_EXECUTE, 1);
     expect(selfNagJob.payload).toMatchObject({
       goalId: goal.id,
       scopeId: scope.id,
       triggerKind: 'self_nag',
-      triggerKey: reminder.id,
-      scheduleId: reminder.id,
+      triggerKey: schedule.id,
+      scheduleId: schedule.id,
     });
     jobQueue.complete(selfNagJob.id, { skipped: true, reason: 'nudge assertion only' });
 
