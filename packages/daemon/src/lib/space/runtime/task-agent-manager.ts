@@ -3606,6 +3606,22 @@ export class TaskAgentManager {
       taskManager: boundTaskManager,
       internalEventBus: this.config.internalEventBus,
       goalService: this.config.goalService,
+      resolveResultArtifactSummary: (task) => {
+        if (!task.workflowRunId || !this.config.artifactRepo) return null;
+        const artifacts = this.config.artifactRepo.listByRun(task.workflowRunId, {
+          artifactType: 'result',
+        });
+        const artifact = artifacts
+          .map((item, index) => ({ item, index }))
+          .filter(({ item }) => typeof item.data.summary === 'string' && item.data.summary.trim())
+          .toSorted(
+            (a, b) =>
+              b.item.updatedAt - a.item.updatedAt ||
+              b.item.createdAt - a.item.createdAt ||
+              b.index - a.index
+          )[0]?.item;
+        return typeof artifact?.data.summary === 'string' ? artifact.data.summary : null;
+      },
     });
 
     // Self-heal callback for the agent-callable `restore_node_agent` tool.

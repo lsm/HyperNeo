@@ -3421,6 +3421,32 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
     expect(parsed.task.status).toBe('done');
   });
 
+  test('falls back to reported summary when review approval result is generic', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const createResult = await makeHandlers(ctx).create_standalone_task({
+      title: 'plain review task',
+      description: 'no pending action',
+    });
+    const taskId = JSON.parse(createResult.content[0].text).task.id;
+    ctx.taskRepo.updateTask(taskId, {
+      status: 'review',
+      result:
+        'An unexpected error occurred. Please try again or contact support if the issue persists.',
+      reportedSummary: 'PR #2007 merged to dev via squash merge.',
+    });
+
+    const result = await makeHandlers(ctx).approve_task({
+      task_id: taskId,
+      reason: 'looks good',
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(parsed.task.result).toBe('PR #2007 merged to dev via squash merge.');
+    expect(ctx.taskRepo.getTask(taskId)?.result).toBe('PR #2007 merged to dev via squash merge.');
+  });
+
   test('publishes space.task.updated for cascaded dependent tasks', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const task = await ctx.taskManager.createTask({
