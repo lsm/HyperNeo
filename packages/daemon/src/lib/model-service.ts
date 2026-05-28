@@ -240,9 +240,18 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 /**
  * Load models from all available providers
  */
+function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boolean {
+  return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
+}
+
 async function loadModelsFromProviders(): Promise<ModelInfo[]> {
-  initializeProviders();
-  await waitForOptionalProviderRegistration();
+  const registry = getProviderRegistry();
+  if (registry.size === 0) {
+    initializeProviders();
+    await waitForOptionalProviderRegistration();
+  } else if (shouldWaitForOptionalProviders(registry)) {
+    await waitForOptionalProviderRegistration(registry);
+  }
   const providers = getAvailableProviders();
   const allModels: ModelInfo[] = [];
 

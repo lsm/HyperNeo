@@ -139,8 +139,8 @@ export class ProviderService {
   }
 
   private async getReadyRegistry() {
-    const registry = initializeProviders();
-    await waitForOptionalProviderRegistration();
+    const registry = this.getRegistry();
+    await waitForOptionalProviderRegistration(registry);
     return registry;
   }
 

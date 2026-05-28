@@ -203,8 +203,10 @@ function registerCopilotProvider(registry: ProviderRegistry): void {
   void registerLoadedCopilotProvider(registry);
 }
 
-export async function waitForOptionalProviderRegistration(): Promise<void> {
-  await registerLoadedCopilotProvider(initializeProviders());
+export async function waitForOptionalProviderRegistration(
+  registry?: ProviderRegistry
+): Promise<void> {
+  await registerLoadedCopilotProvider(registry ?? initializeProviders());
 }
 
 async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promise<void> {
