@@ -75,31 +75,39 @@ export class ProviderRepository {
     const id = generateUUID();
     const now = Date.now();
 
-    this.db
-      .prepare(
-        `INSERT INTO providers (
-          id, provider_id, display_name, kind, auth_type, is_enabled, is_default,
-          sort_order, base_url, config_json, custom_endpoint_config_json,
-          health_status, last_health_check_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        params.providerId,
-        params.displayName,
-        params.kind,
-        params.authType,
-        (params.isEnabled ?? true) ? 1 : 0,
-        (params.isDefault ?? false) ? 1 : 0,
-        params.sortOrder,
-        params.baseUrl ?? null,
-        params.configJson ?? null,
-        params.customEndpointConfigJson ?? null,
-        params.healthStatus ?? 'unknown',
-        params.lastHealthCheckAt ?? null,
-        now,
-        now
-      );
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO providers (
+            id, provider_id, display_name, kind, auth_type, is_enabled, is_default,
+            sort_order, base_url, config_json, custom_endpoint_config_json,
+            health_status, last_health_check_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          params.providerId,
+          params.displayName,
+          params.kind,
+          params.authType,
+          (params.isEnabled ?? true) ? 1 : 0,
+          (params.isDefault ?? false) ? 1 : 0,
+          params.sortOrder,
+          params.baseUrl ?? null,
+          params.configJson ?? null,
+          params.customEndpointConfigJson ?? null,
+          params.healthStatus ?? 'unknown',
+          params.lastHealthCheckAt ?? null,
+          now,
+          now
+        );
+
+      if (params.isDefault === true) {
+        this.db
+          .prepare(`UPDATE providers SET is_default = 0, updated_at = ? WHERE id != ?`)
+          .run(now, id);
+      }
+    })();
 
     this.reactiveDb.notifyChange('providers');
     return this.getProvider(id)!;

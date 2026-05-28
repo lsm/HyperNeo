@@ -43,9 +43,9 @@ export interface UpdateProviderParams {
   isEnabled?: boolean;
   isDefault?: boolean;
   sortOrder?: number;
-  baseUrl?: string;
-  configJson?: string;
-  customEndpointConfigJson?: string;
+  baseUrl?: string | null;
+  configJson?: string | null;
+  customEndpointConfigJson?: string | null;
   healthStatus?: ProviderHealthStatus;
-  lastHealthCheckAt?: number;
+  lastHealthCheckAt?: number | null;
 }

@@ -138,11 +138,11 @@ describe('ProviderRepository', () => {
       isEnabled: false,
       isDefault: true,
       sortOrder: 5,
-      baseUrl: undefined,
-      configJson: undefined,
-      customEndpointConfigJson: undefined,
+      baseUrl: null,
+      configJson: null,
+      customEndpointConfigJson: null,
       healthStatus: 'healthy',
-      lastHealthCheckAt: undefined,
+      lastHealthCheckAt: null,
     });
 
     expect(updated).toMatchObject({
@@ -199,6 +199,29 @@ describe('ProviderRepository', () => {
     });
 
     repo.setDefaultProvider(second.id);
+
+    expect(repo.getProvider(first.id)!.isDefault).toBe(false);
+    expect(repo.getProvider(second.id)!.isDefault).toBe(true);
+    expect(repo.listProviders().filter((provider) => provider.isDefault)).toHaveLength(1);
+  });
+
+  test('createProvider with isDefault true leaves exactly one default provider', () => {
+    const first = repo.createProvider({
+      providerId: 'anthropic',
+      displayName: 'Anthropic',
+      kind: 'built_in',
+      authType: 'api_key',
+      isDefault: true,
+      sortOrder: 10,
+    });
+    const second = repo.createProvider({
+      providerId: 'custom:lmstudio',
+      displayName: 'LM Studio',
+      kind: 'custom_endpoint',
+      authType: 'none',
+      isDefault: true,
+      sortOrder: 20,
+    });
 
     expect(repo.getProvider(first.id)!.isDefault).toBe(false);
     expect(repo.getProvider(second.id)!.isDefault).toBe(true);
