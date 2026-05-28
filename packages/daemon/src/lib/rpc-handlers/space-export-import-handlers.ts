@@ -138,7 +138,14 @@ function buildAgentCreateParams(
   usedAgentHandles?: Set<string>
 ): CreateSpaceAgentParams {
   const params: CreateSpaceAgentParams = { spaceId, name };
-  if (shouldPreserveAgentHandle(exported.handle, usedAgentHandles)) params.handle = exported.handle;
+  if (shouldPreserveAgentHandle(exported.handle, usedAgentHandles)) {
+    params.handle = exported.handle;
+  } else if (usedAgentHandles) {
+    params.handle = slugifyWithinLimit(name, [
+      ...usedAgentHandles,
+      ...RESERVED_SPACE_AGENT_HANDLES,
+    ]);
+  }
   applyExportedAgentFields(params, exported);
   return params;
 }

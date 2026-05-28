@@ -1049,6 +1049,28 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(agentRepo.getById(existingB.id)?.handle).toBe('b-2');
       });
 
+      it('generates legacy create handles from batch reservations', async () => {
+        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+
+        const bundle = makeBundle(
+          [
+            { name: 'New Agent', model: 'claude-new' },
+            { name: 'A', handle: 'new-agent', model: 'claude-new-a' },
+          ],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { A: 'replace' } },
+        });
+
+        const newAgent = agentRepo.getById(result.agents.find((a) => a.name === 'New Agent')!.id)!;
+        expect(newAgent.handle).toBe('new-agent-2');
+        expect(agentRepo.getById(existingA.id)?.handle).toBe('new-agent');
+      });
+
       it('replaces conflicting workflow (delete + create)', async () => {
         const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
         workflowManager.createWorkflow({
