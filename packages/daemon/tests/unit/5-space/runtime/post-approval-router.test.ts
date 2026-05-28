@@ -256,6 +256,54 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned[0].targetAgent).toBe('reviewer');
     expect(delegates.spawned[0].kickoffMessage).toContain('Merge Ship it.');
     expect(delegates.spawned[0].kickoffMessage).not.toContain('Legacy route');
+    const final = taskRepo.getTask(task.id);
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+  });
+
+  test('submitting node with no postApproval bypasses workflow end-node route', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const workflow = stubWorkflow({
+      startNodeId: 'n1',
+      endNodeId: 'n2',
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Validation Complete',
+          agents: [{ agentId: 'coder-id', name: 'validator' }],
+        },
+        {
+          id: 'n2',
+          name: 'Review',
+          agents: [{ agentId: 'reviewer-id', name: 'reviewer' }],
+          postApproval: {
+            targetAgent: 'reviewer',
+            instructions: 'Merge {{task_title}}.',
+          },
+        },
+      ],
+    });
+
+    const result = await router.route(
+      { ...task, pendingCompletionSubmittedByNodeId: 'n1' },
+      workflow,
+      {
+        approvalSource: 'human',
+        task_title: task.title,
+      }
+    );
+
+    expect(result.mode).toBe('no-route');
+    expect(delegates.spawned).toHaveLength(0);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.status).toBe('done');
+    expect(final?.pendingCompletionSubmittedByNodeId).toBe('n1');
   });
 
   test('already-routed (live session) → no re-spawn', async () => {
@@ -312,8 +360,15 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned).toHaveLength(1);
   });
 
-  test('empty instructions on spawn path → skipped', async () => {
+  test('empty instructions on spawn path → skipped and clears pending completion state', async () => {
     const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'validation-node',
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'needs approval',
+    });
+    const updated = taskRepo.getTask(task.id)!;
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
@@ -322,12 +377,15 @@ describe('PostApprovalRouter.route', () => {
     });
 
     const result = await router.route(
-      task,
+      updated,
       stubWorkflow({ postApproval: { targetAgent: 'deployer', instructions: '' } }),
       { approvalSource: 'agent' }
     );
     expect(result.mode).toBe('skipped');
     expect(delegates.spawned).toHaveLength(0);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.pendingCheckpointType).toBeNull();
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
   });
 
   test('task not in approved → skipped', async () => {
@@ -347,8 +405,15 @@ describe('PostApprovalRouter.route', () => {
     expect(result.mode).toBe('skipped');
   });
 
-  test('legacy task-agent target → skipped gracefully', async () => {
+  test('legacy task-agent target → skipped gracefully and clears pending completion state', async () => {
     const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'validation-node',
+      pendingCompletionSubmittedAt: Date.now(),
+      pendingCompletionReason: 'needs approval',
+    });
+    const updated = taskRepo.getTask(task.id)!;
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
@@ -365,7 +430,7 @@ describe('PostApprovalRouter.route', () => {
         instructions: 'Deploy task {{task_id}} to production.',
       },
     });
-    const result = await router.route(task, workflow, {
+    const result = await router.route(updated, workflow, {
       approvalSource: 'agent',
       spaceId: SPACE_ID,
       autonomyLevel: 4,
@@ -377,5 +442,8 @@ describe('PostApprovalRouter.route', () => {
     expect(result.reason).toContain('legacy task-agent');
     // Spawner must NOT have been called
     expect(delegates.spawned).toHaveLength(0);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.pendingCheckpointType).toBeNull();
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
   });
 });

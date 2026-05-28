@@ -4619,13 +4619,14 @@ export class SpaceRuntime {
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
+          const sourceNodeId = canonicalTask.pendingCompletionSubmittedByNodeId ?? endNodeId;
           const siblingsToQuiesce = this.config.nodeExecutionRepo
             .listByWorkflowRun(runId)
             .filter(
               (e) =>
                 e.status === 'in_progress' &&
                 e.agentSessionId &&
-                (!endNodeId || e.workflowNodeId !== endNodeId)
+                (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
             );
           for (const sibling of siblingsToQuiesce) {
             this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
