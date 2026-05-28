@@ -39,6 +39,7 @@ export interface FlakyRegistry {
 export interface FailedTestCase {
   file: string;
   name: string;
+  className: string;
 }
 
 interface CliOptions {
@@ -91,19 +92,54 @@ export function parseJUnitFailures(xml: string): FailedTestCase[] {
       continue;
     }
 
+    const className = readXmlAttribute(attrs, 'classname') ?? '';
     failures.push({
-      file: readXmlAttribute(attrs, 'file') ?? readXmlAttribute(attrs, 'classname') ?? '',
+      file: readXmlAttribute(attrs, 'file') ?? className,
       name: readXmlAttribute(attrs, 'name') ?? '',
+      className,
     });
   }
 
   return failures;
 }
 
+export function parseJUnitErrors(xml: string): string[] {
+  const errors: string[] = [];
+  const testcasePattern = /<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/g;
+
+  for (const match of xml.matchAll(testcasePattern)) {
+    const [, attrs, body] = match;
+    if (body.includes('<error')) {
+      errors.push(
+        readXmlAttribute(attrs, 'name') ?? readXmlAttribute(attrs, 'classname') ?? 'unknown'
+      );
+    }
+  }
+
+  const suiteErrorCounts = [
+    ...xml.matchAll(/<testsuite\b([^>]*)>/g),
+    ...xml.matchAll(/<testsuites\b([^>]*)>/g),
+  ]
+    .map((match) => Number(readXmlAttribute(match[1], 'errors') ?? '0'))
+    .filter((count) => Number.isFinite(count) && count > 0);
+
+  for (const count of suiteErrorCounts) {
+    errors.push(`${count} JUnit suite error(s)`);
+  }
+
+  return errors;
+}
+
 export function parseJUnitFailureFiles(paths: string[]): FailedTestCase[] {
   return paths
     .filter((path) => existsSync(path))
     .flatMap((path) => parseJUnitFailures(readFileSync(path, 'utf8')));
+}
+
+export function parseJUnitErrorFiles(paths: string[]): string[] {
+  return paths
+    .filter((path) => existsSync(path))
+    .flatMap((path) => parseJUnitErrors(readFileSync(path, 'utf8')));
 }
 
 export function matchKnownFlakyFailures(
@@ -119,7 +155,7 @@ export function matchKnownFlakyFailures(
       (entry) =>
         entry.suite === suite &&
         samePath(entry.path, failure.file) &&
-        failure.name.includes(entry.namePattern)
+        (failure.name.includes(entry.namePattern) || failure.className.includes(entry.namePattern))
     );
 
     if (matched) {
@@ -137,7 +173,8 @@ export function shouldQuarantine(failedAttempts: number, policy: FlakyPolicy): b
 }
 
 function readXmlAttribute(attrs: string, name: string): string | null {
-  const match = attrs.match(new RegExp(`${name}="([^"]*)"`));
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = attrs.match(new RegExp(`(?:^|\\s)${escapedName}="([^"]*)"`));
   return match ? unescapeXml(match[1]) : null;
 }
 
@@ -306,7 +343,17 @@ export function main(argv = process.argv.slice(2)): number {
     }
 
     failedAttempts += 1;
-    const failures = parseJUnitFailureFiles(discoverJUnitFiles(options.resultsDir));
+    const junitFiles = discoverJUnitFiles(options.resultsDir);
+    const errors = parseJUnitErrorFiles(junitFiles);
+    if (errors.length > 0) {
+      console.error('JUnit errors found outside registered flaky test failures. Blocking CI.');
+      for (const error of errors) {
+        console.error(`  ${error}`);
+      }
+      return exitCode;
+    }
+
+    const failures = parseJUnitFailureFiles(junitFiles);
     if (failures.length === 0) {
       console.error('Test command failed, but no JUnit failures were found. Blocking CI.');
       return exitCode;
