@@ -156,6 +156,13 @@ function checkVersion(version: unknown): string | null {
 const exportedAgentBaseSchema = z.object({
   type: z.literal('agent'),
   name: z.string().min(1),
+  handle: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || validateSlug(v) === null, {
+      message:
+        'handle must contain only lowercase letters, numbers, and hyphens, and must start and end with a letter or number',
+    }),
   description: z.string().optional(),
   model: z.string().optional(),
   thinkingLevel: thinkingLevelSchema.optional(),
@@ -244,6 +251,7 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
     type: 'agent',
     name: agent.name,
   };
+  if (agent.handle !== undefined) exported.handle = agent.handle;
   if (agent.description !== undefined) exported.description = agent.description;
   if (agent.model !== undefined) exported.model = agent.model;
   if (agent.thinkingLevel !== undefined) exported.thinkingLevel = agent.thinkingLevel;

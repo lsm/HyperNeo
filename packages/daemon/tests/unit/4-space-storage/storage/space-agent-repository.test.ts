@@ -82,6 +82,14 @@ describe('SpaceAgentRepository', () => {
       expect(first.handle).toBe('qa');
       expect(second.handle).toBe('qa-agent');
     });
+
+    it('avoids reserved system handles when auto-generating handles', () => {
+      const coordinator = repo.create({ spaceId: 'space-1', name: 'Coordinator' });
+      const systemRuntime = repo.create({ spaceId: 'space-1', name: 'System Runtime' });
+
+      expect(coordinator.handle).toBe('coordinator-2');
+      expect(systemRuntime.handle).toBe('system-runtime-2');
+    });
   });
 
   describe('getById', () => {

@@ -19,7 +19,7 @@ import type {
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
-import { slugifyWithinLimit, validateSlug } from '../slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
 import { Logger } from '../../logger';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
@@ -28,12 +28,7 @@ import { computeAgentTemplateHash } from '../agents/agent-template-hash';
 const log = new Logger('space-agent-manager');
 
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
-const RESERVED_AGENT_HANDLES = new Set([
-  'coordinator',
-  'system-runtime',
-  'system-workflow',
-  'system-messaging',
-]);
+const RESERVED_AGENT_HANDLES = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);
 
 export type SpaceAgentResult<T> =
   | { ok: true; value: T }

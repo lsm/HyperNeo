@@ -440,6 +440,28 @@ describe('SpaceIsland — sessions view', () => {
     });
   });
 
+  it('navigates after slug-routed session creation when canonical space still matches', async () => {
+    mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-123' });
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+
+    const { getByLabelText, getByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="sessions" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create session'));
+
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
+    });
+  });
+
   it('shows toast.error when createSession fails', async () => {
     mockCreateSession.mockRejectedValueOnce(new Error('Connection refused'));
 

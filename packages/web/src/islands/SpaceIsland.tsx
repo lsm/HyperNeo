@@ -202,7 +202,8 @@ export default function SpaceIsland({
         // Only navigate if the user is still in the same space and on the
         // Sessions view; prevents stale async redirect if they navigated elsewhere.
         if (
-          currentSpaceIdSignal.value === originSpaceId &&
+          (currentSpaceIdSignal.value === originSpaceId ||
+            spaceStore.space.value?.id === originSpaceId) &&
           currentSpaceViewModeSignal.value === originViewMode
         ) {
           navigateToSpaceSession(spaceId, response.sessionId);

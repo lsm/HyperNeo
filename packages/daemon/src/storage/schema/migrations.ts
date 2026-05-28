@@ -12,7 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
-import { slugify, validateSlug } from '../../lib/space/slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 
@@ -10350,7 +10350,7 @@ export function runMigration148(db: BunDatabase): void {
 
   const handlesBySpace = new Map<string, string[]>();
   for (const row of rows) {
-    const existingHandles = handlesBySpace.get(row.space_id) ?? [];
+    const existingHandles = handlesBySpace.get(row.space_id) ?? [...RESERVED_SPACE_AGENT_HANDLES];
     if (!handlesBySpace.has(row.space_id)) handlesBySpace.set(row.space_id, existingHandles);
 
     const current = row.handle?.trim();

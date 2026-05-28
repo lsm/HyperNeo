@@ -12,7 +12,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { slugify, slugifyWithinLimit } from '../../lib/space/slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
@@ -232,7 +232,10 @@ export class SpaceAgentRepository {
   }
 
   private generateUniqueHandle(spaceId: string, name: string): string {
-    return slugifyWithinLimit(name, this.getHandlesForSpace(spaceId));
+    return slugifyWithinLimit(name, [
+      ...this.getHandlesForSpace(spaceId),
+      ...RESERVED_SPACE_AGENT_HANDLES,
+    ]);
   }
 
   private rowToAgent(row: Record<string, unknown>): SpaceAgent {

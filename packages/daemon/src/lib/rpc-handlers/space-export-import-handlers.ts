@@ -47,6 +47,7 @@ import type {
   SpaceAgent,
   SpaceWorkflow,
   CreateSpaceAgentParams,
+  UpdateSpaceAgentParams,
   CreateSpaceWorkflowParams,
   WorkflowNodeInput,
   SpaceExportBundle,
@@ -131,9 +132,41 @@ function generateUniqueName(baseName: string, existingNames: Set<string>): strin
 function buildAgentCreateParams(
   spaceId: string,
   name: string,
-  exported: ExportedSpaceAgent
+  exported: ExportedSpaceAgent,
+  usedAgentHandles?: Set<string>
 ): CreateSpaceAgentParams {
   const params: CreateSpaceAgentParams = { spaceId, name };
+  if (shouldPreserveAgentHandle(exported.handle, usedAgentHandles)) params.handle = exported.handle;
+  applyExportedAgentFields(params, exported);
+  return params;
+}
+
+function shouldPreserveAgentHandle(
+  handle: string | undefined,
+  usedAgentHandles?: Set<string>
+): boolean {
+  if (handle === undefined || handle.trim() === '') return false;
+  return !usedAgentHandles?.has(handle);
+}
+
+function warnOnAgentHandleRewrite(
+  exported: ExportedSpaceAgent,
+  finalName: string,
+  usedAgentHandles: Set<string>,
+  warnings: string[]
+): void {
+  const exportedHandle = typeof exported.handle === 'string' ? exported.handle.trim() : '';
+  if (exportedHandle && usedAgentHandles.has(exportedHandle)) {
+    warnings.push(
+      `Agent "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
+    );
+  }
+}
+
+function applyExportedAgentFields(
+  params: UpdateSpaceAgentParams,
+  exported: ExportedSpaceAgent
+): void {
   if (exported.description !== undefined) params.description = exported.description;
   if (exported.model !== undefined) params.model = exported.model;
   if (exported.thinkingLevel !== undefined) params.thinkingLevel = exported.thinkingLevel;
@@ -145,7 +178,6 @@ function buildAgentCreateParams(
   if (parts.length > 0) params.customPrompt = parts.join('\n\n');
   if (exported.tools !== undefined) params.tools = exported.tools;
   if (exported.settingSources !== undefined) params.settingSources = exported.settingSources;
-  return params;
 }
 
 /**
@@ -515,6 +547,7 @@ export function setupSpaceExportImportHandlers(
 
         // Mutable sets for uniqueness tracking across the import batch
         const usedAgentNames = new Set(existingAgents.map((a) => a.name));
+        const usedAgentHandles = new Set(existingAgents.map((a) => a.handle).filter(Boolean));
         const usedWorkflowNames = new Set(existingWorkflows.map((w) => w.name));
         const usedWorkflowHandles = new Set(
           existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
@@ -524,16 +557,28 @@ export function setupSpaceExportImportHandlers(
         // Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
         const importedAgentNameToId = new Map<string, string>();
         const agentResults: ImportedItem[] = [];
+        const allWarnings: string[] = [];
 
         for (const exportedAgent of bundle.agents) {
           const existing = existingAgentByName.get(exportedAgent.name);
 
           if (!existing) {
             // No conflict — create new agent
-            const created = agentRepo.create(
-              buildAgentCreateParams(spaceId, exportedAgent.name, exportedAgent)
+            const createParams = buildAgentCreateParams(
+              spaceId,
+              exportedAgent.name,
+              exportedAgent,
+              usedAgentHandles
             );
+            warnOnAgentHandleRewrite(
+              exportedAgent,
+              exportedAgent.name,
+              usedAgentHandles,
+              allWarnings
+            );
+            const created = agentRepo.create(createParams);
             usedAgentNames.add(exportedAgent.name);
+            usedAgentHandles.add(created.handle);
             importedAgentNameToId.set(exportedAgent.name, created.id);
             agentResults.push({ name: exportedAgent.name, id: created.id, action: 'created' });
             continue;
@@ -553,7 +598,7 @@ export function setupSpaceExportImportHandlers(
             const replaceParts = [exportedAgent.systemPrompt, exportedAgent.instructions].filter(
               (s): s is string => typeof s === 'string' && s.length > 0
             );
-            const updated = agentRepo.update(existing.id, {
+            const updateParams: UpdateSpaceAgentParams = {
               description: exportedAgent.description ?? null,
               model: exportedAgent.model ?? null,
               thinkingLevel: exportedAgent.thinkingLevel ?? null,
@@ -561,18 +606,36 @@ export function setupSpaceExportImportHandlers(
               customPrompt: replaceParts.length > 0 ? replaceParts.join('\n\n') : null,
               tools: exportedAgent.tools ?? null,
               settingSources: exportedAgent.settingSources ?? null,
-            });
+            };
+            usedAgentHandles.delete(existing.handle);
+            if (shouldPreserveAgentHandle(exportedAgent.handle, usedAgentHandles)) {
+              updateParams.handle = exportedAgent.handle;
+            }
+            warnOnAgentHandleRewrite(
+              exportedAgent,
+              exportedAgent.name,
+              usedAgentHandles,
+              allWarnings
+            );
+            const updated = agentRepo.update(existing.id, updateParams);
             const id = updated?.id ?? existing.id;
+            if (updated) usedAgentHandles.add(updated.handle);
             importedAgentNameToId.set(exportedAgent.name, id);
             agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
           } else {
             // rename — create with a unique name; the original bundle name remains the
             // cross-reference key so workflow nodes still resolve correctly.
             const finalName = generateUniqueName(exportedAgent.name, usedAgentNames);
-            const created = agentRepo.create(
-              buildAgentCreateParams(spaceId, finalName, exportedAgent)
+            const createParams = buildAgentCreateParams(
+              spaceId,
+              finalName,
+              exportedAgent,
+              usedAgentHandles
             );
+            warnOnAgentHandleRewrite(exportedAgent, finalName, usedAgentHandles, allWarnings);
+            const created = agentRepo.create(createParams);
             usedAgentNames.add(finalName);
+            usedAgentHandles.add(created.handle);
             importedAgentNameToId.set(exportedAgent.name, created.id);
             agentResults.push({ name: finalName, id: created.id, action: 'renamed' });
           }
@@ -598,7 +661,6 @@ export function setupSpaceExportImportHandlers(
 
         // ── Phase 2: import workflows ────────────────────────────────────
         const workflowResults: ImportedItem[] = [];
-        const allWarnings: string[] = [];
 
         for (const exportedWorkflow of bundle.workflows) {
           const existing = existingWorkflowByName.get(exportedWorkflow.name);

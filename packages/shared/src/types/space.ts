@@ -2250,6 +2250,8 @@ export interface ExportedSpaceAgent {
   type: 'agent';
   /** Human-readable name */
   name: string;
+  /** URL-safe handle used for @mentions and agent URLs */
+  handle?: string;
   /** Optional description of this agent's specialization */
   description?: string;
   /** Model ID override */

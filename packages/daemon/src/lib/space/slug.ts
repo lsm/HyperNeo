@@ -17,6 +17,13 @@
 const MAX_SLUG_LENGTH = 60;
 const DEFAULT_SLUG = 'unnamed-space';
 
+export const RESERVED_SPACE_AGENT_HANDLES = [
+  'coordinator',
+  'system-runtime',
+  'system-workflow',
+  'system-messaging',
+] as const;
+
 /**
  * Generate a URL-safe slug from an input string.
  * If the generated slug collides with existing slugs, appends a numeric suffix (-2, -3, ...).
