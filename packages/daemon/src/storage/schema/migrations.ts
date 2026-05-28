@@ -675,7 +675,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // Migration 146: Expand Forge evidence kinds for structured daemon log capture.
   runMigration146(db);
 
-  // Migration 147: Add model and thinking_level columns to long-horizon agents.
+  // Migration 147: Add providers table and model/thinking_level columns to long-horizon agents.
   runMigration147(db);
 }
 
@@ -10309,7 +10309,29 @@ function generateValidHandle(name: string, existingHandles: string[]): string {
  * Migration 147 — Add model and thinking_level columns to space_long_horizon_agents.
  * Idempotent: uses ADD COLUMN IF NOT EXISTS (SQLite 3.37+) or swallows duplicate-column errors.
  */
-function runMigration147(db: BunDatabase): void {
+export function runMigration147(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS providers (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT UNIQUE NOT NULL,
+      display_name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      auth_type TEXT NOT NULL,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL,
+      base_url TEXT,
+      config_json TEXT,
+      custom_endpoint_config_json TEXT,
+      health_status TEXT NOT NULL DEFAULT 'unknown',
+      last_health_check_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
+
   if (!tableExists(db, 'space_long_horizon_agents')) return;
   for (const stmt of [
     `ALTER TABLE space_long_horizon_agents ADD COLUMN model TEXT DEFAULT NULL`,

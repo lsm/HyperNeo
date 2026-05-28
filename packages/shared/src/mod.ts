@@ -26,6 +26,7 @@ export * from './types/space-utils.ts';
 export * from './space/workflow-autonomy.ts';
 export * from './types/tools.ts';
 export * from './types/app-mcp-server.ts';
+export * from './types/provider-record.ts';
 export * from './types/mcp-enablement.ts';
 export * from './types/skills.ts';
 export * from './types/reference.ts';

@@ -123,6 +123,8 @@ export { runMigration142 } from './migrations';
 export { runMigration143 } from './migrations';
 // knip-ignore-next-line
 export { runMigration144 } from './migrations';
+// knip-ignore-next-line
+export { runMigration147 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -577,6 +579,28 @@ export function createTables(db: BunDatabase): void {
         updated_at INTEGER
       )
     `);
+
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS providers (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        auth_type TEXT NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL,
+        base_url TEXT,
+        config_json TEXT,
+        custom_endpoint_config_json TEXT,
+        health_status TEXT NOT NULL DEFAULT 'unknown',
+        last_health_check_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
 
   // Partial unique index on (source_path, name) for imported rows — enables
   // idempotent upserts from McpImportService without a pre-check round trip.
