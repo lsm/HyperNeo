@@ -22,7 +22,7 @@ class FakeCredentialManager {
   }
 }
 
-function createProvider(refreshResult: boolean): Provider {
+function createProvider(refreshResult: boolean | Error): Provider {
   return {
     id: 'oauth-provider',
     displayName: 'OAuth Provider',
@@ -39,7 +39,10 @@ function createProvider(refreshResult: boolean): Provider {
     ownsModel: () => false,
     getModelForTier: () => undefined,
     buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
-    refreshToken: async () => refreshResult,
+    refreshToken: async () => {
+      if (refreshResult instanceof Error) throw refreshResult;
+      return refreshResult;
+    },
     getCredentials: () => ({
       type: 'oauth',
       accessToken: 'new-token',
@@ -100,6 +103,57 @@ describe('OAuthRefreshScheduler', () => {
     });
 
     await scheduler.tick();
+    await scheduler.tick();
+
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+  });
+
+  it('counts thrown refresh attempts as failures', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(new Error('network')));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 1,
+    });
+
+    await scheduler.tick();
+
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+  });
+
+  it('tracks retry counts per token expiry', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(false));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 1,
+    });
+
+    await scheduler.tick();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'new-token',
+      refreshToken: 'new-refresh-token',
+      expiresAt: 2_000,
+    });
     await scheduler.tick();
 
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');

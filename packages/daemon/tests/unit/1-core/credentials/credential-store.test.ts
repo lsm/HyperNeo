@@ -37,4 +37,20 @@ describe('DatabaseCredentialStore', () => {
       db.close();
     }
   });
+
+  it('lists services by prefix', async () => {
+    const { db, store } = createStore();
+    try {
+      await store.set('neokai.provider.glm', 'default', 'glm-secret');
+      await store.set('neokai.provider.kimi', 'default', 'kimi-secret');
+      await store.set('other.provider.test', 'default', 'other-secret');
+
+      expect(await store.listServices('neokai.provider.')).toEqual([
+        'neokai.provider.glm',
+        'neokai.provider.kimi',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
 });

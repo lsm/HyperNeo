@@ -410,8 +410,15 @@ export class AnthropicProvider implements Provider {
    * Returns empty env vars (SDK handles auth from environment).
    */
   buildSdkConfig(): ProviderSdkConfig {
+    const envVars: Record<string, string> = {};
+    if (this.credentials?.type === 'api_key') {
+      envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
+    } else if (this.credentials?.type === 'oauth' && this.credentials.accessToken) {
+      envVars.CLAUDE_CODE_OAUTH_TOKEN = this.credentials.accessToken;
+    }
+
     return {
-      envVars: {},
+      envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
     };

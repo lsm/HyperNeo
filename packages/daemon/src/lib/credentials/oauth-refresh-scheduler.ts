@@ -48,9 +48,9 @@ export class OAuthRefreshScheduler {
   }
 
   async tick(): Promise<void> {
-    for (const provider of this.registry.getAll()) {
-      await this.refreshProviderIfNeeded(provider);
-    }
+    await Promise.all(
+      this.registry.getAll().map((provider) => this.refreshProviderIfNeeded(provider))
+    );
   }
 
   private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
@@ -61,11 +61,19 @@ export class OAuthRefreshScheduler {
     const expiresAt = credentials.expiresAt;
     if (typeof expiresAt !== 'number') return;
     if (expiresAt - this.now() > this.refreshWindowMs) return;
-    if ((this.retryCounts.get(provider.id) ?? 0) >= this.maxRetries) return;
 
-    const refreshed = await provider.refreshToken();
+    const retryKey = this.retryKey(provider.id, credentials);
+    if ((this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
+
+    let refreshed = false;
+    try {
+      refreshed = await provider.refreshToken();
+    } catch {
+      refreshed = false;
+    }
+
     if (refreshed) {
-      this.retryCounts.delete(provider.id);
+      this.retryCounts.delete(retryKey);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
       if (nextCredentials) {
         await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
@@ -74,8 +82,8 @@ export class OAuthRefreshScheduler {
       return;
     }
 
-    const retries = (this.retryCounts.get(provider.id) ?? 0) + 1;
-    this.retryCounts.set(provider.id, retries);
+    const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
+    this.retryCounts.set(retryKey, retries);
     if (retries >= this.maxRetries) {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
     }
@@ -87,5 +95,10 @@ export class OAuthRefreshScheduler {
   ): Promise<ProviderCredentials> {
     if (!provider.getCredentials) return fallback;
     return (await provider.getCredentials()) ?? fallback;
+  }
+
+  private retryKey(providerId: string, credentials: ProviderCredentials): string {
+    if (credentials.type !== 'oauth') return providerId;
+    return `${providerId}:${credentials.refreshToken ?? credentials.accessToken ?? ''}:${credentials.expiresAt ?? ''}`;
   }
 }

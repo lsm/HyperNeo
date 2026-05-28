@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
-import type { CredentialStore } from '../../../../src/lib/credentials/credential-store';
+import {
+  DatabaseCredentialStore,
+  type CredentialStore,
+} from '../../../../src/lib/credentials/credential-store';
 
 class MemoryCredentialStore implements CredentialStore {
   values = new Map<string, string>();
@@ -75,6 +78,40 @@ describe('ProviderCredentialManager', () => {
     try {
       expect(await manager.migrateFromEnv('glm')).toBe(true);
       expect(await manager.getCredentials('glm')).toEqual({ type: 'api_key', apiKey: 'from-env' });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('lists provider ids from database credential store', async () => {
+    const db = createDb();
+    const store = new DatabaseCredentialStore(db, 'test-secret');
+    const manager = new ProviderCredentialManager(store, db);
+    try {
+      await store.set('neokai.provider.glm', 'default', 'glm-secret');
+      await store.set('neokai.provider.openrouter', 'default', 'openrouter-secret');
+
+      expect(await manager.listCredentialProviderIds()).toEqual(['glm', 'openrouter']);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('removes credentials and clears provider auth state', async () => {
+    const db = createDb();
+    const store = new MemoryCredentialStore();
+    const manager = new ProviderCredentialManager(store, db);
+    try {
+      await manager.storeApiKey('glm', 'glm-secret');
+      await manager.removeCredentials('glm');
+
+      expect(await manager.getCredentials('glm')).toBeNull();
+      const row = db
+        .query<{ auth_type: string; health_status: string }, []>(
+          'SELECT auth_type, health_status FROM providers WHERE provider_id = ?'
+        )
+        .get('glm');
+      expect(row).toEqual({ auth_type: 'none', health_status: 'unknown' });
     } finally {
       db.close();
     }

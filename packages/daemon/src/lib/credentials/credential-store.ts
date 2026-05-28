@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { platform } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -75,8 +75,9 @@ export class DatabaseCredentialStore implements CredentialStore {
 
   constructor(
     private readonly db: Database,
-    secret: string = process.env[ENCRYPTION_KEY_ENV] || defaultEncryptionSecret()
+    secret?: string
   ) {
+    secret ??= process.env[ENCRYPTION_KEY_ENV] || defaultEncryptionSecret(db);
     this.key = createHash('sha256').update(secret).digest();
     ensureProviderCredentialsTable(db);
   }
@@ -128,7 +129,7 @@ export class DatabaseCredentialStore implements CredentialStore {
       .query<{ provider_id: string }, [string]>(
         'SELECT provider_id FROM provider_credentials WHERE provider_id LIKE ? ORDER BY provider_id ASC'
       )
-      .all(`${escapeLike(prefix)}:%`);
+      .all(`${escapeLike(prefix)}%`);
     return rows.map((row) => row.provider_id.slice(0, row.provider_id.lastIndexOf(':')));
   }
 }
@@ -158,8 +159,14 @@ function providerIdFrom(service: string, account: string): string {
   return `${service}:${account}`;
 }
 
-function defaultEncryptionSecret(): string {
-  return `${process.execPath}:${process.cwd()}`;
+function defaultEncryptionSecret(db: Database): string {
+  const filename = databaseFilename(db);
+  return `${homedir()}:neokai-provider-credentials:${filename}`;
+}
+
+function databaseFilename(db: Database): string {
+  const filename = (db as Database & { filename?: string }).filename;
+  return filename && filename !== ':memory:' ? filename : 'memory';
 }
 
 function escapeLike(value: string): string {
