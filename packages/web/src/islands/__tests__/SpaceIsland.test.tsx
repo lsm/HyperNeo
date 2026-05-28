@@ -178,6 +178,26 @@ vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
     ) : null,
 }));
 
+vi.mock('../../components/space/SpaceGoals', () => ({
+  SpaceGoals: (props: { spaceId: string; navigationSpaceId?: string }) => (
+    <div
+      data-testid="space-goals"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+    />
+  ),
+}));
+
+vi.mock('../../components/space/SpaceSessionsPage', () => ({
+  SpaceSessionsPage: (props: { spaceId: string; navigationSpaceId?: string }) => (
+    <div
+      data-testid="space-sessions-page"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+    />
+  ),
+}));
+
 vi.mock('../../components/space/SpaceAgentList', () => ({
   SpaceAgentList: () => <div data-testid="space-agent-list" />,
 }));
@@ -498,6 +518,23 @@ describe('SpaceIsland — content priority chain', () => {
   });
 });
 
+describe('SpaceIsland — goals view', () => {
+  it('passes the route space id to goals page navigation', async () => {
+    const { getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="goals" />
+    );
+
+    await waitFor(
+      () => {
+        expect(getByTestId('space-goals')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    expect(getByTestId('space-goals').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByTestId('space-goals').getAttribute('data-navigation-space-id')).toBe('space-slug');
+  });
+});
+
 describe('SpaceIsland — sessions view', () => {
   it('renders Create Session button in the header', async () => {
     const { getByLabelText, getByTestId } = render(
@@ -510,6 +547,23 @@ describe('SpaceIsland — sessions view', () => {
       { timeout: LAZY_LOAD_TIMEOUT }
     );
     expect(getByLabelText('Create session')).toBeTruthy();
+  });
+
+  it('passes the route space id to sessions page navigation', async () => {
+    const { getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
+    );
+
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-page')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    expect(getByTestId('space-sessions-page').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByTestId('space-sessions-page').getAttribute('data-navigation-space-id')).toBe(
+      'space-slug'
+    );
   });
 
   it('calls createSession and navigates on success', async () => {

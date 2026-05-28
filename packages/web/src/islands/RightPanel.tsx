@@ -318,7 +318,11 @@ export function RightPanel() {
           </div>
           {renderedTarget?.type === 'git' && <GitPanel sessionId={renderedTarget.sessionId} />}
           {renderedTarget?.type === 'goal' && (
-            <GoalDetailPanel spaceId={renderedTarget.spaceId} goalId={renderedTarget.goalId} />
+            <GoalDetailPanel
+              spaceId={renderedTarget.spaceId}
+              navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
+              goalId={renderedTarget.goalId}
+            />
           )}
           {renderedTarget?.type === 'scope' && (
             <ScopeDetailPanel spaceId={renderedTarget.spaceId} scopeId={renderedTarget.scopeId} />
@@ -326,6 +330,7 @@ export function RightPanel() {
           {renderedTarget?.type === 'task' && (
             <TaskAuxiliaryPanel
               spaceId={renderedTarget.spaceId}
+              navigationSpaceId={currentSpaceIdSignal.value ?? renderedTarget.spaceId}
               taskId={renderedTarget.taskId}
               tab={renderedTarget.tab}
             />

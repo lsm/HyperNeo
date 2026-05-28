@@ -1020,6 +1020,35 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(newAgent.handle).toBe('new-agent');
       });
 
+      it('generates a new fallback handle when another replacement claims the old one', async () => {
+        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+        const existingB = agentRepo.create({ spaceId: SPACE_ID, name: 'B', handle: 'b' });
+
+        const bundle = makeBundle(
+          [
+            { name: 'A', handle: 'b', model: 'claude-new-a' },
+            { name: 'B', handle: 'coordinator', model: 'claude-new-b' },
+          ],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { A: 'replace', B: 'replace' } },
+        });
+
+        expect(result.agents).toEqual([
+          { name: 'A', id: existingA.id, action: 'replaced' },
+          { name: 'B', id: existingB.id, action: 'replaced' },
+        ]);
+        expect(result.warnings).toContain(
+          'Agent "B": exported handle "coordinator" is reserved; a new handle was auto-generated'
+        );
+        expect(agentRepo.getById(existingA.id)?.handle).toBe('b');
+        expect(agentRepo.getById(existingB.id)?.handle).toBe('b-2');
+      });
+
       it('replaces conflicting workflow (delete + create)', async () => {
         const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
         workflowManager.createWorkflow({

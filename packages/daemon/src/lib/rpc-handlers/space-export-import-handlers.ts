@@ -60,7 +60,7 @@ import type { SpaceWorkflowManager } from '../space/managers/space-workflow-mana
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format';
-import { RESERVED_SPACE_AGENT_HANDLES } from '../space/slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug';
 import { Logger } from '../logger';
 
 const log = new Logger('space-export-import-handlers');
@@ -170,6 +170,21 @@ function warnOnAgentHandleRewrite(
       `Agent "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
     );
   }
+}
+
+function generateAgentFallbackHandle(
+  existing: SpaceAgent,
+  usedAgentHandles: Set<string>,
+  fallbackBaseHandles: Set<string>
+): string {
+  if (!usedAgentHandles.has(existing.handle) && !fallbackBaseHandles.has(existing.handle)) {
+    return existing.handle;
+  }
+  return slugifyWithinLimit(existing.name, [
+    ...usedAgentHandles,
+    ...fallbackBaseHandles,
+    ...RESERVED_SPACE_AGENT_HANDLES,
+  ]);
 }
 
 function applyExportedAgentFields(
@@ -569,6 +584,7 @@ export function setupSpaceExportImportHandlers(
         const replacedAgentByName = new Map<string, SpaceAgent>();
         const preservedReplaceHandleByName = new Map<string, string>();
         const fallbackReplaceHandleByName = new Map<string, string>();
+        const fallbackBaseHandles = new Set<string>();
         for (const exportedAgent of bundle.agents) {
           const existing = existingAgentByName.get(exportedAgent.name);
           if (!existing) continue;
@@ -576,6 +592,7 @@ export function setupSpaceExportImportHandlers(
           if (strategy !== 'replace') continue;
           replacedAgentByName.set(exportedAgent.name, existing);
           usedAgentHandles.delete(existing.handle);
+          fallbackBaseHandles.add(existing.handle);
         }
         for (const exportedAgent of bundle.agents) {
           const existing = replacedAgentByName.get(exportedAgent.name);
@@ -583,10 +600,16 @@ export function setupSpaceExportImportHandlers(
           if (shouldPreserveAgentHandle(exportedAgent.handle, usedAgentHandles)) {
             preservedReplaceHandleByName.set(exportedAgent.name, exportedAgent.handle!);
             usedAgentHandles.add(exportedAgent.handle!);
-          } else {
-            fallbackReplaceHandleByName.set(exportedAgent.name, existing.handle);
-            usedAgentHandles.add(existing.handle);
+            continue;
           }
+          fallbackBaseHandles.delete(existing.handle);
+          const fallbackHandle = generateAgentFallbackHandle(
+            existing,
+            usedAgentHandles,
+            fallbackBaseHandles
+          );
+          fallbackReplaceHandleByName.set(exportedAgent.name, fallbackHandle);
+          usedAgentHandles.add(fallbackHandle);
         }
         if (replacedAgentByName.size > 0) {
           const now = Date.now();

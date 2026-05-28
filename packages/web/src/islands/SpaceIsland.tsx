@@ -377,7 +377,7 @@ export default function SpaceIsland({
           <SpacePageHeader pageTitle="Goals" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
-              <SpaceGoals spaceId={spaceId} />
+              <SpaceGoals spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
             </Suspense>
           </div>
         </div>
@@ -442,7 +442,7 @@ export default function SpaceIsland({
           />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
-              <SpaceSessionsPage spaceId={spaceId} />
+              <SpaceSessionsPage spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
             </Suspense>
           </div>
         </div>
