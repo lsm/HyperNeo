@@ -674,6 +674,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 146: Expand Forge evidence kinds for structured daemon log capture.
   runMigration146(db);
+
+  // Migration 147: Add model and thinking_level columns to long-horizon agents.
+  runMigration147(db);
 }
 
 /**
@@ -10300,4 +10303,22 @@ function generateValidHandle(name: string, existingHandles: string[]): string {
   }
   // Absolute fallback — should never reach here in practice
   return 'workflow';
+}
+
+/**
+ * Migration 147 — Add model and thinking_level columns to space_long_horizon_agents.
+ * Idempotent: uses ADD COLUMN IF NOT EXISTS (SQLite 3.37+) or swallows duplicate-column errors.
+ */
+function runMigration147(db: BunDatabase): void {
+  if (!tableExists(db, 'space_long_horizon_agents')) return;
+  for (const stmt of [
+    `ALTER TABLE space_long_horizon_agents ADD COLUMN model TEXT DEFAULT NULL`,
+    `ALTER TABLE space_long_horizon_agents ADD COLUMN thinking_level TEXT DEFAULT NULL`,
+  ]) {
+    try {
+      db.exec(stmt);
+    } catch {
+      // Column already exists — safe to ignore.
+    }
+  }
 }

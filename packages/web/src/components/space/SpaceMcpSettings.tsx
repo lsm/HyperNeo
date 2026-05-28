@@ -175,7 +175,7 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
           Refresh imports
         </Button>
       </div>
-      <p class="text-xs text-gray-500">
+      <p class="text-xs text-gray-400">
         Enable or disable MCP servers for tasks spawned in this space. Each toggle overrides the
         global default. Changes apply to <strong>new</strong> sessions; already-running tasks keep
         the MCP set they started with.
@@ -184,10 +184,10 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
       {loading && totalEntries === 0 ? (
         <div class="flex items-center gap-2 py-2">
           <Spinner size="sm" />
-          <span class="text-xs text-gray-500">Loading MCP servers…</span>
+          <span class="text-xs text-gray-400">Loading MCP servers…</span>
         </div>
       ) : totalEntries === 0 ? (
-        <div class="text-sm text-gray-500 bg-dark-800 border border-dark-700 rounded-lg px-3 py-3">
+        <div class="text-sm text-gray-400 bg-dark-800 border border-dark-700 rounded-lg px-3 py-3">
           No MCP servers configured. Add one in global MCP settings, or drop a
           <span class="font-mono mx-1">.mcp.json</span>
           into the space workspace and press <strong>Refresh imports</strong>.
@@ -199,7 +199,7 @@ export function SpaceMcpSettings({ spaceId, disabled = false }: SpaceMcpSettings
             if (group.length === 0) return null;
             return (
               <div key={groupKey} class="space-y-2">
-                <div class="text-[11px] uppercase tracking-wider text-gray-500">
+                <div class="text-[11px] uppercase tracking-wider text-gray-400">
                   {GROUP_LABELS[groupKey]}
                 </div>
                 <div class="space-y-2">
@@ -269,7 +269,7 @@ function SpaceMcpEntryRow({ entry, disabled, onToggle, onClearOverride }: SpaceM
               class={cn(
                 'text-xs px-1.5 py-0.5 rounded',
                 b.tone === 'override' && 'bg-blue-900/40 text-blue-400',
-                b.tone === 'muted' && 'bg-dark-700 text-gray-500',
+                b.tone === 'muted' && 'bg-dark-700 text-gray-400',
                 b.tone === 'info' && 'bg-purple-900/40 text-purple-300'
               )}
             >
@@ -278,9 +278,9 @@ function SpaceMcpEntryRow({ entry, disabled, onToggle, onClearOverride }: SpaceM
           ))}
         </div>
         {entry.description && (
-          <p class="text-xs text-gray-500 mt-0.5 truncate">{entry.description}</p>
+          <p class="text-xs text-gray-400 mt-0.5 truncate">{entry.description}</p>
         )}
-        <p class="text-xs text-gray-600 mt-0.5 font-mono">
+        <p class="text-xs text-gray-400 mt-0.5 font-mono">
           {sourceTypeLabel(entry.sourceType)}
           {entry.source === 'imported' && entry.sourcePath ? ` — ${entry.sourcePath}` : ''}
         </p>

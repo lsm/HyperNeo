@@ -21,7 +21,7 @@ const STATUS_CLASSES: Record<SpaceGoalStatus, string> = {
   active: 'border-green-500/30 bg-green-500/10 text-green-300',
   paused: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
   completed: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
-  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-500',
+  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
 };
 
 const PRIORITY_CLASSES: Record<SpaceTaskPriority, string> = {
@@ -77,7 +77,7 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
 
   if (!goal) {
     return (
-      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-500">
+      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
         Goal not found
       </div>
     );
@@ -185,7 +185,7 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
           </section>
 
           <section>
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Summary</h3>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Summary</h3>
             <p class="mt-2 text-sm leading-6 text-gray-300">
               {goal.summary || goal.description || 'No summary yet.'}
             </p>
@@ -193,51 +193,51 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
 
           {goal.type === 'recurring' ? (
             <section>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Activity</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Activity</h3>
               <div class="mt-2 space-y-2 rounded-lg border border-dark-700 bg-dark-900/40 px-3 py-2 text-xs">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-gray-500">Status</span>
+                  <span class="text-gray-400">Status</span>
                   <span class="capitalize text-gray-300">
                     {getRecurringGoalActivityStatus(goal, activityTask)}
                   </span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-gray-500">Last activity</span>
+                  <span class="text-gray-400">Last activity</span>
                   <span class="text-gray-300">{formatDate(lastActivityAt)}</span>
                 </div>
                 <div>
-                  <div class="text-gray-500">Metric trajectory</div>
+                  <div class="text-gray-400">Metric trajectory</div>
                   <div class="mt-1 text-gray-300">{formatGoalMetricSnapshot(goal, 4)}</div>
                 </div>
               </div>
             </section>
           ) : (
             <section>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Progress</h3>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">Progress</h3>
               <div class="mt-2 h-2 rounded-full bg-dark-700">
                 <div
                   class="h-2 rounded-full bg-green-500"
                   style={{ width: `${Math.max(0, Math.min(100, goal.progress ?? 0))}%` }}
                 />
               </div>
-              <p class="mt-2 text-xs text-gray-500">{goal.progress ?? 0}% complete</p>
+              <p class="mt-2 text-xs text-gray-400">{goal.progress ?? 0}% complete</p>
             </section>
           )}
 
           <section class="grid grid-cols-2 gap-3 text-xs">
             <div>
-              <div class="text-gray-600">Last check-in</div>
+              <div class="text-gray-400">Last check-in</div>
               <div class="mt-1 text-gray-300">{formatDate(goal.lastCheckInAt)}</div>
             </div>
             <div>
-              <div class="text-gray-600">Next check-in</div>
+              <div class="text-gray-400">Next check-in</div>
               <div class="mt-1 text-gray-300">{formatDate(goal.nextCheckInAt)}</div>
             </div>
           </section>
 
           {goal.nextSteps.length > 0 && (
             <section>
-              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">
                 Next Steps
               </h3>
               <ul class="mt-2 space-y-2 text-sm text-gray-300">
@@ -251,12 +251,12 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
           )}
 
           <section>
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">
               Linked Tasks
             </h3>
             <div class="mt-2 space-y-2">
               {linkedTasks.length === 0 ? (
-                <p class="text-sm text-gray-500">No linked tasks yet.</p>
+                <p class="text-sm text-gray-400">No linked tasks yet.</p>
               ) : (
                 linkedTasks.slice(0, 8).map((task) => (
                   <button
@@ -266,7 +266,7 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
                     class="w-full rounded-md border border-dark-700 bg-dark-900/40 px-3 py-2 text-left hover:border-dark-600 hover:bg-dark-800/60"
                   >
                     <div class="truncate text-sm text-gray-200">{task.title}</div>
-                    <div class="mt-1 font-mono text-[11px] text-gray-500">#{task.taskNumber}</div>
+                    <div class="mt-1 font-mono text-[11px] text-gray-400">#{task.taskNumber}</div>
                   </button>
                 ))
               )}

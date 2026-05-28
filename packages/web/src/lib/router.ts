@@ -620,8 +620,8 @@ export function navigateToSpaceAgent(spaceId: string, replace = false): void {
   }
 
   currentSpaceIdSignal.value = spaceId;
-  currentSpaceViewModeSignal.value = 'overview';
-  currentSpaceSessionIdSignal.value = `space:chat:${spaceId}`;
+  currentSpaceViewModeSignal.value = 'agents';
+  currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
   currentSessionIdSignal.value = null;
@@ -677,8 +677,8 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceAgent) {
       currentSpaceIdSignal.value = spaceAgent;
-      currentSpaceViewModeSignal.value = 'overview';
-      currentSpaceSessionIdSignal.value = `space:chat:${spaceAgent}`;
+      currentSpaceViewModeSignal.value = 'agents';
+      currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
       currentSessionIdSignal.value = null;

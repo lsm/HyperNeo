@@ -37,7 +37,7 @@ function shorten(value: string | null | undefined, max = 220): string {
 function ActorLabel({ row }: { row: ActorMessageProjectionRow }) {
   return (
     <span class="inline-flex items-center gap-1.5 rounded-md border border-dark-700 bg-dark-800/70 px-2 py-0.5 text-[11px] font-medium text-gray-200">
-      <span class="uppercase tracking-wide text-gray-500">{row.from.kind}</span>
+      <span class="uppercase tracking-wide text-gray-400">{row.from.kind}</span>
       <span>{row.from.label}</span>
     </span>
   );
@@ -50,9 +50,9 @@ function TargetBadge({ row }: { row: ActorMessageProjectionRow }) {
       class="inline-flex items-center gap-1 rounded-md border border-dark-700 bg-dark-900/70 px-2 py-0.5 text-[11px] font-medium text-gray-300"
       data-testid="actor-target-badge"
     >
-      <span class="text-gray-600">→</span>
+      <span class="text-gray-400">→</span>
       <span>{row.target.label}</span>
-      {row.targetResolution ? <span class="text-gray-500">({row.targetResolution})</span> : null}
+      {row.targetResolution ? <span class="text-gray-400">({row.targetResolution})</span> : null}
     </span>
   );
 }
@@ -65,20 +65,20 @@ function ProjectionRow({ row }: { row: ActorMessageProjectionRow }) {
       <span class={`absolute left-0 top-2 h-2.5 w-2.5 rounded-full ${dotClass}`} />
       <div class="rounded-lg border border-dark-700 bg-dark-850/70 px-3 py-2.5 shadow-sm shadow-black/10">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+          <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
             {eventLabel}
           </span>
           <ActorLabel row={row} />
           <TargetBadge row={row} />
           <DeliveryStateBadge state={row.deliveryState} class="text-[11px]" />
-          <span class="ml-auto text-[11px] text-gray-500">{formatClock(row.createdAt)}</span>
+          <span class="ml-auto text-[11px] text-gray-400">{formatClock(row.createdAt)}</span>
         </div>
         <div class="mt-2 text-sm font-medium text-gray-100">{row.title}</div>
         {row.summary ? (
           <p class="mt-1 text-sm leading-relaxed text-gray-300">{shorten(row.summary)}</p>
         ) : null}
         {row.details ? (
-          <p class="mt-1 text-xs leading-relaxed text-gray-500">{shorten(row.details, 160)}</p>
+          <p class="mt-1 text-xs leading-relaxed text-gray-400">{shorten(row.details, 160)}</p>
         ) : null}
       </div>
     </li>
@@ -117,7 +117,7 @@ export function ActorMessageProjectionFeed({
   if (isReconnecting || isLoading) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-500">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-400">
           {isReconnecting ? reconnectingLabel : loadingLabel}
         </div>
       </div>
@@ -127,7 +127,7 @@ export function ActorMessageProjectionFeed({
   if (rows.length === 0) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-500">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-400">
           {emptyLabel}
         </div>
       </div>

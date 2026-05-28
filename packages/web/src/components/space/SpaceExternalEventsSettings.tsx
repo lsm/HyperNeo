@@ -330,14 +330,14 @@ export function SpaceExternalEventsSettings({
         <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
           External event sources
         </h3>
-        <p class="mt-1 text-xs text-gray-500">
+        <p class="mt-1 text-xs text-gray-400">
           Enable source extensions globally, then choose which repositories can trigger work in this
           space.
         </p>
       </div>
 
       {loading ? (
-        <div class="flex items-center gap-2 py-2 text-xs text-gray-500">
+        <div class="flex items-center gap-2 py-2 text-xs text-gray-400">
           <Spinner size="sm" />
           Loading external event sources…
         </div>
@@ -345,7 +345,7 @@ export function SpaceExternalEventsSettings({
         <div class="space-y-4">
           <div class="space-y-2">
             {extensions.length === 0 ? (
-              <div class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3 text-sm text-gray-500">
+              <div class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3 text-sm text-gray-400">
                 No external event extensions registered.
               </div>
             ) : (
@@ -364,7 +364,7 @@ export function SpaceExternalEventsSettings({
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div class="text-sm font-medium text-gray-200">GitHub repositories</div>
-                <p class="mt-0.5 text-xs text-gray-500">
+                <p class="mt-0.5 text-xs text-gray-400">
                   Watch pull request and review activity for this space.
                 </p>
               </div>
@@ -386,12 +386,12 @@ export function SpaceExternalEventsSettings({
             </div>
 
             <div class="mt-3 rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
-              <div class="text-[11px] uppercase tracking-wider text-gray-500">Webhook endpoint</div>
+              <div class="text-[11px] uppercase tracking-wider text-gray-400">Webhook endpoint</div>
               <div class="mt-1 flex items-center gap-2">
                 <code class="min-w-0 flex-1 truncate text-xs text-gray-300">{webhookUrl}</code>
                 <CopyButton text={webhookUrl} label="Copy webhook URL" />
               </div>
-              <p class="mt-1 text-xs text-gray-600">
+              <p class="mt-1 text-xs text-gray-400">
                 Use a public HTTPS tunnel for local development. Configure GitHub webhooks for
                 pull_request, issue_comment, pull_request_review, and pull_request_review_comment
                 events.
@@ -431,7 +431,7 @@ export function SpaceExternalEventsSettings({
 
             <div class="mt-3 space-y-2">
               {repos.length === 0 ? (
-                <p class="rounded-lg border border-dashed border-dark-600 px-3 py-3 text-sm text-gray-500">
+                <p class="rounded-lg border border-dashed border-dark-600 px-3 py-3 text-sm text-gray-400">
                   No repositories watched yet.
                 </p>
               ) : (
@@ -500,7 +500,7 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
             </span>
           ))}
           {capabilities.length === 0 && (
-            <span class="text-xs text-gray-600">No capabilities enabled</span>
+            <span class="text-xs text-gray-400">No capabilities enabled</span>
           )}
         </div>
       </div>
@@ -529,7 +529,7 @@ function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: G
           <div class="truncate font-mono text-sm text-gray-200">
             {repo.owner}/{repo.repo}
           </div>
-          <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-500">
+          <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-400">
             <span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
             <span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
             <span>last poll {formatTimestamp(repo.lastPollAt)}</span>

@@ -187,9 +187,21 @@ describe('SpaceTasks', () => {
 
   afterEach(() => {
     cleanup();
+    // Reset viewport width in case a test narrowed it for mobile overflow testing.
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1024,
+      configurable: true,
+      writable: true,
+    });
   });
 
   it('renders desktop tabs inline and removes the standalone Archived tab', () => {
+    // Simulate narrow viewport so mobileTabCount=2 and the More overflow button appears.
+    Object.defineProperty(window, 'innerWidth', {
+      value: 0,
+      configurable: true,
+      writable: true,
+    });
     mockTasks.value = [makeTask('t1', 'open')];
     const { getAllByText, queryByText, getByLabelText } = render(<SpaceTasks spaceId="space-1" />);
     expect(getAllByText('Action').length).toBeGreaterThan(0);
@@ -292,6 +304,12 @@ describe('SpaceTasks', () => {
   });
 
   it('shows secondary tabs and Scheduled in the mobile More dropdown', async () => {
+    // Simulate narrow viewport so mobileTabCount=2 and draft/scheduled/completed go to overflow.
+    Object.defineProperty(window, 'innerWidth', {
+      value: 0,
+      configurable: true,
+      writable: true,
+    });
     mockTasks.value = [
       makeTask('t1', 'open'),
       makeTask('t2', 'draft'),

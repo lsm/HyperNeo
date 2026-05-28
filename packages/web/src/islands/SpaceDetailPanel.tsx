@@ -81,11 +81,11 @@ function TaskTabButton({
       onClick={onClick}
       class={cn(
         'flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs transition-colors',
-        active ? 'bg-white/5 text-gray-200' : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+        active ? 'bg-white/5 text-gray-200' : 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
       )}
     >
       <span>{label}</span>
-      <span class="text-[11px] text-gray-500 tabular-nums">{count}</span>
+      <span class="text-[11px] text-gray-400 tabular-nums">{count}</span>
     </button>
   );
 }
@@ -121,7 +121,7 @@ function SpaceNavItem({
       <span
         class={cn(
           'flex h-5 w-5 flex-shrink-0 items-center justify-center',
-          active ? accentClass : 'text-gray-500'
+          active ? accentClass : 'text-gray-400'
         )}
       >
         {icon}
@@ -144,15 +144,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
   if (!isReady) {
     return (
       <div class="flex-1 flex items-center justify-center p-6">
-        <span class="text-xs text-gray-600">Loading…</span>
+        <span class="text-xs text-gray-400">Loading…</span>
       </div>
     );
   }
 
   const selectedSessionId = currentSpaceSessionIdSignal.value;
   const selectedTaskId = currentSpaceTaskIdSignal.value;
-  const spaceAgentSessionId = `space:chat:${spaceId}`;
-
   const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
   // Auto-switch tab when the selected task changes (not on every task update)
@@ -170,7 +168,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
     selectedSessionId === null &&
     selectedTaskId === null &&
     currentSpaceViewModeSignal.value === 'overview';
-  const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
+  const isSpaceAgentSelected = currentSpaceViewModeSignal.value === 'agents';
   const isGoalsSelected = currentSpaceViewModeSignal.value === 'goals';
   const isForgeSelected = currentSpaceViewModeSignal.value === 'forge';
   const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
@@ -228,9 +226,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
   }, [spaceId, onNavigate]);
 
   const handleTasksClick = useCallback(() => {
-    navigateToSpaceTasks(spaceId);
+    navigateToSpaceTasks(spaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [spaceId, actionCount, activeCount, onNavigate]);
 
   const handleSessionsClick = useCallback(() => {
     navigateToSpaceSessions(spaceId);
@@ -344,7 +342,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
           }
           badge={
             goals.length > 0 ? (
-              <span class="flex-shrink-0 text-xs tabular-nums text-gray-500">
+              <span class="flex-shrink-0 text-xs tabular-nums text-gray-400">
                 {goals.filter((goal) => goal.status !== 'archived').length}
               </span>
             ) : undefined
@@ -427,7 +425,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
           }
           badge={
             sessions.length > 0 ? (
-              <span class="flex-shrink-0 text-xs tabular-nums text-gray-500">
+              <span class="flex-shrink-0 text-xs tabular-nums text-gray-400">
                 {sessions.length}
               </span>
             ) : undefined
@@ -464,7 +462,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
             </div>
           )}
           {tasksForTab.length === 0 ? (
-            <div class="px-4 py-2 text-xs text-gray-600">No tasks</div>
+            <div class="px-4 py-2 text-xs text-gray-400">No tasks</div>
           ) : (
             tasksForTab.map((task) => (
               <button
@@ -493,7 +491,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
             <button
               type="button"
               onClick={handleCreateSession}
-              class="rounded-md p-0.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
+              class="rounded-md p-0.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-300"
               aria-label="Create session"
             >
               <svg
@@ -514,7 +512,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
           }
         >
           {sessions.length === 0 ? (
-            <div class="px-4 py-2 text-xs text-gray-600">No sessions</div>
+            <div class="px-4 py-2 text-xs text-gray-400">No sessions</div>
           ) : (
             sessions.map((session) => (
               <button

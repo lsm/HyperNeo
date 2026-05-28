@@ -48,7 +48,7 @@ function SettingsBlock({ title, description, children, tone = 'default' }: Setti
         >
           {title}
         </h3>
-        <p class="mt-1 text-xs leading-5 text-gray-600">{description}</p>
+        <p class="mt-1 text-xs leading-5 text-gray-400">{description}</p>
       </div>
       <div class="min-w-0">{children}</div>
     </section>
@@ -274,13 +274,13 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
               </div>
               <div class="lg:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-400">Workspace path</label>
-                <p class="truncate rounded-lg border border-white/10 bg-dark-850 px-3 py-2 font-mono text-sm text-gray-500">
+                <p class="truncate rounded-lg border border-white/10 bg-dark-850 px-3 py-2 font-mono text-sm text-gray-400">
                   {space.workspacePath}
                 </p>
               </div>
               <div class="lg:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-400">
-                  Description <span class="text-gray-600">(optional)</span>
+                  Description <span class="text-gray-400">(optional)</span>
                 </label>
                 <textarea
                   value={description}
@@ -300,7 +300,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
             <div class="grid gap-4 xl:grid-cols-2">
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-400">
-                  Space instructions <span class="text-gray-600">(optional)</span>
+                  Space instructions <span class="text-gray-400">(optional)</span>
                 </label>
                 <textarea
                   value={instructions}
@@ -309,13 +309,13 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                   rows={7}
                   class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
                 />
-                <div class="mt-0.5 text-right text-xs text-gray-600">
+                <div class="mt-0.5 text-right text-xs text-gray-400">
                   {instructions.length} characters
                 </div>
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-400">
-                  Background context <span class="text-gray-600">(optional)</span>
+                  Background context <span class="text-gray-400">(optional)</span>
                 </label>
                 <textarea
                   value={backgroundContext}
@@ -324,7 +324,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                   rows={7}
                   class="w-full resize-y rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
                 />
-                <div class="mt-0.5 text-right text-xs text-gray-600">
+                <div class="mt-0.5 text-right text-xs text-gray-400">
                   {backgroundContext.length} characters
                 </div>
               </div>
@@ -358,14 +358,14 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                             'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
                             autonomyLevel === level
                               ? 'bg-blue-500/20 text-blue-300'
-                              : 'bg-white/5 text-gray-500'
+                              : 'bg-white/5 text-gray-400'
                           )}
                         >
                           {level}
                         </span>
                         <div class="min-w-0">
                           <div class="text-sm font-medium">{label}</div>
-                          <div class="text-xs text-gray-500">{description}</div>
+                          <div class="text-xs text-gray-400">{description}</div>
                         </div>
                       </div>
                     </button>
@@ -409,7 +409,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                   <div class="flex items-start justify-between gap-3">
                     <div>
                       <label class="block text-xs font-medium text-gray-400">Setting sources</label>
-                      <p class="mt-1 text-xs leading-5 text-gray-600">
+                      <p class="mt-1 text-xs leading-5 text-gray-400">
                         Choose which on-disk settings files agents load.
                       </p>
                     </div>
@@ -458,7 +458,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                         />
                         <span class="min-w-0">
                           <span class="block">{label}</span>
-                          <span class="block truncate text-xs text-gray-600">{detail}</span>
+                          <span class="block truncate text-xs text-gray-400">{detail}</span>
                         </span>
                       </label>
                     ))}
@@ -499,7 +499,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p class="text-sm text-gray-300">Portable Space bundle</p>
-              <p class="mt-0.5 text-xs text-gray-500">
+              <p class="mt-0.5 text-xs text-gray-400">
                 Download all agents and workflows as a <span class="font-mono">.neokai.json</span>{' '}
                 bundle.
               </p>
@@ -522,16 +522,16 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
           </div>
           <dl class="mt-4 grid gap-2 text-xs sm:grid-cols-3">
             <div>
-              <dt class="text-gray-600">Status</dt>
+              <dt class="text-gray-400">Status</dt>
               <dd class="mt-0.5 capitalize text-gray-300">{space.status}</dd>
             </div>
             <div>
-              <dt class="text-gray-600">Created</dt>
+              <dt class="text-gray-400">Created</dt>
               <dd class="mt-0.5 text-gray-300">{new Date(space.createdAt).toLocaleDateString()}</dd>
             </div>
             <div class="min-w-0">
-              <dt class="text-gray-600">ID</dt>
-              <dd class="mt-0.5 truncate font-mono text-gray-500">{space.id}</dd>
+              <dt class="text-gray-400">ID</dt>
+              <dd class="mt-0.5 truncate font-mono text-gray-400">{space.id}</dd>
             </div>
           </dl>
         </SettingsBlock>
@@ -545,7 +545,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
             <div class="flex items-center justify-between gap-4 px-3 py-3">
               <div>
                 <p class="text-sm text-gray-300">Archive space</p>
-                <p class="mt-0.5 text-xs text-gray-500">
+                <p class="mt-0.5 text-xs text-gray-400">
                   Hide from the main list. Can be restored later.
                 </p>
               </div>
@@ -564,7 +564,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
             <div class="flex items-center justify-between gap-4 px-3 py-3">
               <div>
                 <p class="text-sm text-gray-300">Delete space</p>
-                <p class="mt-0.5 text-xs text-gray-500">
+                <p class="mt-0.5 text-xs text-gray-400">
                   Permanently remove this space and all its data.
                 </p>
               </div>

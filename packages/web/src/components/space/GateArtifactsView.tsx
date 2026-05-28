@@ -158,12 +158,12 @@ export function GateArtifactsView({
       <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0 bg-dark-850">
         <div>
           <h2 class="text-sm font-semibold text-gray-100">Review Changes</h2>
-          <p class="text-xs text-gray-500 mt-0.5">Approve or reject the proposed changes</p>
+          <p class="text-xs text-gray-400 mt-0.5">Approve or reject the proposed changes</p>
         </div>
         {onClose && (
           <button
             onClick={onClose}
-            class="text-gray-600 hover:text-gray-400 transition-colors flex-shrink-0 ml-3"
+            class="text-gray-400 hover:text-gray-400 transition-colors flex-shrink-0 ml-3"
             aria-label="Close"
             data-testid="artifacts-close"
           >
@@ -237,7 +237,7 @@ export function GateArtifactsView({
 
             {/* File tree */}
             {artifacts.files.length === 0 ? (
-              <p class="text-sm text-gray-500" data-testid="no-files">
+              <p class="text-sm text-gray-400" data-testid="no-files">
                 No changed files found
               </p>
             ) : (
@@ -254,7 +254,7 @@ export function GateArtifactsView({
                   >
                     {/* File icon */}
                     <svg
-                      class="w-3.5 h-3.5 text-gray-500 flex-shrink-0"
+                      class="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -280,7 +280,7 @@ export function GateArtifactsView({
                     </span>
                     {/* Chevron */}
                     <svg
-                      class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400"
+                      class="w-3 h-3 text-gray-400 flex-shrink-0 group-hover:text-gray-400"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"

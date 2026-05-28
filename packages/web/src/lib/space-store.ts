@@ -28,6 +28,7 @@ import type {
   CreateSpaceGoalParams,
   CreateSpaceTaskParams,
   CreateSpaceWorkflowParams,
+  CreateSpaceLongHorizonAgentReminderParams,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
   MessageImage,
@@ -41,6 +42,9 @@ import type {
   SpaceGoal,
   SpaceGoalEvent,
   SpaceGoalListParams,
+  SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentReminder,
+  SpaceLongHorizonAgentTemplate,
   SpaceTask,
   SpaceTaskActivityMember,
   SpaceTaskPriority,
@@ -52,6 +56,7 @@ import type {
   TaskScheduleStatus,
   TaskScheduleTriggerType,
   UpdateSpaceAgentParams,
+  UpdateSpaceLongHorizonAgentParams,
   UpdateSpaceGoalParams,
   UpdateSpaceParams,
   UpdateSpaceTaskParams,
@@ -136,6 +141,12 @@ class SpaceStore {
 
   /** Built-in agent templates sourced from daemon seeding definitions */
   readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
+
+  /** Long-horizon agents for this space */
+  readonly longHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
+
+  /** Built-in long-horizon agent templates */
+  readonly longHorizonAgentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
   /** Workflow definitions for this space */
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
@@ -552,6 +563,8 @@ class SpaceStore {
     this.workflowRuns.value = [];
     this.agents.value = [];
     this.agentTemplates.value = [];
+    this.longHorizonAgents.value = [];
+    this.longHorizonAgentTemplates.value = [];
     this.workflows.value = [];
     this.workflowTemplates.value = [];
     this.nodeExecutions.value = [];
@@ -924,6 +937,38 @@ class SpaceStore {
     }
   }
 
+  private async fetchLongHorizonAgents(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    spaceId: string
+  ): Promise<void> {
+    try {
+      const result = await hub.request<{ agents: SpaceLongHorizonAgent[] }>(
+        'spaceLongHorizonAgent.list',
+        { spaceId }
+      );
+      this.longHorizonAgents.value = result?.agents ?? [];
+    } catch (err) {
+      logger.error('Failed to fetch long-horizon agents:', err);
+      this.longHorizonAgents.value = [];
+    }
+  }
+
+  private async fetchLongHorizonAgentTemplates(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    spaceId: string
+  ): Promise<void> {
+    try {
+      const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
+        'spaceLongHorizonAgent.listBuiltInTemplates',
+        { spaceId }
+      );
+      this.longHorizonAgentTemplates.value = result?.templates ?? [];
+    } catch (err) {
+      logger.error('Failed to fetch long-horizon agent templates:', err);
+      this.longHorizonAgentTemplates.value = [];
+    }
+  }
+
   /**
    * Fetch built-in agent templates from daemon seeding source.
    */
@@ -1136,6 +1181,8 @@ class SpaceStore {
         this.fetchAgentTemplates(hub, spaceId),
         this.fetchWorkflows(hub, spaceId),
         this.fetchWorkflowTemplates(hub, spaceId),
+        this.fetchLongHorizonAgents(hub, spaceId),
+        this.fetchLongHorizonAgentTemplates(hub, spaceId),
       ]);
       // Only mark loaded if still the same space
       if (this.spaceId.value === spaceId) {
@@ -2083,6 +2130,88 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('spaceAgent.delete', { id: agentId, spaceId });
+  }
+
+  // ========================================
+  // Long-Horizon Agent Methods
+  // ========================================
+
+  async createLongHorizonAgent(params: {
+    handle: string;
+    displayName?: string;
+    templateKey?: string | null;
+    instructions?: string;
+    autonomyLevel?: number | null;
+    model?: string | null;
+    thinkingLevel?: string | null;
+  }): Promise<SpaceLongHorizonAgent> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
+      'spaceLongHorizonAgent.create',
+      { spaceId, ...params }
+    );
+    this.longHorizonAgents.value = [...this.longHorizonAgents.value, agent];
+    return agent;
+  }
+
+  async updateLongHorizonAgent(
+    agentId: string,
+    params: UpdateSpaceLongHorizonAgentParams
+  ): Promise<SpaceLongHorizonAgent> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
+      'spaceLongHorizonAgent.update',
+      { agentId, spaceId, ...params }
+    );
+    this.longHorizonAgents.value = this.longHorizonAgents.value.map((a) =>
+      a.id === agentId ? agent : a
+    );
+    return agent;
+  }
+
+  async deleteLongHorizonAgent(agentId: string): Promise<void> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    await hub.request('spaceLongHorizonAgent.delete', { agentId, spaceId });
+    this.longHorizonAgents.value = this.longHorizonAgents.value.filter((a) => a.id !== agentId);
+  }
+
+  async listLongHorizonAgentReminders(agentId: string): Promise<SpaceLongHorizonAgentReminder[]> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { reminders } = await hub.request<{ reminders: SpaceLongHorizonAgentReminder[] }>(
+      'spaceLongHorizonAgent.listReminders',
+      { agentId }
+    );
+    return reminders;
+  }
+
+  async createLongHorizonAgentReminder(
+    params: Omit<CreateSpaceLongHorizonAgentReminderParams, 'spaceId'>
+  ): Promise<SpaceLongHorizonAgentReminder> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { reminder } = await hub.request<{ reminder: SpaceLongHorizonAgentReminder }>(
+      'spaceLongHorizonAgent.createReminder',
+      { spaceId, ...params }
+    );
+    return reminder;
+  }
+
+  async deleteLongHorizonAgentReminder(reminderId: string): Promise<void> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    await hub.request('spaceLongHorizonAgent.deleteReminder', { reminderId });
   }
 
   // ========================================

@@ -14,6 +14,8 @@ export function createLongHorizonAgentTables(db: BunDatabase): void {
 			instructions TEXT NOT NULL DEFAULT '',
 			autonomy_level INTEGER DEFAULT NULL
 				CHECK(autonomy_level IS NULL OR autonomy_level BETWEEN 1 AND 5),
+			model TEXT DEFAULT NULL,
+			thinking_level TEXT DEFAULT NULL,
 			tool_permissions_json TEXT NOT NULL DEFAULT '{}',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,

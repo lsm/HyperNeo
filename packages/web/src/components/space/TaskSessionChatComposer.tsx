@@ -158,7 +158,7 @@ export function TaskSessionChatComposer({
             class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-dark-700 bg-dark-850 shadow-xl shadow-black/30"
             data-testid="task-composer-target-menu"
           >
-            <div class="border-b border-dark-700 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-gray-500">
+            <div class="border-b border-dark-700 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-gray-400">
               Send Message To
             </div>
             <div class="max-h-72 overflow-y-auto py-1">
@@ -178,7 +178,7 @@ export function TaskSessionChatComposer({
                 >
                   <span class="min-w-0">
                     <span class="block truncate text-gray-100">{target.label}</span>
-                    <span class="block truncate text-xs text-gray-500">
+                    <span class="block truncate text-xs text-gray-400">
                       {`${target.nodeName ?? 'Workflow'}${target.state ? ` · ${target.state}` : ''}`}
                     </span>
                   </span>
@@ -243,7 +243,6 @@ export function TaskSessionChatComposer({
         sandboxSwitching={false}
         isWaitingForInput={!canSend || isSending}
         isConnected={true}
-        rewindMode={false}
         onModelSwitch={switchModel}
         onAutoScrollChange={onAutoScrollChange}
         onCoordinatorModeChange={() => {}}
@@ -251,8 +250,6 @@ export function TaskSessionChatComposer({
         onSend={handleSend}
         onOpenTools={handleOpenTools}
         onThinkingLevelChange={setThinkingLevel}
-        onEnterRewindMode={() => {}}
-        onExitRewindMode={() => {}}
         agentMentionCandidates={mentionCandidates}
         inputPlaceholder={
           selectedTarget ? `Message ${selectedTarget.label}...` : 'Select a target agent...'

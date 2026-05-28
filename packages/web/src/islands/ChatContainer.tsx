@@ -296,9 +296,6 @@ export default function ChatContainer({
     new Map()
   );
 
-  // Rewind mode state
-  const [rewindMode, setRewindMode] = useState(false);
-  const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
   const [rewindModeChoice, setRewindModeChoice] = useState<'files' | 'conversation' | 'both'>(
     'both'
   );
@@ -327,7 +324,6 @@ export default function ChatContainer({
   const infoModal = useModal();
   const errorDialog = useModal();
   const rewindConfirmModal = useModal();
-  const selectiveRewindModal = useModal();
 
   // ========================================
   // Rewind handler
@@ -374,79 +370,6 @@ export default function ChatContainer({
     setRewindTargetUuid(null);
     rewindConfirmModal.close();
   }, [rewindConfirmModal]);
-
-  // Rewind mode handlers
-  const handleEnterRewindMode = useCallback(() => {
-    setRewindMode(true);
-    setSelectedMessages(new Set());
-  }, []);
-
-  const handleExitRewindMode = useCallback(() => {
-    setRewindMode(false);
-    setSelectedMessages(new Set());
-  }, []);
-
-  const handleMessageCheckboxChange = useCallback(
-    (messageId: string, checked: boolean) => {
-      const newSelected = new Set(selectedMessages);
-
-      if (checked) {
-        // Find message index and select all messages from this point onward
-        const messageIndex = messages.findIndex((m) => m.uuid === messageId);
-        for (let i = messageIndex; i < messages.length; i++) {
-          if (messages[i].uuid) {
-            newSelected.add(messages[i].uuid!);
-          }
-        }
-      } else {
-        // Unselect this message and all after it
-        const messageIndex = messages.findIndex((m) => m.uuid === messageId);
-        for (let i = messageIndex; i < messages.length; i++) {
-          if (messages[i].uuid) {
-            newSelected.delete(messages[i].uuid!);
-          }
-        }
-      }
-
-      setSelectedMessages(newSelected);
-    },
-    [selectedMessages, messages]
-  );
-
-  const handleRewindSelection = useCallback(() => {
-    if (selectedMessages.size === 0) return;
-    setRewindModeChoice('both'); // reset to default
-    selectiveRewindModal.open();
-  }, [selectedMessages, selectiveRewindModal]);
-
-  const handleSelectiveRewindConfirm = useCallback(async () => {
-    if (selectedMessages.size === 0) return;
-
-    setIsRewinding(true);
-    try {
-      const { result } = await import('../lib/api-helpers.ts').then((m) =>
-        m.executeSelectiveRewind(sessionId, Array.from(selectedMessages), rewindModeChoice)
-      );
-
-      if (result.success) {
-        const parts = [];
-        if (result.messagesDeleted) parts.push(`${result.messagesDeleted} messages removed`);
-        if (result.filesReverted?.length)
-          parts.push(`${result.filesReverted.length} files restored`);
-        toast.success(`Rewound successfully: ${parts.join(', ')}`);
-        // Refresh session state to ensure data consistency
-        await sessionStore.refresh();
-        handleExitRewindMode();
-      } else {
-        toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setIsRewinding(false);
-      selectiveRewindModal.close();
-    }
-  }, [selectedMessages, sessionId, rewindModeChoice, handleExitRewindMode, selectiveRewindModal]);
 
   // ========================================
   // Reactive State from sessionStore (via useSignalEffect for re-renders)
@@ -1333,52 +1256,6 @@ export default function ChatContainer({
 
       {/* Messages */}
       <div class="flex-1 relative min-h-0">
-        {/* Rewind Mode Banner - only show if feature is enabled */}
-        {features.rewind && rewindMode && (
-          <div class="absolute top-0 left-0 right-0 z-20 bg-amber-500/10 backdrop-blur-sm border-b border-amber-500/30 px-4 py-3">
-            <div class="max-w-4xl mx-auto flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <svg
-                  class="w-5 h-5 text-amber-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                  />
-                </svg>
-                <span class="text-sm text-amber-200">
-                  {selectedMessages.size > 0
-                    ? `${selectedMessages.size} message${selectedMessages.size > 1 ? 's' : ''} selected`
-                    : 'Select a message to rewind to'}
-                </span>
-              </div>
-              <div class="flex items-center gap-2">
-                {selectedMessages.size > 0 && (
-                  <button
-                    onClick={handleRewindSelection}
-                    disabled={isRewinding}
-                    class="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                  >
-                    {isRewinding && <Spinner size="xs" color="border-white" />}
-                    {isRewinding ? 'Rewinding...' : 'Rewind to Here'}
-                  </button>
-                )}
-                <button
-                  onClick={handleExitRewindMode}
-                  class="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-gray-200 rounded-lg text-sm font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div
           ref={messagesContainerRef}
           data-messages-container
@@ -1480,9 +1357,6 @@ export default function ChatContainer({
                     pendingQuestion={pendingQuestion}
                     onRewind={handleRewindClick}
                     rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
-                    rewindMode={rewindMode}
-                    selectedMessages={selectedMessages}
-                    onMessageCheckboxChange={handleMessageCheckboxChange}
                     onQuestionResolved={handleQuestionResolved}
                   />
                 </div>
@@ -1527,15 +1401,12 @@ export default function ChatContainer({
         sandboxSwitching={sandboxSwitching}
         isWaitingForInput={isWaitingForInput}
         isConnected={isConnected}
-        rewindMode={rewindMode}
         onModelSwitch={handleModelSwitchWithConfirmation}
         onAutoScrollChange={handleAutoScrollChange}
         onCoordinatorModeChange={handleCoordinatorModeChange}
         onSandboxModeChange={handleSandboxModeChange}
         onSend={handleSendMessage}
         onOpenTools={toolsModal.open}
-        onEnterRewindMode={handleEnterRewindMode}
-        onExitRewindMode={handleExitRewindMode}
       />
 
       {/* Delete Modal */}
@@ -1641,70 +1512,6 @@ export default function ChatContainer({
               Cancel
             </Button>
             <Button variant="danger" onClick={handleRewindConfirm} loading={isRewinding}>
-              {isRewinding ? 'Rewinding...' : 'Rewind'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Selective Rewind Modal */}
-      <Modal
-        isOpen={selectiveRewindModal.isOpen}
-        onClose={() => {
-          if (!isRewinding) selectiveRewindModal.close();
-        }}
-        title="Rewind Conversation"
-        size="sm"
-      >
-        <div class="space-y-4">
-          <p class="text-gray-300 text-sm">
-            This will rewind the conversation to the selected point. Choose what to restore:
-          </p>
-          <div class="space-y-2">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="rewindMode"
-                value="both"
-                checked={rewindModeChoice === 'both'}
-                onChange={() => setRewindModeChoice('both')}
-                class="text-amber-500 focus:ring-amber-500"
-              />
-              <span class="text-sm text-gray-200">Files & Conversation</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="rewindMode"
-                value="files"
-                checked={rewindModeChoice === 'files'}
-                onChange={() => setRewindModeChoice('files')}
-                class="text-amber-500 focus:ring-amber-500"
-              />
-              <span class="text-sm text-gray-200">Files only</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="rewindMode"
-                value="conversation"
-                checked={rewindModeChoice === 'conversation'}
-                onChange={() => setRewindModeChoice('conversation')}
-                class="text-amber-500 focus:ring-amber-500"
-              />
-              <span class="text-sm text-gray-200">Conversation only</span>
-            </label>
-          </div>
-          <p class="text-amber-400 text-xs">This action cannot be undone.</p>
-          <div class="flex gap-3 justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => selectiveRewindModal.close()}
-              disabled={isRewinding}
-            >
-              Cancel
-            </Button>
-            <Button variant="danger" onClick={handleSelectiveRewindConfirm} loading={isRewinding}>
               {isRewinding ? 'Rewinding...' : 'Rewind'}
             </Button>
           </div>

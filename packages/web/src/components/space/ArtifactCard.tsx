@@ -119,7 +119,7 @@ function PrCard({ artifact }: { artifact: WorkflowRunArtifact }) {
             {title && <span class="text-gray-400 ml-1.5">— {title}</span>}
           </span>
         )}
-        {headBranch && <p class="text-xs text-gray-600 font-mono mt-0.5 truncate">{headBranch}</p>}
+        {headBranch && <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{headBranch}</p>}
       </div>
       {state && <span class={`text-xs font-medium ${stateColor} flex-shrink-0`}>{state}</span>}
       <TypeBadge type={artifact.artifactType} />
@@ -140,7 +140,7 @@ function CommitRefCard({ artifact }: { artifact: WorkflowRunArtifact }) {
     <div class={cardBase} data-testid="artifact-card-commit-ref">
       {/* Commit icon */}
       <svg
-        class="w-3.5 h-3.5 text-gray-500 flex-shrink-0 mt-0.5"
+        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -162,7 +162,7 @@ function CommitRefCard({ artifact }: { artifact: WorkflowRunArtifact }) {
           <span class="text-xs font-mono text-gray-400">{shortSha ?? 'commit'}</span>
         )}
         {message && <p class="text-xs text-gray-300 truncate mt-0.5">{message}</p>}
-        {author && <p class="text-xs text-gray-600 mt-0.5">{author}</p>}
+        {author && <p class="text-xs text-gray-400 mt-0.5">{author}</p>}
       </div>
       <TypeBadge type={artifact.artifactType} />
     </div>
@@ -205,7 +205,7 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         >
           {title}
         </a>
-        <p class="text-xs text-gray-600 font-mono mt-0.5 truncate">{hostname}</p>
+        <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{hostname}</p>
       </div>
       <TypeBadge type={artifact.artifactType} />
     </div>
@@ -231,7 +231,7 @@ function TerminalOutputCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       <div class="flex items-center justify-between px-3 py-1.5 border-b border-dark-700 bg-dark-700/50">
         <div class="flex items-center gap-1.5">
           <svg
-            class="w-3.5 h-3.5 text-gray-500"
+            class="w-3.5 h-3.5 text-gray-400"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -251,7 +251,7 @@ function TerminalOutputCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       </div>
       <pre class="px-3 py-2 text-xs font-mono text-gray-300 overflow-x-auto whitespace-pre-wrap break-words">
         {preview}
-        {truncated && <span class="text-gray-600">{'\n…'}</span>}
+        {truncated && <span class="text-gray-400">{'\n…'}</span>}
       </pre>
     </div>
   );
@@ -282,7 +282,7 @@ function StructuredTableCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       data-testid="artifact-card-table"
     >
       <div class="flex items-center justify-between px-3 py-1.5 border-b border-dark-700">
-        <span class="text-xs text-gray-500">
+        <span class="text-xs text-gray-400">
           {entries.length} field{entries.length === 1 ? '' : 's'}
         </span>
         <TypeBadge type={artifact.artifactType} />
@@ -291,12 +291,12 @@ function StructuredTableCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         <tbody>
           {entries.map(([key, value]) => (
             <tr key={key} class="border-b border-dark-700/50 last:border-0">
-              <td class="px-3 py-1.5 text-gray-500 font-mono align-top whitespace-nowrap w-1/3">
+              <td class="px-3 py-1.5 text-gray-400 font-mono align-top whitespace-nowrap w-1/3">
                 {key}
               </td>
               <td class="px-3 py-1.5 text-gray-300 break-all">
                 {value === null ? (
-                  <span class="text-gray-600 italic">null</span>
+                  <span class="text-gray-400 italic">null</span>
                 ) : typeof value === 'boolean' ? (
                   <span class={value ? 'text-green-400' : 'text-red-400'}>{String(value)}</span>
                 ) : (
@@ -317,9 +317,9 @@ function GenericCard({ artifact }: { artifact: WorkflowRunArtifact }) {
     <div class={cardBase} data-testid="artifact-card-generic">
       <div class="flex-1 min-w-0">
         {artifact.artifactKey && (
-          <p class="text-xs text-gray-500 font-mono truncate">{artifact.artifactKey}</p>
+          <p class="text-xs text-gray-400 font-mono truncate">{artifact.artifactKey}</p>
         )}
-        <p class="text-xs text-gray-600">
+        <p class="text-xs text-gray-400">
           {keyCount} field{keyCount === 1 ? '' : 's'}
         </p>
       </div>

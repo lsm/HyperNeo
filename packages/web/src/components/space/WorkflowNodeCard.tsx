@@ -293,7 +293,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
     <div class="space-y-2">
       <div class="flex items-center justify-between">
         <label class="text-xs font-medium text-gray-400">
-          Agents <span class="text-gray-600">({nodeAgents.length})</span>
+          Agents <span class="text-gray-400">({nodeAgents.length})</span>
         </label>
         {nodeAgents.length === 1 && (
           <button
@@ -306,7 +306,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                 channels: undefined,
               })
             }
-            class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            class="text-xs text-gray-400 hover:text-gray-300 transition-colors"
           >
             Switch to single
           </button>
@@ -356,7 +356,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                 <button
                   type="button"
                   onClick={() => toggleSlotExpanded(sa.name)}
-                  class="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
+                  class="text-gray-400 hover:text-gray-300 transition-colors flex-shrink-0"
                   title={isExpanded ? 'Hide overrides' : 'Edit overrides'}
                   aria-expanded={isExpanded}
                   data-testid="toggle-overrides-button"
@@ -382,7 +382,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                 <button
                   type="button"
                   onClick={() => removeAgent(sa.name)}
-                  class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+                  class="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
                   title="Remove agent"
                 >
                   <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -396,10 +396,10 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                 </button>
               </div>
               {/* Agent name (readonly) */}
-              <p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId ?? ''}</p>
+              <p class="text-xs text-gray-400">{agentInfo?.name ?? sa.agentId ?? ''}</p>
               {/* Per-agent custom prompt */}
               <div class="space-y-0.5">
-                <label class="text-xs text-gray-600">Custom Prompt</label>
+                <label class="text-xs text-gray-400">Custom Prompt</label>
                 <input
                   type="text"
                   value={extractOverrideValue(sa.customPrompt)}
@@ -414,9 +414,9 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
               {/* Expandable overrides section */}
               {isExpanded && (
                 <div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
-                  <p class="text-xs text-gray-500 font-medium">Slot overrides</p>
+                  <p class="text-xs text-gray-400 font-medium">Slot overrides</p>
                   <div class="space-y-0.5">
-                    <label class="text-xs text-gray-600">Model</label>
+                    <label class="text-xs text-gray-400">Model</label>
                     <input
                       type="text"
                       value={''}
@@ -443,7 +443,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
             addAgent((e.currentTarget as HTMLSelectElement).value);
             (e.currentTarget as HTMLSelectElement).value = '';
           }}
-          class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-500 focus:outline-none focus:border-blue-500"
+          class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-400 focus:outline-none focus:border-blue-500"
         >
           <option value="">+ Add agent…</option>
           {availableAgents.map((a) => (
@@ -508,11 +508,11 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
   return (
     <div class="space-y-2 pt-2 border-t border-dark-700">
       <label class="text-xs font-medium text-gray-400">
-        Channels <span class="text-gray-600 font-normal">(messaging topology)</span>
+        Channels <span class="text-gray-400 font-normal">(messaging topology)</span>
       </label>
 
       {channels.length === 0 && (
-        <p class="text-xs text-gray-600">No channels — agents are isolated.</p>
+        <p class="text-xs text-gray-400">No channels — agents are isolated.</p>
       )}
 
       {/* Channel list */}
@@ -524,12 +524,12 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
           >
             <span class="text-xs text-gray-300 font-mono flex-1">
               {ch.from} → {formatTo(ch.to)}
-              {ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
+              {ch.label && <span class="text-gray-400 ml-1">"{ch.label}"</span>}
             </span>
             <button
               type="button"
               onClick={() => removeChannel(i)}
-              class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+              class="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
               title="Remove channel"
             >
               <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -707,7 +707,7 @@ export function WorkflowNodeCard({
             <span class="text-xs font-medium text-gray-200 truncate">
               {node.name || 'Unnamed Node'}
             </span>
-            <span class="text-xs text-gray-600 flex-shrink-0">·</span>
+            <span class="text-xs text-gray-400 flex-shrink-0">·</span>
             {multi ? (
               <span class="flex items-center gap-1 flex-wrap">
                 {node.agents!.map((a) => {
@@ -738,7 +738,7 @@ export function WorkflowNodeCard({
                 })}
               </span>
             ) : (
-              <span class="flex items-center gap-1 text-xs text-gray-500 truncate flex-shrink-0">
+              <span class="flex items-center gap-1 text-xs text-gray-400 truncate flex-shrink-0">
                 <span>{agentName || '—'}</span>
                 {taskStateByAgent.get(null) && (
                   <AgentStatusIcon state={taskStateByAgent.get(null)!} />
@@ -748,7 +748,7 @@ export function WorkflowNodeCard({
           </div>
           {/* Completion summary — shown when the single-agent or any agent has a summary */}
           {nodeTaskStates && nodeTaskStates.some((s) => s.completionSummary) && (
-            <p class="text-xs text-gray-500 truncate mt-0.5" data-testid="node-completion-summary">
+            <p class="text-xs text-gray-400 truncate mt-0.5" data-testid="node-completion-summary">
               {nodeTaskStates.find((s) => s.completionSummary)?.completionSummary}
             </p>
           )}
@@ -759,7 +759,7 @@ export function WorkflowNodeCard({
           <button
             onClick={onMoveUp}
             disabled={isFirst}
-            class="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            class="p-1 rounded text-gray-400 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             title="Move up"
           >
             <ChevronUp />
@@ -767,7 +767,7 @@ export function WorkflowNodeCard({
           <button
             onClick={onMoveDown}
             disabled={isLast}
-            class="p-1 rounded text-gray-600 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            class="p-1 rounded text-gray-400 hover:text-gray-300 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             title="Move down"
           >
             <ChevronDown />
@@ -775,7 +775,7 @@ export function WorkflowNodeCard({
           <button
             onClick={onRemove}
             disabled={disableRemove}
-            class="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            class="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             title="Remove node"
           >
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -790,7 +790,7 @@ export function WorkflowNodeCard({
         </div>
 
         {/* Expand chevron */}
-        <span class="text-gray-600 flex-shrink-0">
+        <span class="text-gray-400 flex-shrink-0">
           {expanded ? <ChevronUp /> : <ChevronDown />}
         </span>
       </div>
@@ -856,7 +856,7 @@ export function WorkflowNodeCard({
           {/* Custom Prompt (single-agent) */}
           <div class="space-y-1">
             <label class="text-xs font-medium text-gray-400">
-              Custom Prompt <span class="font-normal text-gray-600">(optional)</span>
+              Custom Prompt <span class="font-normal text-gray-400">(optional)</span>
             </label>
             <textarea
               value={extractOverrideValue(node.customPrompt)}

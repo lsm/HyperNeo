@@ -36,7 +36,6 @@ export interface ChatComposerProps {
   sandboxSwitching: boolean;
   isWaitingForInput: boolean;
   isConnected: boolean;
-  rewindMode: boolean;
   onModelSwitch: (model: ModelInfo) => void;
   onAutoScrollChange: (enabled: boolean) => void;
   onCoordinatorModeChange: (enabled: boolean) => void;
@@ -47,8 +46,6 @@ export interface ChatComposerProps {
     deliveryMode?: MessageDeliveryMode
   ) => Promise<void | boolean>;
   onOpenTools: () => void;
-  onEnterRewindMode: () => void;
-  onExitRewindMode: () => void;
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   /** Override the default placeholder text in the message input */
   inputPlaceholder?: string;
@@ -86,15 +83,12 @@ export function ChatComposer({
   sandboxSwitching,
   isWaitingForInput,
   isConnected,
-  rewindMode,
   onModelSwitch,
   onAutoScrollChange,
   onCoordinatorModeChange,
   onSandboxModeChange,
   onSend,
   onOpenTools,
-  onEnterRewindMode,
-  onExitRewindMode,
   agentMentionCandidates,
   inputPlaceholder,
   inputLeadingElement,
@@ -187,9 +181,6 @@ export function ChatComposer({
               autoScroll={autoScroll}
               onAutoScrollChange={onAutoScrollChange}
               onOpenTools={onOpenTools}
-              onEnterRewindMode={onEnterRewindMode}
-              rewindMode={rewindMode}
-              onExitRewindMode={onExitRewindMode}
               agentMentionCandidates={agentMentionCandidates}
               placeholder={inputPlaceholder}
               leadingElement={inputLeadingElement}

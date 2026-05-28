@@ -329,7 +329,8 @@ describe('router', () => {
     finishNavigation();
 
     navigateToSpaceAgent(SPACE_ID);
-    expect(currentSpaceSessionIdSignal.value).toBe(`space:chat:${SPACE_ID}`);
+    expect(currentSpaceSessionIdSignal.value).toBeNull();
+    expect(currentSpaceViewModeSignal.value).toBe('agents');
     finishNavigation();
 
     navigateToSpacesPage();

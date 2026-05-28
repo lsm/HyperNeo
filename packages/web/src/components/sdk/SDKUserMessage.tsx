@@ -17,7 +17,6 @@ import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
 import { MentionToken, parseTextWithReferences } from './MentionToken.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
-import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
 import type { JSX } from 'preact';
@@ -83,10 +82,6 @@ interface Props {
   sessionId?: string; // Session ID for rewind operations
   onRewind?: (uuid: string) => void; // Rewind to this message
   rewindingMessageUuid?: string | null; // UUID of message currently being rewound
-  // Rewind mode props
-  rewindMode?: boolean;
-  selectedMessages?: Set<string>;
-  onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
   /** Render user rows whose content is tool_result blocks. */
   showToolResultMessages?: boolean;
 }
@@ -100,9 +95,6 @@ export function SDKUserMessage({
   sessionId,
   onRewind,
   rewindingMessageUuid,
-  rewindMode,
-  selectedMessages,
-  onMessageCheckboxChange,
   showToolResultMessages = false,
 }: Props) {
   const { message: apiMessage } = message;
@@ -304,15 +296,6 @@ export function SDKUserMessage({
   // Get message metadata for E2E tests
   const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 
-  // Checkbox rendering for rewind mode (using shared function)
-  const renderCheckbox = () =>
-    renderRewindCheckbox({
-      rewindMode,
-      messageUuid: message.uuid,
-      onMessageCheckboxChange,
-      selectedMessages,
-    });
-
   // Message bubble component - extracted for proper checkbox alignment
   const messageBubble = (
     <div
@@ -444,29 +427,6 @@ export function SDKUserMessage({
   );
 
   // Wrap with checkbox if in rewind mode - simpler structure for proper alignment
-  if (rewindMode && message.uuid && onMessageCheckboxChange) {
-    return (
-      <div
-        class={cn(messageSpacing.user.container.combined)}
-        data-testid="user-message"
-        data-message-role="user"
-        data-message-uuid={message.uuid}
-        data-message-timestamp={messageWithTimestamp.timestamp || 0}
-      >
-        <div class="flex items-center gap-2">
-          {renderCheckbox()}
-          <div class="flex justify-end flex-1">
-            <div class="max-w-[85%] md:max-w-[70%] w-auto">{messageBubble}</div>
-          </div>
-        </div>
-        <div class="flex justify-end">
-          <div class="max-w-[85%] md:max-w-[70%] w-auto">{messageActions}</div>
-        </div>
-      </div>
-    );
-  }
-
-  // Normal mode (non-rewind): original layout
   const messageContent = (
     <div
       class={cn(messageSpacing.user.container.combined, 'flex justify-end')}

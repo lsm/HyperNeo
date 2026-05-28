@@ -12,6 +12,7 @@ describe('long-horizon agent templates', () => {
       'security-auditor.default',
       'marketing.default',
       'sales.default',
+      'research.default',
       'family-ops-chores.default',
     ]);
     expect(templates.map((template) => template.displayName)).toEqual([
@@ -21,6 +22,7 @@ describe('long-horizon agent templates', () => {
       'Security Auditor',
       'Marketing',
       'Sales',
+      'Research',
       'Family Ops/Chores',
     ]);
   });

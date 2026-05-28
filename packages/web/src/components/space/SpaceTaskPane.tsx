@@ -84,8 +84,8 @@ const STATUS_BADGE_CLASSES: Record<SpaceTaskStatus, string> = {
   approved: 'border-green-500/30 bg-green-500/10 text-green-300',
   done: 'border-green-500/25 bg-green-500/10 text-green-400',
   blocked: 'border-red-500/30 bg-red-500/10 text-red-300',
-  cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-500',
-  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-500',
+  cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
+  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
 };
 
 const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
@@ -256,7 +256,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
   if (!taskId) {
     return (
       <div class="flex items-center justify-center h-full p-6">
-        <p class="text-sm text-gray-600 text-center">Select a task to view details</p>
+        <p class="text-sm text-gray-400 text-center">Select a task to view details</p>
       </div>
     );
   }
@@ -264,7 +264,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
   if (!task) {
     return (
       <div class="flex items-center justify-center h-full p-6">
-        <p class="text-sm text-gray-600 text-center">Task not found</p>
+        <p class="text-sm text-gray-400 text-center">Task not found</p>
       </div>
     );
   }
@@ -1030,7 +1030,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
                         ? 'Starting task thread...'
                         : 'Task thread is not available yet.'}
                     </p>
-                    <p class="mt-2 text-xs text-gray-500">
+                    <p class="mt-2 text-xs text-gray-400">
                       {ensuringThread
                         ? 'Connecting task and node-agent streams.'
                         : 'Keep this view open while the task thread starts.'}
