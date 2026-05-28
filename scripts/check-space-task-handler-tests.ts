@@ -166,7 +166,7 @@ function main() {
   if (!existsSync(testFile)) fail(`Missing test file: ${testFile}`);
 
   const files = changedFiles();
-  if (!files.has(handlerFile)) return;
+  if (!files.has(handlerFile) && !files.has(testFile)) return;
 
   const handlerSource = readFileSync(handlerFile, 'utf8');
   const testSource = readFileSync(testFile, 'utf8');

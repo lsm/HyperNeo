@@ -85,6 +85,9 @@ jobs:
       - name: Validate space task RPC handler tests
         run: bun run check:space-task-handler-tests
 
+      - name: Test space task RPC handler gate
+        run: bun run test:space-task-handler-gate
+
       - name: Run linter
         id: lint
         run: bun run lint

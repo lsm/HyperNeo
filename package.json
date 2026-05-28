@@ -19,6 +19,7 @@
     "knip:all": "knip",
     "check:session-guards": "./scripts/check-session-deletion-callers.sh",
     "check:space-task-handler-tests": "bun run scripts/check-space-task-handler-tests.ts",
+    "test:space-task-handler-gate": "NEOKAI_ALLOW_ROOT_TEST=1 bun test scripts/check-space-task-handler-tests.test.ts",
     "check": "bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:space-task-handler-tests",
     "db:maintain-message-search": "bun run scripts/maintain-message-search-db.ts",
     "test:proxy:start": "./scripts/dev-proxy.sh start",

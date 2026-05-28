@@ -62,7 +62,7 @@ describe('check-space-task-handler-tests', () => {
     for (const repo of repos) rmSync(repo, { recursive: true, force: true });
   });
 
-  it('passes when space-task-handlers.ts is unchanged', () => {
+  it('passes when space-task-handlers.ts and handler tests are unchanged', () => {
     const cwd = createRepo();
     repos.push(cwd);
 
@@ -73,6 +73,23 @@ describe('check-space-task-handler-tests', () => {
     const result = runGate(cwd);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
+  });
+
+  it('flags handler test regressions even when the handler file is unchanged', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    writeProjectFile(
+      cwd,
+      'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
+      "it.skip('covers create', async () => { await call('spaceTask.create', {}); });\n"
+    );
+    git(cwd, ['add', '.']);
+    git(cwd, ['commit', '-m', 'skip handler test']);
+
+    const result = runGate(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('spaceTask.create');
   });
 
   it('skips local checks when the comparison ref is unavailable', () => {
