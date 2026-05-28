@@ -2390,11 +2390,6 @@ function runMigration29(db: BunDatabase): void {
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
-    ON space_agents(space_id, handle)
-    WHERE handle IS NOT NULL
-  `);
 
   // -------------------------------------------------------------------------
   // space_workflows
