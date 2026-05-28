@@ -97,6 +97,8 @@ The target can be implemented as subpath exports inside `@neokai/shared` first.
     "./domain/forge": "./src/domain/forge/index.ts",
     "./domain/session": "./src/domain/session/index.ts",
     "./domain/settings": "./src/domain/settings/index.ts",
+    "./domain/config": "./src/domain/config/index.ts",
+    "./domain/extensions": "./src/domain/extensions/index.ts",
     "./domain/prompt-policy": "./src/domain/prompt-policy/index.ts",
     "./provider": "./src/provider/index.ts",
     "./sdk/*": "./src/sdk/*",
@@ -127,6 +129,8 @@ Target path:
 @neokai/shared/contracts/space
 @neokai/shared/contracts/forge
 @neokai/shared/contracts/session
+@neokai/shared/contracts/config
+@neokai/shared/contracts/extensions
 @neokai/shared/contracts/prompt-policy
 @neokai/shared/contracts/provider
 @neokai/shared/contracts/settings
@@ -177,6 +181,8 @@ Target path:
 @neokai/shared/read-models/space
 @neokai/shared/read-models/forge
 @neokai/shared/read-models/session
+@neokai/shared/read-models/config
+@neokai/shared/read-models/extensions
 @neokai/shared/read-models/prompt-policy
 ```
 
@@ -209,6 +215,8 @@ Target paths:
 @neokai/shared/domain/forge
 @neokai/shared/domain/session
 @neokai/shared/domain/settings
+@neokai/shared/domain/config
+@neokai/shared/domain/extensions
 @neokai/shared/domain/prompt-policy
 ```
 
@@ -228,6 +236,8 @@ Current candidates:
 | `EvolutionScope`, `EvidenceRef`, `EvolutionEpisode`, `EvolutionLesson`, `TaskProposal`, `MetricSnapshot` | `domain/forge` |
 | `Session`, `SessionContext`, `SessionFeatures` | `domain/session` |
 | settings types | `domain/settings` |
+| config key definitions, scopes, source chains | `domain/config` |
+| extension package and contribution types | `domain/extensions` |
 | `PromptPolicyRecord`, prompt policy scope/source/channel types | `domain/prompt-policy` |
 
 ### 7.4 Messaging
@@ -320,6 +330,30 @@ Rules:
 - `PromptPolicyResolver`, `PromptPolicyComposer`, `PromptPolicyRenderer`, and built-in prompt text live in daemon Agent Runtime code, not shared.
 - Prompt policy is not the same as user-visible prompt templates. Shared policy types describe durable records and read models; rendered prompt fragments are daemon behavior.
 
+### 7.10 Config And Extensions
+
+Configuration and extension types describe effective settings, source chains, package metadata, and semantic contributions. They do not describe SDK-specific plugin loader internals.
+
+Target paths:
+
+```text
+@neokai/shared/domain/config
+@neokai/shared/contracts/config
+@neokai/shared/read-models/config
+@neokai/shared/domain/extensions
+@neokai/shared/contracts/extensions
+@neokai/shared/read-models/extensions
+```
+
+Rules:
+
+- `domain/config` owns serializable config key definitions, scope names, source-chain entries, merge strategy names, and redaction metadata.
+- `read-models/config` owns effective value preview shapes, including current value, inherited value, source, allowed scopes, and reset/override actions.
+- `domain/extensions` owns extension package metadata and contribution types such as `skill.command`, `tool.mcp`, `hook.policy`, `prompt.policy`, and `runtime.setting`.
+- `read-models/extensions` owns active contribution previews with package source, trust level, render target, and suppress/override source.
+- Runtime-specific plugin manifests, hook callback implementations, MCP server processes, and prompt rendering stay daemon-side or runtime-adapter-side.
+- A Markdown file or local plugin path is not a shared semantic type by itself; it becomes shared only through a declared skill, prompt policy, hook policy, MCP, or runtime setting contribution.
+
 ---
 
 ## 8. File Organization Target
@@ -339,12 +373,16 @@ packages/shared/src/
     session.ts
     provider.ts
     settings.ts
+    config.ts
+    extensions.ts
     prompt-policy.ts
   read-models/
     index.ts
     space.ts
     forge.ts
     session.ts
+    config.ts
+    extensions.ts
     prompt-policy.ts
   domain/
     space/
@@ -365,6 +403,10 @@ packages/shared/src/
     session/
       index.ts
     settings/
+      index.ts
+    config/
+      index.ts
+    extensions/
       index.ts
     prompt-policy/
       index.ts
@@ -503,6 +545,8 @@ Target split:
 | --- | --- |
 | session/workspace/git/message/file requests | `contracts/session`, `contracts/workspace`, `contracts/git`, `contracts/files` |
 | config/settings requests | `contracts/settings` |
+| effective config and source-chain preview requests | `contracts/config` |
+| extension package/contribution requests | `contracts/extensions` |
 | MCP registry requests | `contracts/mcp` |
 | Forge evolution requests | `contracts/forge` |
 | prompt policy requests | `contracts/prompt-policy` |
@@ -523,6 +567,10 @@ read-models -> domain
 domain -> pure utilities only
 contracts/prompt-policy -> domain/prompt-policy, read-models/prompt-policy
 read-models/prompt-policy -> domain/prompt-policy
+contracts/config -> domain/config, read-models/config
+read-models/config -> domain/config
+contracts/extensions -> domain/extensions, read-models/extensions
+read-models/extensions -> domain/extensions
 messaging/protocol -> pure utilities only
 messaging/client -> messaging/protocol
 provider -> models, pure utilities
@@ -584,26 +632,33 @@ Forge is a good first slice because it is new, comparatively contained, and alre
 - Keep resolver/composer/renderer and built-in prompt text in daemon Agent Runtime code.
 - Update token-efficiency/output-mode work to use prompt-policy subpaths instead of settings/session-specific fields.
 
-### Phase 5: Space Domain Split
+### Phase 5: Config And Extension Boundaries
+
+- Add `domain/config`, `contracts/config`, and `read-models/config`.
+- Add `domain/extensions`, `contracts/extensions`, and `read-models/extensions`.
+- Keep SDK plugin loading, hook callbacks, MCP process lifecycle, and prompt rendering outside shared.
+- Update skills/plugins/MCP/settings implementation work to expose effective previews through config/extension subpaths instead of broad settings or skill-specific shapes.
+
+### Phase 6: Space Domain Split
 
 - Split `types/space.ts` into domain modules.
 - Add read models from the client-state design.
 - Add Space command/query/event contracts.
 - Update Space runtime, Space stores, and Space components gradually.
 
-### Phase 6: API Split
+### Phase 7: API Split
 
 - Move `api.ts` sections into contract modules.
 - Keep `api.ts` as a compatibility re-export file.
 - Make legacy RPC adapters depend on compatibility API names while new MessageFabric handlers use contract modules.
 
-### Phase 7: Root Barrel Reduction
+### Phase 8: Root Barrel Reduction
 
 - Replace direct root imports package by package.
 - Prefer daemon first for implementation clarity, then web stores/components, then tests.
 - Stop exporting MessageHub internals, prompts, and daemon-only params from the root barrel.
 
-### Phase 8: Enforce Boundaries
+### Phase 9: Enforce Boundaries
 
 - Add lint/import checks:
   - no new root imports;
@@ -639,8 +694,9 @@ This gives immediate value without forcing a full Space type split.
 5. MessageHub runtime classes are compatibility internals, not the future public messaging API.
 6. Forge must use the same domain/contract/read-model split as Space.
 7. Prompt policy shared exports contain serializable records, contracts, and read models only; resolver/composer/renderer stay daemon-side.
-8. Daemon-only params and service dependency types do not belong in shared.
-9. Pure utilities are shared only when both daemon and web actually use them.
+8. Config/extension shared exports contain serializable keys, scopes, source chains, packages, contributions, and previews only; SDK plugin loading, hook callbacks, MCP process lifecycle, and prompt rendering stay daemon/runtime-side.
+9. Daemon-only params and service dependency types do not belong in shared.
+10. Pure utilities are shared only when both daemon and web actually use them.
 
 ---
 

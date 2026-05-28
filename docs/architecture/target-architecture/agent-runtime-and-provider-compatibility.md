@@ -9,6 +9,7 @@
 - [Space Runtime Decomposition Design](./space-runtime-decomposition.md)
 - [Storage Unit Of Work And Outbox Design](./storage-unit-of-work-and-outbox.md)
 - [Shared Package Boundaries Design](./shared-package-boundaries.md)
+- [Configuration And Extension Resolution Design](./configuration-and-extension-resolution.md)
 - [Prompt Policy Registry Spec](../../research/token-efficiency/prompt-policy-registry-spec.md)
 
 ---
@@ -490,6 +491,8 @@ Resolution precedence:
 ### 7.8 AgentBehaviorResolver
 
 Agent behavior should be a portable input to runtime adapters.
+
+`AgentBehaviorResolver` consumes effective configuration, active extension contributions, and prompt policy output. It should not inspect raw user/project/local SDK settings files, plugin directories, Space config JSON, or workflow prompt fields directly once those surfaces have migrated to the configuration and extension resolver.
 
 Behavior includes:
 

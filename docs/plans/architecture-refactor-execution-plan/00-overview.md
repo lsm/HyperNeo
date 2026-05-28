@@ -13,6 +13,7 @@ The target architecture is already defined in:
 - [Client State And Read Models Design](../../architecture/target-architecture/client-state-and-read-models.md)
 - [Shared Package Boundaries Design](../../architecture/target-architecture/shared-package-boundaries.md)
 - [Agent Runtime And Provider Compatibility Design](../../architecture/target-architecture/agent-runtime-and-provider-compatibility.md)
+- [Configuration And Extension Resolution Design](../../architecture/target-architecture/configuration-and-extension-resolution.md)
 - [UI Design System Architecture Design](../../architecture/target-architecture/ui-design-system-architecture.md)
 - [Prompt Policy Registry Spec](../../research/token-efficiency/prompt-policy-registry-spec.md)
 
@@ -22,7 +23,7 @@ This plan is the execution layer over those specs. It defines the Goal/Forge ope
 
 Create one parent Goal:
 
-> Architecture Refactor: MessageFabric, UoW, Agent Runtime, Space Runtime, Client Read Models, and UI Boundaries
+> Architecture Refactor: MessageFabric, UoW, Config/Extensions, Agent Runtime, Space Runtime, Client Read Models, and UI Boundaries
 
 Create one linked Forge scope for the same objective. The Forge scope is the evidence and learning surface for the refactor, not a separate backlog. Every implementation PR should attach evidence to that scope before the next PR is planned.
 
@@ -106,21 +107,25 @@ flowchart TD
   M3["M3 UoW And Outbox Foundation"]
   M4["M4 First Vertical Slice"]
   M5["M5 Prompt Policy Registry"]
-  M6["M6 Agent Runtime Boundary"]
-  M7["M7 Client Read Models"]
-  M8["M8 Space Runtime Decomposition"]
-  M9["M9 Legacy Cleanup And Enforcement"]
+  M6["M6 Config And Extension Resolution"]
+  M7["M7 Agent Runtime Boundary"]
+  M8["M8 Client Read Models"]
+  M9["M9 Space Runtime Decomposition"]
+  M10["M10 Legacy Cleanup And Enforcement"]
 
   M0 --> M1
   M1 --> M2
   M1 --> M5
+  M1 --> M6
   M2 --> M3
   M3 --> M4
-  M4 --> M7
+  M4 --> M8
   M5 --> M6
+  M6 --> M7
   M6 --> M8
   M7 --> M9
-  M8 --> M9
+  M8 --> M10
+  M9 --> M10
 ```
 
 The graph is intentionally serial at the platform foundation. Later milestones can overlap only after their dependencies have merged to `dev`.
@@ -146,7 +151,8 @@ Purpose: make ownership visible before moving behavior.
 | 1.1 | Add `@neokai/shared` subpath skeletons: `contracts`, `read-models`, `domain`, `messaging`, `compat`. | Re-export only; no behavior changes. | Existing imports keep working; new subpaths compile. |
 | 1.2 | Add Forge domain/contract/read-model subpaths as the first real shared slice. | Re-export existing types first. | `SpaceForge` and low-risk Forge files can import from subpaths. |
 | 1.3 | Add prompt-policy shared domain/contract/read-model types. | Types only; no rendering path changes. | Types match the prompt policy spec and do not expose renderer internals. |
-| 1.4 | Add import-boundary checks for newly touched files. | Advisory or narrow allowlist first. | New code cannot expand root barrel usage in migrated slices. |
+| 1.4 | Add config and extension shared domain/contract/read-model types for effective previews. | Types only; no storage or runtime changes. | Types distinguish config keys, scopes, source chains, packages, contributions, skills, plugins, MCP, hooks, and prompt policy. |
+| 1.5 | Add import-boundary checks for newly touched files. | Advisory or narrow allowlist first. | New code cannot expand root barrel usage in migrated slices. |
 
 ### M2: MessageFabric Kernel
 
@@ -195,53 +201,65 @@ Purpose: move output/prompt behavior into the scoped prompt policy boundary.
 | 5.4 | Wire prompt policy into current Claude Agent SDK option construction. | Preserve existing behavior when no records apply. | Existing sessions are unchanged by default; activated compressed mode renders through policy. |
 | 5.5 | Add `promptPolicy.effective.preview` query and client store surface. | Read-only preview first. | UI/debug callers can see applied/suppressed records without duplicating precedence logic. |
 
-### M6: Agent Runtime Boundary
+### M6: Configuration And Extension Resolution
+
+Purpose: make settings, skills, plugins, MCP, hooks, native SDK settings, and prompt-affecting extension behavior resolve through one understandable effective-config model.
+
+| PR | Scope | Release safety | Acceptance |
+| --- | --- | --- | --- |
+| 6.1 | Add `ConfigRegistry` skeleton with registered key metadata and effective preview types. | Read-only diagnostics first. | Existing settings keep their storage; preview shows key, value, source, inherited value, and allowed scopes. |
+| 6.2 | Add `ExtensionRegistry` contribution model over current skills and MCP registries. | Compatibility mapping only. | Built-in `SKILL.md`, local plugin, and MCP-backed skills are described as contributions without changing injection. |
+| 6.3 | Add effective skill/extension preview for Space/session context. | Preview only. | UI/debug output distinguishes skill, plugin package, MCP server, hook policy, and prompt policy contribution. |
+| 6.4 | Register built-in hooks and workflow declarative guards as hook policies. | Existing hook behavior unchanged. | Loop detector, output limiter if retained, and workflow tool guards appear in hook preview with scope/trust/effect metadata. |
+| 6.5 | Enforce prompt-affecting extension rule for new paths. | New paths only; legacy prompt fields remain. | A prompt-only plugin/Markdown package must declare `skill.command` or `prompt.policy`; no new silent always-on prompt append bypasses PromptPolicyRegistry. |
+
+### M7: Agent Runtime Boundary
 
 Purpose: make runtime selection and provider selection independent axes without breaking current Claude Agent SDK behavior.
 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
-| 6.1 | Audit SDK source/type files for Claude Agent SDK, OpenAI Agents SDK, Codex SDK/server, Pi, and provider bridges. | Docs/type matrix only. | Capability matrix identifies native, bridged, degraded, and unsupported features. |
-| 6.2 | Add NeoKai superset Agent Runtime types based on the audit. | Types and adapter contracts only. | Types avoid prematurely hiding runtime-specific capabilities. |
-| 6.3 | Add `AgentRuntimeGateway` wrapping current `AgentSession` behavior. | Default runtime remains Claude Agent SDK. | Existing session tests pass through the gateway. |
-| 6.4 | Add capability resolver and read-only compatibility diagnostics. | No runtime selection change yet. | UI/API can report compatibility without changing execution. |
-| 6.5 | Add runtime profile persistence with default Claude profile. | Existing sessions map to default profile. | No existing session loses provider/model configuration. |
+| 7.1 | Audit SDK source/type files for Claude Agent SDK, OpenAI Agents SDK, Codex SDK/server, Pi, and provider bridges. | Docs/type matrix only. | Capability matrix identifies native, bridged, degraded, and unsupported features. |
+| 7.2 | Add NeoKai superset Agent Runtime types based on the audit. | Types and adapter contracts only. | Types avoid prematurely hiding runtime-specific capabilities. |
+| 7.3 | Add `AgentRuntimeGateway` wrapping current `AgentSession` behavior. | Default runtime remains Claude Agent SDK. | Existing session tests pass through the gateway. |
+| 7.4 | Add capability resolver and read-only compatibility diagnostics. | No runtime selection change yet. | UI/API can report compatibility without changing execution. |
+| 7.5 | Add runtime profile persistence with default Claude profile. | Existing sessions map to default profile. | No existing session loses provider/model configuration. |
 
-### M7: Client Read Models
+### M8: Client Read Models
 
 Purpose: move the client from broad mutable stores to focused read-model stores without a UI rewrite.
 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
-| 7.1 | Add fabric client kernel beside existing MessageHub client. | Existing components keep using current paths. | Typed command/query/event clients can call low-risk contracts. |
-| 7.2 | Add `PromptPolicyStore` for effective preview. | New store is additive. | Prompt policy UI/debug surfaces read from preview query. |
-| 7.3 | Split Forge state into `ForgeStore` backed by contracts/read models. | `SpaceForge` compatibility preserved. | Forge scope/detail data no longer lives only in component-local state. |
-| 7.4 | Add focused task/runtime stores behind `spaceStore` compatibility facade. | Components can migrate one at a time. | Existing task and runtime views behave unchanged. |
-| 7.5 | Move selected components to focused stores. | `spaceStore` remains fallback until all consumers migrate. | Stale-response and subscription lifecycle tests pass. |
+| 8.1 | Add fabric client kernel beside existing MessageHub client. | Existing components keep using current paths. | Typed command/query/event clients can call low-risk contracts. |
+| 8.2 | Add config/extension, prompt policy, and runtime behavior preview stores. | New stores are additive. | Settings/debug UI reads effective values and source chains instead of rebuilding precedence. |
+| 8.3 | Split Forge state into `ForgeStore` backed by contracts/read models. | `SpaceForge` compatibility preserved. | Forge scope/detail data no longer lives only in component-local state. |
+| 8.4 | Add focused task/runtime stores behind `spaceStore` compatibility facade. | Components can migrate one at a time. | Existing task and runtime views behave unchanged. |
+| 8.5 | Move selected components to focused stores. | `spaceStore` remains fallback until all consumers migrate. | Stale-response and subscription lifecycle tests pass. |
 
-### M8: Space Runtime Decomposition
+### M9: Space Runtime Decomposition
 
 Purpose: decompose workflow orchestration behind a stable `SpaceRuntimeFacade`.
 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
-| 8.1 | Add `SpaceRuntimeFacade` with compatibility methods over current runtime. | No internal behavior move yet. | Existing RPC/MCP callers can use facade without behavior change. |
-| 8.2 | Extract `RuntimeScheduler` and recovery startup flow. | Same scheduling triggers preserved. | Existing schedule and recovery tests pass. |
-| 8.3 | Extract `WorkflowRunCoordinator` and state-machine helpers. | Keep current persistence and event semantics. | Active/blocked/completed run behavior is unchanged. |
-| 8.4 | Extract `NodeExecutionSupervisor`, `ChannelDeliveryService`, and `GateOrchestrator` incrementally. | One component per PR if needed. | Workflow channel, gate, and node execution tests remain green. |
-| 8.5 | Route Space runtime commands through fabric contracts where UoW path exists. | Compatibility methods stay until callers migrate. | Runtime behavior can be driven through fabric in tests. |
+| 9.1 | Add `SpaceRuntimeFacade` with compatibility methods over current runtime. | No internal behavior move yet. | Existing RPC/MCP callers can use facade without behavior change. |
+| 9.2 | Extract `RuntimeScheduler` and recovery startup flow. | Same scheduling triggers preserved. | Existing schedule and recovery tests pass. |
+| 9.3 | Extract `WorkflowRunCoordinator` and state-machine helpers. | Keep current persistence and event semantics. | Active/blocked/completed run behavior is unchanged. |
+| 9.4 | Extract `NodeExecutionSupervisor`, `ChannelDeliveryService`, and `GateOrchestrator` incrementally. | One component per PR if needed. | Workflow channel, gate, and node execution tests remain green. |
+| 9.5 | Route Space runtime commands through fabric contracts where UoW path exists. | Compatibility methods stay until callers migrate. | Runtime behavior can be driven through fabric in tests. |
 
-### M9: Legacy Cleanup And Enforcement
+### M10: Legacy Cleanup And Enforcement
 
 Purpose: remove old coupling only after replacement paths are proven.
 
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
-| 9.1 | Shrink `setupRPCHandlers` by moving migrated surfaces to module registration. | Compatibility aliases remain. | No migrated surface depends on broad service internals. |
-| 9.2 | Replace migrated client RPC calls with fabric clients. | Keep old RPC aliases until no consumers remain. | Client tests cover reconnect, stale responses, and event delivery. |
-| 9.3 | Remove direct root shared imports from migrated packages. | Enforcement applies only after replacement imports exist. | Boundary checks are mandatory for migrated slices. |
-| 9.4 | Remove obsolete event bridges and duplicated broadcasts. | Only cleanup paths with replacement coverage. | No double-delivery and no missing-delivery tests fail. |
-| 9.5 | Final architecture exit review. | Docs/review only unless gaps are found. | Target architecture exit criteria are checked against code and tests. |
+| 10.1 | Shrink `setupRPCHandlers` by moving migrated surfaces to module registration. | Compatibility aliases remain. | No migrated surface depends on broad service internals. |
+| 10.2 | Replace migrated client RPC calls with fabric clients. | Keep old RPC aliases until no consumers remain. | Client tests cover reconnect, stale responses, and event delivery. |
+| 10.3 | Remove direct root shared imports from migrated packages. | Enforcement applies only after replacement imports exist. | Boundary checks are mandatory for migrated slices. |
+| 10.4 | Remove obsolete event bridges and duplicated broadcasts. | Only cleanup paths with replacement coverage. | No double-delivery and no missing-delivery tests fail. |
+| 10.5 | Final architecture exit review. | Docs/review only unless gaps are found. | Target architecture exit criteria are checked against code and tests. |
 
 ## Parallelization Rules
 
@@ -250,6 +268,7 @@ Parallel work is allowed only when branches do not require each other to keep `d
 Good parallel candidates after M1:
 
 - Prompt policy shared types and repository work can run beside MessageFabric kernel work.
+- Config/extension preview types can run beside MessageFabric kernel work because they are read-only until migration.
 - SDK capability audit can run beside UoW foundation work because it is documentation/type discovery.
 - UI design system extraction can continue as long as it does not depend on fabric/client store changes.
 
@@ -289,6 +308,7 @@ The parent Goal is complete when:
 
 - the [Target Architecture Overview](../../architecture/target-architecture/README.md) exit criteria pass;
 - at least one durable vertical slice uses `fabric command -> auth/policy -> UoW -> DB/job/receipt/outbox -> dispatcher -> event/projector -> client store`;
+- effective configuration and extension previews can explain active settings, skills, plugins, MCP servers, hooks, native SDK settings, and prompt-affecting contributions;
 - Prompt Policy Registry is the source of scoped prompt behavior;
 - Agent Runtime Gateway owns runtime/provider execution boundaries;
 - focused client read-model stores own migrated UI state;
