@@ -1566,7 +1566,7 @@ describe('handleGoalAutomationExecute', () => {
       scopeId: scope.id,
       triggerKind: 'self_nag',
       triggerKey: 'sched-race',
-      lastFiredAt: cursor1.lastFiredAt,
+      lastFiredAt: cursor1.lastFiredAt! - 1, // strictly older than cursor2
       lastEvidenceCreatedAt: 1, // stale value
       metadata: { stale: true },
     });
