@@ -145,6 +145,14 @@ function blankDisabledTestCalls(source: string): string {
   return output;
 }
 
+function normalizeCallLine(line: string): string {
+  let normalized = line.trim();
+  if (normalized.startsWith('const ')) {
+    normalized = normalized.replace(/^const\s+\w+\s*=\s*/, '');
+  }
+  return normalized;
+}
+
 function parseTestedHandlers(source: string): Set<string> {
   const executableSource = blankDisabledTestCalls(stripComments(source));
   const tested = new Set<string>();
@@ -153,9 +161,13 @@ function parseTestedHandlers(source: string): Set<string> {
     const end = findCallEnd(executableSource, openParenIndex);
     if (end === -1) continue;
     const testBody = executableSource.slice(openParenIndex, end + 1);
-    for (const callMatch of testBody.matchAll(/\bcall\(\s*['"]([^'"]+)['"]/g)) {
-      const method = callMatch[1];
-      if (method.startsWith('spaceTask.')) tested.add(method);
+    for (const line of testBody.split('\n')) {
+      const normalizedLine = normalizeCallLine(line);
+      const callMatch = normalizedLine.match(
+        /^(?:return\s+)?(?:await\s+)?(?:expect\()?call\(\s*['"]([^'"]+)['"]/
+      );
+      const method = callMatch?.[1];
+      if (method?.startsWith('spaceTask.')) tested.add(method);
     }
   }
   return tested;

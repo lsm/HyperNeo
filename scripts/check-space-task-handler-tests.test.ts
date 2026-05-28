@@ -156,6 +156,30 @@ describe('check-space-task-handler-tests', () => {
     expect(result.stderr).toContain('spaceTask.publish');
   });
 
+  it('flags handlers that are called only inside non-executed functions', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    writeProjectFile(
+      cwd,
+      'packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts',
+      "messageHub.onRequest('spaceTask.create', async () => {});\n" +
+        "messageHub.onRequest('spaceTask.publish', async () => {});\n"
+    );
+    writeProjectFile(
+      cwd,
+      'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
+      "it('covers create', async () => { await call('spaceTask.create', {});\n" +
+        "const cover = () => call('spaceTask.publish', {}); });\n"
+    );
+    git(cwd, ['add', '.']);
+    git(cwd, ['commit', '-m', 'wrap handler call']);
+
+    const result = runGate(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('spaceTask.publish');
+  });
+
   it('flags handlers that are called only in skipped tests', () => {
     const cwd = createRepo();
     repos.push(cwd);
@@ -193,8 +217,8 @@ describe('check-space-task-handler-tests', () => {
     writeProjectFile(
       cwd,
       'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
-      "it('covers create', async () => { await call('spaceTask.create', {}); });\n" +
-        "it('covers publish', async () => { await call('spaceTask.publish', {}); });\n"
+      "it('covers create', async () => {\nconst result = await call('spaceTask.create', {});\n});\n" +
+        "it('covers publish', async () => {\nawait expect(call('spaceTask.publish', {})).resolves.toBeDefined();\n});\n"
     );
     git(cwd, ['add', '.']);
     git(cwd, ['commit', '-m', 'add handler and test']);
