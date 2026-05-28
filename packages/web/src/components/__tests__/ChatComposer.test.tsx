@@ -43,15 +43,12 @@ function baseProps(overrides: Partial<ChatComposerProps> = {}): ChatComposerProp
     sandboxSwitching: false,
     isWaitingForInput: false,
     isConnected: true,
-    rewindMode: false,
     onModelSwitch: vi.fn(),
     onAutoScrollChange: vi.fn(),
     onCoordinatorModeChange: vi.fn(),
     onSandboxModeChange: vi.fn(),
     onSend: vi.fn(async () => true),
     onOpenTools: vi.fn(),
-    onEnterRewindMode: vi.fn(),
-    onExitRewindMode: vi.fn(),
     ...overrides,
   };
 }

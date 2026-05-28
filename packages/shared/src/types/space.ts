@@ -80,6 +80,8 @@ export interface SpaceLongHorizonAgent {
   sessionId: string | null;
   instructions: string;
   autonomyLevel: SpaceAgentAutonomyLevel | null;
+  model: string | null;
+  thinkingLevel: ThinkingLevel | null;
   toolPermissions: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
@@ -95,6 +97,8 @@ export interface CreateSpaceLongHorizonAgentParams {
   sessionId?: string | null;
   instructions?: string;
   autonomyLevel?: SpaceAgentAutonomyLevel | null;
+  model?: string | null;
+  thinkingLevel?: ThinkingLevel | null;
   toolPermissions?: Record<string, unknown>;
 }
 
@@ -106,6 +110,8 @@ export interface UpdateSpaceLongHorizonAgentParams {
   sessionId?: string | null;
   instructions?: string;
   autonomyLevel?: SpaceAgentAutonomyLevel | null;
+  model?: string | null;
+  thinkingLevel?: ThinkingLevel | null;
   toolPermissions?: Record<string, unknown> | null;
 }
 

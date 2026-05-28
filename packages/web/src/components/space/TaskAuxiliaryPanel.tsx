@@ -59,8 +59,8 @@ const STATUS_BADGE_CLASSES: Record<SpaceTaskStatus, string> = {
   approved: 'border-green-500/30 bg-green-500/10 text-green-300',
   done: 'border-green-500/25 bg-green-500/10 text-green-400',
   blocked: 'border-red-500/30 bg-red-500/10 text-red-300',
-  cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-500',
-  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-500',
+  cancelled: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
+  archived: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
 };
 
 const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
@@ -104,7 +104,7 @@ function TaskPanelBadge({
 function PanelSection({ title, children }: { title: string; children: ComponentChildren }) {
   return (
     <section class="rounded-xl border border-white/10 bg-dark-900/50 p-4">
-      <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</h3>
+      <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h3>
       <div class="mt-3 space-y-3">{children}</div>
     </section>
   );
@@ -113,7 +113,7 @@ function PanelSection({ title, children }: { title: string; children: ComponentC
 function DetailRow({ label, children }: { label: string; children: ComponentChildren }) {
   return (
     <div class="flex items-start justify-between gap-3 text-sm">
-      <span class="text-gray-500">{label}</span>
+      <span class="text-gray-400">{label}</span>
       <span class="min-w-0 text-right text-gray-200">{children}</span>
     </div>
   );
@@ -196,7 +196,7 @@ function AgentConfigCard({
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="truncate text-sm font-medium text-gray-100">{agent.name}</div>
-          <div class="truncate text-xs text-gray-500">{node.name}</div>
+          <div class="truncate text-xs text-gray-400">{node.name}</div>
         </div>
         <span class="inline-flex h-6 max-w-[11rem] items-center rounded-md border border-white/10 bg-dark-900/70 px-2 text-[11px] font-medium leading-none text-gray-300 whitespace-nowrap">
           <span class="truncate">{execution?.status ?? 'Not started'}</span>
@@ -208,21 +208,21 @@ function AgentConfigCard({
         </DetailRow>
       ) : (
         <div>
-          <label class="mb-1 block text-xs text-gray-500">Model override</label>
+          <label class="mb-1 block text-xs text-gray-400">Model override</label>
           <WorkflowModelSelect
             value={task.workflowModelOverrides?.[key]}
             onChange={(value) => onModelChange(node.id, agent.name, value)}
             testId={`task-agent-model-${node.id}-${agent.name}`}
             className="w-full rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50"
           />
-          <div class="mt-1 text-[11px] text-gray-600">
+          <div class="mt-1 text-[11px] text-gray-400">
             Default: {agent.model ?? spaceDefaultModel ?? 'Space default'}
             {savingOverrideKey === key ? ' · Saving…' : ''}
           </div>
         </div>
       )}
       {agent.customPrompt?.value && (
-        <p class="line-clamp-3 text-xs text-gray-500">{agent.customPrompt.value}</p>
+        <p class="line-clamp-3 text-xs text-gray-400">{agent.customPrompt.value}</p>
       )}
     </div>
   );
@@ -232,8 +232,8 @@ function GateCard({ gate }: { gate: NonNullable<SpaceWorkflow['gates']>[number] 
   return (
     <div class="rounded-lg border border-white/10 bg-dark-800/60 p-3">
       <div class="text-sm font-medium text-gray-200">{gate.label ?? gate.id}</div>
-      {gate.description && <div class="mt-1 text-xs text-gray-500">{gate.description}</div>}
-      <div class="mt-2 text-xs text-gray-600">
+      {gate.description && <div class="mt-1 text-xs text-gray-400">{gate.description}</div>}
+      <div class="mt-2 text-xs text-gray-400">
         Required autonomy: {gate.requiredLevel ?? 'validation only'}
       </div>
     </div>
@@ -339,7 +339,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
 
   if (!task) {
     return (
-      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-500">
+      <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
         Task not found
       </div>
     );
@@ -460,7 +460,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
         placeholder="Add a description…"
         class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
       />
-      {savingDescription && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
+      {savingDescription && <p class="mt-1 text-[11px] text-gray-400">Saving…</p>}
     </PanelSection>
   );
   const detailsSection = (
@@ -505,7 +505,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
         const dep = spaceStore.tasks.value.find((t) => t.id === depId);
         return (
           <div key={depId} class="flex items-center gap-2 text-sm">
-            <span class="flex-shrink-0 font-mono text-[11px] text-gray-500">
+            <span class="flex-shrink-0 font-mono text-[11px] text-gray-400">
               #{dep?.taskNumber ?? '—'}
             </span>
             <span class="min-w-0 truncate text-gray-300">{dep?.title ?? depId}</span>
@@ -513,7 +513,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
               class={
                 dep
                   ? STATUS_BADGE_CLASSES[dep.status]
-                  : 'border-gray-500/25 bg-gray-500/10 text-gray-500'
+                  : 'border-gray-500/25 bg-gray-500/10 text-gray-400'
               }
             >
               {dep ? STATUS_LABELS[dep.status] : '—'}
@@ -538,16 +538,16 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
           </option>
         ))}
       </select>
-      {savingWorkflow && <p class="mt-1 text-[11px] text-gray-500">Saving…</p>}
+      {savingWorkflow && <p class="mt-1 text-[11px] text-gray-400">Saving…</p>}
       {workflow && (
         <div class="space-y-2 rounded-lg border border-white/10 bg-dark-800/60 p-3 text-sm">
           <div class="font-medium text-gray-200">{workflow.name}</div>
           {workflow.nodes.map((node, index) => (
-            <div key={node.id} class="text-xs text-gray-500">
+            <div key={node.id} class="text-xs text-gray-400">
               {index + 1}. {node.name}
               {node.agents.length > 0 && (
                 <>
-                  <span class="text-gray-500"> — </span>
+                  <span class="text-gray-400"> — </span>
                   <span class="text-gray-400">
                     {node.agents.map((agent) => agent.name).join(', ')}
                   </span>
@@ -583,7 +583,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
           ))
         )
       ) : (
-        <p class="text-sm text-gray-500">
+        <p class="text-sm text-gray-400">
           {task.preferredWorkflowId
             ? 'Loading workflow…'
             : 'Select a workflow to configure agent models.'}
@@ -703,7 +703,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
                     'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium transition-colors',
                     activeTab === item.id
                       ? 'bg-dark-700 text-gray-100 shadow-sm'
-                      : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
                   )}
                   aria-pressed={activeTab === item.id}
                 >
@@ -731,7 +731,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
             )}
             {activeTab === 'gates' && (
               <div class="h-full overflow-y-auto px-4 pb-4">
-                {gatesSection ?? <p class="text-sm text-gray-500">No gates configured.</p>}
+                {gatesSection ?? <p class="text-sm text-gray-400">No gates configured.</p>}
               </div>
             )}
             {activeTab === 'timeline' && (

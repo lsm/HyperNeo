@@ -181,7 +181,7 @@ export function ImportPreviewDialog({
         <div class="text-sm text-gray-400">
           Importing from <span class="text-gray-200 font-medium">{bundle.name}</span>
           {bundle.exportedFrom && (
-            <span class="ml-1 text-gray-500 font-mono text-xs">({bundle.exportedFrom})</span>
+            <span class="ml-1 text-gray-400 font-mono text-xs">({bundle.exportedFrom})</span>
           )}
         </div>
 

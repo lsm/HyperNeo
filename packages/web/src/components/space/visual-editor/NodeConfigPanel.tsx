@@ -145,7 +145,7 @@ function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps)
 
   return (
     <div class="space-y-1">
-      <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+      <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-400">
         Skills
       </label>
       <div class="space-y-0.5">
@@ -376,7 +376,7 @@ function AgentsSection({
         </select>
         <div class="space-y-1">
           <label class="text-xs font-medium text-gray-400">
-            LLM Model <span class="font-normal text-gray-600">(optional override)</span>
+            LLM Model <span class="font-normal text-gray-400">(optional override)</span>
           </label>
           <WorkflowModelSelect
             testId="single-agent-model-input"
@@ -386,7 +386,7 @@ function AgentsSection({
         </div>
         <div class="space-y-1">
           <label class="text-xs font-medium text-gray-400">
-            Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
+            Thinking Level <span class="font-normal text-gray-400">(optional override)</span>
           </label>
           <select
             value={selectedSingleThinkingLevel ?? ''}
@@ -452,7 +452,7 @@ function AgentsSection({
     <div class="space-y-2">
       <div class="flex items-center justify-between">
         <label class="text-xs font-medium text-gray-400">
-          Agents <span class="text-gray-600">({nodeAgents.length})</span>
+          Agents <span class="text-gray-400">({nodeAgents.length})</span>
         </label>
       </div>
 
@@ -483,7 +483,7 @@ function AgentsSection({
                   type="button"
                   data-testid="remove-agent-button"
                   onClick={() => removeAgent(sa.name)}
-                  class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
+                  class="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
                   title="Remove agent"
                 >
                   <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -497,7 +497,7 @@ function AgentsSection({
                 </button>
               </div>
               <div class="space-y-1">
-                <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+                <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-400">
                   Agent
                 </label>
                 <select
@@ -515,10 +515,10 @@ function AgentsSection({
                     </option>
                   ))}
                 </select>
-                <p class="text-[11px] text-gray-600">{agentInfo?.name ?? sa.agentId}</p>
+                <p class="text-[11px] text-gray-400">{agentInfo?.name ?? sa.agentId}</p>
               </div>
               <div class="space-y-1">
-                <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+                <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-400">
                   Model
                 </label>
                 <WorkflowModelSelect
@@ -528,7 +528,7 @@ function AgentsSection({
                 />
               </div>
               <div class="space-y-1">
-                <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+                <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-400">
                   Thinking
                 </label>
                 <select
@@ -581,7 +581,7 @@ function AgentsSection({
             addAgent((e.currentTarget as HTMLSelectElement).value);
             (e.currentTarget as HTMLSelectElement).value = '';
           }}
-          class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-500 focus:outline-none focus:border-blue-500"
+          class="w-full text-xs bg-dark-800 border border-dark-600 border-dashed rounded px-2 py-1.5 text-gray-400 focus:outline-none focus:border-blue-500"
         >
           <option value="">+ Add agent…</option>
           {availableAgents.map((a) => (
@@ -759,7 +759,7 @@ export function NodeConfigPanel({
           <button
             data-testid="close-button"
             onClick={onClose}
-            class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+            class="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
             title="Close panel"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -810,7 +810,7 @@ export function NodeConfigPanel({
               }
               setPanelView({ kind: 'main' });
             }}
-            class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+            class="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
             title="Back"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -827,7 +827,7 @@ export function NodeConfigPanel({
         <button
           data-testid="close-button"
           onClick={onClose}
-          class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+          class="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
           title="Close panel"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -892,7 +892,7 @@ export function NodeConfigPanel({
         <div class="scrollbar-dark flex-1 overflow-y-auto px-4 py-4 pr-5 space-y-4">
           <div class="rounded border border-dark-700 bg-dark-850 px-3 py-2 text-xs text-gray-400 space-y-1">
             <p>
-              <span class="text-gray-500">Agent:</span>{' '}
+              <span class="text-gray-400">Agent:</span>{' '}
               {(singleAgent?.name ?? singleAgentId) || '—'}
             </p>
           </div>
@@ -926,15 +926,15 @@ export function NodeConfigPanel({
         <div class="scrollbar-dark flex-1 overflow-y-auto px-4 py-4 pr-5 space-y-4">
           <div class="rounded border border-dark-700 bg-dark-850 px-3 py-2 text-xs text-gray-400 space-y-1">
             <p>
-              <span class="text-gray-500">Role:</span> {slot.name}
+              <span class="text-gray-400">Role:</span> {slot.name}
             </p>
             <p>
-              <span class="text-gray-500">Agent:</span> {slotAgent?.name ?? slot.agentId}
+              <span class="text-gray-400">Agent:</span> {slotAgent?.name ?? slot.agentId}
             </p>
           </div>
           <div class="space-y-1">
             <label class="text-xs font-medium text-gray-400">
-              LLM Model <span class="font-normal text-gray-600">(optional override)</span>
+              LLM Model <span class="font-normal text-gray-400">(optional override)</span>
             </label>
             <WorkflowModelSelect
               testId="slot-prompts-model-input"
@@ -944,7 +944,7 @@ export function NodeConfigPanel({
           </div>
           <div class="space-y-1">
             <label class="text-xs font-medium text-gray-400">
-              Thinking Level <span class="font-normal text-gray-600">(optional override)</span>
+              Thinking Level <span class="font-normal text-gray-400">(optional override)</span>
             </label>
             <select
               value={safeNodeThinkingLevel(slot.thinkingLevel) ?? ''}
@@ -1051,7 +1051,7 @@ export function NodeConfigPanel({
         <div class="space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="text-xs font-medium text-gray-400">Channel Links</label>
-            <span class="text-xs text-gray-600">{channelLinks.length}</span>
+            <span class="text-xs text-gray-400">{channelLinks.length}</span>
           </div>
           {channelLinks.length > 0 ? (
             <div class="space-y-1.5">
@@ -1069,7 +1069,7 @@ export function NodeConfigPanel({
                   <div class="flex items-center justify-between gap-2">
                     <div class="min-w-0">
                       <div class="text-xs font-mono text-gray-200 truncate">{link.label}</div>
-                      <div class="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
+                      <div class="mt-1 flex items-center gap-2 text-[11px] text-gray-400">
                         <span>
                           {link.channelCount} link{link.channelCount === 1 ? '' : 's'}
                         </span>
@@ -1077,7 +1077,7 @@ export function NodeConfigPanel({
                       </div>
                     </div>
                     <svg
-                      class="w-4 h-4 text-gray-500 flex-shrink-0"
+                      class="w-4 h-4 text-gray-400 flex-shrink-0"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -1094,7 +1094,7 @@ export function NodeConfigPanel({
               ))}
             </div>
           ) : (
-            <p class="text-xs text-gray-600">Create links by dragging from one node to another.</p>
+            <p class="text-xs text-gray-400">Create links by dragging from one node to another.</p>
           )}
         </div>
 
@@ -1111,7 +1111,7 @@ export function NodeConfigPanel({
             />
             <span class="font-medium">Post-approval instruction</span>
           </label>
-          <p class="mt-2 text-xs leading-5 text-gray-600">
+          <p class="mt-2 text-xs leading-5 text-gray-400">
             Run this node again with follow-up instructions after it approves or submits the task
             for approval.
           </p>
@@ -1186,7 +1186,7 @@ export function NodeConfigPanel({
           </button>
         )}
         {isStartNode && !confirmingDelete && (
-          <p class="text-xs text-gray-600 mt-1.5 text-center">
+          <p class="text-xs text-gray-400 mt-1.5 text-center">
             Designate another node as start before deleting.
           </p>
         )}

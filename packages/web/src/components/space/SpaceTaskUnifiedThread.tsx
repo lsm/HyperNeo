@@ -77,7 +77,7 @@ export function SpaceTaskUnifiedThread({
   if (isReconnecting) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-500">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-400">
           Reconnecting task thread…
         </div>
       </div>
@@ -87,7 +87,7 @@ export function SpaceTaskUnifiedThread({
   if (isLoading) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-500">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-400">
           Loading task thread…
         </div>
       </div>
@@ -98,7 +98,7 @@ export function SpaceTaskUnifiedThread({
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
-          <p class="text-sm text-gray-500">No task-agent activity yet.</p>
+          <p class="text-sm text-gray-400">No task-agent activity yet.</p>
         </div>
       </div>
     );

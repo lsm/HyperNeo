@@ -133,11 +133,6 @@ export function App() {
       const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
       const navSection = navSectionSignal.value;
       const currentPath = window.location.pathname;
-      const isSpaceAgentRoute = !!(
-        spaceSessionId &&
-        spaceId &&
-        spaceSessionId === `space:chat:${spaceId}`
-      );
       const expectedPath = sessionId
         ? createSessionPath(sessionId)
         : spaceTaskId && spaceId
@@ -146,7 +141,7 @@ export function App() {
               spaceTaskId,
               spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
             )
-          : isSpaceAgentRoute
+          : spaceId && spaceViewMode === 'agents'
             ? createSpaceAgentPath(spaceId)
             : spaceSessionId && spaceId
               ? createSpaceSessionPath(spaceId, spaceSessionId)
@@ -186,7 +181,7 @@ export function App() {
             spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined,
             true
           );
-        } else if (isSpaceAgentRoute) {
+        } else if (spaceId && spaceViewMode === 'agents') {
           navigateToSpaceAgent(spaceId, true);
         } else if (spaceSessionId && spaceId) {
           navigateToSpaceSession(spaceId, spaceSessionId, true);

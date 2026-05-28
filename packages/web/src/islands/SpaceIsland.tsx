@@ -20,6 +20,7 @@ import { createSession } from '../lib/api-helpers';
 import {
   closeOverlayHistory,
   navigateToSpace,
+  navigateBack,
   navigateToSpaceSession,
   navigateToSpaceTask,
   pushOverlayHistory,
@@ -59,6 +60,11 @@ const SpaceOverview = lazy(() =>
 );
 const SpaceTaskPane = lazy(() =>
   import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
+);
+const SpaceLongHorizonAgents = lazy(() =>
+  import('../components/space/SpaceLongHorizonAgents').then((m) => ({
+    default: m.SpaceLongHorizonAgents,
+  }))
 );
 
 /** Shared Suspense fallback for lazy-loaded space views. */
@@ -172,7 +178,11 @@ export default function SpaceIsland({
   }, [spaceId]);
 
   const handleTaskPaneClose = useCallback(() => {
-    navigateToSpace(spaceId);
+    navigateBack(() => navigateToSpace(spaceId));
+  }, [spaceId]);
+
+  const handleSessionBack = useCallback(() => {
+    navigateBack(() => navigateToSpace(spaceId));
   }, [spaceId]);
 
   const handleCreateSession = useCallback(
@@ -225,6 +235,7 @@ export default function SpaceIsland({
           key={sessionViewId}
           sessionId={sessionViewId}
           titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
+          onBack={handleSessionBack}
         />
         {overlay}
       </>
@@ -242,7 +253,7 @@ export default function SpaceIsland({
       <div class="flex-1 flex items-center justify-center bg-app-content">
         <div class="text-center max-w-sm">
           <p class="text-sm text-red-400 mb-2">Failed to load space</p>
-          <p class="text-xs text-gray-600">{error}</p>
+          <p class="text-xs text-gray-400">{error}</p>
         </div>
       </div>
     );
@@ -288,7 +299,7 @@ export default function SpaceIsland({
               <button
                 type="button"
                 onClick={() => setCreateTaskOpen(true)}
-                class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100"
+                class="flex-shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
                 aria-label="Create task"
                 title="Create task"
               >
@@ -344,6 +355,7 @@ export default function SpaceIsland({
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-goals-view"
         >
+          <SpacePageHeader pageTitle="Goals" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceGoals spaceId={spaceId} />
@@ -362,6 +374,7 @@ export default function SpaceIsland({
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-forge-view"
         >
+          <SpacePageHeader pageTitle="Forge" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceForge spaceId={spaceId} />
@@ -387,7 +400,7 @@ export default function SpaceIsland({
                 type="button"
                 onClick={handleCreateSession}
                 disabled={creatingSession}
-                class="flex-shrink-0 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                class="flex-shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Create session"
                 title="Create session"
               >
@@ -411,6 +424,25 @@ export default function SpaceIsland({
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceSessionsPage spaceId={spaceId} />
+            </Suspense>
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
+  }
+
+  if (viewMode === 'agents' && space) {
+    return (
+      <>
+        <div
+          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          data-testid="space-agents-view"
+        >
+          <SpacePageHeader pageTitle="Agents" />
+          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Suspense fallback={lazyFallback}>
+              <SpaceLongHorizonAgents spaceId={spaceId} />
             </Suspense>
           </div>
         </div>

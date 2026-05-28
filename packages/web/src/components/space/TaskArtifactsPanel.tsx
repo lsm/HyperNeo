@@ -107,9 +107,9 @@ function SectionHeader({
 }) {
   return (
     <div class="px-4 py-2 flex items-center justify-between border-b border-dark-800">
-      <span class="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</span>
+      <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">{label}</span>
       {meta && (
-        <span class="text-xs text-gray-600 font-mono" data-testid={metaTestId}>
+        <span class="text-xs text-gray-400 font-mono" data-testid={metaTestId}>
           {meta}
         </span>
       )}
@@ -148,7 +148,7 @@ function TodoStatusIcon({ status }: { status: TodoItem['status'] }) {
   }
   return (
     <svg
-      class="w-3.5 h-3.5 text-gray-600 flex-shrink-0"
+      class="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -170,7 +170,7 @@ function FileRow({ file, onClick }: { file: FileDiffStat; onClick: () => void })
       data-file-path={file.path}
     >
       <svg
-        class="w-3.5 h-3.5 text-gray-500 flex-shrink-0"
+        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -193,7 +193,7 @@ function FileRow({ file, onClick }: { file: FileDiffStat; onClick: () => void })
         <span class="text-red-400">-{file.deletions}</span>
       </span>
       <svg
-        class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400"
+        class="w-3 h-3 text-gray-400 flex-shrink-0 group-hover:text-gray-400"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -273,7 +273,7 @@ function CommitFilesView({
         </button>
         <div class="flex-1 min-w-0">
           <p class="text-xs text-gray-300 truncate">{commit.message}</p>
-          <p class="text-xs text-gray-600 font-mono">{shortSha}</p>
+          <p class="text-xs text-gray-400 font-mono">{shortSha}</p>
         </div>
       </div>
 
@@ -291,7 +291,7 @@ function CommitFilesView({
         {!loading && !error && (
           <div class="px-2 py-1 space-y-0.5">
             {files.length === 0 ? (
-              <p class="px-2 py-3 text-sm text-gray-500">No files changed</p>
+              <p class="px-2 py-3 text-sm text-gray-400">No files changed</p>
             ) : (
               files.map((file) => (
                 <FileRow key={file.path} file={file} onClick={() => onFileClick(file.path)} />
@@ -521,7 +521,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
       <>
         <span class="text-green-400">+{uncommitted.totalAdditions}</span>
         <span class="text-red-400 ml-1">-{uncommitted.totalDeletions}</span>
-        <span class="text-gray-600 ml-1.5">
+        <span class="text-gray-400 ml-1.5">
           {uncommitted.files.length} {uncommitted.files.length === 1 ? 'file' : 'files'}
         </span>
       </>
@@ -544,7 +544,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 {todosByAgent.map(({ label, todos }, agentIdx) => (
                   <div key={agentIdx}>
                     {todosByAgent.length > 1 && (
-                      <p class="px-4 pt-2 pb-0.5 text-xs text-gray-600 font-medium">{label}</p>
+                      <p class="px-4 pt-2 pb-0.5 text-xs text-gray-400 font-medium">{label}</p>
                     )}
                     {[
                       ...todos.filter((t) => t.status === 'in_progress'),
@@ -559,7 +559,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                           class={cn(
                             'text-xs leading-relaxed',
                             todo.status === 'completed'
-                              ? 'text-gray-600 line-through'
+                              ? 'text-gray-400 line-through'
                               : 'text-gray-300'
                           )}
                         >
@@ -611,7 +611,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 {!commitsLoading && !commitsError && (
                   <div class="px-2 py-1 space-y-0.5" data-testid="artifacts-commits-list">
                     {!commitsData?.commits.length ? (
-                      <p class="px-2 py-3 text-sm text-gray-500">No commits yet</p>
+                      <p class="px-2 py-3 text-sm text-gray-400">No commits yet</p>
                     ) : (
                       commitsData.commits.map((commit) => {
                         const ghCommitUrl = commitsData.repoUrl
@@ -629,7 +629,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                             data-testid="artifacts-commit-row"
                           >
                             <svg
-                              class="w-3.5 h-3.5 text-gray-500 flex-shrink-0 mt-0.5"
+                              class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -645,7 +645,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                               <p class="text-xs text-gray-300 truncate group-hover:text-gray-100">
                                 {commit.message}
                               </p>
-                              <p class="text-xs text-gray-600 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                              <p class="text-xs text-gray-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
                                 {/* SHA — links to GitHub when repoUrl is available */}
                                 {ghCommitUrl ? (
                                   <a
@@ -663,7 +663,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                                 )}
                                 {commit.author && (
                                   <span
-                                    class="font-sans text-gray-600 truncate"
+                                    class="font-sans text-gray-400 truncate"
                                     data-testid="artifacts-commit-author"
                                   >
                                     {commit.author}
@@ -671,7 +671,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                                 )}
                                 {commit.timestamp > 0 && (
                                   <span
-                                    class="font-sans text-gray-700"
+                                    class="font-sans text-gray-400"
                                     data-testid="artifacts-commit-time"
                                   >
                                     {relativeTime(commit.timestamp)}
@@ -693,7 +693,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                               )}
                             </span>
                             <svg
-                              class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400 mt-0.5"
+                              class="w-3 h-3 text-gray-400 flex-shrink-0 group-hover:text-gray-400 mt-0.5"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -733,7 +733,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 {!uncommittedLoading && !uncommittedError && uncommitted && (
                   <div class="py-1" data-testid="artifacts-file-list">
                     {uncommitted.files.length === 0 ? (
-                      <p class="px-4 py-3 text-sm text-gray-500" data-testid="artifacts-no-files">
+                      <p class="px-4 py-3 text-sm text-gray-400" data-testid="artifacts-no-files">
                         No uncommitted changes
                       </p>
                     ) : (
@@ -758,7 +758,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 label="Files Touched"
                 meta={
                   fileOps.length ? (
-                    <span class="text-gray-600">
+                    <span class="text-gray-400">
                       {fileOps.length} file{fileOps.length === 1 ? '' : 's'} · not a git repo
                     </span>
                   ) : undefined
@@ -766,7 +766,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
               />
               <div class="py-1" data-testid="artifacts-file-list">
                 {fileOps.length === 0 ? (
-                  <p class="px-4 py-3 text-sm text-gray-500">No files written or edited yet</p>
+                  <p class="px-4 py-3 text-sm text-gray-400">No files written or edited yet</p>
                 ) : (
                   <div class="px-2 space-y-0.5">
                     {fileOps.map((op) => {

@@ -257,7 +257,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Description
-            <span class="text-gray-500 text-xs ml-2">(optional)</span>
+            <span class="text-gray-400 text-xs ml-2">(optional)</span>
           </label>
           <textarea
             value={description}
@@ -420,7 +420,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 
             {/* Preview */}
             {preview && (
-              <div class="text-xs text-gray-500 bg-dark-900/50 rounded px-3 py-2 border border-dark-700">
+              <div class="text-xs text-gray-400 bg-dark-900/50 rounded px-3 py-2 border border-dark-700">
                 {preview}
               </div>
             )}

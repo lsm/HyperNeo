@@ -16,8 +16,8 @@ import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
-import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 import { Dropdown } from '../ui/Dropdown';
+import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 type LegacyTaskFilterTab = TaskFilterTab | 'archived';
@@ -203,8 +203,8 @@ function TabButton({
       ? 'text-red-400 border-b-2 border-red-400'
       : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
     gray: isActive
-      ? 'text-gray-500 border-b-2 border-gray-500'
-      : 'text-gray-500 hover:text-gray-400 border-b-2 border-transparent',
+      ? 'text-gray-400 border-b-2 border-gray-500'
+      : 'text-gray-400 hover:text-gray-400 border-b-2 border-transparent',
   };
 
   return (
@@ -251,9 +251,8 @@ function MoreTabsDropdown({
       items={[]}
       isOpen={isOpen}
       onOpenChange={setIsOpen}
-      class="sm:hidden"
       customContent={
-        <div class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[180px]">
+        <div class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[160px]">
           {tabs.map((tab) => (
             <button
               key={tab.key}
@@ -315,7 +314,7 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
   return (
     <div class="flex flex-col items-center justify-center py-12 text-center">
       <p class="text-sm text-gray-400 font-medium">{title}</p>
-      <p class="text-xs text-gray-500 mt-1">{description}</p>
+      <p class="text-xs text-gray-400 mt-1">{description}</p>
     </div>
   );
 }
@@ -350,7 +349,7 @@ function TaskDependencyBadges({
 
   return (
     <div class="flex items-center gap-1 flex-wrap mt-1" data-testid="task-dependency-badges">
-      <span class="text-xs text-gray-500 mr-0.5">deps:</span>
+      <span class="text-xs text-gray-400 mr-0.5">deps:</span>
       {visible.map((depId) => {
         const dep = taskById.get(depId);
         const isDone = dep?.status === 'done';
@@ -466,7 +465,7 @@ function TaskGroup({
     purple: 'text-purple-400',
     green: 'text-green-400',
     red: 'text-red-400',
-    gray: 'text-gray-500',
+    gray: 'text-gray-400',
   };
 
   const borderStyles: Record<string, string> = {
@@ -503,7 +502,7 @@ function TaskGroup({
       )}
     </div>
   ) : loading && tasks.length === 0 ? (
-    <div class="px-4 py-6 text-xs text-gray-500" data-testid="task-group-loading" aria-busy="true">
+    <div class="px-4 py-6 text-xs text-gray-400" data-testid="task-group-loading" aria-busy="true">
       Loading…
     </div>
   ) : (
@@ -586,7 +585,7 @@ export function TaskGroupPagination({
       >
         ← Prev
       </button>
-      <span class="text-xs text-gray-500" data-testid="task-group-range">
+      <span class="text-xs text-gray-400" data-testid="task-group-range">
         Showing {start}–{end} of {total}
       </span>
       <button
@@ -629,9 +628,9 @@ function TaskItem({
             </span>
           </div>
           <div class="flex items-center gap-2 mt-1">
-            <span class="text-xs text-gray-500">{STATUS_LABEL[task.status] ?? task.status}</span>
+            <span class="text-xs text-gray-400">{STATUS_LABEL[task.status] ?? task.status}</span>
             {task.updatedAt > 0 && (
-              <span class="text-xs text-gray-600">{getRelativeTime(task.updatedAt)}</span>
+              <span class="text-xs text-gray-400">{getRelativeTime(task.updatedAt)}</span>
             )}
           </div>
           <TaskDependencyBadges
@@ -646,7 +645,7 @@ function TaskItem({
           )}
         </div>
         <div class="ml-4 flex items-center flex-shrink-0">
-          {isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
+          {isClickable && <span class="text-xs text-gray-400">&rarr;</span>}
         </div>
       </div>
     </div>
@@ -720,30 +719,52 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
   // We always render the tab strip so users can navigate to the Scheduled tab
   // even when no tasks have been spawned yet.
   const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
+
+  const draftTab: TabConfig | null =
+    counts.draft > 0 ? { key: 'draft', label: 'Drafts', count: counts.draft } : null;
+  const scheduledTab: TabConfig = { key: 'scheduled', label: 'Scheduled', count: counts.scheduled };
+  const completedTab: TabConfig = {
+    key: 'completed',
+    label: 'Completed',
+    count: counts.completed,
+    variant: 'green',
+  };
   const primaryTabs: TabConfig[] = [
     { key: 'action', label: 'Action', count: counts.action, variant: 'amber' },
     { key: 'active', label: 'Active', count: counts.active },
   ];
-  const secondaryTabs: TabConfig[] = [
-    ...(counts.draft > 0 ? [{ key: 'draft' as const, label: 'Drafts', count: counts.draft }] : []),
-    { key: 'completed', label: 'Completed', count: counts.completed, variant: 'green' },
-  ];
-  const overflowTabs: TabConfig[] = [
-    ...secondaryTabs,
-    { key: 'scheduled', label: 'Scheduled', count: counts.scheduled },
-  ];
-  const desktopTabs = [
+  const allTabs: TabConfig[] = [
     ...primaryTabs,
-    ...secondaryTabs,
-    { key: 'scheduled' as const, label: 'Scheduled', count: counts.scheduled },
+    ...(draftTab ? [draftTab] : []),
+    scheduledTab,
+    completedTab,
   ];
+
+  // JS-driven mobile tab count — avoids Tailwind arbitrary-breakpoint ordering issues
+  const [mobileTabCount, setMobileTabCount] = useState(() => {
+    const w = typeof window !== 'undefined' ? window.innerWidth : 0;
+    return w > 420 ? 4 : w > 320 ? 3 : 2;
+  });
+
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      setMobileTabCount(w > 420 ? 4 : w > 320 ? 3 : 2);
+    };
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  const mobileTabs = allTabs.slice(0, mobileTabCount);
+  const mobileOverflowTabs = allTabs.slice(mobileTabCount);
 
   return (
     <div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
       <div class="min-h-[calc(100%+1px)] space-y-6">
         <div class="flex border-b border-dark-700">
+          {/* Mobile (<640px): JS-driven count */}
           <div class="flex sm:hidden">
-            {primaryTabs.map((tab) => (
+            {mobileTabs.map((tab) => (
               <TabButton
                 key={tab.key}
                 label={tab.label}
@@ -753,10 +774,13 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
                 variant={tab.variant}
               />
             ))}
-            <MoreTabsDropdown tabs={overflowTabs} activeTab={activeTab} spaceId={spaceId} />
+            {mobileOverflowTabs.length > 0 && (
+              <MoreTabsDropdown tabs={mobileOverflowTabs} activeTab={activeTab} spaceId={spaceId} />
+            )}
           </div>
+          {/* Desktop (640px+): all tabs inline */}
           <div class="hidden sm:flex">
-            {desktopTabs.map((tab) => (
+            {allTabs.map((tab) => (
               <TabButton
                 key={tab.key}
                 label={tab.label}
@@ -772,7 +796,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
         {showGlobalEmpty ? (
           <div class="flex flex-col items-center justify-center py-16 text-center">
             <svg
-              class="w-10 h-10 text-gray-700 mb-3"
+              class="w-10 h-10 text-gray-400 mb-3"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -785,7 +809,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
               />
             </svg>
             <p class="text-sm text-gray-400 font-medium">No tasks yet</p>
-            <p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
+            <p class="text-xs text-gray-400 mt-1">Create a task to get started</p>
           </div>
         ) : activeTab === 'scheduled' ? (
           schedules.length === 0 ? (
@@ -871,13 +895,13 @@ function ScheduleList({
                     ? 'bg-green-900/40 text-green-400'
                     : s.status === 'paused'
                       ? 'bg-amber-900/40 text-amber-400'
-                      : 'bg-gray-800 text-gray-500'
+                      : 'bg-gray-800 text-gray-400'
                 }`}
               >
                 {s.status}
               </span>
             </div>
-            <div class="mt-1 flex items-center gap-3 text-xs text-gray-500">
+            <div class="mt-1 flex items-center gap-3 text-xs text-gray-400">
               <span title="Trigger">{formatTrigger(s)}</span>
               {s.nextRunAt && s.status === 'active' && (
                 <span>next: {formatNextRun(s.nextRunAt)}</span>

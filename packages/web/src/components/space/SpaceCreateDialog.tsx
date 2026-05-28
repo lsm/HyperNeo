@@ -131,7 +131,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
             Workspace Path
             <span class="text-red-400 ml-1">*</span>
           </label>
-          <p class="text-xs text-gray-500 mb-2">
+          <p class="text-xs text-gray-400 mb-2">
             Absolute path to the project directory this Space operates on.
           </p>
           <div class="flex gap-2">
@@ -177,7 +177,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Description
-            <span class="text-gray-500 text-xs ml-2">(optional)</span>
+            <span class="text-gray-400 text-xs ml-2">(optional)</span>
           </label>
           <textarea
             value={description}

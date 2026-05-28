@@ -4,7 +4,6 @@ import {
   navSectionSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
-  currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   type NavSection,
 } from '../lib/signals.ts';
@@ -18,6 +17,8 @@ import {
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
 } from '../lib/router.ts';
+import { spaceStore } from '../lib/space-store';
+import { isActionRequired, isActiveTask } from '../lib/task-filters';
 
 interface TabItem {
   id:
@@ -175,8 +176,11 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
   const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 
   const spaceViewMode = currentSpaceViewModeSignal.value;
-  const spaceSessionId = currentSpaceSessionIdSignal.value;
   const spaceTaskId = currentSpaceTaskIdSignal.value;
+
+  const tasks = spaceStore.tasks.value;
+  const actionCount = tasks.filter(isActionRequired).length;
+  const activeCount = tasks.filter(isActiveTask).length;
 
   const tabs = isInSpaceContext ? SPACE_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
 
@@ -195,7 +199,8 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
         if (spaceId) navigateToSpace(spaceId);
         break;
       case 'space-tasks':
-        if (spaceId) navigateToSpaceTasks(spaceId);
+        if (spaceId)
+          navigateToSpaceTasks(spaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
         break;
       case 'space-sessions':
         if (spaceId) navigateToSpaceSessions(spaceId);
@@ -213,14 +218,9 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
     if (isInSpaceContext) {
       if (id === 'space-settings') return spaceViewMode === 'configure';
       if (id === 'space-sessions') return spaceViewMode === 'sessions';
-      if (id === 'space-agent') return spaceSessionId === `space:chat:${spaceId}`;
+      if (id === 'space-agent') return spaceViewMode === 'agents';
       if (id === 'space-tasks') return spaceViewMode === 'tasks' && spaceTaskId === null;
-      if (id === 'space-overview')
-        return (
-          spaceViewMode === 'overview' &&
-          spaceTaskId === null &&
-          spaceSessionId !== `space:chat:${spaceId}`
-        );
+      if (id === 'space-overview') return spaceViewMode === 'overview' && spaceTaskId === null;
     }
     return navSection === id;
   };
@@ -253,7 +253,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
               aria-label={tab.label}
               onClick={() => handleTabClick(tab.id)}
               class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
-                isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
+                isActive ? 'text-indigo-400' : 'text-gray-400 active:text-gray-300'
               }`}
             >
               <tab.icon />

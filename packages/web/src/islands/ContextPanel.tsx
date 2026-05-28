@@ -4,7 +4,6 @@ import {
   contextPanelOpenSignal,
   currentSpaceIdSignal,
   currentSpaceConfigureTabSignal,
-  currentSpaceSessionIdSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
   settingsSectionSignal,
@@ -191,8 +190,6 @@ export function ContextPanel() {
   const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
-  const currentSpaceSessionId = currentSpaceSessionIdSignal.value;
-
   // When a specific space is selected in the spaces section, show space-specific panel
   const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
   const headerTitle = spaceStore.space.value?.name ?? 'Space';
@@ -202,30 +199,29 @@ export function ContextPanel() {
   };
 
   const handleSpaceSwitch = (spaceId: string) => {
-    if (currentSpaceSessionId === `space:chat:${currentSpaceId}`) {
-      navigateToSpaceAgent(spaceId);
-    } else {
-      switch (currentSpaceViewMode) {
-        case 'tasks':
-          navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
-          break;
-        case 'sessions':
-          navigateToSpaceSessions(spaceId);
-          break;
-        case 'goals':
-          navigateToSpaceGoals(spaceId);
-          break;
-        case 'forge':
-          navigateToSpaceForge(spaceId);
-          break;
-        case 'configure':
-          navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
-          break;
-        case 'overview':
-        default:
-          navigateToSpace(spaceId);
-          break;
-      }
+    switch (currentSpaceViewMode) {
+      case 'agents':
+        navigateToSpaceAgent(spaceId);
+        break;
+      case 'tasks':
+        navigateToSpaceTasks(spaceId, currentSpaceTasksFilterTab);
+        break;
+      case 'sessions':
+        navigateToSpaceSessions(spaceId);
+        break;
+      case 'goals':
+        navigateToSpaceGoals(spaceId);
+        break;
+      case 'forge':
+        navigateToSpaceForge(spaceId);
+        break;
+      case 'configure':
+        navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);
+        break;
+      case 'overview':
+      default:
+        navigateToSpace(spaceId);
+        break;
     }
     contextPanelOpenSignal.value = false;
   };
@@ -249,7 +245,7 @@ export function ContextPanel() {
       {activeSpaces.length === 0 ? (
         <div class="px-4 py-8 text-center">
           <svg
-            class="w-10 h-10 mx-auto text-gray-700 mb-3"
+            class="w-10 h-10 mx-auto text-gray-400 mb-3"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -262,7 +258,7 @@ export function ContextPanel() {
             />
           </svg>
           <p class="text-sm font-medium text-gray-300">No spaces yet</p>
-          <p class="text-xs text-gray-500 mt-1">
+          <p class="text-xs text-gray-400 mt-1">
             Create a Space to organize agents, missions, and project context.
           </p>
         </div>
@@ -284,7 +280,7 @@ export function ContextPanel() {
                 )}
               >
                 <svg
-                  class="w-5 h-5 flex-shrink-0 text-gray-500"
+                  class="w-5 h-5 flex-shrink-0 text-gray-400"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -299,7 +295,7 @@ export function ContextPanel() {
                 <div class="min-w-0 flex-1">
                   <div class="text-sm font-medium truncate">{space.name}</div>
                   {space.description && (
-                    <div class="text-xs text-gray-500 truncate mt-0.5">{space.description}</div>
+                    <div class="text-xs text-gray-400 truncate mt-0.5">{space.description}</div>
                   )}
                 </div>
                 {isCurrent && (
@@ -442,21 +438,41 @@ export function ContextPanel() {
           )}
           {navSection === 'spaces' && !isSpaceDetail && spaceSwitcherContent}
           {navSection === 'spaces' && isSpaceDetail && (
-            <>
-              <div class="md:hidden flex-1 flex flex-col overflow-hidden">
-                {spaceSwitcherContent}
+            <div class="flex-1 flex flex-col overflow-hidden">
+              <div class="md:hidden px-2 pt-2 pb-1 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigateToSpaces();
+                    contextPanelOpenSignal.value = false;
+                  }}
+                  class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors"
+                >
+                  <svg
+                    class="w-4 h-4 flex-shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width={2}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                  All Spaces
+                </button>
               </div>
-              <div class="hidden md:flex flex-1 overflow-hidden flex-col">
-                <SpaceDetailPanel
-                  spaceId={currentSpaceId!}
-                  onNavigate={() => (contextPanelOpenSignal.value = false)}
-                />
-              </div>
-            </>
+              <SpaceDetailPanel
+                spaceId={currentSpaceId!}
+                onNavigate={() => (contextPanelOpenSignal.value = false)}
+              />
+            </div>
           )}
           {navSection === 'settings' && (
             <div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
-              <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+              <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
                 Settings
               </div>
               <nav class="space-y-1" aria-label="Settings sections">
@@ -477,7 +493,7 @@ export function ContextPanel() {
                       <span
                         class={cn(
                           'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
-                          isActive ? section.accent : 'bg-white/[0.03] text-gray-500'
+                          isActive ? section.accent : 'bg-white/[0.03] text-gray-400'
                         )}
                       >
                         <SectionIcon type={section.icon} />

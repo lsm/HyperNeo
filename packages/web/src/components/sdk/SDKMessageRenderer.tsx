@@ -60,10 +60,6 @@ interface Props {
   ) => void;
   onRewind?: (uuid: string) => void; // Rewind to this message
   rewindingMessageUuid?: string | null; // UUID of message currently being rewound (shows spinner)
-  // Rewind mode props
-  rewindMode?: boolean;
-  selectedMessages?: Set<string>;
-  onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
   /** When true, renders all message types without skipping (for task conversation timelines) */
   taskContext?: boolean;
   /**
@@ -193,9 +189,6 @@ function SDKMessageRendererImpl({
   onQuestionResolved,
   onRewind,
   rewindingMessageUuid,
-  rewindMode,
-  selectedMessages,
-  onMessageCheckboxChange,
   taskContext,
   showSubagentMessages = false,
   flattenSubagentTools = false,
@@ -258,11 +251,8 @@ function SDKMessageRendererImpl({
         message={sdkMessage}
         sessionInfo={sessionInfo}
         sessionId={sessionId}
-        onRewind={rewindMode ? undefined : onRewind}
-        rewindingMessageUuid={rewindMode ? undefined : rewindingMessageUuid}
-        rewindMode={rewindMode}
-        selectedMessages={selectedMessages}
-        onMessageCheckboxChange={onMessageCheckboxChange}
+        onRewind={onRewind}
+        rewindingMessageUuid={rewindingMessageUuid}
         showToolResultMessages={showToolResultUserMessages}
       />
     );
@@ -276,9 +266,6 @@ function SDKMessageRendererImpl({
         resolvedQuestions={resolvedQuestions}
         pendingQuestion={pendingQuestion}
         onQuestionResolved={onQuestionResolved}
-        rewindMode={rewindMode}
-        selectedMessages={selectedMessages}
-        onMessageCheckboxChange={onMessageCheckboxChange}
         flattenSubagentTools={flattenSubagentTools}
         isRunning={isRunning}
       />
@@ -335,9 +322,6 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
     prev.onQuestionResolved === next.onQuestionResolved &&
     prev.onRewind === next.onRewind &&
     prev.rewindingMessageUuid === next.rewindingMessageUuid &&
-    prev.rewindMode === next.rewindMode &&
-    prev.selectedMessages === next.selectedMessages &&
-    prev.onMessageCheckboxChange === next.onMessageCheckboxChange &&
     prev.taskContext === next.taskContext &&
     prev.showSubagentMessages === next.showSubagentMessages &&
     prev.flattenSubagentTools === next.flattenSubagentTools &&

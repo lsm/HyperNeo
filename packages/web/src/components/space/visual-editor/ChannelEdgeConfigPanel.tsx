@@ -119,7 +119,7 @@ export function ChannelEdgeConfigPanel({
         <label class="text-xs font-medium text-gray-400">Gate</label>
         {!currentGate ? (
           <div class="space-y-2">
-            <p class="text-xs text-gray-600">No gate — always open</p>
+            <p class="text-xs text-gray-400">No gate — always open</p>
             <button
               type="button"
               data-testid={`channel-edge-add-gate-${index}`}
@@ -155,7 +155,7 @@ export function ChannelEdgeConfigPanel({
               {currentGate.script && (
                 <span
                   data-testid="gate-script-indicator"
-                  class="ml-auto text-gray-500 shrink-0"
+                  class="ml-auto text-gray-400 shrink-0"
                   title={`Script: ${currentGate.script.interpreter}`}
                 >
                   {'\u26A1'}
@@ -165,7 +165,7 @@ export function ChannelEdgeConfigPanel({
 
             {/* Field summary rows */}
             {(currentGate.fields ?? []).length === 0 && !currentGate.script ? (
-              <p class="text-xs text-gray-600 italic">No fields defined yet</p>
+              <p class="text-xs text-gray-400 italic">No fields defined yet</p>
             ) : (
               <div class="space-y-1">
                 {(currentGate.fields ?? []).map((field) => (
@@ -180,7 +180,7 @@ export function ChannelEdgeConfigPanel({
                       {fieldTypeIcon(field.type)}
                     </span>
                     <span class="font-mono text-gray-200 truncate">{field.name}</span>
-                    <span class="text-gray-500 ml-auto text-[11px] truncate">
+                    <span class="text-gray-400 ml-auto text-[11px] truncate">
                       {fieldCheckLabel(field)}
                     </span>
                   </div>

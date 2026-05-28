@@ -34,12 +34,6 @@ export interface InputActionsMenuProps {
   onOpenTools: () => void;
   /** Trigger file input */
   onAttachFile: () => void;
-  /** Enter rewind mode */
-  onEnterRewindMode?: () => void;
-  /** Whether rewind mode is currently active */
-  rewindMode?: boolean;
-  /** Exit rewind mode */
-  onExitRewindMode?: () => void;
   /** Whether actions are disabled */
   disabled?: boolean;
   /** Ref to the plus button for click-outside detection */
@@ -60,9 +54,6 @@ export function InputActionsMenu({
   onAutoScrollChange,
   onOpenTools,
   onAttachFile,
-  onEnterRewindMode,
-  rewindMode,
-  onExitRewindMode,
   disabled = false,
   buttonRef: externalButtonRef,
 }: InputActionsMenuProps) {
@@ -88,15 +79,6 @@ export function InputActionsMenu({
       onAttachFile();
       onClose();
     }
-  };
-
-  const handleRewindModeClick = () => {
-    if (rewindMode) {
-      onExitRewindMode?.();
-    } else {
-      onEnterRewindMode?.();
-    }
-    onClose();
   };
 
   return (
@@ -201,47 +183,6 @@ export function InputActionsMenu({
               />
             </svg>
             <span class="text-sm">Tools</span>
-          </button>
-
-          <div class="h-px bg-dark-600" />
-
-          {/* Rewind Mode */}
-          <button
-            type="button"
-            onClick={handleRewindModeClick}
-            class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50"
-          >
-            <span class="flex items-center gap-3">
-              <svg
-                class="w-5 h-5 text-amber-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                />
-              </svg>
-              <span class="text-sm">{rewindMode ? 'Exit Rewind Mode' : 'Rewind Mode'}</span>
-            </span>
-            {rewindMode && (
-              <svg
-                class="w-4 h-4 text-amber-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2.5}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            )}
           </button>
 
           <div class="h-px bg-dark-600" />

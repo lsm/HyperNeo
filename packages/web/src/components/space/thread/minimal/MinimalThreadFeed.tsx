@@ -867,7 +867,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
           <span class={`${toolColor} font-semibold`}>{toolLabel}</span>
           {preview ? (
             <>
-              <span class="text-gray-600">: </span>
+              <span class="text-gray-400">: </span>
               <span class={bodyClass}>{preview}</span>
             </>
           ) : null}
@@ -918,7 +918,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
         data-testid="minimal-thread-roster-entry"
         data-roster-kind="handoff"
       >
-        <span class="shrink-0 text-gray-500" aria-hidden="true">
+        <span class="shrink-0 text-gray-400" aria-hidden="true">
           ↪
         </span>
         <span class={bodyClass}>{entry.text}</span>
@@ -937,7 +937,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
       data-roster-kind="message"
     >
       <svg
-        class="w-3 h-3 shrink-0 text-gray-500 self-center"
+        class="w-3 h-3 shrink-0 text-gray-400 self-center"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -1032,7 +1032,7 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
       style={{ borderColor: color }}
       data-testid="minimal-thread-active-rail"
     >
-      <div class="text-[11px] text-gray-500 mt-0.5" data-testid="minimal-thread-active-meta">
+      <div class="text-[11px] text-gray-400 mt-0.5" data-testid="minimal-thread-active-meta">
         {hasSummaryCounts ? (
           <>
             ✦ {turn.thinkingEntries} · 💬 {turn.messageEntries} · ⚙ {turn.toolEntries} ·{' '}
@@ -1056,7 +1056,7 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
           ))}
         </div>
       ) : null}
-      <div class="mt-1.5 text-[11px] text-gray-600" data-testid="minimal-thread-last-event">
+      <div class="mt-1.5 text-[11px] text-gray-400" data-testid="minimal-thread-last-event">
         last event {lastEventSec < 1 ? 'now' : `${formatDuration(lastEventSec)} ago`} ·{' '}
         {formatClock(turn.lastEventAt)}
       </div>
@@ -1117,12 +1117,12 @@ function AgentTurnRow({
             {shortAgentName(turn.agent)}
           </span>
           {turn.state === 'active' ? (
-            <span class="text-xs text-gray-500 leading-tight">{formatClock(turn.startedAt)}</span>
+            <span class="text-xs text-gray-400 leading-tight">{formatClock(turn.startedAt)}</span>
           ) : null}
         </div>
         {turn.state === 'completed' ? (
           <div
-            class="text-[11px] text-gray-500 leading-tight"
+            class="text-[11px] text-gray-400 leading-tight"
             data-testid="minimal-thread-agent-meta"
           >
             {turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
@@ -1131,7 +1131,7 @@ function AgentTurnRow({
         ) : (
           <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <StatusPill color={color} status={turn.status} />
-            <span class="text-[11px] text-gray-500 leading-tight">
+            <span class="text-[11px] text-gray-400 leading-tight">
               {turn.messages} {turn.messages === 1 ? 'message' : 'messages'}
             </span>
           </div>

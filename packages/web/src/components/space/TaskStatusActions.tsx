@@ -132,7 +132,7 @@ export function TaskStatusActions({
 
   if (actions.length === 0) {
     return (
-      <p class="text-xs text-gray-500" data-testid="task-status-no-actions">
+      <p class="text-xs text-gray-400" data-testid="task-status-no-actions">
         No status actions available.
       </p>
     );
