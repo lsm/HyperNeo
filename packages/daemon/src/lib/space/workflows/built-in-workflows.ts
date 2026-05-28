@@ -1651,8 +1651,15 @@ function mergeNodeStructuralFieldsFromTemplate(
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
   const existingNodeNames = new Set(existingNodes.map((node) => node.name));
+  const existingAgentNames = new Set(
+    existingNodes.flatMap((node) => node.agents.map((agent) => agent.name).filter(Boolean))
+  );
   const missingTemplateNodes = templateNodes
-    .filter((node) => !existingNodeNames.has(node.name))
+    .filter(
+      (node) =>
+        !existingNodeNames.has(node.name) &&
+        !node.agents.some((agent) => agent.name && existingAgentNames.has(agent.name))
+    )
     .map((node) => ({
       ...node,
       id: generateUUID(),

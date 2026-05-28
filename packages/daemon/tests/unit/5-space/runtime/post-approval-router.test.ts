@@ -256,6 +256,54 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned[0].targetAgent).toBe('reviewer');
     expect(delegates.spawned[0].kickoffMessage).toContain('Merge Ship it.');
     expect(delegates.spawned[0].kickoffMessage).not.toContain('Legacy route');
+    const final = taskRepo.getTask(task.id);
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+  });
+
+  test('submitting node with no postApproval bypasses workflow end-node route', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const workflow = stubWorkflow({
+      startNodeId: 'n1',
+      endNodeId: 'n2',
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Validation Complete',
+          agents: [{ agentId: 'coder-id', name: 'validator' }],
+        },
+        {
+          id: 'n2',
+          name: 'Review',
+          agents: [{ agentId: 'reviewer-id', name: 'reviewer' }],
+          postApproval: {
+            targetAgent: 'reviewer',
+            instructions: 'Merge {{task_title}}.',
+          },
+        },
+      ],
+    });
+
+    const result = await router.route(
+      { ...task, pendingCompletionSubmittedByNodeId: 'n1' },
+      workflow,
+      {
+        approvalSource: 'human',
+        task_title: task.title,
+      }
+    );
+
+    expect(result.mode).toBe('no-route');
+    expect(delegates.spawned).toHaveLength(0);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.status).toBe('done');
+    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
   });
 
   test('already-routed (live session) → no re-spawn', async () => {

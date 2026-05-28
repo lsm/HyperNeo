@@ -245,17 +245,13 @@ export class SpaceTaskManager {
       updates.approvedAt = null;
     }
 
-    // Clear pending-completion fields on any transition out of `review`.
+    // Clear pending-completion fields on terminal/non-approval exits from `review`.
     //
-    // Mirrors (and replaces) the explicit follow-up `updateTask` cleanups
-    // formerly issued by `approvePendingCompletion` (both branches) and the
-    // agent `approve_task` tool. Centralising here closes the exit-side
-    // counterpart of the unified `submitTaskForReview` entry: every task
-    // landing in `review` carries the pending-* fields, and every task
-    // leaving `review` (for any reason — Approve via banner, Reopen, Archive,
-    // review→done by RPC) gets those fields nulled in the same SQL UPDATE
-    // that flips the status. No banner-on-non-review state can persist.
-    if (task.status === 'review' && newStatus !== 'review') {
+    // Keep `pendingCompletionSubmittedByNodeId` while transitioning into
+    // `approved`: PostApprovalRouter still needs the submitting workflow node to
+    // choose the node-level route. The router clears pending state after route
+    // dispatch. Other exits still clear immediately so banner state cannot leak.
+    if (task.status === 'review' && newStatus !== 'review' && newStatus !== 'approved') {
       updates.pendingCheckpointType = null;
       updates.pendingCompletionSubmittedByNodeId = null;
       updates.pendingCompletionSubmittedAt = null;

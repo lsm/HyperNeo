@@ -269,6 +269,10 @@ export class PostApprovalRouter {
         ...outcomeUpdates,
         status: 'done',
         completedAt: Date.now(),
+        pendingCheckpointType: null,
+        pendingCompletionSubmittedByNodeId: null,
+        pendingCompletionSubmittedAt: null,
+        pendingCompletionReason: null,
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
@@ -360,6 +364,10 @@ export class PostApprovalRouter {
     });
 
     this.deps.taskRepo.updateTask(task.id, {
+      pendingCheckpointType: null,
+      pendingCompletionSubmittedByNodeId: null,
+      pendingCompletionSubmittedAt: null,
+      pendingCompletionReason: null,
       postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,

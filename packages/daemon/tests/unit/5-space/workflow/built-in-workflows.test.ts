@@ -2043,7 +2043,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
   });
 
-  test('terminal-node detection treats validation feedback as terminal and wildcard channels as non-terminal', () => {
+  test('terminal-node detection treats validation feedback as terminal and outbound channels as non-terminal', () => {
     const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const validationNode = CODING_WORKFLOW.nodes.find(
       (node) => node.name === 'Validation Complete'
@@ -2060,6 +2060,40 @@ describe('seedBuiltInWorkflows()', () => {
         validationNode.id
       )
     ).toBe(false);
+    expect(
+      isWorkflowTerminalNode(
+        {
+          ...CODING_WORKFLOW,
+          channels: [{ from: 'coder', to: 'Review', label: 'Coder → Review' }],
+        },
+        codingNode.id
+      )
+    ).toBe(false);
+  });
+
+  test('re-stamp does not append duplicate template nodes over renamed built-in nodes', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((node) =>
+        node.id === reviewNode.id ? { ...node, name: 'Human Review' } : node
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-node-drift',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.nodes.filter((node) => node.name === 'Review')).toHaveLength(0);
+    expect(
+      after.nodes.filter((node) => node.agents.some((agent) => agent.name === 'reviewer'))
+    ).toHaveLength(1);
   });
 
   test('re-stamp preserves existing node rows, layout, and updates toolGuards in place', () => {

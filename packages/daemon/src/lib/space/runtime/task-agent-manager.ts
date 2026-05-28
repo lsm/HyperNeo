@@ -143,8 +143,14 @@ export function isWorkflowTerminalNode(
   const node = workflow.nodes.find((candidate) => candidate.id === workflowNodeId);
   if (!node) return false;
 
+  const nodeAgents = resolveNodeAgents(node);
+  const fromRefs = new Set([
+    node.name,
+    node.id,
+    ...nodeAgents.flatMap((agent) => [agent.name, agent.agentId, `${node.id}/${agent.name}`]),
+  ]);
   const outgoingChannels = (workflow.channels ?? []).filter(
-    (channel) => channel.from === '*' || channel.from === node.name || channel.from === node.id
+    (channel) => channel.from === '*' || fromRefs.has(channel.from)
   );
   if (outgoingChannels.some((channel) => channel.from === '*')) return false;
   if (outgoingChannels.length === 0) return true;
