@@ -30,6 +30,18 @@ type SchemaRow = {
   sql: string | null;
 };
 
+type IndexListRow = {
+  name: string;
+  unique: number;
+  origin: string;
+  partial: number;
+};
+
+type IndexInfoRow = {
+  seqno: number;
+  name: string;
+};
+
 export const HELPER_SCHEMA_TABLES = [
   'channel_cycles',
   'evolution_episodes',
@@ -164,19 +176,39 @@ function getCheckConstraints(db: Database, tableName: string): string[] {
   return checks.sort();
 }
 
-function getIndexSql(db: Database, tableName: string): string[] {
+function getIndexes(db: Database, tableName: string): string[] {
   return db
-    .query(
-      `SELECT sql
-       FROM sqlite_schema
-       WHERE type = 'index'
-         AND tbl_name = ?
-         AND sql IS NOT NULL
-       ORDER BY name`
-    )
-    .all(tableName)
-    .map((row) => normalizeIndexSql((row as SchemaRow).sql ?? ''))
+    .query(`PRAGMA index_list(${JSON.stringify(tableName)})`)
+    .all()
+    .map((row) => {
+      const index = row as IndexListRow;
+      return [
+        index.unique,
+        index.origin,
+        index.partial,
+        getIndexColumns(db, index.name).join(','),
+        getIndexSql(db, index.name),
+      ].join('|');
+    })
     .sort();
+}
+
+function getIndexColumns(db: Database, indexName: string): string[] {
+  return db
+    .query(`PRAGMA index_info(${JSON.stringify(indexName)})`)
+    .all()
+    .map((row) => {
+      const column = row as IndexInfoRow;
+      return `${column.seqno}:${column.name}`;
+    })
+    .sort();
+}
+
+function getIndexSql(db: Database, indexName: string): string {
+  const row = db
+    .query(`SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = ?`)
+    .get(indexName) as SchemaRow | null;
+  return normalizeIndexSql(row?.sql ?? '');
 }
 
 function normalizeDefaultValue(value: string | null): string {
@@ -249,11 +281,11 @@ export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): s
   }
 
   const extraTables = getTableNames(helperDb).filter(
-    (tableName) => !HELPER_SCHEMA_TABLES.includes(tableName) && prodTables.has(tableName)
+    (tableName) => !HELPER_SCHEMA_TABLES.includes(tableName)
   );
   if (extraTables.length > 0) {
     failures.push(
-      'space-test-db helper has production tables not tracked by HELPER_SCHEMA_TABLES:',
+      'space-test-db helper has tables not tracked by HELPER_SCHEMA_TABLES:',
       formatList(extraTables)
     );
   }
@@ -294,7 +326,7 @@ export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): s
       );
     }
 
-    const indexDiff = diffLists(getIndexSql(prodDb, tableName), getIndexSql(helperDb, tableName));
+    const indexDiff = diffLists(getIndexes(prodDb, tableName), getIndexes(helperDb, tableName));
     if (indexDiff.missing.length > 0 || indexDiff.extra.length > 0) {
       failures.push(
         `space-test-db helper index mismatch for ${tableName}:`,
