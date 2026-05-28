@@ -160,6 +160,11 @@ function appendOllamaMessages(
     return;
   }
 
+  const imageBlock = message.content.find((block) => block.type === 'image');
+  if (imageBlock) {
+    throw new Error('Ollama bridge does not support image content blocks');
+  }
+
   const text = extractText(message.content);
   const toolUses = message.content.filter(
     (block): block is AnthropicContentBlockToolUse => block.type === 'tool_use'
@@ -446,10 +451,19 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
         );
       }
 
-      const requestBody = buildOllamaRequest(body, {
-        toolUseSupported: config.toolUseSupported,
-        modelContextWindow: config.modelContextWindow,
-      });
+      let requestBody: OllamaChatRequest;
+      try {
+        requestBody = buildOllamaRequest(body, {
+          toolUseSupported: config.toolUseSupported,
+          modelContextWindow: config.modelContextWindow,
+        });
+      } catch (error) {
+        return sendJsonError(
+          400,
+          'invalid_request_error',
+          error instanceof Error ? error.message : 'Unsupported request content'
+        );
+      }
       const inputTokens = estimateTokens(
         requestBody.messages
           .map((message) => message.content)

@@ -5,6 +5,9 @@
  * Anthropic-compatible provider bridges.
  */
 
+import type { AnthropicErrorType } from '../shared/error-envelope.js';
+export type { AnthropicErrorType } from '../shared/error-envelope.js';
+
 // ---------------------------------------------------------------------------
 // Anthropic Messages API types (minimal subset needed by the bridge)
 // ---------------------------------------------------------------------------
@@ -227,15 +230,6 @@ export function messageDeltaSSE(
 export function messageStopSSE(): string {
   return sseEvent('message_stop', { type: 'message_stop' });
 }
-
-/** Anthropic-standard error types used in both HTTP envelopes and SSE error events. */
-export type AnthropicErrorType =
-  | 'invalid_request_error'
-  | 'authentication_error'
-  | 'not_found_error'
-  | 'not_implemented_error'
-  | 'api_error'
-  | 'overloaded_error';
 
 export function errorSSE(errorType: AnthropicErrorType, message: string): string {
   return sseEvent('error', { type: 'error', error: { type: errorType, message } });

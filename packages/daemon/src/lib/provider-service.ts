@@ -294,6 +294,16 @@ export class ProviderService {
   }
 
   /**
+   * Get SDK-facing model for title generation.
+   * Defaults to the session model unless the provider declares an override.
+   */
+  async getTitleGenerationModel(providerId: string, sessionModelId: string): Promise<string> {
+    const registry = this.getRegistry();
+    const provider = registry.get(providerId);
+    return provider?.getTitleGenerationModel?.() ?? sessionModelId;
+  }
+
+  /**
    * Get title generation configuration for a provider
    * Returns the model ID, base URL, and API version to use for direct API calls
    */
@@ -316,8 +326,12 @@ export class ProviderService {
 
     const models = await provider.getModels();
 
-    // Use haiku tier model for title generation (fast/cheap)
-    const modelId = provider.getModelForTier('haiku') || models[0]?.id || 'default';
+    // Use provider override when available; otherwise use haiku tier model for title generation (fast/cheap).
+    const modelId =
+      provider.getTitleGenerationModel?.() ||
+      provider.getModelForTier('haiku') ||
+      models[0]?.id ||
+      'default';
 
     // Get base URL from SDK config
     let baseUrl = 'https://api.anthropic.com';

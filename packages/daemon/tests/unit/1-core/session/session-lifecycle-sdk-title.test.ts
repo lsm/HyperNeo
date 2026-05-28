@@ -158,7 +158,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
         workspacePath: '/test',
         status: 'active',
         metadata: { titleGenerated: false, worktreeChoice: undefined },
-        config: {},
+        config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
         worktree: undefined,
       })),
     };
@@ -263,6 +263,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     expect(result.isFallback).toBe(false);
     expect(lastTitleQueryOptions).toBeDefined();
     expect(lastTitleQueryOptions?.thinking).toEqual({ type: 'disabled' });
+  });
+
+  it('should pass the session model to SDK title generation without provider hardcoding', async () => {
+    await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    expect(lastTitleQueryOptions?.model).toBe('claude-sonnet-4-20250514');
   });
 
   it('should extract title from text blocks', async () => {

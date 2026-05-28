@@ -106,6 +106,16 @@ class ThrowingMockProvider extends MockProvider {
   }
 }
 
+class TitleOverrideMockProvider extends MockProvider {
+  constructor() {
+    super('title-override', 'Title Override Provider', true, 'title-');
+  }
+
+  getTitleGenerationModel(): string {
+    return 'title-turbo';
+  }
+}
+
 class BridgeMockProvider extends MockProvider {
   constructor() {
     super('bridge', 'Bridge Provider', true, 'bridge-');
@@ -495,6 +505,22 @@ describe('ProviderService', () => {
     it('should return "default" for unknown provider', async () => {
       const model = await service.getDefaultModelForProvider('unknown' as unknown as ProviderId);
       expect(model).toBe('default');
+    });
+  });
+
+  describe('getTitleGenerationModel', () => {
+    it('should return session model when provider has no title override', async () => {
+      const model = await service.getTitleGenerationModel('glm', 'glm-4.7');
+
+      expect(model).toBe('glm-4.7');
+    });
+
+    it('should return provider title override when configured', async () => {
+      registry.register(new TitleOverrideMockProvider());
+
+      const model = await service.getTitleGenerationModel('title-override', 'title-1');
+
+      expect(model).toBe('title-turbo');
     });
   });
 

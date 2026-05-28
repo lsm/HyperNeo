@@ -1137,10 +1137,12 @@ ${messageText.slice(0, 2000)}`;
       // while provider-specific vars (like ANTHROPIC_BASE_URL for GLM) override
       const mergedEnv = buildSdkQueryEnv(providerEnvVars);
 
+      const titleModelId = await providerService.getTitleGenerationModel(provider, modelId);
+
       const agentQuery = query({
         prompt,
         options: {
-          model: provider === 'glm' ? 'haiku' : modelId,
+          model: titleModelId,
           maxTurns: 1,
           permissionMode: 'acceptEdits',
           allowDangerouslySkipPermissions: false,

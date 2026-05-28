@@ -23,6 +23,7 @@ export type AnthropicErrorType =
   | 'not_found_error'
   | 'request_too_large'
   | 'rate_limit_error'
+  | 'not_implemented_error'
   | 'api_error'
   | 'overloaded_error';
 

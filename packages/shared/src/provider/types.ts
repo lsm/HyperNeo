@@ -176,6 +176,12 @@ export interface Provider {
   translateModelIdForSdk?(modelId: string): string;
 
   /**
+   * Optional: Get provider-specific model to use for title generation.
+   * Defaults to session model when unset.
+   */
+  getTitleGenerationModel?(): string;
+
+  /**
    * Optional: Get authentication status for this provider.
    * Returns detailed auth info including method, expiration, and user info.
    */

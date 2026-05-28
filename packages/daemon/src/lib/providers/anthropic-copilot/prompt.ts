@@ -32,6 +32,8 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
       const r = block as ToolResultBlock;
       const prefix = r.is_error ? '[Tool error for' : '[Tool result for';
       parts.push(`${prefix} ${r.tool_use_id}]: ${extractToolResultText(r.content)}`);
+    } else if (block.type === 'image') {
+      throw new Error('Copilot bridge does not support image content blocks');
     }
   }
 }
