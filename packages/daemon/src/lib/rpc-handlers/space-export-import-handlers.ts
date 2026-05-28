@@ -60,9 +60,11 @@ import type { SpaceWorkflowManager } from '../space/managers/space-workflow-mana
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format';
+import { RESERVED_SPACE_AGENT_HANDLES } from '../space/slug';
 import { Logger } from '../logger';
 
 const log = new Logger('space-export-import-handlers');
+const RESERVED_AGENT_HANDLE_SET = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);
 
 // ============================================================================
 // Public types
@@ -146,6 +148,7 @@ function shouldPreserveAgentHandle(
   usedAgentHandles?: Set<string>
 ): boolean {
   if (handle === undefined || handle.trim() === '') return false;
+  if (RESERVED_AGENT_HANDLE_SET.has(handle)) return false;
   return !usedAgentHandles?.has(handle);
 }
 
@@ -156,7 +159,11 @@ function warnOnAgentHandleRewrite(
   warnings: string[]
 ): void {
   const exportedHandle = typeof exported.handle === 'string' ? exported.handle.trim() : '';
-  if (exportedHandle && usedAgentHandles.has(exportedHandle)) {
+  if (exportedHandle && RESERVED_AGENT_HANDLE_SET.has(exportedHandle)) {
+    warnings.push(
+      `Agent "${finalName}": exported handle "${exportedHandle}" is reserved; a new handle was auto-generated`
+    );
+  } else if (exportedHandle && usedAgentHandles.has(exportedHandle)) {
     warnings.push(
       `Agent "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
     );

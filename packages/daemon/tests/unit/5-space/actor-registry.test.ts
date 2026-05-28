@@ -264,7 +264,7 @@ describe('SpaceActorRegistryAdapter', () => {
     const actors = registry.listActors(space.id);
 
     expect(canonicalAgentHandle([agent, reservedNameAgent], reservedNameAgent)).toBe(
-      '@coordinator'
+      '@coordinator-2'
     );
 
     expect(actors).toContainEqual({
@@ -319,8 +319,8 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:${reservedNameAgent.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: '@coordinator',
-      roles: ['actor-role:coordinator', 'space-agent'],
+      handle: '@coordinator-2',
+      roles: ['actor-role:coordinator-2', 'space-agent'],
       status: 'active',
     });
     expect(actors).toContainEqual({

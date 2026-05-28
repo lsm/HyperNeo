@@ -888,6 +888,26 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(importedAgent.handle).toBe('reviewer-2');
       });
 
+      it('auto-generates an imported agent handle and warns when exported handle is reserved', async () => {
+        const bundle = makeBundle(
+          [{ name: 'Coordinator', handle: 'coordinator', role: 'coordinator' }],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+        });
+
+        expect(result.agents[0]).toMatchObject({ name: 'Coordinator', action: 'created' });
+        expect(result.warnings).toContain(
+          'Agent "Coordinator": exported handle "coordinator" is reserved; a new handle was auto-generated'
+        );
+
+        const importedAgent = agentRepo.getById(result.agents[0].id)!;
+        expect(importedAgent.handle).toBe('coordinator-2');
+      });
+
       it('renames conflicting workflow', async () => {
         const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
         workflowManager.createWorkflow({
