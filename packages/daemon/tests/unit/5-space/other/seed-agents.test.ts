@@ -320,6 +320,7 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer?.customPrompt).toContain('own-PR fallback');
     expect(reviewer?.customPrompt).toContain('COMMENT');
+    expect(reviewer?.customPrompt).toContain('match your actual verdict');
   });
 
   it('Reviewer custom prompt emphasises goal alignment, completeness, and omissions', async () => {

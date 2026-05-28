@@ -48,7 +48,7 @@ gh api repos/{owner}/{repo}/pulls/{n}/reviews \
 
 > **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
 
-Recommendation: REQUEST_CHANGES
+Recommendation: <APPROVE or REQUEST_CHANGES — match your actual verdict>
 
 <review body>' \
   --jq '.html_url'
