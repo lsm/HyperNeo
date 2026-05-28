@@ -405,7 +405,7 @@ describe('ProviderRegistry', () => {
       expect(globalReg.size).toBe(9);
     });
 
-    it('should restore anthropic-copilot after the registry is reset without factory reset', async () => {
+    it('should restore all providers after the registry is reset without factory reset', async () => {
       const reg = initializeProviders();
       await waitForOptionalProviderRegistration();
       expect(reg.has('anthropic-copilot')).toBe(true);
@@ -414,8 +414,23 @@ describe('ProviderRegistry', () => {
       const resetReg = initializeProviders();
       await waitForOptionalProviderRegistration();
 
-      expect(resetReg.has('anthropic-copilot')).toBe(true);
-      expect(resetReg.size).toBe(9);
+      const ids = resetReg
+        .getAll()
+        .map((p) => p.id)
+        .sort();
+      expect(ids).toEqual(
+        [
+          'anthropic',
+          'anthropic-codex',
+          'anthropic-copilot',
+          'glm',
+          'kimi',
+          'minimax',
+          'ollama',
+          'ollama-cloud',
+          'openrouter',
+        ].sort()
+      );
     });
   });
 

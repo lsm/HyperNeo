@@ -241,6 +241,8 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
  * Load models from all available providers
  */
 async function loadModelsFromProviders(): Promise<ModelInfo[]> {
+  initializeProviders();
+  await waitForOptionalProviderRegistration();
   const providers = getAvailableProviders();
   const allModels: ModelInfo[] = [];
 

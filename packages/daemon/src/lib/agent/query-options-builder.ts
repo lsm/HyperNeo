@@ -53,6 +53,7 @@ import { requireModelContextWindow } from '../providers/codex-models';
 import {
   getProviderContextManager,
   getProviderRegistry,
+  initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import type { SettingsManager } from '../settings-manager';
@@ -320,6 +321,7 @@ export class QueryOptionsBuilder {
     // ['user', 'project', 'local'] so CLAUDE.md and on-disk settings are loaded.
     await this.ctx.settingsManager.prepareSDKOptions();
 
+    initializeProviders();
     await waitForOptionalProviderRegistration();
 
     // Translate model ID for SDK compatibility using provider context
