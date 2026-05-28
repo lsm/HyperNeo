@@ -489,7 +489,7 @@ export class SpaceRuntimeService {
         await sessionManager.createSession({
           sessionId,
           workspacePath: space.workspacePath,
-          title: `${agent.name} inbox`,
+          title: agent.name,
           spaceId: space.id,
           worktreeMode: 'direct',
           config: {

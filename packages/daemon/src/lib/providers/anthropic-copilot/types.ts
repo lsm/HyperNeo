@@ -26,15 +26,20 @@ export interface ToolUseBlock {
   input: Record<string, unknown>;
 }
 
+export interface ImageBlock {
+  type: 'image';
+  source: unknown;
+}
+
 export interface ToolResultBlock {
   type: 'tool_result';
   tool_use_id: string;
-  content?: string | TextBlock[];
+  content?: string | Array<TextBlock | ImageBlock>;
   /** When `true` the tool call failed; the model should be informed. */
   is_error?: boolean;
 }
 
-export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
+export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
 
 // ---------------------------------------------------------------------------
 // Message types
