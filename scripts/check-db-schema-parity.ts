@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import {
   getAccessibleTableNames,
   getExcludedTableNames,
+  getScopeConfig,
 } from '../packages/daemon/src/lib/db-query/scope-config';
 import { createTables, runMigrations } from '../packages/daemon/src/storage/schema';
 import { createSpaceTables } from '../packages/daemon/tests/unit/helpers/space-test-db';
@@ -120,9 +121,23 @@ function getTableNames(db: Database): string[] {
 
 function getTableSql(db: Database, tableName: string): string {
   const row = db
-    .query(`SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?`)
+    .query(`SELECT sql FROM sqlite_schema WHERE type IN ('table', 'virtual table') AND name = ?`)
     .get(tableName) as SchemaRow | null;
   return normalizeSchemaSql(row?.sql ?? '');
+}
+
+function getTableType(db: Database, tableName: string): string {
+  const row = db
+    .query(`SELECT type AS name FROM sqlite_schema WHERE name = ?`)
+    .get(tableName) as SchemaRow | null;
+  return row?.name ?? '';
+}
+
+function getColumnNames(db: Database, tableName: string): string[] {
+  return db
+    .query(`PRAGMA table_info(${JSON.stringify(tableName)})`)
+    .all()
+    .map((row) => (row as ColumnRow).name);
 }
 
 function getColumnMetadata(db: Database, tableName: string): string[] {
@@ -220,6 +235,21 @@ function getIndexSql(db: Database, indexName: string): string {
   return normalizeIndexSql(row?.sql ?? '');
 }
 
+function getTriggers(db: Database, tableName: string): string[] {
+  return db
+    .query(
+      `SELECT sql
+       FROM sqlite_schema
+       WHERE type = 'trigger'
+         AND tbl_name = ?
+         AND sql IS NOT NULL
+       ORDER BY name`
+    )
+    .all(tableName)
+    .map((row) => normalizeTriggerSql((row as SchemaRow).sql ?? ''))
+    .sort();
+}
+
 function normalizeDefaultValue(value: string | null): string {
   const normalized = normalizeSchemaSql(value ?? '');
   return normalized === 'NULL' ? '' : normalized;
@@ -238,6 +268,10 @@ function normalizeIndexSql(sql: string): string {
     /^CREATE( UNIQUE)? INDEX [^ ]+ ON /,
     'CREATE$1 INDEX <name> ON '
   );
+}
+
+function normalizeTriggerSql(sql: string): string {
+  return normalizeSchemaSql(sql).replace(/^CREATE TRIGGER [^ ]+ /, 'CREATE TRIGGER <name> ');
 }
 
 function formatList(items: string[]): string {
@@ -260,6 +294,43 @@ function formatDiff(kind: string, missing: string[], extra: string[]): string[] 
   ];
 }
 
+function validateScopeConfigColumns(
+  db: Database,
+  scopeType: string,
+  config: ReturnType<typeof getScopeConfig>[number]
+): string[] {
+  const failures: string[] = [];
+  const tableColumns = new Set(getColumnNames(db, config.tableName));
+
+  if (config.scopeColumn && !tableColumns.has(config.scopeColumn)) {
+    failures.push(`${scopeType}:${config.tableName}.scopeColumn:${config.scopeColumn}`);
+  }
+  if (config.scopeLike && !tableColumns.has(config.scopeLike.column)) {
+    failures.push(`${scopeType}:${config.tableName}.scopeLike:${config.scopeLike.column}`);
+  }
+  if (config.scopeJoin) {
+    if (!tableColumns.has(config.scopeJoin.localColumn)) {
+      failures.push(
+        `${scopeType}:${config.tableName}.scopeJoin.localColumn:${config.scopeJoin.localColumn}`
+      );
+    }
+
+    const joinColumns = new Set(getColumnNames(db, config.scopeJoin.joinTable));
+    if (!joinColumns.has(config.scopeJoin.joinPkColumn)) {
+      failures.push(
+        `${scopeType}:${config.tableName}.scopeJoin.joinPkColumn:${config.scopeJoin.joinTable}.${config.scopeJoin.joinPkColumn}`
+      );
+    }
+    if (!joinColumns.has(config.scopeJoin.scopeColumn)) {
+      failures.push(
+        `${scopeType}:${config.tableName}.scopeJoin.scopeColumn:${config.scopeJoin.joinTable}.${config.scopeJoin.scopeColumn}`
+      );
+    }
+  }
+
+  return failures;
+}
+
 export function checkScopeRegistration(prodDb: Database): string[] {
   const registeredTables = new Set([
     ...getExcludedTableNames(),
@@ -267,16 +338,43 @@ export function checkScopeRegistration(prodDb: Database): string[] {
     ...getAccessibleTableNames('room'),
     ...getAccessibleTableNames('space'),
   ]);
+  const prodTableNames = getTableNames(prodDb);
+  const prodTables = new Set(prodTableNames);
+  const failures: string[] = [];
 
-  const unregisteredTables = getTableNames(prodDb).filter(
-    (tableName) => !registeredTables.has(tableName)
+  const unregisteredTables = prodTableNames.filter((tableName) => !registeredTables.has(tableName));
+  if (unregisteredTables.length > 0) {
+    failures.push(
+      'DB tables missing scope registration. Add each table to EXCLUDED_TABLE_NAMES or a scope config:',
+      formatList(unregisteredTables)
+    );
+  }
+
+  const staleAccessibleTables = ['global', 'room', 'space'].flatMap((scopeType) =>
+    getAccessibleTableNames(scopeType as 'global' | 'room' | 'space')
+      .filter((tableName) => !prodTables.has(tableName))
+      .map((tableName) => `${scopeType}:${tableName}`)
   );
-  if (unregisteredTables.length === 0) return [];
+  if (staleAccessibleTables.length > 0) {
+    failures.push(
+      'DB scope config has accessible tables missing from production schema:',
+      formatList(staleAccessibleTables)
+    );
+  }
 
-  return [
-    'DB tables missing scope registration. Add each table to EXCLUDED_TABLE_NAMES or a scope config:',
-    formatList(unregisteredTables),
-  ];
+  const scopeColumnFailures = ['global', 'room', 'space'].flatMap((scopeType) =>
+    getScopeConfig(scopeType as 'global' | 'room' | 'space').flatMap((config) =>
+      validateScopeConfigColumns(prodDb, scopeType, config)
+    )
+  );
+  if (scopeColumnFailures.length > 0) {
+    failures.push(
+      'DB scope config references columns missing from production schema:',
+      formatList(scopeColumnFailures)
+    );
+  }
+
+  return failures;
 }
 
 export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): string[] {
@@ -287,6 +385,16 @@ export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): s
   const missingTables = HELPER_SCHEMA_TABLES.filter((tableName) => !helperTables.has(tableName));
   if (missingTables.length > 0) {
     failures.push('space-test-db helper missing expected tables:', formatList(missingTables));
+  }
+
+  const missingProductionTables = HELPER_SCHEMA_TABLES.filter(
+    (tableName) => !prodTables.has(tableName)
+  );
+  if (missingProductionTables.length > 0) {
+    failures.push(
+      'space-test-db helper tracks tables missing from production schema:',
+      formatList(missingProductionTables)
+    );
   }
 
   const extraTables = getTableNames(helperDb).filter(
@@ -301,6 +409,20 @@ export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): s
 
   for (const tableName of HELPER_SCHEMA_TABLES) {
     if (!prodTables.has(tableName) || !helperTables.has(tableName)) continue;
+
+    if (getTableType(prodDb, tableName) === 'virtual table') {
+      const tableSqlDiff = diffLists(
+        [getTableSql(prodDb, tableName)],
+        [getTableSql(helperDb, tableName)]
+      );
+      if (tableSqlDiff.missing.length > 0 || tableSqlDiff.extra.length > 0) {
+        failures.push(
+          `space-test-db helper virtual table SQL mismatch for ${tableName}:`,
+          ...formatDiff('table SQL', tableSqlDiff.missing, tableSqlDiff.extra)
+        );
+      }
+      continue;
+    }
 
     const columnDiff = diffLists(
       getColumnMetadata(prodDb, tableName),
@@ -340,6 +462,14 @@ export function checkHelperSchemaParity(prodDb: Database, helperDb: Database): s
       failures.push(
         `space-test-db helper index mismatch for ${tableName}:`,
         ...formatDiff('indexes', indexDiff.missing, indexDiff.extra)
+      );
+    }
+
+    const triggerDiff = diffLists(getTriggers(prodDb, tableName), getTriggers(helperDb, tableName));
+    if (triggerDiff.missing.length > 0 || triggerDiff.extra.length > 0) {
+      failures.push(
+        `space-test-db helper trigger mismatch for ${tableName}:`,
+        ...formatDiff('triggers', triggerDiff.missing, triggerDiff.extra)
       );
     }
   }
