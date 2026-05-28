@@ -94,19 +94,9 @@ export class SpaceActorRegistryAdapter {
   }
 
   private agentActors(spaceId: string): ActorRef[] {
-    const agents = this.repos.spaceAgentRepo.getBySpaceId(spaceId);
-    const handleCounts = new Map<string, number>();
-    for (const handle of reservedHandles()) {
-      handleCounts.set(handle, 1);
-    }
-    for (const agent of agents) {
-      const slug = baseHandleSlug(agent.name, agent.id);
-      handleCounts.set(slug, (handleCounts.get(slug) ?? 0) + 1);
-    }
-
-    return agents.map((agent) =>
-      agentActor(agent, handleCounts, this.findLongTermAgentSession(spaceId, agent.id))
-    );
+    return this.repos.spaceAgentRepo
+      .getBySpaceId(spaceId)
+      .map((agent) => agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id)));
   }
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
@@ -180,47 +170,23 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 }
 
 export function canonicalAgentHandle(
-  agents: SpaceAgent[],
+  _agents: SpaceAgent[],
   agent: SpaceAgent,
-  reserved: string[] = reservedHandles()
+  _reserved: string[] = reservedHandles()
 ): string {
-  const handleCounts = new Map<string, number>();
-  for (const handle of reserved) {
-    handleCounts.set(handle, 1);
-  }
-  for (const candidate of agents) {
-    const slug = baseHandleSlug(candidate.name, candidate.id);
-    handleCounts.set(slug, (handleCounts.get(slug) ?? 0) + 1);
-  }
-
-  const slug = baseHandleSlug(agent.name, agent.id);
-  const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
-  return `@${handleSlug}`;
+  return `@${agent.handle}`;
 }
 
-function agentActor(
-  agent: SpaceAgent,
-  handleCounts: Map<string, number>,
-  session: Session | null
-): ActorRef {
-  const handle = canonicalAgentHandleFromCounts(agent, handleCounts);
+function agentActor(agent: SpaceAgent, session: Session | null): ActorRef {
+  const handle = canonicalAgentHandle([], agent);
   return {
     actorId: `agent:${encodeActorIdComponent(agent.id)}`,
     kind: 'agent',
     spaceId: agent.spaceId,
     handle,
-    roles: unique(['space-agent', routingRole(handle.slice(1))]),
+    roles: unique(['space-agent', routingRole(agent.handle)]),
     status: session ? statusFromSession(session) : 'inactive',
   };
-}
-
-function canonicalAgentHandleFromCounts(
-  agent: SpaceAgent,
-  handleCounts: Map<string, number>
-): string {
-  const slug = baseHandleSlug(agent.name, agent.id);
-  const handleSlug = handleCounts.get(slug) === 1 ? slug : `${slug}-${shortId(agent.id)}`;
-  return `@${handleSlug}`;
 }
 
 function workerActorFromExecution(spaceId: string, execution: NodeExecution): ActorRef {
@@ -329,17 +295,4 @@ function compareActors(left: ActorRef, right: ActorRef): number {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)].sort();
-}
-
-function baseHandleSlug(name: string, id: string): string {
-  const slug = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || `agent-${shortId(id)}`;
-}
-
-function shortId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 8) || 'unknown';
 }

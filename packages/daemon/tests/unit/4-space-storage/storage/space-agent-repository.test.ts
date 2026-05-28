@@ -37,6 +37,7 @@ describe('SpaceAgentRepository', () => {
       expect(agent.id).toBeDefined();
       expect(agent.spaceId).toBe('space-1');
       expect(agent.name).toBe('Coder');
+      expect(agent.handle).toBe('coder');
       expect(agent.description).toBeUndefined();
       expect(agent.customPrompt).toBeNull();
       expect(agent.model).toBeUndefined();
@@ -72,6 +73,14 @@ describe('SpaceAgentRepository', () => {
         tools: string;
       };
       expect(JSON.parse(raw.tools)).toEqual(['Bash', 'Read']);
+    });
+
+    it('uses explicit handles and auto-suffixes generated collisions', () => {
+      const first = repo.create({ spaceId: 'space-1', name: 'QA Agent', handle: 'qa' });
+      const second = repo.create({ spaceId: 'space-1', name: 'QA Agent' });
+
+      expect(first.handle).toBe('qa');
+      expect(second.handle).toBe('qa-agent');
     });
   });
 

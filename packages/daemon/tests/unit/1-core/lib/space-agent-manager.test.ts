@@ -62,6 +62,14 @@ describe('SpaceAgentManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(result.value.name).toBe('Coder');
+      expect(result.value.handle).toBe('coder');
+    });
+
+    it('rejects duplicate explicit handles within same space', async () => {
+      await manager.create({ spaceId: 'space-1', name: 'Coder', handle: 'worker' });
+      const dup = await manager.create({ spaceId: 'space-1', name: 'Reviewer', handle: 'worker' });
+      expect(dup.ok).toBe(false);
+      if (!dup.ok) expect(dup.error).toContain('handle "worker"');
     });
 
     it('creates agents with all valid roles', async () => {

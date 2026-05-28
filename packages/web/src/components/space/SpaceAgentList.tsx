@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { AgentDriftReport, SpaceAgent } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
-import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
+import { navigateToSpaceAgent, navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -25,6 +25,7 @@ interface AgentCardProps {
   onEdit: (agent: SpaceAgent) => void;
   onDelete: (agent: SpaceAgent) => void;
   onSync: (agent: SpaceAgent) => void;
+  onOpenDetail: (agent: SpaceAgent) => void;
 }
 
 function isCoordinatorAgent(agent: SpaceAgent): boolean {
@@ -52,6 +53,7 @@ function AgentCard({
   onEdit,
   onDelete,
   onSync,
+  onOpenDetail,
 }: AgentCardProps) {
   const toolCount = agent.tools?.length ?? 0;
   const isCoordinator = isCoordinatorAgent(agent);
@@ -82,6 +84,13 @@ function AgentCard({
               </span>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => onOpenDetail(agent)}
+            class="mt-1 font-mono text-xs text-blue-300 hover:text-blue-200"
+          >
+            @{agent.handle}
+          </button>
           {agent.description && (
             <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{agent.description}</p>
           )}
@@ -187,6 +196,7 @@ export function SpaceAgentList() {
   const agents = spaceStore.agents.value;
   const loading = spaceStore.loading.value;
   const spaceId = spaceStore.spaceId.value;
+  const spaceUrlId = spaceStore.space.value?.slug ?? spaceId;
   const goals = spaceStore.goals.value;
   const schedules = spaceStore.schedules.value;
   const workflows = spaceStore.workflows.value;
@@ -281,6 +291,11 @@ export function SpaceAgentList() {
     setEditorOpen(true);
   };
 
+  const handleOpenDetail = (agent: SpaceAgent) => {
+    if (!spaceUrlId) return;
+    navigateToSpaceAgent(spaceUrlId, agent.handle);
+  };
+
   const handleCreate = () => {
     setEditingAgent(null);
     setEditorOpen(true);
@@ -311,13 +326,13 @@ export function SpaceAgentList() {
   };
 
   const handleGoalsClick = () => {
-    if (!spaceId) return;
-    navigateToSpaceGoals(spaceId);
+    if (!spaceUrlId) return;
+    navigateToSpaceGoals(spaceUrlId);
   };
 
   const handleForgeClick = () => {
-    if (!spaceId) return;
-    navigateToSpaceForge(spaceId);
+    if (!spaceUrlId) return;
+    navigateToSpaceForge(spaceUrlId);
   };
 
   const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
@@ -437,6 +452,7 @@ export function SpaceAgentList() {
                   onEdit={handleEdit}
                   onDelete={handleDeleteClick}
                   onSync={handleSync}
+                  onOpenDetail={handleOpenDetail}
                 />
               ))}
             </div>

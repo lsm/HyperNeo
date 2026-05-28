@@ -126,7 +126,15 @@ import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
 // ============================================================================
 
 function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
-  return { id, spaceId: 'space-1', name, customPrompt: null, createdAt: 0, updatedAt: 0 };
+  return {
+    id,
+    spaceId: 'space-1',
+    name,
+    handle: id,
+    customPrompt: null,
+    createdAt: 0,
+    updatedAt: 0,
+  };
 }
 
 const STEP_1_ID = 'step-1';

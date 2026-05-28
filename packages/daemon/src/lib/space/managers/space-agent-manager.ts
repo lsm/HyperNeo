@@ -19,6 +19,7 @@ import type {
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+import { slugify, validateSlug } from '../slug';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
 import { Logger } from '../../logger';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
@@ -46,6 +47,11 @@ export class SpaceAgentManager {
         error: `An agent named "${params.name}" already exists in this Space`,
       };
     }
+
+    const handle = params.handle ?? this.generateUniqueHandle(params.spaceId, params.name);
+    const handleError = this.validateHandle(params.spaceId, handle);
+    if (handleError) return { ok: false, error: handleError };
+    params = { ...params, handle };
 
     // Validate tool names against KNOWN_TOOLS
     if (params.tools) {
@@ -78,6 +84,11 @@ export class SpaceAgentManager {
           error: `An agent named "${params.name}" already exists in this Space`,
         };
       }
+    }
+
+    if (params.handle !== undefined && params.handle !== existing.handle) {
+      const handleError = this.validateHandle(existing.spaceId, params.handle, id);
+      if (handleError) return { ok: false, error: handleError };
     }
 
     // Validate tool names against KNOWN_TOOLS (only when setting to a non-null value;
@@ -236,6 +247,21 @@ export class SpaceAgentManager {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private validateHandle(spaceId: string, handle: string, excludeId?: string): string | null {
+    const trimmed = handle.trim();
+    if (trimmed !== handle) return 'Agent handle must not have leading or trailing whitespace';
+    const slugError = validateSlug(trimmed);
+    if (slugError) return `Invalid agent handle: ${slugError}`;
+    if (this.repo.isHandleTaken(spaceId, trimmed, excludeId)) {
+      return `An agent with handle "${trimmed}" already exists in this Space`;
+    }
+    return null;
+  }
+
+  private generateUniqueHandle(spaceId: string, name: string): string {
+    return slugify(name, this.repo.getHandlesForSpace(spaceId));
+  }
 
   /**
    * Validate that a model is recognized.

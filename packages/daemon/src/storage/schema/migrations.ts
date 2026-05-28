@@ -677,6 +677,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 147: Add model and thinking_level columns to long-horizon agents.
   runMigration147(db);
+
+  // Migration 148: Add persisted handles to Space agents.
+  runMigration148(db);
 }
 
 /**
@@ -2371,6 +2374,7 @@ function runMigration29(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
+			handle TEXT,
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
@@ -2386,6 +2390,11 @@ function runMigration29(db: BunDatabase): void {
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
+    ON space_agents(space_id, handle)
+    WHERE handle IS NOT NULL
+  `);
 
   // -------------------------------------------------------------------------
   // space_workflows
@@ -4909,6 +4918,7 @@ export function runMigration63(db: BunDatabase): void {
 				slug TEXT NOT NULL,
 				workspace_path TEXT NOT NULL UNIQUE,
 				name TEXT NOT NULL,
+				handle TEXT,
 				description TEXT NOT NULL DEFAULT '',
 				background_context TEXT NOT NULL DEFAULT '',
 				instructions TEXT NOT NULL DEFAULT '',
@@ -10321,4 +10331,42 @@ function runMigration147(db: BunDatabase): void {
       // Column already exists — safe to ignore.
     }
   }
+}
+
+/**
+ * Migration 148 — Add persisted handles to space_agents.
+ */
+export function runMigration148(db: BunDatabase): void {
+  if (!tableExists(db, 'space_agents')) return;
+  if (!tableHasColumn(db, 'space_agents', 'handle')) {
+    db.exec(`ALTER TABLE space_agents ADD COLUMN handle TEXT`);
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT id, space_id, name, handle FROM space_agents ORDER BY space_id, created_at, id`
+    )
+    .all() as Array<{ id: string; space_id: string; name: string; handle: string | null }>;
+
+  const handlesBySpace = new Map<string, string[]>();
+  for (const row of rows) {
+    const existingHandles = handlesBySpace.get(row.space_id) ?? [];
+    if (!handlesBySpace.has(row.space_id)) handlesBySpace.set(row.space_id, existingHandles);
+
+    const current = row.handle?.trim();
+    const handle =
+      current && validateSlug(current) === null && !existingHandles.includes(current)
+        ? current
+        : generateValidHandle(row.name, existingHandles);
+    existingHandles.push(handle);
+    if (row.handle !== handle) {
+      db.prepare(`UPDATE space_agents SET handle = ? WHERE id = ?`).run(handle, row.id);
+    }
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
+    ON space_agents(space_id, handle)
+    WHERE handle IS NOT NULL
+  `);
 }

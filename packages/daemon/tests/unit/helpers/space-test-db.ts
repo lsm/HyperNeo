@@ -52,6 +52,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
+			handle TEXT,
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'paused', 'archived')),
 			description TEXT NOT NULL DEFAULT '',
@@ -68,6 +69,12 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
+	`);
+
+  db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
+		ON space_agents(space_id, handle)
+		WHERE handle IS NOT NULL
 	`);
 
   db.exec(`

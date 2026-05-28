@@ -270,7 +270,7 @@ export function ContextPanel() {
               <button
                 key={space.id}
                 type="button"
-                onClick={() => handleSpaceSwitch(space.id)}
+                onClick={() => handleSpaceSwitch(space.slug)}
                 aria-current={isCurrent ? 'page' : undefined}
                 class={cn(
                   'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',

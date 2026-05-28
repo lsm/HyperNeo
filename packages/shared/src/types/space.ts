@@ -1177,6 +1177,8 @@ export interface SpaceAgent {
   spaceId: string;
   /** Human-readable name (unique within a space) */
   name: string;
+  /** URL-safe handle (unique within a space), used for @mentions and agent URLs */
+  handle: string;
   /** Long-horizon agent lifecycle state */
   status?: SpaceAgentStatus;
   /** Optional description of this agent's specialization */
@@ -1253,6 +1255,8 @@ export interface SpaceAgentPromotionDraft {
 export interface CreateSpaceAgentParams {
   spaceId: string;
   name: string;
+  /** Optional explicit handle. When omitted, backend auto-generates one from name. */
+  handle?: string;
   status?: SpaceAgentStatus;
   description?: string;
   model?: string;
@@ -1286,6 +1290,8 @@ export interface CreateSpaceAgentParams {
  */
 export interface UpdateSpaceAgentParams {
   name?: string;
+  /** Update the URL-safe handle. Omit to leave unchanged. */
+  handle?: string;
   status?: SpaceAgentStatus;
   description?: string | null;
   model?: string | null;

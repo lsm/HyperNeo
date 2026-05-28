@@ -110,6 +110,7 @@ describe('router', () => {
     expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
     expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
     expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agents`);
+    expect(createSpaceAgentPath(SPACE_ID, 'reviewer')).toBe(`/space/${SPACE_ID}/agent/reviewer`);
     expect(createSpaceSessionPath(SPACE_ID, SESSION_ID)).toBe(
       `/space/${SPACE_ID}/session/${SESSION_ID}`
     );

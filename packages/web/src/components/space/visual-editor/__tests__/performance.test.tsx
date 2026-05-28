@@ -41,6 +41,7 @@ const mockAgents: Signal<SpaceAgent[]> = signal([
     id: 'agent-1',
     spaceId: 'space-1',
     name: 'Test Agent',
+    handle: 'agent-1',
     customPrompt: null,
     createdAt: 0,
     updatedAt: 0,

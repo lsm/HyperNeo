@@ -12,6 +12,7 @@ import {
   createSpacePath,
   createSpaceSessionPath,
   createSpaceTaskPath,
+  getSpaceAgentDetailFromPath,
 } from '../router';
 
 describe('getSpaceIdFromPath — slug support', () => {
@@ -65,6 +66,16 @@ describe('getSpaceSessionIdFromPath — slug support', () => {
       sessionId: '14062505-780f-4881-a3be-9cb9062790fb',
     });
   });
+
+  test('matches coordinator session ids with colons', () => {
+    const result = getSpaceSessionIdFromPath(
+      '/space/neokai-dev/session/space:chat:b90171e4-1111-2222-3333-444444444444'
+    );
+    expect(result).toEqual({
+      spaceId: 'neokai-dev',
+      sessionId: 'space:chat:b90171e4-1111-2222-3333-444444444444',
+    });
+  });
 });
 
 describe('getSpaceTaskIdFromPath — slug support', () => {
@@ -110,5 +121,14 @@ describe('createSpaceSessionPath — works with slugs', () => {
 describe('createSpaceTaskPath — works with slugs', () => {
   test('creates path with slug', () => {
     expect(createSpaceTaskPath('neokai-dev', 'task-456')).toBe('/space/neokai-dev/task/task-456');
+  });
+});
+
+describe('getSpaceAgentDetailFromPath — slug and handle support', () => {
+  test('matches agent detail route', () => {
+    expect(getSpaceAgentDetailFromPath('/space/neokai-dev/agent/reviewer')).toEqual({
+      spaceId: 'neokai-dev',
+      handle: 'reviewer',
+    });
   });
 });
