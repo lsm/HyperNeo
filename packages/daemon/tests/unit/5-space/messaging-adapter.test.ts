@@ -19,35 +19,6 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import type { MessageRecord } from '../../../../messaging/src/types';
 import { createSpaceTables } from '../helpers/space-test-db';
 
-function alignTestSchema(db: Database): void {
-  db.exec('ALTER TABLE space_agents ADD COLUMN custom_prompt TEXT DEFAULT NULL');
-  db.exec('DROP TABLE sessions');
-  db.exec(`
-		CREATE TABLE sessions (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			workspace_path TEXT,
-			created_at TEXT NOT NULL,
-			last_active_at TEXT NOT NULL,
-			status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
-			config TEXT NOT NULL,
-			metadata TEXT NOT NULL,
-			is_worktree INTEGER DEFAULT 0,
-			worktree_path TEXT,
-			main_repo_path TEXT,
-			worktree_branch TEXT,
-			git_branch TEXT,
-			sdk_session_id TEXT,
-			sdk_origin_path TEXT,
-			available_commands TEXT,
-			processing_state TEXT,
-			archived_at TEXT,
-			type TEXT DEFAULT 'worker',
-			session_context TEXT
-		)
-	`);
-}
-
 describe('Space messaging adapter', () => {
   let db: Database;
   let spaceRepo: SpaceRepository;
@@ -65,7 +36,7 @@ describe('Space messaging adapter', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceTables(db);
-    alignTestSchema(db);
+
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
     spaceAgentRepo = new SpaceAgentRepository(db);
@@ -194,14 +165,15 @@ describe('Space messaging adapter', () => {
   });
 
   it('filters role-resolved worker actors through channel topology', async () => {
-    nodeExecutionRepo.create({
-      workflowRunId: runId,
-      workflowNodeId: 'node-qa',
-      agentName: 'reviewer',
-      agentId: spaceAgentRepo.getBySpaceId(spaceId)[0].id,
-      agentSessionId: 'qa-session',
-      status: 'in_progress',
-    });
+    nodeExecutionRepo.updateStatus(
+      nodeExecutionRepo
+        .listByWorkflowRun(runId)
+        .find(
+          (execution) =>
+            execution.workflowNodeId === 'node-qa' && execution.agentName === 'reviewer'
+        )!.id,
+      'in_progress'
+    );
     const resolver = new SpaceMessageResolver(
       { actorRegistry: registry, workflowRepo, workflowRunRepo },
       { spaceId, workflowRunId: runId, nodeId: 'node-coding', agentName: 'coder' }
@@ -218,14 +190,15 @@ describe('Space messaging adapter', () => {
   });
 
   it('falls back to permitted inactive role holders when active holders are rejected', async () => {
-    nodeExecutionRepo.create({
-      workflowRunId: runId,
-      workflowNodeId: 'node-qa',
-      agentName: 'reviewer',
-      agentId: spaceAgentRepo.getBySpaceId(spaceId)[0].id,
-      agentSessionId: 'qa-session',
-      status: 'in_progress',
-    });
+    nodeExecutionRepo.updateStatus(
+      nodeExecutionRepo
+        .listByWorkflowRun(runId)
+        .find(
+          (execution) =>
+            execution.workflowNodeId === 'node-qa' && execution.agentName === 'reviewer'
+        )!.id,
+      'in_progress'
+    );
     nodeExecutionRepo.updateStatus(
       nodeExecutionRepo
         .listByWorkflowRun(runId)

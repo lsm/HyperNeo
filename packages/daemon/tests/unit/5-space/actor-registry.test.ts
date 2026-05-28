@@ -16,35 +16,6 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import type { Session } from '@neokai/shared';
 import { createSpaceTables } from '../helpers/space-test-db';
 
-function alignTestSchema(db: Database): void {
-  db.exec('ALTER TABLE space_agents ADD COLUMN custom_prompt TEXT DEFAULT NULL');
-  db.exec('DROP TABLE sessions');
-  db.exec(`
-		CREATE TABLE sessions (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			workspace_path TEXT,
-			created_at TEXT NOT NULL,
-			last_active_at TEXT NOT NULL,
-			status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
-			config TEXT NOT NULL,
-			metadata TEXT NOT NULL,
-			is_worktree INTEGER DEFAULT 0,
-			worktree_path TEXT,
-			main_repo_path TEXT,
-			worktree_branch TEXT,
-			git_branch TEXT,
-			sdk_session_id TEXT,
-			sdk_origin_path TEXT,
-			available_commands TEXT,
-			processing_state TEXT,
-			archived_at TEXT,
-			type TEXT DEFAULT 'worker',
-			session_context TEXT
-		)
-	`);
-}
-
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
     id,
@@ -82,7 +53,7 @@ describe('SpaceActorRegistryAdapter', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceTables(db);
-    alignTestSchema(db);
+
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
     spaceAgentRepo = new SpaceAgentRepository(db);
