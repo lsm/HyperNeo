@@ -32,10 +32,32 @@ FAILURES_FILE="$RESULTS_DIR/failures.txt"
 PRELOAD="$REPO_ROOT/packages/daemon/tests/unit/setup.ts"
 TEST_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
 
+# Split storage migration tests dynamically so new files are picked up without
+# editing this script. Bash glob order is deterministic.
+migration_shard_paths() {
+	local parity="$1"
+	local files=(
+		"$TEST_ROOT/4-space-storage/storage"/migration*.test.ts
+		"$TEST_ROOT/4-space-storage/storage/migrations"/*.test.ts
+		"$TEST_ROOT/4-space-storage/storage/migrations"/*_test.ts
+	)
+	local index=0
+	local file
+
+	for file in "${files[@]}"; do
+		[ -e "$file" ] || continue
+		if [ $((index % 2)) -eq "$parity" ]; then
+			printf '%s\n' "$file"
+		fi
+		index=$((index + 1))
+	done
+}
+
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
 	case "$1" in
 	0-shared-handlers-workflow)
+		# Keep shared first so daemon mock.module() calls cannot leak into shared tests.
 		printf '%s\n' \
 			"$REPO_ROOT/packages/shared/tests" \
 			"$TEST_ROOT/2-handlers" \
@@ -54,65 +76,13 @@ shard_paths() {
 		done
 		;;
 	4-space-migrations-a)
-		printf '%s\n' \
-			"$TEST_ROOT/4-space-storage/storage/migration-101-mcp-enablement.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-103_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-122_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-127_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-128_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-129_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-12_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-137-message-search-policy.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-139-goal-automation-cursors.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-142-forge-evidence.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-29_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-33_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-35-36_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-38_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-42_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-43_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-44_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-48_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-53_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-54_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-89_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-94_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-97_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-99_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/sentinel-replacement_test.ts"
+		migration_shard_paths 0
 		;;
 	4-space-migrations-b)
-		printf '%s\n' \
-			"$TEST_ROOT/4-space-storage/storage/migration-108-remove-brave-search-mcp.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-102_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-104_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-106_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-112_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-124_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-126_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-131_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-134-message-search.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-144-long-horizon-agents.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-21_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-24_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-28_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-30_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-34_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-40_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-45_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-47_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-51_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-60_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-68_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-70_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-71_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-73-idempotency.test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-74_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-96_test.ts" \
-			"$TEST_ROOT/4-space-storage/storage/migrations/migration-spaces-autonomy-level_test.ts"
+		migration_shard_paths 1
 		;;
 	5-space-agent-other)
-		printf '%s\n' "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other"
+		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other"
 		;;
 	5-space-runtime-a)
 		printf '%s\n' \

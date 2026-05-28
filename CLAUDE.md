@@ -45,7 +45,7 @@ bun run format       # biome write
 
 # Tests — never run `bun test` from repo root
 ./scripts/test-daemon.sh                # all daemon shards in parallel
-./scripts/test-daemon.sh 2-handlers     # one shard
+./scripts/test-daemon.sh 5-space-runtime-a # one shard
 ./scripts/test-daemon.sh --rerun        # rerun previously failing files
 cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/web && bunx vitest run src/some-test.test.ts
