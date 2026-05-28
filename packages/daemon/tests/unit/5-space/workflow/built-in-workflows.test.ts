@@ -25,6 +25,7 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
+import { evaluateFields } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -40,6 +41,7 @@ import {
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
+import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
@@ -97,14 +99,19 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-  test('has two nodes: Coding, Review', () => {
-    expect(CODING_WORKFLOW.nodes).toHaveLength(2);
-    expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review']);
+  test('has three nodes: Coding, Validation Complete, Review', () => {
+    expect(CODING_WORKFLOW.nodes).toHaveLength(3);
+    expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual([
+      'Coding',
+      'Validation Complete',
+      'Review',
+    ]);
   });
 
   test('step agentId placeholders are correct', () => {
     expect(CODING_WORKFLOW.nodes[0].agents[0]?.name).toBe('coder');
-    expect(CODING_WORKFLOW.nodes[1].agents[0]?.name).toBe('reviewer');
+    expect(CODING_WORKFLOW.nodes[1].agents[0]?.name).toBe('validator');
+    expect(CODING_WORKFLOW.nodes[2].agents[0]?.name).toBe('reviewer');
   });
 
   test('coder prompt forbids merging and delegates approval merge to reviewer', () => {
@@ -114,18 +121,20 @@ describe('CODING_WORKFLOW template', () => {
     expect(prompt).toContain('The reviewer handles the merge.');
   });
 
-  test('coder agent slot has toolGuards with gh pr merge deny rule', () => {
-    const guards = CODING_WORKFLOW.nodes[0].agents[0]?.toolGuards;
-    expect(guards).toBeDefined();
-    expect(guards).toHaveLength(1);
-    expect(guards![0].matcher).toBe('Bash');
-    expect(guards![0].decision).toBe('deny');
-    expect(guards![0].pattern).toContain('gh');
-    expect(guards![0].reason).toContain('merge');
+  test('coder and validator slots have toolGuards with gh pr merge deny rule', () => {
+    for (const agent of [CODING_WORKFLOW.nodes[0].agents[0], CODING_WORKFLOW.nodes[1].agents[0]]) {
+      const guards = agent?.toolGuards;
+      expect(guards).toBeDefined();
+      expect(guards).toHaveLength(1);
+      expect(guards![0].matcher).toBe('Bash');
+      expect(guards![0].decision).toBe('deny');
+      expect(guards![0].pattern).toContain('gh');
+      expect(guards![0].reason).toContain('merge');
+    }
   });
 
-  test('has two channels', () => {
-    expect(CODING_WORKFLOW.channels).toHaveLength(2);
+  test('has four channels', () => {
+    expect(CODING_WORKFLOW.channels).toHaveLength(4);
   });
 
   test('Coding → Review channel is gated by code-ready-gate', () => {
@@ -136,6 +145,15 @@ describe('CODING_WORKFLOW template', () => {
     expect(ch!.maxCycles).toBeUndefined();
   });
 
+  test('Coding → Validation Complete channel is gated by validation-complete-gate', () => {
+    const ch = CODING_WORKFLOW.channels!.find(
+      (c) => c.from === 'Coding' && c.to === 'Validation Complete'
+    );
+    expect(ch).toBeDefined();
+    expect(ch!.gateId).toBe('validation-complete-gate');
+    expect(ch!.maxCycles).toBeUndefined();
+  });
+
   test('Review → Coding channel is gated by review-posted-gate with maxCycles', () => {
     const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(ch).toBeDefined();
@@ -143,6 +161,15 @@ describe('CODING_WORKFLOW template', () => {
     // summarizes feedback internally without posting to GitHub.
     expect(ch!.gateId).toBe('review-posted-gate');
     // direction field removed from WorkflowChannel
+    expect(ch!.maxCycles).toBe(5);
+  });
+
+  test('Validation Complete → Coding channel is cyclic and resets validation evidence', () => {
+    const ch = CODING_WORKFLOW.channels!.find(
+      (c) => c.from === 'Validation Complete' && c.to === 'Coding'
+    );
+    expect(ch).toBeDefined();
+    expect(ch!.gateId).toBe('validation-complete-gate');
     expect(ch!.maxCycles).toBe(5);
   });
 
@@ -160,15 +187,136 @@ describe('CODING_WORKFLOW template', () => {
     }
   });
 
-  test('has two gates: code-ready-gate and review-posted-gate', () => {
-    expect(CODING_WORKFLOW.gates).toHaveLength(2);
+  test('has three gates: code-ready-gate, validation-complete-gate, and review-posted-gate', () => {
+    expect(CODING_WORKFLOW.gates).toHaveLength(3);
     const gateIds = CODING_WORKFLOW.gates!.map((g) => g.id).sort();
-    expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
-    // code-ready-gate has 1 field (pr_url); review-posted-gate has 2 fields (pr_url + review_url)
+    expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate', 'validation-complete-gate']);
     const codeReadyGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
     expect(codeReadyGate.fields).toHaveLength(1);
+    const validationGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    expect(validationGate.fields).toHaveLength(3);
     const reviewPostedGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
     expect(reviewPostedGate.fields).toHaveLength(2);
+  });
+
+  test('validation-complete-gate accepts no-code-change completion evidence without pr_url', () => {
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    expect(gate.script).toBeDefined();
+    expect(gate.script?.source).toContain('git status --porcelain=v1');
+    expect(gate.resetOnCycle).toBe(true);
+
+    const completionMode = gate.fields!.find((f) => f.name === 'completion_mode')!;
+    expect(completionMode.type).toBe('string');
+    expect(completionMode.writers).toEqual(['Coding', 'coder']);
+    expect(completionMode.check).toEqual({ op: '==', value: 'validation_only' });
+
+    const changedFiles = gate.fields!.find((f) => f.name === 'changed_files')!;
+    expect(changedFiles.type).toBe('number');
+    expect(changedFiles.writers).toEqual(['Coding', 'coder']);
+    expect(changedFiles.check).toEqual({ op: '==', value: 0 });
+
+    const outcome = gate.fields!.find((f) => f.name === 'validation_outcome')!;
+    expect(outcome.type).toBe('string');
+    expect(outcome.writers).toEqual(['Coding', 'coder']);
+    expect(outcome.check.op).toBe('exists');
+
+    expect(gate.fields!.some((f) => f.name === 'pr_url')).toBe(false);
+  });
+
+  test('validation-complete-gate opens with validation evidence and no pr_url', () => {
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+
+    expect(
+      evaluateFields(gate, {
+        completion_mode: 'validation_only',
+        changed_files: 0,
+        validation_outcome: 'Trace evidence validated against run artifacts.',
+      })
+    ).toEqual({ open: true });
+    expect(
+      evaluateFields(gate, {
+        completion_mode: 'validation_only',
+        changed_files: 1,
+        validation_outcome: 'Unexpected code edits present.',
+      }).open
+    ).toBe(false);
+    expect(
+      evaluateFields(gate, {
+        completion_mode: 'validation_only',
+        changed_files: 0,
+      }).open
+    ).toBe(false);
+  });
+
+  test('validation-complete-gate script blocks dirty worktrees', async () => {
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    const tmp = mkdtempSync(join(tmpdir(), 'validation-gate-'));
+    try {
+      await Bun.$`git init`.cwd(tmp).quiet();
+      await Bun.$`git config user.email test@example.com`.cwd(tmp).quiet();
+      await Bun.$`git config user.name Test`.cwd(tmp).quiet();
+      writeFileSync(join(tmp, 'base.txt'), 'base');
+      await Bun.$`git add base.txt`.cwd(tmp).quiet();
+      await Bun.$`git commit -m base`.cwd(tmp).quiet();
+      writeFileSync(join(tmp, 'changed.txt'), 'dirty');
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: tmp,
+          gateId: gate.id,
+          runId: 'run-validation-dirty',
+          gateData: {
+            completion_mode: 'validation_only',
+            changed_files: 0,
+            validation_outcome: 'claimed clean',
+          },
+        },
+        { VALIDATION_BASE_REF: 'HEAD' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('clean worktree');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('validation-complete-gate script blocks committed changes against base ref', async () => {
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    const tmp = mkdtempSync(join(tmpdir(), 'validation-gate-committed-'));
+    try {
+      await Bun.$`git init`.cwd(tmp).quiet();
+      await Bun.$`git config user.email test@example.com`.cwd(tmp).quiet();
+      await Bun.$`git config user.name Test`.cwd(tmp).quiet();
+      writeFileSync(join(tmp, 'base.txt'), 'base');
+      await Bun.$`git add base.txt`.cwd(tmp).quiet();
+      await Bun.$`git commit -m base`.cwd(tmp).quiet();
+      const baseRef = (await Bun.$`git rev-parse HEAD`.cwd(tmp).text()).trim();
+      writeFileSync(join(tmp, 'committed.txt'), 'changed');
+      await Bun.$`git add committed.txt`.cwd(tmp).quiet();
+      await Bun.$`git commit -m changed`.cwd(tmp).quiet();
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: tmp,
+          gateId: gate.id,
+          runId: 'run-validation-committed',
+          gateData: {
+            completion_mode: 'validation_only',
+            changed_files: 0,
+            validation_outcome: 'claimed clean',
+          },
+        },
+        { VALIDATION_BASE_REF: baseRef }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('no committed changes');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('review-posted-gate has pr_url and review_url fields writable only by Review node', () => {
@@ -1422,23 +1570,30 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('CODING_WORKFLOW seeded correctly — two nodes with real agent IDs', async () => {
+  test('CODING_WORKFLOW seeded correctly — three nodes with real agent IDs', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
     expect(wf).toBeDefined();
-    expect(wf!.nodes).toHaveLength(2);
+    expect(wf!.nodes).toHaveLength(3);
     expect(wf!.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
-    expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
+    expect(wf!.nodes[1].agents[0]?.agentId).toBe(CODER_ID);
+    expect(wf!.nodes[2].agents[0]?.agentId).toBe(roleMap.reviewer);
   });
 
-  test('CODING_WORKFLOW seeded with two channels (gated Coding→Review, gated Review→Coding)', async () => {
+  test('CODING_WORKFLOW seeded with four channels including validation-only branch', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(2);
+    expect(wf.channels).toHaveLength(4);
 
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
     expect(codeToReview!.gateId).toBe('code-ready-gate');
+
+    const codeToValidation = wf.channels!.find(
+      (c) => c.from === 'Coding' && c.to === 'Validation Complete'
+    );
+    expect(codeToValidation).toBeDefined();
+    expect(codeToValidation!.gateId).toBe('validation-complete-gate');
 
     const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
@@ -1446,14 +1601,21 @@ describe('seedBuiltInWorkflows()', () => {
     // message cannot be delivered until a GitHub review is visible.
     expect(reviewToCode!.gateId).toBe('review-posted-gate');
     expect(reviewToCode!.maxCycles).toBe(5);
+
+    const validationToCode = wf.channels!.find(
+      (c) => c.from === 'Validation Complete' && c.to === 'Coding'
+    );
+    expect(validationToCode).toBeDefined();
+    expect(validationToCode!.gateId).toBe('validation-complete-gate');
+    expect(validationToCode!.maxCycles).toBe(5);
   });
 
-  test('CODING_WORKFLOW seeded with two gates (code-ready-gate + review-posted-gate)', async () => {
+  test('CODING_WORKFLOW seeded with three gates including validation-complete-gate', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.gates).toHaveLength(2);
+    expect(wf.gates).toHaveLength(3);
     const gateIds = wf.gates!.map((g) => g.id).sort();
-    expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
+    expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate', 'validation-complete-gate']);
   });
 
   test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -1917,9 +2079,128 @@ describe('seedBuiltInWorkflows()', () => {
     expect(approvedField.check).toEqual({ op: '==', value: true });
   });
 
-  test('re-stamp preserves node rows, layout, and updates toolGuards in place', () => {
-    // The narrow re-stamp explicitly does NOT regenerate node UUIDs because
-    // live workflow_run rows reference them. It also must not delete/reinsert
+  test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const legacyNodes = coding.nodes.filter((node) => node.name !== 'Validation Complete');
+    const legacyChannels = coding.channels!.filter(
+      (channel) => channel.from !== 'Coding' || channel.to !== 'Validation Complete'
+    );
+
+    manager.updateWorkflow(coding.id, {
+      nodes: legacyNodes,
+      channels: legacyChannels,
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-validation-branch-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const validationNode = after.nodes.find((node) => node.name === 'Validation Complete');
+    expect(validationNode).toBeDefined();
+    expect(validationNode!.agents[0].agentId).toBe(CODER_ID);
+    expect(
+      after.channels!.some(
+        (channel) => channel.from === 'Coding' && channel.to === 'Validation Complete'
+      )
+    ).toBe(true);
+    expect(
+      after.channels!.some(
+        (channel) => channel.from === 'Validation Complete' && channel.to === 'Coding'
+      )
+    ).toBe(true);
+    expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
+  });
+
+  test('terminal-node detection treats validation feedback as terminal and outbound channels as non-terminal', () => {
+    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+    const validationNode = CODING_WORKFLOW.nodes.find(
+      (node) => node.name === 'Validation Complete'
+    )!;
+
+    expect(isWorkflowTerminalNode(CODING_WORKFLOW, validationNode.id)).toBe(true);
+    expect(isWorkflowTerminalNode(CODING_WORKFLOW, codingNode.id)).toBe(false);
+    expect(
+      isWorkflowTerminalNode(
+        {
+          ...CODING_WORKFLOW,
+          channels: [{ from: '*', to: 'Review', label: 'Everyone → Review' }],
+        },
+        validationNode.id
+      )
+    ).toBe(false);
+    expect(
+      isWorkflowTerminalNode(
+        {
+          ...CODING_WORKFLOW,
+          channels: [{ from: 'coder', to: 'Review', label: 'Coder → Review' }],
+        },
+        codingNode.id
+      )
+    ).toBe(false);
+    expect(
+      isWorkflowTerminalNode(
+        {
+          ...CODING_WORKFLOW,
+          channels: [{ from: 'validator', to: 'coder', label: 'Validator → coder' }],
+        },
+        validationNode.id
+      )
+    ).toBe(true);
+  });
+
+  test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
+    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
+    const legacyNodes = coding.nodes.filter((node) => node.name !== 'Validation Complete');
+    const legacyChannels = coding.channels!.filter(
+      (channel) => channel.from !== 'Coding' || channel.to !== 'Validation Complete'
+    );
+    manager.updateWorkflow(coding.id, {
+      nodes: legacyNodes.map((node) => {
+        if (node.id === codingNode.id) return { ...node, name: 'Implementation' };
+        if (node.id === reviewNode.id) return { ...node, name: 'Human Review' };
+        return node;
+      }),
+      channels: legacyChannels,
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-node-drift',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    expect(after.nodes.filter((node) => node.name === 'Review')).toHaveLength(0);
+    expect(after.nodes.filter((node) => node.name === 'Coding')).toHaveLength(0);
+    expect(
+      after.nodes.filter((node) => node.agents.some((agent) => agent.name === 'reviewer'))
+    ).toHaveLength(1);
+    expect(
+      after.channels!.some(
+        (channel) => channel.from === 'Implementation' && channel.to === 'Validation Complete'
+      )
+    ).toBe(true);
+    expect(
+      after.channels!.some(
+        (channel) => channel.from === 'Validation Complete' && channel.to === 'Implementation'
+      )
+    ).toBe(true);
+  });
+
+  test('re-stamp preserves existing node rows, layout, and updates toolGuards in place', () => {
+    // The narrow re-stamp explicitly does NOT regenerate existing node UUIDs because
+    // live workflow_run rows reference them. It also must not delete/reinsert existing
     // node rows because in-flight executions depend on those row identities.
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -1968,8 +2249,9 @@ describe('seedBuiltInWorkflows()', () => {
       )
       .all(coding.id) as Array<{ id: string; rowid: number }>;
     const afterCodingAgent = after.nodes.find((n) => n.id === codingNode.id)!.agents[0];
-    expect(afterNodeIds).toEqual(originalNodeIds);
-    expect(afterRows).toEqual(savedRows);
+    expect(afterNodeIds).toEqual(expect.arrayContaining(originalNodeIds));
+    expect(afterNodeIds.length).toBeGreaterThanOrEqual(originalNodeIds.length);
+    expect(afterRows).toEqual(expect.arrayContaining(savedRows));
     expect(after.layout).toEqual(layout);
     expect(afterCodingAgent.toolGuards).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.toolGuards);
   });
@@ -2582,14 +2864,14 @@ describe('Coding Workflow export/import round-trip', () => {
     expect(result.ok).toBe(true);
   });
 
-  test('exported Coding Workflow preserves two channels and Review→Coding cycle', () => {
+  test('exported Coding Workflow preserves channels and Review→Coding cycle', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     const exported = exportWorkflow(wf, mockAgents);
     expect(exported.channels).toBeDefined();
     // gateId is stripped during export (gates are separate entities)
-    expect(exported.channels).toHaveLength(2);
+    expect(exported.channels).toHaveLength(4);
 
     const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
@@ -2646,8 +2928,8 @@ describe('Coding Workflow export/import round-trip', () => {
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(reimported).toBeDefined();
-    expect(reimported.nodes).toHaveLength(2);
-    expect(reimported.channels).toHaveLength(2);
+    expect(reimported.nodes).toHaveLength(3);
+    expect(reimported.channels).toHaveLength(4);
 
     // Coding → Review channel preserved
     const codeToReview = reimported.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');

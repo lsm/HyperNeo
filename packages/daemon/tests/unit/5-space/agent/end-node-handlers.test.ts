@@ -519,7 +519,7 @@ describe('createEndNodeHandlers — approve_task', () => {
     expect(t?.reportedStatus).toBe('done');
   });
 
-  test('clears pending-completion fields that were set by a prior submit_for_approval', async () => {
+  test('clears pending-completion fields except approval source node', async () => {
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'T',
@@ -547,9 +547,32 @@ describe('createEndNodeHandlers — approve_task', () => {
     const t = ctx.taskRepo.getTask(task.id);
     expect(t?.reportedStatus).toBe('done');
     expect(t?.pendingCheckpointType).toBeNull();
-    expect(t?.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(t?.pendingCompletionSubmittedByNodeId).toBe('end-node');
     expect(t?.pendingCompletionSubmittedAt).toBeNull();
     expect(t?.pendingCompletionReason).toBeNull();
+  });
+
+  test('records calling node as approval source for post-approval routing', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const { onApproveTask } = createEndNodeHandlers(
+      makeDeps(ctx, task.id, {
+        workflow: makeWorkflow(2, 'validation-node'),
+        workflowNodeId: 'validation-node',
+        spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+      })
+    );
+
+    const out = await onApproveTask({});
+    expect(JSON.parse(out.content[0].text).success).toBe(true);
+
+    const t = ctx.taskRepo.getTask(task.id);
+    expect(t?.reportedStatus).toBe('done');
+    expect(t?.pendingCompletionSubmittedByNodeId).toBe('validation-node');
   });
 
   test('emits space.task.updated with the updated task on success', async () => {

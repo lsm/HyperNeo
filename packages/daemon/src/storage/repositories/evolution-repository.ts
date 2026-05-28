@@ -347,6 +347,15 @@ export class EvolutionRepository {
     return rows.map(rowToTaskProposal);
   }
 
+  getTaskProposalByCreatedTaskId(taskId: string): TaskProposal | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM evolution_task_proposals WHERE created_task_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`
+      )
+      .get(taskId) as Record<string, unknown> | undefined;
+    return row ? rowToTaskProposal(row) : null;
+  }
+
   updateTaskProposal(id: string, params: UpdateTaskProposalParams): TaskProposal | null {
     return this.updateTaskProposalWhere(id, params);
   }
