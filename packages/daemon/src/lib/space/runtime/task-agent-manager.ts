@@ -2226,7 +2226,7 @@ export class TaskAgentManager {
     execution: NodeExecution,
     space: Space | null
   ): string {
-    const isEndNode = !!workflow?.endNodeId && execution.workflowNodeId === workflow.endNodeId;
+    const isEndNode = this.isTerminalNode(workflow, execution.workflowNodeId);
 
     // Compute whether approve_task is currently unlocked for this space.
     // The MCP handler re-checks at call time, so this is purely for prompt
@@ -2391,6 +2391,19 @@ export class TaskAgentManager {
       .replace(/^-+|-+$/g, '');
     if (kebab) variants.add(kebab);
     return [...variants];
+  }
+
+  private isTerminalNode(
+    workflow: SpaceWorkflow | null | undefined,
+    workflowNodeId: string
+  ): boolean {
+    if (!workflow) return false;
+    if (workflow.endNodeId === workflowNodeId) return true;
+
+    const node = workflow.nodes.find((candidate) => candidate.id === workflowNodeId);
+    if (!node) return false;
+
+    return !(workflow.channels ?? []).some((channel) => channel.from === node.name);
   }
 
   private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {
@@ -3568,7 +3581,7 @@ export class TaskAgentManager {
     //                          Only available to end-node agents.
     //   `submit_for_approval` — request human review of completion.
     //                           Only available to end-node agents.
-    const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
+    const isEndNode = this.isTerminalNode(workflow, workflowNodeId);
     // Bound SpaceTaskManager shared by the `submit_for_approval` and
     // `mark_complete` tool handlers — both rely on the centralised transition
     // validator so any illegal source status fails before fields get written.

@@ -161,6 +161,7 @@ const builtInSeederLog = new Logger('seed-built-in-workflows');
 
 const CODING_CODE_NODE = 'tpl-coding-code';
 const CODING_REVIEW_NODE = 'tpl-coding-review';
+const CODING_VALIDATION_NODE = 'tpl-coding-validation';
 
 // Plan & Decompose node IDs
 const PD_PLANNING_NODE = 'tpl-pd-planning';
@@ -624,9 +625,12 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * Two-node iterative graph: Coding ↔ Review (with cycle).
  * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
+ * - Coding → Validation Complete: gated by `validation-complete-gate` — accepts
+ *   no-code-change validation evidence (`completion_mode: "validation_only"`,
+ *   `changed_files: 0`, `validation_outcome`) and bypasses PR validation.
  * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
- *   When satisfied, Reviewer calls `save_artifact({ type: 'result', append: true })` then
- *   `approve_task()` on the Review node (endNodeId) which signals workflow completion.
+ *   Review approval records PR evidence; validation-only approval records validation
+ *   evidence. Either terminal node can close the task.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
   id: '',
@@ -654,12 +658,16 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '2. Implement the changes with logical, well-described commits\n' +
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
-              '5. Open a PR with `gh pr create` — include a clear title and description\n' +
-              '6. Hand off by sending a message to Review with ' +
+              '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
+              '6. If code changed: hand off by sending a message to Review with ' +
               '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
               'mergeable, so make sure it actually is before sending. ' +
               '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
-              'data resets each cycle, so even on round 2+ you must re-supply it.\n\n' +
+              'data resets each cycle, so even on round 2+ you must re-supply it.\n' +
+              '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
+              'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
+              '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
+              'That validation-only handoff bypasses the PR-ready gate and closes the task without `pr_url`.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -679,6 +687,20 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               're-trigger the review cycle',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
+        },
+      ],
+    },
+    {
+      id: CODING_VALIDATION_NODE,
+      name: 'Validation Complete',
+      agents: [
+        {
+          agentId: 'Coder',
+          name: 'validator',
+          customPrompt: {
+            value:
+              'You are the terminal validation-only completion agent in a Coding workflow. This node is only for tasks that produced no code changes: diagnostics, trace validation, manual checks, or other verification work.\n\nYour job is to verify the upstream coder recorded a result artifact with validation evidence, then close the task. Do NOT create commits, branches, or PRs. Do NOT merge anything.\n\nChecklist:\n1. Read the incoming message and list_artifacts({ type: "result" })\n2. Confirm the result artifact says `completion_mode: "validation_only"`, `changed_files: 0`, and includes a concrete validation outcome/evidence\n3. If evidence is missing or indicates code changes were made, send a message back to Coding explaining what is missing; do NOT approve\n4. If evidence is sufficient, call `save_artifact({ type: "result", append: true, summary: "Validation-only completion accepted: <outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" } })`\n5. Call `approve_task({})` as your final action to mark the task done. No `pr_url` is required for this path.',
+          },
         },
       ],
     },
@@ -794,6 +816,33 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       resetOnCycle: true,
     },
     {
+      id: 'validation-complete-gate',
+      label: 'Validated',
+      description:
+        'Validation-only task produced no code changes and recorded completion evidence.',
+      fields: [
+        {
+          name: 'completion_mode',
+          type: 'string',
+          writers: ['Coding', 'coder'],
+          check: { op: '==', value: 'validation_only' },
+        },
+        {
+          name: 'changed_files',
+          type: 'number',
+          writers: ['Coding', 'coder'],
+          check: { op: '==', value: 0 },
+        },
+        {
+          name: 'validation_outcome',
+          type: 'string',
+          writers: ['Coding', 'coder'],
+          check: { op: 'exists' },
+        },
+      ],
+      resetOnCycle: false,
+    },
+    {
       id: 'review-posted-gate',
       label: 'Review Posted',
       description:
@@ -829,6 +878,17 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       to: 'Review',
       gateId: 'code-ready-gate',
       label: 'Coding → Review',
+    },
+    {
+      from: 'Coding',
+      to: 'Validation Complete',
+      gateId: 'validation-complete-gate',
+      label: 'Coding → Validation Complete (no code changes)',
+    },
+    {
+      from: 'Validation Complete',
+      to: 'Coding',
+      label: 'Validation Complete → Coding (evidence missing)',
     },
     {
       from: 'Review',
@@ -1586,6 +1646,14 @@ function mergeNodeStructuralFieldsFromTemplate(
   templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[]
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
+  const existingNodeNames = new Set(existingNodes.map((node) => node.name));
+  const missingTemplateNodes = templateNodes
+    .filter((node) => !existingNodeNames.has(node.name))
+    .map((node) => ({
+      ...node,
+      id: generateUUID(),
+      agents: node.agents.map((agent) => ({ ...agent })),
+    }));
   const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
   for (const node of templateNodes) {
     for (const agent of node.agents) {
@@ -1593,7 +1661,7 @@ function mergeNodeStructuralFieldsFromTemplate(
     }
   }
 
-  return existingNodes.map((node) => {
+  const mergedExistingNodes: WorkflowNode[] = existingNodes.map((node) => {
     const templateNode = templateNodesByName.get(node.name);
     return {
       ...node,
@@ -1607,30 +1675,38 @@ function mergeNodeStructuralFieldsFromTemplate(
       }),
     };
   });
+
+  return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
 }
 
 function mergeGateStructuralFieldsFromTemplate(
   existingGates: Gate[] | undefined,
   templateGates: Gate[] | undefined
 ): Gate[] | undefined {
-  if (!existingGates || !templateGates) return existingGates;
+  if (!templateGates) return existingGates;
+  if (!existingGates) return templateGates;
 
   const templateGatesById = new Map(templateGates.map((gate) => [gate.id, gate]));
-  return existingGates.map((gate) => {
-    const templateGate = templateGatesById.get(gate.id);
-    if (!templateGate) return gate;
+  const existingGateIds = new Set(existingGates.map((gate) => gate.id));
+  const missingTemplateGates = templateGates.filter((gate) => !existingGateIds.has(gate.id));
 
-    const templateFieldsByName = new Map(
-      (templateGate.fields ?? []).map((field) => [field.name, field])
-    );
-    const fields = (gate.fields ?? []).map((field) => {
-      const templateField = templateFieldsByName.get(field.name);
-      if (!templateField) return field;
-      return { ...field, writers: templateField.writers };
-    });
+  return existingGates
+    .map((gate) => {
+      const templateGate = templateGatesById.get(gate.id);
+      if (!templateGate) return gate;
 
-    return { ...gate, fields };
-  });
+      const templateFieldsByName = new Map(
+        (templateGate.fields ?? []).map((field) => [field.name, field])
+      );
+      const fields = (gate.fields ?? []).map((field) => {
+        const templateField = templateFieldsByName.get(field.name);
+        if (!templateField) return field;
+        return { ...field, writers: templateField.writers };
+      });
+
+      return { ...gate, fields };
+    })
+    .concat(missingTemplateGates);
 }
 
 /**
@@ -1644,11 +1720,14 @@ function mergeGateStructuralFieldsFromTemplate(
  * - Agent `toolGuards` are merged onto matching agent slots (by node name +
  *   agent name) so structural enforcement metadata stays in sync with the
  *   template when node + agent names still match. Other node fields
- *   (customPrompt, model, disabledSkillIds, etc.) are preserved.
+ *   (customPrompt, model, disabledSkillIds, etc.) are preserved. Template nodes
+ *   missing from an existing workflow are appended so new terminal branches can
+ *   land without replacing existing node IDs.
  * - Gate field `writers` are merged onto matching gate fields (by gate id +
  *   field name) so structural authorization changes land on pre-existing spaces.
- *   Checks, scripts, and gate topology remain untouched.
- * - Channels, layout, and node rows are NOT re-stamped. Workflow IDs,
+ *   Missing template gates are appended. Existing checks, scripts, and gate
+ *   topology remain untouched.
+ * - Channels, layout, and existing node rows are NOT re-stamped. Workflow IDs,
  *   node IDs, and persisted node-agent slots are stable identifiers for
  *   in-flight runs, so template drift must never replace node rows. Agent
  *   `toolGuards` are updated in-place on existing node configs instead.
@@ -1657,8 +1736,8 @@ const RESTAMP_FIELDS = [
   'legacy postApproval(clear)',
   'completionAutonomyLevel',
   'templateHash',
-  'nodes(postApproval + toolGuards in-place)',
-  'gates(field writers in-place)',
+  'nodes(postApproval + toolGuards in-place + missing template nodes)',
+  'gates(field writers in-place + missing template gates)',
 ] as const;
 
 /**
@@ -1724,6 +1803,7 @@ export function seedBuiltInWorkflows(
         // preserving user-configurable prompts and workflow topology.
         const mergedNodes = mergeNodeStructuralFieldsFromTemplate(row.nodes, template.nodes);
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
+        const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1731,9 +1811,12 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: mergedGates,
+          ...(hasNewTemplateNodes ? { nodes: mergedNodes } : {}),
           templateHash: expectedHash,
         });
-        workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
+        if (!hasNewTemplateNodes) {
+          workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
+        }
         restamped.push(template.name);
         builtInSeederLog.info(
           `re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
