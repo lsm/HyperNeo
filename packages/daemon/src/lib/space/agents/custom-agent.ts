@@ -55,7 +55,6 @@ const RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT = 500;
 const CORE_MEMORY_PROMPT_CHAR_LIMIT = 2_000;
 const PREVIOUS_WORK_TOTAL_LIMIT = 900;
 const PROJECT_CONTEXT_PROMPT_LIMIT = 1_200;
-const STANDING_INSTRUCTIONS_PROMPT_LIMIT = 1_200;
 
 const log = new Logger('custom-agent');
 
@@ -379,9 +378,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push('');
     sections.push('## Standing Instructions');
     sections.push('');
-    sections.push(
-      truncateContextBlock(standingLines.join('\n\n'), STANDING_INSTRUCTIONS_PROMPT_LIMIT)
-    );
+    sections.push(standingLines.join('\n\n'));
   }
 
   const message = sections.join('\n');
@@ -436,20 +433,38 @@ function buildCappedBulletLines(
   omittedLabel: string
 ): string[] {
   if (!items || items.length === 0) return [];
+
   const lines: string[] = [];
   let used = 0;
   let omitted = 0;
-  for (const item of [...items].reverse()) {
+  const newestFirst = [...items].reverse();
+
+  for (let index = 0; index < newestFirst.length; index += 1) {
+    const item = newestFirst[index];
     const line = `- ${item}`;
-    if (used + line.length + 1 > totalLimit) {
-      omitted += 1;
+    if (used + line.length + 1 <= totalLimit) {
+      lines.unshift(line);
+      used += line.length + 1;
       continue;
     }
-    lines.unshift(line);
-    used += line.length + 1;
+
+    if (index === 0 && lines.length === 0) {
+      const truncatedLine = truncateBulletLine(line, totalLimit);
+      lines.unshift(truncatedLine);
+      used += truncatedLine.length + 1;
+      continue;
+    }
+
+    omitted += 1;
   }
+
   if (omitted > 0) lines.unshift(`- ${omitted} ${omittedLabel}`);
   return lines;
+}
+
+function truncateBulletLine(line: string, limit: number): string {
+  if (line.length <= limit) return line;
+  return `${line.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 }
 
 function buildRelevantMemoryLines(memories: AgentMemorySearchResult[] | undefined): string[] {

@@ -497,7 +497,7 @@ describe('buildCustomAgentTaskMessage', () => {
         })),
         space: makeSpace({
           backgroundContext: 'Project context '.repeat(200),
-          instructions: 'Instruction '.repeat(200),
+          instructions: 'Mandatory instruction '.repeat(200),
         }),
         workflow: makeWorkflow({ instructions: 'Workflow instruction '.repeat(200) }),
       })
@@ -524,8 +524,31 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(projectBlock.length).toBeLessThan(1_400);
 
     const standingBlock = message.slice(message.indexOf('## Standing Instructions'));
-    expect(standingBlock).toContain('[truncated; ask the Space Agent for full context if needed]');
-    expect(standingBlock.length).toBeLessThan(1_400);
+    expect(standingBlock).not.toContain(
+      '[truncated; ask the Space Agent for full context if needed]'
+    );
+    expect(standingBlock).toContain('Mandatory instruction');
+    expect(standingBlock).toContain('Workflow instruction');
+  });
+
+  it('truncates an oversized newest previous-work summary instead of dropping it', () => {
+    const newestSummary = `Latest result: ${'z'.repeat(2_000)}`;
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        previousTaskSummaries: ['Older result', newestSummary],
+      })
+    );
+
+    const previousStart = message.indexOf('## Previous Work on This Goal');
+    const previousEnd = message.indexOf('## Project Context');
+    const previousBlock = message.slice(
+      previousStart,
+      previousEnd === -1 ? undefined : previousEnd
+    );
+    expect(previousBlock).toContain('Latest result:');
+    expect(previousBlock).toContain('…');
+    expect(previousBlock).toContain('older summaries omitted');
+    expect(previousBlock.length).toBeLessThan(1_100);
   });
 
   it('renders Standing Instructions last, after Project Context', () => {
