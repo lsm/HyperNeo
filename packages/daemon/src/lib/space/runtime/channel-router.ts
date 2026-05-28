@@ -1156,7 +1156,7 @@ export class ChannelRouter {
     // fixes, new fallback logic, etc.) take immediate effect for all running
     // workflow instances without requiring a resync.
     let gateDef = storedGateDef;
-    if (workflow.templateName && storedGateDef.script) {
+    if (workflow.templateName) {
       const liveScript = getBuiltInGateScript(workflow.templateName, gateId);
       if (liveScript) {
         gateDef = { ...storedGateDef, script: liveScript };

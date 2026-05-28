@@ -371,6 +371,52 @@ const REVIEW_POSTED_BASH_SCRIPT = [
   'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n,"review_evidence":"own_pr_comment"}\'',
 ].join('\n');
 
+const CODEX_REACTION_TIMEOUT_SECONDS = 600;
+const CODEX_REACTION_POLL_INTERVAL_MS = 60_000;
+
+const CODEX_REACTION_APPROVAL_BASH_SCRIPT = [
+  'PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'if [ -z "$PR_URL" ]; then',
+  '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+  'fi',
+  'if [ -z "$PR_URL" ]; then',
+  '  echo "No PR URL available to verify codex[bot] reaction" >&2',
+  '  exit 1',
+  'fi',
+  'if [[ ! "$PR_URL" =~ github\\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
+  '  echo "Unsupported PR URL for codex[bot] reaction check: ${PR_URL}" >&2',
+  '  exit 1',
+  'fi',
+  'OWNER="${BASH_REMATCH[1]}"',
+  'REPO="${BASH_REMATCH[2]}"',
+  'NUMBER="${BASH_REMATCH[3]}"',
+  'if ! REACTIONS_JSON=$(gh api "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions" -H "Accept: application/vnd.github+json"); then',
+  '  echo "Failed to fetch PR reactions for ${PR_URL}" >&2',
+  '  exit 1',
+  'fi',
+  'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$REACTIONS_JSON")',
+  'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
+  '  jq -n --arg url "$PR_URL" \'{"pr_url":$url,"codex_bot_reaction":"+1"}\'',
+  '  exit 0',
+  'fi',
+  'CODEX_EYES_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "eyes")] | length\' <<< "$REACTIONS_JSON")',
+  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'if [ -n "$START_ISO" ]; then',
+  `  START_EPOCH=$(node -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$START_ISO" 2>/dev/null || true)`,
+  '  NOW_EPOCH=$(date +%s)',
+  `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REACTION_TIMEOUT_SECONDS} ]; then`,
+  '    jq -n --arg url "$PR_URL" --arg status "timeout" \'{"pr_url":$url,"codex_bot_reaction":$status,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
+  '    exit 0',
+  '  fi',
+  'fi',
+  'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
+  '  echo "codex[bot] review still in progress (eyes reaction present); waiting for +1 on ${PR_URL}" >&2',
+  'else',
+  '  echo "codex[bot] +1 reaction not found on ${PR_URL}" >&2',
+  'fi',
+  'exit 1',
+].join('\n');
+
 /**
  * Reviewer Terminal Action Pre-conditions block.
  *
@@ -504,6 +550,17 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
   'auto-merge is not allowed.';
 
+const CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify codex[bot] reaction status before ' +
+  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+  'reaction means it has not started or has not reported yet. Poll every 60 seconds ' +
+  'for up to 10 minutes before proceeding. If codex[bot] still has not posted `+1` ' +
+  'after the timeout, proceed only with a warning recorded in your result artifact. ' +
+  'Do not close the task or write the approval gate before codex[bot] has `+1` unless ' +
+  'that timeout has elapsed.';
+
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
   'write tests, and keep one PR updated across review and QA cycles.\n\n' +
@@ -518,8 +575,10 @@ const FULLSTACK_REVIEW_PROMPT =
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
   'terminal hand-off is writing approved = true to review-approval-gate, only after an ' +
-  'APPROVE verdict with zero P0-P3 findings. If findings remain, do not write the gate; ' +
-  'send actionable feedback to Coding and stop. Never set a PR to auto-merge.';
+  'APPROVE verdict with zero P0-P3 findings and codex[bot] `+1` or timeout. ' +
+  CODEX_REACTION_APPROVAL_GUIDANCE +
+  ' If findings remain, do not write the gate; send actionable feedback to Coding and stop. ' +
+  'Never set a PR to auto-merge.';
 
 const FULLSTACK_QA_PROMPT =
   QA_SYSTEM_CONTRACT +
@@ -649,6 +708,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'post visible GitHub review before gate write. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+              ' ' +
+              CODEX_REACTION_APPROVAL_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
@@ -1321,7 +1382,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: 'review-approval-gate',
       label: 'Review',
-      description: 'Reviewer approved the PR for QA.',
+      description: 'Reviewer approved the PR for QA and codex[bot] review passed or timed out.',
       fields: [
         {
           name: 'approved',
@@ -1330,6 +1391,17 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           check: { op: '==', value: true },
         },
       ],
+      script: {
+        interpreter: 'bash',
+        source: CODEX_REACTION_APPROVAL_BASH_SCRIPT,
+        timeoutMs: 30000,
+      },
+      poll: {
+        intervalMs: CODEX_REACTION_POLL_INTERVAL_MS,
+        target: 'from',
+        script: CODEX_REACTION_APPROVAL_BASH_SCRIPT,
+        messageTemplate: 'codex[bot] reaction status update:\n{{output}}',
+      },
       resetOnCycle: true,
     },
   ],

@@ -3861,7 +3861,7 @@ export class SpaceRuntime {
       };
     }
     let gate = storedGate;
-    if (workflow.templateName && storedGate.script) {
+    if (workflow.templateName) {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
       if (liveScript) gate = { ...storedGate, script: liveScript };
     }
