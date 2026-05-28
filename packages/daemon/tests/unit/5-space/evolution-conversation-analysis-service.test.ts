@@ -489,6 +489,20 @@ describe('EvolutionConversationAnalysisService', () => {
     };
   }
 
+  function ensureSession(sessionId: string) {
+    db.prepare(
+      `INSERT OR IGNORE INTO sessions (
+        id, title, workspace_path, created_at, last_active_at, status, config, metadata
+      ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}')`
+    ).run(
+      sessionId,
+      `Session ${sessionId}`,
+      '/workspace/conversation-friction',
+      '2024-01-01T00:00:00.000Z',
+      '2024-01-01T00:00:00.000Z'
+    );
+  }
+
   function insertTextMessage(
     taskId: string,
     id: string,
@@ -498,6 +512,7 @@ describe('EvolutionConversationAnalysisService', () => {
     sendStatus: string | null = 'consumed',
     parentToolUseId: string | null = null
   ): void {
+    ensureSession('session-1');
     db.prepare(
       `INSERT INTO sdk_messages (
 				id, session_id, message_type, sdk_message, timestamp, origin,
