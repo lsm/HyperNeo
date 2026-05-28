@@ -51,10 +51,8 @@ const CLAUDE_CODE_BUILTIN_TOOLS = [
  */
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
 const MEMORY_PROMPT_CONTENT_LIMIT = 500;
-const RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT = 500;
 const CORE_MEMORY_PROMPT_CHAR_LIMIT = 2_000;
-const PREVIOUS_WORK_TOTAL_LIMIT = 900;
-const PROJECT_CONTEXT_PROMPT_LIMIT = 1_200;
+const OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT = 2_000;
 
 const log = new Logger('custom-agent');
 
@@ -332,11 +330,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   }
 
   // 6. Previous work summaries.
-  const previousWorkLines = buildCappedBulletLines(
-    previousTaskSummaries,
-    PREVIOUS_WORK_TOTAL_LIMIT,
-    'older summaries omitted'
-  );
+  const previousWorkLines = buildPreviousWorkLines(previousTaskSummaries);
   if (previousWorkLines.length > 0) {
     sections.push('');
     sections.push('## Previous Work on This Goal');
@@ -354,12 +348,16 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   }
 
   // 8. Relevant persistent memories.
-  const relevantMemoryLines = buildRelevantMemoryLines(relevantMemories);
-  if (relevantMemoryLines.length > 0) {
+  if (relevantMemories && relevantMemories.length > 0) {
     sections.push('');
     sections.push('## Relevant Memories');
     sections.push('');
-    sections.push(...relevantMemoryLines);
+    for (const result of relevantMemories) {
+      const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
+      sections.push(
+        `- ${result.memory.key}${tags}: ${truncateMemoryPromptContent(result.memory.content)}`
+      );
+    }
   }
 
   // 9. Project context from the Space.
@@ -367,7 +365,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push('');
     sections.push('## Project Context');
     sections.push('');
-    sections.push(truncateContextBlock(space.backgroundContext, PROJECT_CONTEXT_PROMPT_LIMIT));
+    sections.push(space.backgroundContext);
   }
 
   // 10. Standing instructions — space + workflow combined under one heading.
@@ -421,78 +419,23 @@ function truncateMemoryPromptContent(content: string): string {
   return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
 }
 
-function truncateContextBlock(content: string, limit: number): string {
-  const trimmed = content.trim();
-  if (trimmed.length <= limit) return trimmed;
-  return `${trimmed.slice(0, Math.max(0, limit - 80)).trimEnd()}…\n[truncated; ask the Space Agent for full context if needed]`;
-}
-
-function buildCappedBulletLines(
-  items: string[] | undefined,
-  totalLimit: number,
-  omittedLabel: string
-): string[] {
+function buildPreviousWorkLines(items: string[] | undefined): string[] {
   if (!items || items.length === 0) return [];
 
-  const lines: string[] = [];
-  let used = 0;
-  let omitted = 0;
-  const newestFirst = [...items].reverse();
-
-  for (let index = 0; index < newestFirst.length; index += 1) {
-    const item = newestFirst[index];
-    const line = `- ${item}`;
-    if (used + line.length + 1 <= totalLimit) {
-      lines.unshift(line);
-      used += line.length + 1;
-      continue;
-    }
-
-    if (index === 0 && lines.length === 0) {
-      const truncatedLine = truncateBulletLine(line, totalLimit);
-      lines.unshift(truncatedLine);
-      used += truncatedLine.length + 1;
-      continue;
-    }
-
-    omitted += 1;
+  const lines = items.map((item) => `- ${item}`);
+  const newestIndex = lines.length - 1;
+  if (lines[newestIndex].length > OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT) {
+    lines[newestIndex] = truncateBulletLine(
+      lines[newestIndex],
+      OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT
+    );
   }
-
-  if (omitted > 0) lines.unshift(`- ${omitted} ${omittedLabel}`);
   return lines;
 }
 
 function truncateBulletLine(line: string, limit: number): string {
   if (line.length <= limit) return line;
   return `${line.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
-}
-
-function buildRelevantMemoryLines(memories: AgentMemorySearchResult[] | undefined): string[] {
-  if (!memories || memories.length === 0) return [];
-  const lines: string[] = [];
-  let used = 0;
-  let omitted = 0;
-  for (const result of memories) {
-    const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
-    const prefix = `- ${result.memory.key}${tags}: `;
-    const remaining = RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT - used - prefix.length;
-    if (remaining <= 1) {
-      omitted += 1;
-      continue;
-    }
-    const content = truncateMemoryPromptContent(result.memory.content);
-    const clipped = content.length > remaining ? `${content.slice(0, remaining - 1)}…` : content;
-    const line = `${prefix}${clipped}`;
-    lines.push(line);
-    used += line.length + 1;
-  }
-  if (omitted > 0) {
-    const omittedLine = `- ${omitted} memories omitted`;
-    if (used + omittedLine.length + 1 <= RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT) {
-      lines.push(omittedLine);
-    }
-  }
-  return lines;
 }
 
 function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined): string[] {

@@ -262,7 +262,7 @@ describe('seedPresetAgents', () => {
     // sub-agent that ships with the `claude_code` preset. Custom reviewer
     // sub-agents (e.g. reviewer-explorer / reviewer-fact-checker) are a
     // planned follow-up and must NOT be referenced yet.
-    expect(reviewer?.customPrompt).toContain('Task general-purpose delegation');
+    expect(reviewer?.customPrompt).toContain('multiple Task general-purpose sub-agents');
     // We deliberately do not reference custom reviewer sub-agents that are
     // not yet defined as workflow-template/data.
     expect(reviewer?.customPrompt).not.toContain('reviewer-explorer');

@@ -474,13 +474,14 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('Gates you can write:');
   });
 
-  it('caps dynamic context sections to keep activation messages bounded', () => {
+  it('preserves dynamic task context sections without total caps', () => {
+    const previousTaskSummaries = Array.from(
+      { length: 20 },
+      (_, i) => `Task ${i}: ${'x'.repeat(120)}`
+    );
     const message = buildCustomAgentTaskMessage(
       makeConfig({
-        previousTaskSummaries: Array.from(
-          { length: 20 },
-          (_, i) => `Task ${i}: ${'x'.repeat(120)}`
-        ),
+        previousTaskSummaries,
         relevantMemories: Array.from({ length: 5 }, (_, i) => ({
           rank: i + 1,
           memory: {
@@ -505,23 +506,27 @@ describe('buildCustomAgentTaskMessage', () => {
 
     const previousBlock = message.slice(
       message.indexOf('## Previous Work on This Goal'),
-      message.indexOf('## Relevant Memories')
+      message.indexOf('## Core Memories')
     );
-    expect(previousBlock.length).toBeLessThan(1_100);
-    expect(previousBlock).toContain('older summaries omitted');
+    for (const summary of previousTaskSummaries) expect(previousBlock).toContain(summary);
+    expect(previousBlock).not.toContain('older summaries omitted');
 
     const memoryBlock = message.slice(
       message.indexOf('## Relevant Memories'),
       message.indexOf('## Project Context')
     );
-    expect(memoryBlock.length).toBeLessThan(650);
+    expect(memoryBlock).toContain('memory-0');
+    expect(memoryBlock).toContain('memory-4');
+    expect(memoryBlock).not.toContain('memories omitted');
 
     const projectBlock = message.slice(
       message.indexOf('## Project Context'),
       message.indexOf('## Standing Instructions')
     );
-    expect(projectBlock).toContain('[truncated; ask the Space Agent for full context if needed]');
-    expect(projectBlock.length).toBeLessThan(1_400);
+    expect(projectBlock).toContain('Project context '.repeat(200).trim());
+    expect(projectBlock).not.toContain(
+      '[truncated; ask the Space Agent for full context if needed]'
+    );
 
     const standingBlock = message.slice(message.indexOf('## Standing Instructions'));
     expect(standingBlock).not.toContain(
@@ -547,8 +552,8 @@ describe('buildCustomAgentTaskMessage', () => {
     );
     expect(previousBlock).toContain('Latest result:');
     expect(previousBlock).toContain('…');
-    expect(previousBlock).toContain('older summaries omitted');
-    expect(previousBlock.length).toBeLessThan(1_100);
+    expect(previousBlock).toContain('Older result');
+    expect(previousBlock.length).toBeLessThan(2_200);
   });
 
   it('renders Standing Instructions last, after Project Context', () => {
