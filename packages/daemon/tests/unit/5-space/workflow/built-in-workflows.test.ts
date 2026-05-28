@@ -3366,6 +3366,21 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.poll?.intervalMs).toBe(60_000);
   });
 
+  test('codex feature script and poll override custom script and poll consistently', () => {
+    const gate = getEffectiveGate({
+      id: 'custom-codex-gate',
+      resetOnCycle: false,
+      features: { codex_review_bot: true },
+      script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
+      poll: { intervalMs: 30_000, target: 'to', script: 'echo custom poll' },
+    });
+
+    expect(gate.script?.source).toContain('codex[bot]');
+    expect(gate.poll?.script).toContain('codex[bot]');
+    expect(gate.script?.source).not.toContain('echo custom');
+    expect(gate.poll?.script).not.toContain('echo custom poll');
+  });
+
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks without codex thumbs-up', async () => {
     const gate = getEffectiveGate(
       FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!

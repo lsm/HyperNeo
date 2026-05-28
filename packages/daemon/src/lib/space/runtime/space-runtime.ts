@@ -65,6 +65,7 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import { getEffectiveGatePoll } from './gate-features';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -3077,7 +3078,7 @@ export class SpaceRuntime {
       this.pollManager.stopPolls(run.id);
       return;
     }
-    const pollGateCount = workflow.gates?.filter((gate) => gate.poll).length ?? 0;
+    const pollGateCount = workflow.gates?.filter((gate) => getEffectiveGatePoll(gate)).length ?? 0;
     if (pollGateCount === 0) {
       log.info(
         `SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow has no polled gates`

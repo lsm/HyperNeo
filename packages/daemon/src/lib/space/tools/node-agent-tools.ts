@@ -51,7 +51,7 @@ import {
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, hasCodexReviewBotFeature, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -98,7 +98,7 @@ import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { getEffectiveGate, hasCodexReviewBotFeature } from '../runtime/gate-features';
+import { getEffectiveGate } from '../runtime/gate-features';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().

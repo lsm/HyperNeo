@@ -1,3 +1,4 @@
+import { hasCodexReviewBotFeature } from '@neokai/shared';
 import type { Gate, GatePoll, GateScript } from '@neokai/shared';
 
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 600;
@@ -46,12 +47,6 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   'exit 1',
 ].join('\n');
 
-export function hasCodexReviewBotFeature(gate: Pick<Gate, 'features'> | undefined): boolean {
-  const flag = gate?.features?.codex_review_bot;
-  if (flag === true) return true;
-  return !!flag && typeof flag === 'object' && flag.enabled !== false;
-}
-
 export function getCodexReviewBotGateScript(): GateScript {
   return {
     interpreter: 'bash',
@@ -73,13 +68,12 @@ export function getEffectiveGate(gate: Gate): Gate {
   if (!hasCodexReviewBotFeature(gate)) return gate;
   return {
     ...gate,
-    script: gate.script ?? getCodexReviewBotGateScript(),
-    poll: gate.poll ?? getCodexReviewBotGatePoll(),
+    script: getCodexReviewBotGateScript(),
+    poll: getCodexReviewBotGatePoll(),
   };
 }
 
 export function getEffectiveGatePoll(gate: Gate): GatePoll | undefined {
-  if (gate.poll) return gate.poll;
   if (hasCodexReviewBotFeature(gate)) return getCodexReviewBotGatePoll();
-  return undefined;
+  return gate.poll;
 }

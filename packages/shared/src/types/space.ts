@@ -1486,6 +1486,16 @@ export interface GateFeatures {
   codex_review_bot?: boolean | { enabled?: boolean };
 }
 
+export function hasCodexReviewBotFeature(gate: { features?: GateFeatures } | undefined): boolean {
+  const flag = gate?.features?.codex_review_bot;
+  if (flag === true) return true;
+  return !!flag && typeof flag === 'object' && flag.enabled !== false;
+}
+
+export function hasGateFeatures(gate: { features?: GateFeatures } | undefined): boolean {
+  return hasCodexReviewBotFeature(gate);
+}
+
 export interface Gate {
   /** Unique identifier */
   id: string;

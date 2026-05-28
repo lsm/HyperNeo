@@ -1179,6 +1179,25 @@ describe('validateGate', () => {
     expect(errors).toHaveLength(0);
   });
 
+  test('gate with codex review bot feature is valid', () => {
+    const errors = validateGate({
+      id: 'g1',
+      features: { codex_review_bot: true },
+      resetOnCycle: false,
+    });
+    expect(errors).toHaveLength(0);
+  });
+
+  test('gate with empty features and no fields or script returns error', () => {
+    const errors = validateGate({
+      id: 'g1',
+      features: {},
+      resetOnCycle: false,
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.includes('at least one'))).toBe(true);
+  });
+
   test('gate with both fields and script is valid', () => {
     const errors = validateGate({
       id: 'g1',

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
+import { hasCodexReviewBotFeature } from '@neokai/shared';
 import type {
   Gate,
   GateField,
@@ -104,12 +105,6 @@ function validateGateCompleteness(
     return 'gate: must have at least one field, feature, or script check';
   }
   return '';
-}
-
-function hasCodexReviewBotFeature(gate: Gate): boolean {
-  const flag = gate.features?.codex_review_bot;
-  if (flag === true) return true;
-  return !!flag && typeof flag === 'object' && flag.enabled !== false;
 }
 
 function defaultCheckForType(type: GateFieldType): GateFieldCheck {
