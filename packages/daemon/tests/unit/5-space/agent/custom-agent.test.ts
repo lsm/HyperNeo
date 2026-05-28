@@ -474,6 +474,60 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('Gates you can write:');
   });
 
+  it('caps dynamic context sections to keep activation messages bounded', () => {
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        previousTaskSummaries: Array.from(
+          { length: 20 },
+          (_, i) => `Task ${i}: ${'x'.repeat(120)}`
+        ),
+        relevantMemories: Array.from({ length: 5 }, (_, i) => ({
+          rank: i + 1,
+          memory: {
+            spaceId: 'space-1',
+            key: `memory-${i}`,
+            content: 'm'.repeat(400),
+            tags: ['tag'],
+            createdBySession: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            accessCount: 0,
+            lastAccessedAt: null,
+          },
+        })),
+        space: makeSpace({
+          backgroundContext: 'Project context '.repeat(200),
+          instructions: 'Instruction '.repeat(200),
+        }),
+        workflow: makeWorkflow({ instructions: 'Workflow instruction '.repeat(200) }),
+      })
+    );
+
+    const previousBlock = message.slice(
+      message.indexOf('## Previous Work on This Goal'),
+      message.indexOf('## Relevant Memories')
+    );
+    expect(previousBlock.length).toBeLessThan(1_100);
+    expect(previousBlock).toContain('older summaries omitted');
+
+    const memoryBlock = message.slice(
+      message.indexOf('## Relevant Memories'),
+      message.indexOf('## Project Context')
+    );
+    expect(memoryBlock.length).toBeLessThan(650);
+
+    const projectBlock = message.slice(
+      message.indexOf('## Project Context'),
+      message.indexOf('## Standing Instructions')
+    );
+    expect(projectBlock).toContain('[truncated; ask the Space Agent for full context if needed]');
+    expect(projectBlock.length).toBeLessThan(1_400);
+
+    const standingBlock = message.slice(message.indexOf('## Standing Instructions'));
+    expect(standingBlock).toContain('[truncated; ask the Space Agent for full context if needed]');
+    expect(standingBlock.length).toBeLessThan(1_400);
+  });
+
   it('renders Standing Instructions last, after Project Context', () => {
     const message = buildCustomAgentTaskMessage(
       makeConfig({

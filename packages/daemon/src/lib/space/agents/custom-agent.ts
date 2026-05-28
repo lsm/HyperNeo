@@ -51,7 +51,11 @@ const CLAUDE_CODE_BUILTIN_TOOLS = [
  */
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
 const MEMORY_PROMPT_CONTENT_LIMIT = 500;
+const RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT = 500;
 const CORE_MEMORY_PROMPT_CHAR_LIMIT = 2_000;
+const PREVIOUS_WORK_TOTAL_LIMIT = 900;
+const PROJECT_CONTEXT_PROMPT_LIMIT = 1_200;
+const STANDING_INSTRUCTIONS_PROMPT_LIMIT = 1_200;
 
 const log = new Logger('custom-agent');
 
@@ -329,13 +333,16 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   }
 
   // 6. Previous work summaries.
-  if (previousTaskSummaries && previousTaskSummaries.length > 0) {
+  const previousWorkLines = buildCappedBulletLines(
+    previousTaskSummaries,
+    PREVIOUS_WORK_TOTAL_LIMIT,
+    'older summaries omitted'
+  );
+  if (previousWorkLines.length > 0) {
     sections.push('');
     sections.push('## Previous Work on This Goal');
     sections.push('');
-    for (const summary of previousTaskSummaries) {
-      sections.push(`- ${summary}`);
-    }
+    sections.push(...previousWorkLines);
   }
 
   // 7. Core memories are space-scoped and selected by background consolidation.
@@ -348,16 +355,12 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   }
 
   // 8. Relevant persistent memories.
-  if (relevantMemories && relevantMemories.length > 0) {
+  const relevantMemoryLines = buildRelevantMemoryLines(relevantMemories);
+  if (relevantMemoryLines.length > 0) {
     sections.push('');
     sections.push('## Relevant Memories');
     sections.push('');
-    for (const result of relevantMemories) {
-      const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
-      sections.push(
-        `- ${result.memory.key}${tags}: ${truncateMemoryPromptContent(result.memory.content)}`
-      );
-    }
+    sections.push(...relevantMemoryLines);
   }
 
   // 9. Project context from the Space.
@@ -365,10 +368,10 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push('');
     sections.push('## Project Context');
     sections.push('');
-    sections.push(space.backgroundContext);
+    sections.push(truncateContextBlock(space.backgroundContext, PROJECT_CONTEXT_PROMPT_LIMIT));
   }
 
-  // 7. Standing instructions — space + workflow combined under one heading.
+  // 10. Standing instructions — space + workflow combined under one heading.
   const standingLines: string[] = [];
   if (space.instructions?.trim()) standingLines.push(space.instructions.trim());
   if (workflow?.instructions?.trim()) standingLines.push(workflow.instructions.trim());
@@ -376,7 +379,9 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push('');
     sections.push('## Standing Instructions');
     sections.push('');
-    sections.push(standingLines.join('\n\n'));
+    sections.push(
+      truncateContextBlock(standingLines.join('\n\n'), STANDING_INSTRUCTIONS_PROMPT_LIMIT)
+    );
   }
 
   const message = sections.join('\n');
@@ -417,6 +422,62 @@ function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): stri
 function truncateMemoryPromptContent(content: string): string {
   if (content.length <= MEMORY_PROMPT_CONTENT_LIMIT) return content;
   return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
+}
+
+function truncateContextBlock(content: string, limit: number): string {
+  const trimmed = content.trim();
+  if (trimmed.length <= limit) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, limit - 80)).trimEnd()}…\n[truncated; ask the Space Agent for full context if needed]`;
+}
+
+function buildCappedBulletLines(
+  items: string[] | undefined,
+  totalLimit: number,
+  omittedLabel: string
+): string[] {
+  if (!items || items.length === 0) return [];
+  const lines: string[] = [];
+  let used = 0;
+  let omitted = 0;
+  for (const item of [...items].reverse()) {
+    const line = `- ${item}`;
+    if (used + line.length + 1 > totalLimit) {
+      omitted += 1;
+      continue;
+    }
+    lines.unshift(line);
+    used += line.length + 1;
+  }
+  if (omitted > 0) lines.unshift(`- ${omitted} ${omittedLabel}`);
+  return lines;
+}
+
+function buildRelevantMemoryLines(memories: AgentMemorySearchResult[] | undefined): string[] {
+  if (!memories || memories.length === 0) return [];
+  const lines: string[] = [];
+  let used = 0;
+  let omitted = 0;
+  for (const result of memories) {
+    const tags = result.memory.tags.length > 0 ? ` [${result.memory.tags.join(', ')}]` : '';
+    const prefix = `- ${result.memory.key}${tags}: `;
+    const remaining = RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT - used - prefix.length;
+    if (remaining <= 1) {
+      omitted += 1;
+      continue;
+    }
+    const content = truncateMemoryPromptContent(result.memory.content);
+    const clipped = content.length > remaining ? `${content.slice(0, remaining - 1)}…` : content;
+    const line = `${prefix}${clipped}`;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  if (omitted > 0) {
+    const omittedLine = `- ${omitted} memories omitted`;
+    if (used + omittedLine.length + 1 <= RELEVANT_MEMORY_PROMPT_TOTAL_LIMIT) {
+      lines.push(omittedLine);
+    }
+  }
+  return lines;
 }
 
 function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined): string[] {

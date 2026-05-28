@@ -1685,11 +1685,9 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       ? [
           tool(
             'approve_task',
-            'Close this task as done (self-approval). Only available when the space autonomy level ' +
-              "meets the workflow's completionAutonomyLevel threshold. Takes no arguments — the task " +
-              'is inferred from your session context. After calling, the completion-action pipeline ' +
-              'runs and resolves the terminal status. Use this as your final action when you are ' +
-              'authorized to self-close; otherwise use submit_for_approval.',
+            'Close this task as done (self-approval). TERMINAL final action: do not send messages after calling. ' +
+              'Only use when work is approved/QA-passed, all blocking findings are resolved, required review/artifact evidence is saved, and space autonomy meets workflow completionAutonomyLevel. ' +
+              'If autonomy is too low, use submit_for_approval instead. Never use while findings, QA failures, or dispatch work remain open.',
             ApproveTaskSchema.shape,
             (args) => handlers.approve_task(args)
           ),
@@ -1699,10 +1697,9 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       ? [
           tool(
             'submit_for_approval',
-            "Request human review of this task's completion. Always available to end-node agents. " +
-              'Use this when you want to escalate for human sign-off — either because autonomy rules ' +
-              'require it, or because the outcome is risky enough to warrant attention. Pass an ' +
-              'optional `reason` explaining why you are escalating; it is shown in the approval UI.',
+            "Request human sign-off for this task's completion. TERMINAL final action: do not send messages after calling. " +
+              'Same approval semantic and preconditions as approve_task: use only when work is approved/QA-passed, all findings are resolved, and required review/artifact evidence is saved. ' +
+              'Use when autonomy blocks self-close or risk warrants human sign-off. Never use to defer judgment while findings, QA failures, or dispatch work remain open.',
             SubmitForApprovalSchema.shape,
             (args) => config.onSubmitForApproval!(args)
           ),

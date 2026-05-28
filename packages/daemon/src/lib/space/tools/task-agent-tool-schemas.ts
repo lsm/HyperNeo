@@ -51,7 +51,7 @@ export const ApproveTaskSchema = z
   .object({})
   .strict()
   .describe(
-    'Self-close the task as approved. TERMINAL: closes the review/QA loop. Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be addressed in the latest commits you reviewed. While findings are open, request changes and continue the loop instead — do NOT call this tool.'
+    'Self-close the task as approved. TERMINAL final action: closes the review/QA/workflow loop and should be your last tool call. Pre-condition: work is approved/QA-passed, zero P0-P3 findings remain, prior findings are addressed, and required review/artifact evidence has been saved. While findings, QA failures, or dispatch work are open, request changes or continue the loop instead — do NOT call this tool.'
   );
 
 export type ApproveTaskInput = z.infer<typeof ApproveTaskSchema>;
@@ -95,7 +95,7 @@ export const SubmitForApprovalSchema = z
   })
   .strict()
   .describe(
-    'Request human sign-off as the final close action. TERMINAL: closes the review/QA loop, equivalent in semantic to `approve_task` (both signal "the work is approved by me"). Pre-condition: your current-round verdict MUST be APPROVE (zero P0–P3 findings) AND any prior-round P0–P3 findings must be resolved in the commits you reviewed. Do NOT use this to defer judgment while findings are open — request changes and continue the loop instead.'
+    'Request human sign-off as the final close action. TERMINAL final action: closes the review/QA/workflow loop and should be your last tool call. Same approval semantic as approve_task (both signal work is approved by you). Pre-condition: work is approved/QA-passed, zero P0-P3 findings remain, prior findings are resolved, and required review/artifact evidence has been saved. Do NOT use this to defer judgment while findings, QA failures, or dispatch work are open — request changes or continue the loop instead.'
   );
 
 export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;

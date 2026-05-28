@@ -1143,7 +1143,7 @@ describe('QueryOptionsBuilder', () => {
       expect(systemPrompt.append).toContain('session/my-feature');
     });
 
-    it('should include main repo path in isolation text', async () => {
+    it('should include main repo path but omit merge command examples', async () => {
       mockSession.worktree = {
         worktreePath: '/worktree',
         mainRepoPath: '/projects/my-repo',
@@ -1157,6 +1157,8 @@ describe('QueryOptionsBuilder', () => {
 
       const systemPrompt = options.systemPrompt as { append?: string };
       expect(systemPrompt.append).toContain('/projects/my-repo');
+      expect(systemPrompt.append).not.toContain('git --git-dir=');
+      expect(systemPrompt.append).not.toContain('push origin main');
     });
   });
 
