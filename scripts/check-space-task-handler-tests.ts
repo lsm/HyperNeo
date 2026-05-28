@@ -153,16 +153,62 @@ function normalizeCallLine(line: string): string {
   return normalized;
 }
 
+function countBraces(line: string): number {
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (const char of line) {
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '{') depth++;
+    if (char === '}') depth--;
+  }
+
+  return depth;
+}
+
+function startsNestedFunction(line: string): boolean {
+  return (
+    /^(?:async\s+)?function\b/.test(line) ||
+    /^(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*\{/.test(line)
+  );
+}
+
+function hasFocusedTest(source: string): boolean {
+  return /\b(?:describe|it|test)\.only\s*\(/.test(stripComments(source));
+}
+
 function parseTestedHandlers(source: string): Set<string> {
   const executableSource = blankDisabledTestCalls(stripComments(source));
   const tested = new Set<string>();
-  for (const match of executableSource.matchAll(/\b(?:it|test)(?:\.only)?\s*\(/g)) {
+  for (const match of executableSource.matchAll(/\b(?:it|test)\s*\(/g)) {
     const openParenIndex = (match.index ?? 0) + match[0].length - 1;
     const end = findCallEnd(executableSource, openParenIndex);
     if (end === -1) continue;
     const testBody = executableSource.slice(openParenIndex, end + 1);
+    let nestedFunctionDepth = 0;
     for (const line of testBody.split('\n')) {
       const normalizedLine = normalizeCallLine(line);
+      if (nestedFunctionDepth > 0 || startsNestedFunction(normalizedLine)) {
+        nestedFunctionDepth = Math.max(0, nestedFunctionDepth + countBraces(normalizedLine));
+        continue;
+      }
+
       const callMatch = normalizedLine.match(
         /^(?:return\s+)?(?:await\s+)?(?:expect\()?call\(\s*['"]([^'"]+)['"]/
       );
@@ -182,6 +228,9 @@ function main() {
 
   const handlerSource = readFileSync(handlerFile, 'utf8');
   const testSource = readFileSync(testFile, 'utf8');
+  if (hasFocusedTest(testSource)) {
+    fail(`Focused tests are not allowed in ${testFile}. Remove .only before counting coverage.`);
+  }
   const methods = parseHandlers(handlerSource);
   const testedMethods = parseTestedHandlers(testSource);
   const missing = Array.from(methods).filter((method) => !testedMethods.has(method));

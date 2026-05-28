@@ -169,8 +169,12 @@ describe('check-space-task-handler-tests', () => {
     writeProjectFile(
       cwd,
       'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
-      "it('covers create', async () => { await call('spaceTask.create', {});\n" +
-        "const cover = () => call('spaceTask.publish', {}); });\n"
+      "it('covers create', async () => {\n" +
+        "await call('spaceTask.create', {});\n" +
+        'async function cover() {\n' +
+        "await call('spaceTask.publish', {});\n" +
+        '}\n' +
+        '});\n'
     );
     git(cwd, ['add', '.']);
     git(cwd, ['commit', '-m', 'wrap handler call']);
@@ -202,6 +206,28 @@ describe('check-space-task-handler-tests', () => {
     const result = runGate(cwd);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('spaceTask.publish');
+  });
+
+  it('fails when the handler test file contains focused tests', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    writeProjectFile(
+      cwd,
+      'packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts',
+      "messageHub.onRequest('spaceTask.create', async () => {});\n"
+    );
+    writeProjectFile(
+      cwd,
+      'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
+      "it.only('covers create', async () => { await call('spaceTask.create', {}); });\n"
+    );
+    git(cwd, ['add', '.']);
+    git(cwd, ['commit', '-m', 'focus handler test']);
+
+    const result = runGate(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Focused tests are not allowed');
   });
 
   it('passes when each spaceTask handler is called in handler tests', () => {
