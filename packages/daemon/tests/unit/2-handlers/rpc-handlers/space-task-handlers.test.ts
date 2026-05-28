@@ -1893,49 +1893,120 @@ describe('space-task-handlers', () => {
         call('spaceTask.submitForReview', { spaceId: 'space-1', taskId: 'task-1' })
       ).rejects.toThrow('Invalid status transition');
     });
+  });
 
-    describe('spaceTask.publish', () => {
-      beforeEach(() => setup());
+  // ─── spaceTask.approvePendingCompletion ─────────────────────────────────────
 
-      it('publishes a draft task and publishes space.task.updated', async () => {
-        const mockDraftTask = { ...mockTask, status: 'draft' };
-        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(mockDraftTask);
-        (taskManager.publishTask as ReturnType<typeof mock>).mockResolvedValue({
-          ...mockTask,
-          status: 'open',
-        });
+  describe('spaceTask.approvePendingCompletion', () => {
+    beforeEach(() => setup());
 
-        const result = await call('spaceTask.publish', {
+    it('dispatches human approval through the post-approval router and returns the refreshed task', async () => {
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        pendingCheckpointType: 'task_completion' as const,
+      };
+      const approvedTask = { ...reviewTask, status: 'approved' as const };
+      const runtime = {
+        dispatchPostApproval: mock(async () => {}),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, reviewTask, runtime);
+      (taskManager.getTask as ReturnType<typeof mock>)
+        .mockResolvedValueOnce(reviewTask)
+        .mockResolvedValueOnce(approvedTask);
+
+      const result = await call('spaceTask.approvePendingCompletion', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        approved: true,
+        reason: 'looks good',
+      });
+
+      expect(runtime.dispatchPostApproval).toHaveBeenCalledWith('space-1', 'task-1', 'human', {
+        approvalReason: 'looks good',
+      });
+      expect(result).toEqual(approvedTask);
+      expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        task: approvedTask,
+      });
+    });
+
+    it('rejects completion back to in_progress with rejection reason', async () => {
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        pendingCheckpointType: 'task_completion' as const,
+      };
+      setup(mockSpace, reviewTask);
+
+      await call('spaceTask.approvePendingCompletion', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        approved: false,
+        reason: 'needs revision',
+      });
+
+      expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress');
+      expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+        approvalReason: 'needs revision',
+      });
+    });
+
+    it('requires a task_completion checkpoint', async () => {
+      await expect(
+        call('spaceTask.approvePendingCompletion', {
           spaceId: 'space-1',
           taskId: 'task-1',
-        });
+          approved: true,
+        })
+      ).rejects.toThrow('not awaiting submit_for_approval review');
+    });
+  });
 
-        expect(result.status).toBe('open');
-        expect(taskManager.publishTask).toHaveBeenCalledWith('task-1');
-        expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
-          sessionId: 'global',
-          spaceId: 'space-1',
-          taskId: 'task-1',
-          task: expect.objectContaining({ status: 'open' }),
-        });
+  describe('spaceTask.publish', () => {
+    beforeEach(() => setup());
+
+    it('publishes a draft task and publishes space.task.updated', async () => {
+      const mockDraftTask = { ...mockTask, status: 'draft' };
+      (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue(mockDraftTask);
+      (taskManager.publishTask as ReturnType<typeof mock>).mockResolvedValue({
+        ...mockTask,
+        status: 'open',
       });
 
-      it('throws when taskId is missing', async () => {
-        await expect(call('spaceTask.publish', { spaceId: 'space-1' })).rejects.toThrow(
-          'taskId is required'
-        );
+      const result = await call('spaceTask.publish', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
       });
 
-      it('throws when task is not in draft status', async () => {
-        (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue({
-          ...mockTask,
-          status: 'open',
-        });
-
-        await expect(
-          call('spaceTask.publish', { spaceId: 'space-1', taskId: 'task-1' })
-        ).rejects.toThrow("not in 'draft' status");
+      expect(result.status).toBe('open');
+      expect(taskManager.publishTask).toHaveBeenCalledWith('task-1');
+      expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        task: expect.objectContaining({ status: 'open' }),
       });
+    });
+
+    it('throws when taskId is missing', async () => {
+      await expect(call('spaceTask.publish', { spaceId: 'space-1' })).rejects.toThrow(
+        'taskId is required'
+      );
+    });
+
+    it('throws when task is not in draft status', async () => {
+      (taskManager.getTask as ReturnType<typeof mock>).mockResolvedValue({
+        ...mockTask,
+        status: 'open',
+      });
+
+      await expect(
+        call('spaceTask.publish', { spaceId: 'space-1', taskId: 'task-1' })
+      ).rejects.toThrow("not in 'draft' status");
     });
   });
 });
