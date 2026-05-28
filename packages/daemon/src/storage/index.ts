@@ -15,6 +15,9 @@ import type {
   MessageOrigin,
   NeokaiActionMessage,
   ChatMessage,
+  CreateProviderParams,
+  ProviderRecord,
+  UpdateProviderParams,
 } from '@neokai/shared';
 import type { GoalStatus, RoomGoal } from '@neokai/shared/types/neo';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -37,6 +40,7 @@ import {
 } from './repositories/goal-repository';
 import { JobQueueRepository } from './repositories/job-queue-repository';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
+import { ProviderRepository } from './repositories/provider-repository';
 import { TaskRepository } from './repositories/task-repository';
 import { SpaceTaskRepository } from './repositories/space-task-repository';
 import { NodeExecutionRepository } from './repositories/node-execution-repository';
@@ -74,6 +78,7 @@ export type {
   SpaceAgentInboxMessageStatus,
 } from './repositories/space-agent-inbox-repository';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
+export { ProviderRepository } from './repositories/provider-repository';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository';
 export { SkillRepository } from './repositories/skill-repository';
 export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
@@ -103,6 +108,7 @@ export class Database {
   private goalRepo!: GoalRepository;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
+  private providerRepo!: ProviderRepository;
   private taskRepo!: TaskRepository;
   private spaceTaskRepo!: SpaceTaskRepository;
   private nodeExecutionRepo!: NodeExecutionRepository;
@@ -140,6 +146,7 @@ export class Database {
     this.nodeExecutionRepo = new NodeExecutionRepository(db);
     this.jobQueueRepo = new JobQueueRepository(db);
     this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
+    this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);
     this.skillRepo = new SkillRepository(db, reactiveDb);
     this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
@@ -572,6 +579,41 @@ export class Database {
    */
   get appMcpServers(): AppMcpServerRepository {
     return this.appMcpServerRepo;
+  }
+
+  /**
+   * Get the Provider repository.
+   */
+  get providers(): ProviderRepository {
+    return this.providerRepo;
+  }
+
+  listProviders(): ProviderRecord[] {
+    return this.providerRepo.listProviders();
+  }
+
+  getProvider(id: string): ProviderRecord | null {
+    return this.providerRepo.getProvider(id);
+  }
+
+  getProviderByProviderId(providerId: string): ProviderRecord | null {
+    return this.providerRepo.getProviderByProviderId(providerId);
+  }
+
+  createProvider(params: CreateProviderParams): ProviderRecord {
+    return this.providerRepo.createProvider(params);
+  }
+
+  updateProvider(id: string, params: UpdateProviderParams): ProviderRecord | null {
+    return this.providerRepo.updateProvider(id, params);
+  }
+
+  deleteProvider(id: string): boolean {
+    return this.providerRepo.deleteProvider(id);
+  }
+
+  setDefaultProvider(id: string): void {
+    this.providerRepo.setDefaultProvider(id);
   }
 
   /**

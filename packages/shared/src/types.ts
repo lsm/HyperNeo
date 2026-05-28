@@ -18,6 +18,14 @@ export type {
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
 } from './types/app-mcp-server.ts';
+export type {
+  CreateProviderParams,
+  ProviderAuthType,
+  ProviderHealthStatus,
+  ProviderKind,
+  ProviderRecord,
+  UpdateProviderParams,
+} from './types/provider-record.ts';
 // Re-export SDK config types for convenience
 export type {
   AgentDefinition,
