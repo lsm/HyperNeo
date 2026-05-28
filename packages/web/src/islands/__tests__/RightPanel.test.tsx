@@ -12,6 +12,7 @@ vi.mock('../../lib/session-store', () => ({
 }));
 
 import {
+  currentSpaceCanonicalIdSignal,
   currentSpaceGoalIdSignal,
   currentSpaceIdSignal,
   currentSpaceScopeIdSignal,
@@ -26,6 +27,7 @@ describe('RightPanelToggle', () => {
   beforeEach(() => {
     navSectionSignal.value = 'spaces';
     currentSpaceIdSignal.value = 'space-1';
+    currentSpaceCanonicalIdSignal.value = null;
     currentSpaceViewModeSignal.value = 'goals';
     currentSpaceGoalIdSignal.value = null;
     currentSpaceScopeIdSignal.value = null;
@@ -36,6 +38,7 @@ describe('RightPanelToggle', () => {
   afterEach(() => {
     cleanup();
     rightPanelTargetSignal.value = null;
+    currentSpaceCanonicalIdSignal.value = null;
     currentSpaceGoalIdSignal.value = null;
     currentSpaceScopeIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
@@ -59,6 +62,20 @@ describe('RightPanelToggle', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(rightPanelTargetSignal.value).toBeNull();
+  });
+
+  it('uses the canonical space id for slug-routed panel targets', () => {
+    currentSpaceIdSignal.value = 'space-slug';
+    currentSpaceCanonicalIdSignal.value = 'space-1';
+    currentSpaceGoalIdSignal.value = 'goal-1';
+    render(<RightPanelToggle />);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(rightPanelTargetSignal.value).toEqual({
+      type: 'goal',
+      spaceId: 'space-1',
+      goalId: 'goal-1',
+    });
   });
 
   it('toggles the scope panel on the Forge view', () => {

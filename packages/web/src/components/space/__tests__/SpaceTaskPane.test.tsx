@@ -690,6 +690,23 @@ describe('SpaceTaskPane — canvas toggle', () => {
     expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1', 'thread', true);
   });
 
+  it('keeps canonical right-panel task targets while preserving slug navigation', async () => {
+    mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+    mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+    mockCurrentSpaceTaskViewTabSignal.value = 'artifacts';
+    render(<SpaceTaskPane taskId="task-1" spaceId="space-1" navigationSpaceId="space-slug" />);
+
+    await waitFor(() =>
+      expect(rightPanelTargetSignal.value).toEqual({
+        type: 'task',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        tab: 'artifacts',
+      })
+    );
+    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'task-1', 'thread', true);
+  });
+
   it('canvas toggle aria-pressed reflects current state', () => {
     mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
     mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];

@@ -510,7 +510,7 @@ describe('TaskAuxiliaryPanel', () => {
     );
   });
 
-  it('uses the route space id when normalizing tabs', async () => {
+  it('keeps the canonical space id when normalizing right-panel tabs', async () => {
     render(
       <TaskAuxiliaryPanel
         spaceId="space-1"
@@ -523,7 +523,7 @@ describe('TaskAuxiliaryPanel', () => {
     await waitFor(() =>
       expect(rightPanelTargetSignal.value).toEqual({
         type: 'task',
-        spaceId: 'space-slug',
+        spaceId: 'space-1',
         taskId: 'task-1',
         tab: 'details',
       })

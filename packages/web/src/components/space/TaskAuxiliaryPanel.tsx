@@ -291,8 +291,8 @@ export function TaskAuxiliaryPanel({
   useEffect(() => {
     if (!task) return;
     if (tab === activeTab) return;
-    rightPanelTargetSignal.value = { type: 'task', spaceId: routeSpaceId, taskId, tab: activeTab };
-  }, [activeTab, routeSpaceId, tab, task, taskId]);
+    rightPanelTargetSignal.value = { type: 'task', spaceId, taskId, tab: activeTab };
+  }, [activeTab, spaceId, tab, task, taskId]);
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -354,7 +354,7 @@ export function TaskAuxiliaryPanel({
   }
 
   const selectTab = (nextTab: TaskRightPanelTab) => {
-    rightPanelTargetSignal.value = { type: 'task', spaceId: routeSpaceId, taskId, tab: nextTab };
+    rightPanelTargetSignal.value = { type: 'task', spaceId, taskId, tab: nextTab };
   };
 
   // Flat-view data

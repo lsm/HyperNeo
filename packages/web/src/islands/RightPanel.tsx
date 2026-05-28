@@ -8,6 +8,7 @@ import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import { sessionStore } from '../lib/session-store.ts';
 import {
+  currentSpaceCanonicalIdSignal,
   currentSpaceGoalIdSignal,
   currentSpaceIdSignal,
   currentSpaceScopeIdSignal,
@@ -90,8 +91,9 @@ function useToggleTarget(): RightPanelTarget | null {
     ? sessionFeatures(activeSession, activeSessionId).worktree
     : false;
 
-  const inSpace = navSectionSignal.value === 'spaces' && currentSpaceIdSignal.value !== null;
-  const spaceId = currentSpaceIdSignal.value;
+  const routeSpaceId = currentSpaceIdSignal.value;
+  const inSpace = navSectionSignal.value === 'spaces' && routeSpaceId !== null;
+  const spaceId = currentSpaceCanonicalIdSignal.value ?? routeSpaceId;
   const viewMode = currentSpaceViewModeSignal.value;
   const goalId = currentSpaceGoalIdSignal.value;
   const scopeId = currentSpaceScopeIdSignal.value;
