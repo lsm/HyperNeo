@@ -271,12 +271,20 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
 interface AgentCardProps {
   agent: SpaceLongHorizonAgent;
   spaceId: string;
+  navigationSpaceId: string;
   reminderCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCardProps) {
+function AgentCard({
+  agent,
+  spaceId,
+  navigationSpaceId,
+  reminderCount,
+  onEdit,
+  onDelete,
+}: AgentCardProps) {
   const coordinator = isCoordinator(agent);
   const statusColors: Record<string, string> = {
     active: 'bg-green-500',
@@ -291,11 +299,12 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
     <div
       role={sessionId ? 'button' : undefined}
       tabIndex={sessionId ? 0 : undefined}
-      onClick={sessionId ? () => navigateToSpaceSession(spaceId, sessionId) : undefined}
+      onClick={sessionId ? () => navigateToSpaceSession(navigationSpaceId, sessionId) : undefined}
       onKeyDown={
         sessionId
           ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') navigateToSpaceSession(spaceId, sessionId);
+              if (e.key === 'Enter' || e.key === ' ')
+                navigateToSpaceSession(navigationSpaceId, sessionId);
             }
           : undefined
       }
@@ -438,11 +447,14 @@ function TemplateCard({
 
 export function SpaceLongHorizonAgents({
   spaceId,
+  navigationSpaceId,
   selectedHandle,
 }: {
   spaceId: string;
+  navigationSpaceId?: string;
   selectedHandle?: string | null;
 }) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const agents = spaceStore.longHorizonAgents.value;
   const spaceAgents = spaceStore.agents.value;
   const templates = spaceStore.longHorizonAgentTemplates.value;
@@ -518,10 +530,10 @@ export function SpaceLongHorizonAgents({
   const selectedSpaceAgent = selectedHandle
     ? spaceAgents.find((agent) => agent.handle === selectedHandle && agent.status !== 'archived')
     : null;
-  const selectedAgent: SelectedAgentDetail | null = selectedLongHorizonAgent
-    ? { source: 'long-horizon', agent: selectedLongHorizonAgent }
-    : selectedSpaceAgent
-      ? { source: 'space-agent', agent: selectedSpaceAgent }
+  const selectedAgent: SelectedAgentDetail | null = selectedSpaceAgent
+    ? { source: 'space-agent', agent: selectedSpaceAgent }
+    : selectedLongHorizonAgent
+      ? { source: 'long-horizon', agent: selectedLongHorizonAgent }
       : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
@@ -609,6 +621,7 @@ export function SpaceLongHorizonAgents({
                   key={agent.id}
                   agent={agent}
                   spaceId={spaceId}
+                  navigationSpaceId={routeSpaceId}
                   reminderCount={reminderCounts[agent.id] ?? 0}
                   onEdit={() => {
                     setEditingAgent(agent);

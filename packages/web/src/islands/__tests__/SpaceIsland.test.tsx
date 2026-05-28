@@ -121,8 +121,16 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
 }));
 
 vi.mock('../../components/space/SpaceOverview', () => ({
-  SpaceOverview: (props: { onSelectTask?: (taskId: string) => void }) => (
-    <div data-testid="space-dashboard">
+  SpaceOverview: (props: {
+    spaceId: string;
+    navigationSpaceId?: string;
+    onSelectTask?: (taskId: string) => void;
+  }) => (
+    <div
+      data-testid="space-dashboard"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+    >
       <button
         data-testid="overview-select-task"
         onClick={() => props.onSelectTask?.('task-from-overview')}
@@ -134,11 +142,16 @@ vi.mock('../../components/space/SpaceOverview', () => ({
 }));
 
 vi.mock('../../components/space/SpaceTaskPane', () => ({
-  SpaceTaskPane: (props: { taskId: string | null; spaceId?: string }) => (
+  SpaceTaskPane: (props: {
+    taskId: string | null;
+    spaceId?: string;
+    navigationSpaceId?: string;
+  }) => (
     <div
       data-testid="space-task-pane-inner"
       data-task-id={props.taskId ?? ''}
       data-space-id={props.spaceId ?? ''}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
     />
   ),
 }));
@@ -166,12 +179,17 @@ vi.mock('../../components/space/SpaceAgentList', () => ({
 }));
 
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
-  SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => {
+  SpaceLongHorizonAgents: (props: {
+    spaceId: string;
+    navigationSpaceId?: string;
+    selectedHandle?: string | null;
+  }) => {
     const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
     return (
       <div
         data-testid="space-long-horizon-agents"
         data-space-id={props.spaceId}
+        data-navigation-space-id={props.navigationSpaceId ?? ''}
         data-selected-handle={props.selectedHandle ?? ''}
         data-space-agent={spaceAgent?.handle ?? ''}
       />
@@ -313,6 +331,7 @@ describe('SpaceIsland — route-driven views', () => {
     );
     // Outer wrapper
     expect(getByTestId('space-overview-view')).toBeTruthy();
+    expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
     // Legacy tab bar is removed from overview
     expect(queryByTestId('space-tab-bar')).toBeNull();
   });
@@ -341,10 +360,14 @@ describe('SpaceIsland — overview content', () => {
     expect(queryByTestId('dashboard-fallback')).toBeNull();
   });
 
-  it('uses the route space id for overview task navigation', async () => {
+  it('passes the route space id to overview self-managed navigation', async () => {
     const { findByTestId } = render(
       <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="overview" />
     );
+
+    const overview = await findByTestId('space-dashboard');
+    expect(overview.getAttribute('data-space-id')).toBe('space-1');
+    expect(overview.getAttribute('data-navigation-space-id')).toBe('space-slug');
 
     fireEvent.click(await findByTestId('overview-select-task'));
 
@@ -437,6 +460,23 @@ describe('SpaceIsland — content priority chain', () => {
     await findByTestId('space-task-pane-inner');
     expect(getByTestId('space-task-pane')).toBeTruthy();
     expect(getByTestId('space-task-pane-inner').getAttribute('data-task-id')).toBe('task-xyz');
+    expect(getByTestId('space-task-pane-inner').getAttribute('data-space-id')).toBe('space-1');
+  });
+
+  it('passes the route space id to task detail navigation', async () => {
+    const { getByTestId, findByTestId } = render(
+      <SpaceIsland
+        spaceId="space-1"
+        routeSpaceId="space-slug"
+        viewMode="overview"
+        taskViewId="task-xyz"
+      />
+    );
+    await findByTestId('space-task-pane-inner');
+    expect(getByTestId('space-task-pane-inner').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByTestId('space-task-pane-inner').getAttribute('data-navigation-space-id')).toBe(
+      'space-slug'
+    );
   });
 
   it('sessionViewId takes priority over taskViewId', async () => {
@@ -624,8 +664,19 @@ describe('SpaceIsland — agents view', () => {
 
     const agentsPage = await findByTestId('space-long-horizon-agents');
     expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
+    expect(agentsPage.getAttribute('data-navigation-space-id')).toBe('space-1');
     expect(agentsPage.getAttribute('data-selected-handle')).toBe('reviewer');
     expect(agentsPage.getAttribute('data-space-agent')).toBe('reviewer');
+  });
+
+  it('passes the route space id to agent session navigation', async () => {
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="agents" />
+    );
+
+    const agentsPage = await findByTestId('space-long-horizon-agents');
+    expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
+    expect(agentsPage.getAttribute('data-navigation-space-id')).toBe('space-slug');
   });
 });
 

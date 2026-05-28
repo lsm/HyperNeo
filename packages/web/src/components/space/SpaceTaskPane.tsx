@@ -40,6 +40,7 @@ import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 interface SpaceTaskPaneProps {
   taskId: string | null;
   spaceId?: string;
+  navigationSpaceId?: string;
   onClose?: () => void;
 }
 
@@ -159,7 +160,12 @@ function formatEditTaskError(err: unknown): string {
   return message || 'Failed to update task';
 }
 
-export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
+export function SpaceTaskPane({
+  taskId,
+  spaceId,
+  navigationSpaceId: routeSpaceId,
+  onClose,
+}: SpaceTaskPaneProps) {
   // Lazy-load agents/workflows needed for mention autocomplete and canvas
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -238,7 +244,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
     : null;
   const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
   const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
-  const navigationSpaceIdForTask = spaceId ?? currentSpaceIdSignal.value ?? task?.spaceId;
+  const navigationSpaceIdForTask =
+    routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
 
   useEffect(() => {
     if (!taskId || !navigationSpaceIdForTask) return;

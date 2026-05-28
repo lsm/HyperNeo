@@ -279,11 +279,17 @@ export default function SpaceIsland({
             {showInMiddle ? (
               <TaskAuxiliaryPanel
                 spaceId={spaceId}
+                navigationSpaceId={navigationSpaceId}
                 taskId={taskViewId}
                 onClose={handleTaskPaneClose}
               />
             ) : (
-              <SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+              <SpaceTaskPane
+                taskId={taskViewId}
+                spaceId={spaceId}
+                navigationSpaceId={navigationSpaceId}
+                onClose={handleTaskPaneClose}
+              />
             )}
           </Suspense>
         </div>
@@ -448,7 +454,11 @@ export default function SpaceIsland({
           <SpacePageHeader pageTitle="Agents" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
-              <SpaceLongHorizonAgents spaceId={spaceId} selectedHandle={selectedAgentHandle} />
+              <SpaceLongHorizonAgents
+                spaceId={spaceId}
+                navigationSpaceId={navigationSpaceId}
+                selectedHandle={selectedAgentHandle}
+              />
             </Suspense>
           </div>
         </div>
@@ -488,6 +498,7 @@ export default function SpaceIsland({
           <Suspense fallback={lazyFallback}>
             <SpaceOverview
               spaceId={spaceId}
+              navigationSpaceId={navigationSpaceId}
               onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
             />
           </Suspense>

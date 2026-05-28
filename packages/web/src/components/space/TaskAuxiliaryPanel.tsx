@@ -27,6 +27,7 @@ import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
 interface TaskAuxiliaryPanelProps {
   spaceId: string;
+  navigationSpaceId?: string;
   taskId: string;
   tab?: TaskRightPanelTab;
   onClose?: () => void;
@@ -256,7 +257,14 @@ function normalizeTab(task: SpaceTask, tab: TaskRightPanelTab | undefined): Task
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxiliaryPanelProps) {
+export function TaskAuxiliaryPanel({
+  spaceId,
+  navigationSpaceId,
+  taskId,
+  tab,
+  onClose,
+}: TaskAuxiliaryPanelProps) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const task = spaceStore.tasks.value.find((item) => item.id === taskId) ?? null;
 
   // Right-panel tab state
@@ -283,8 +291,8 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
   useEffect(() => {
     if (!task) return;
     if (tab === activeTab) return;
-    rightPanelTargetSignal.value = { type: 'task', spaceId, taskId, tab: activeTab };
-  }, [activeTab, spaceId, tab, task, taskId]);
+    rightPanelTargetSignal.value = { type: 'task', spaceId: routeSpaceId, taskId, tab: activeTab };
+  }, [activeTab, routeSpaceId, tab, task, taskId]);
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -346,7 +354,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
   }
 
   const selectTab = (nextTab: TaskRightPanelTab) => {
-    rightPanelTargetSignal.value = { type: 'task', spaceId, taskId, tab: nextTab };
+    rightPanelTargetSignal.value = { type: 'task', spaceId: routeSpaceId, taskId, tab: nextTab };
   };
 
   // Flat-view data
@@ -474,7 +482,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
             type="button"
             onClick={() => {
               currentSpaceGoalIdSignal.value = goal.id;
-              navigateToSpaceGoals(spaceId);
+              navigateToSpaceGoals(routeSpaceId);
             }}
             class="truncate text-blue-300 hover:text-blue-200"
           >
@@ -488,7 +496,7 @@ export function TaskAuxiliaryPanel({ spaceId, taskId, tab, onClose }: TaskAuxili
             type="button"
             onClick={() => {
               currentSpaceScopeIdSignal.value = task.evolutionScopeId!;
-              navigateToSpaceForge(spaceId);
+              navigateToSpaceForge(routeSpaceId);
             }}
             class="truncate text-blue-300 hover:text-blue-200"
           >

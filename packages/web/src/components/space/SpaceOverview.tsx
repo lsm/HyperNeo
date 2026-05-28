@@ -293,10 +293,12 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
 
 interface SpaceOverviewProps {
   spaceId: string;
+  navigationSpaceId?: string;
   onSelectTask?: (taskId: string) => void;
 }
 
-export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
+export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: SpaceOverviewProps) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
@@ -361,8 +363,8 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
   const handleNewSession = useCallback(async () => {
     const space = spaceStore.space.value;
     const response = await createSession({ spaceId, workspacePath: space?.workspacePath });
-    navigateToSpaceSession(spaceId, response.sessionId);
-  }, [spaceId]);
+    navigateToSpaceSession(routeSpaceId, response.sessionId);
+  }, [spaceId, routeSpaceId]);
 
   const loading = spaceStore.loading.value;
   const space = spaceStore.space.value;
@@ -412,10 +414,10 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
   ).length;
 
   const handleTaskClick =
-    onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
+    onSelectTask ?? ((taskId: string) => navigateToSpaceTask(routeSpaceId, taskId));
 
   const handleAwaitingApprovalClick = () => {
-    navigateToSpaceTasks(spaceId, 'action');
+    navigateToSpaceTasks(routeSpaceId, 'action');
   };
 
   return (
@@ -454,19 +456,19 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
             label="Active"
             count={activeTasks.length}
             color="border-blue-800/30 text-blue-400"
-            onClick={() => navigateToSpaceTasks(spaceId, 'active')}
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'active')}
           />
           <StatCard
             label="Review"
             count={reviewTasks.length}
             color="border-purple-800/30 text-purple-400"
-            onClick={() => navigateToSpaceTasks(spaceId, 'action')}
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
           <StatCard
             label="Done"
             count={doneTasks.length}
             color="border-green-800/30 text-green-400"
-            onClick={() => navigateToSpaceTasks(spaceId, 'completed')}
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'completed')}
           />
         </div>
 
@@ -564,7 +566,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
                 <button
                   key={session.id}
                   type="button"
-                  onClick={() => navigateToSpaceSession(spaceId, session.id)}
+                  onClick={() => navigateToSpaceSession(routeSpaceId, session.id)}
                   class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
                 >
                   <div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />

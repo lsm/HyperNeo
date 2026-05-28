@@ -17,7 +17,6 @@ import './lib/default-commands.ts';
 import {
   currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
-  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
@@ -127,8 +126,6 @@ export function App() {
     return effect(() => {
       const sessionId = currentSessionIdSignal.value;
       const spaceId = currentSpaceIdSignal.value;
-      const canonicalSpaceId = currentSpaceCanonicalIdSignal.value;
-      const apiSpaceId = canonicalSpaceId ?? spaceId;
       const spaceSessionId = currentSpaceSessionIdSignal.value;
       const spaceTaskId = currentSpaceTaskIdSignal.value;
       const spaceAgentHandle = currentSpaceAgentHandleSignal.value;
@@ -179,29 +176,29 @@ export function App() {
       if (currentPath !== expectedPath) {
         if (sessionId) {
           navigateToSession(sessionId, true); // replace=true to avoid polluting history
-        } else if (spaceTaskId && apiSpaceId) {
+        } else if (spaceTaskId && spaceId) {
           navigateToSpaceTask(
-            apiSpaceId,
+            spaceId,
             spaceTaskId,
             spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined,
             true
           );
-        } else if (apiSpaceId && spaceViewMode === 'agents') {
-          navigateToSpaceAgent(apiSpaceId, spaceAgentHandle ?? true, true);
-        } else if (spaceSessionId && apiSpaceId) {
-          navigateToSpaceSession(apiSpaceId, spaceSessionId, true);
-        } else if (apiSpaceId && spaceViewMode === 'sessions') {
-          navigateToSpaceSessions(apiSpaceId, true);
-        } else if (apiSpaceId && spaceViewMode === 'goals') {
-          navigateToSpaceGoals(apiSpaceId, true);
-        } else if (apiSpaceId && spaceViewMode === 'forge') {
-          navigateToSpaceForge(apiSpaceId, true);
-        } else if (apiSpaceId && spaceViewMode === 'tasks') {
-          navigateToSpaceTasks(apiSpaceId, undefined, true);
-        } else if (apiSpaceId && spaceViewMode === 'configure') {
-          navigateToSpaceConfigure(apiSpaceId, undefined, true);
-        } else if (apiSpaceId) {
-          navigateToSpace(apiSpaceId, true);
+        } else if (spaceId && spaceViewMode === 'agents') {
+          navigateToSpaceAgent(spaceId, spaceAgentHandle ?? true, true);
+        } else if (spaceSessionId && spaceId) {
+          navigateToSpaceSession(spaceId, spaceSessionId, true);
+        } else if (spaceId && spaceViewMode === 'sessions') {
+          navigateToSpaceSessions(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'goals') {
+          navigateToSpaceGoals(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'forge') {
+          navigateToSpaceForge(spaceId, true);
+        } else if (spaceId && spaceViewMode === 'tasks') {
+          navigateToSpaceTasks(spaceId, undefined, true);
+        } else if (spaceId && spaceViewMode === 'configure') {
+          navigateToSpaceConfigure(spaceId, undefined, true);
+        } else if (spaceId) {
+          navigateToSpace(spaceId, true);
         } else if (navSection === 'spaces') {
           navigateToSpacesPage(true);
         } else if (navSection === 'chats') {
