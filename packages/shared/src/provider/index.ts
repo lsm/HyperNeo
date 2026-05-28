@@ -8,6 +8,7 @@ export type {
   ProviderContext,
   ProviderId,
   ProviderInfo,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,

@@ -9,7 +9,9 @@
 
 import type {
   Provider,
+  ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
@@ -101,7 +103,17 @@ export class GlmProvider implements Provider {
     },
   ];
 
+  private credentials: ProviderCredentials | null = null;
+
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
+  }
 
   /**
    * Check if GLM is available
@@ -116,7 +128,17 @@ export class GlmProvider implements Provider {
    * Supports both GLM_API_KEY and ZHIPU_API_KEY
    */
   getApiKey(): string | undefined {
+    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
     return this.env.GLM_API_KEY || this.env.ZHIPU_API_KEY;
+  }
+
+  async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    const apiKey = this.getApiKey();
+    return {
+      isAuthenticated: !!apiKey,
+      method: 'api_key',
+      error: apiKey ? undefined : 'Set GLM_API_KEY or ZHIPU_API_KEY to enable GLM models.',
+    };
   }
 
   /**

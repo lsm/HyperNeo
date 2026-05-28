@@ -8,7 +8,9 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Provider,
+  ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ModelTier,
 } from '@neokai/shared/provider';
@@ -132,33 +134,49 @@ export class AnthropicProvider implements Provider {
    * Cache for dynamically loaded models
    */
   private modelCache: ModelInfo[] | null = null;
+  private credentials: ProviderCredentials | null = null;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly modelCacheKey: string = 'anthropic-global'
   ) {}
 
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
+  }
+
   /**
    * Check if Anthropic is available
    * Requires ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_AUTH_TOKEN
    */
   isAvailable(): boolean {
-    return !!(
-      this.env.ANTHROPIC_API_KEY ||
-      this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN
-    );
+    return !!this.getApiKey();
   }
 
   /**
    * Get API key from environment
    */
   getApiKey(): string | undefined {
+    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
+    if (this.credentials?.type === 'oauth') return this.credentials.accessToken;
     return (
       this.env.ANTHROPIC_API_KEY ||
       this.env.CLAUDE_CODE_OAUTH_TOKEN ||
       this.env.ANTHROPIC_AUTH_TOKEN
     );
+  }
+
+  async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    const apiKey = this.getApiKey();
+    return {
+      isAuthenticated: !!apiKey,
+      method: this.credentials?.type ?? 'api_key',
+      error: apiKey ? undefined : 'Set ANTHROPIC_API_KEY or log in with Claude Code OAuth.',
+    };
   }
 
   async shutdown(): Promise<void> {}

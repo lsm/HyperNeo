@@ -3,6 +3,7 @@ import type {
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@neokai/shared/provider';
@@ -81,6 +82,7 @@ export class OllamaProvider implements Provider {
   private modelCache: ModelInfo[] | null = null;
   private modelCacheAt = 0;
   private lastAuthError: string | undefined;
+  private credentials: ProviderCredentials | null = null;
   private bridgeServers = new Map<string, OllamaBridgeServer>();
 
   constructor(options: OllamaProviderOptions) {
@@ -89,6 +91,15 @@ export class OllamaProvider implements Provider {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.id = options.kind === 'cloud' ? 'ollama-cloud' : 'ollama';
     this.displayName = options.kind === 'cloud' ? 'Ollama Cloud' : 'Ollama (Local)';
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+    this.clearModelCache();
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -109,6 +120,7 @@ export class OllamaProvider implements Provider {
   }
 
   getApiKey(): string | undefined {
+    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
     const apiKey = this.kind === 'cloud' ? this.env.OLLAMA_CLOUD_API_KEY : this.env.OLLAMA_API_KEY;
     return apiKey?.trim() || undefined;
   }

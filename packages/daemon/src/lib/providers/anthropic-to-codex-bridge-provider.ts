@@ -22,6 +22,7 @@
 import type {
   Provider,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
@@ -203,6 +204,48 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   async isAvailable(): Promise<boolean> {
     return (await this.getBridgeAuth()) !== undefined;
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    if (credentials.type === 'api_key') {
+      this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
+      this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
+      this.cachedApiKey = credentials.apiKey;
+      return;
+    }
+
+    const raw = credentials.raw ?? {};
+    const stored: StoredCredentials = {
+      type: 'oauth',
+      access: credentials.accessToken,
+      refresh: credentials.refreshToken,
+      expires: credentials.expiresAt,
+      accountId: typeof raw.accountId === 'string' ? raw.accountId : undefined,
+      planType: typeof raw.planType === 'string' ? raw.planType : undefined,
+      isFedrampAccount:
+        typeof raw.isFedrampAccount === 'boolean' ? raw.isFedrampAccount : undefined,
+    };
+    this.cachedCredentials = stored;
+    this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
+    this.cachedApiKey = stored.access ?? '';
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    if (!this.cachedCredentials) return null;
+    if (this.cachedCredentials.type === 'api_key' && this.cachedCredentials.access) {
+      return { type: 'api_key', apiKey: this.cachedCredentials.access };
+    }
+    return {
+      type: 'oauth',
+      accessToken: this.cachedCredentials.access,
+      refreshToken: this.cachedCredentials.refresh,
+      expiresAt: this.cachedCredentials.expires,
+      raw: {
+        accountId: this.cachedCredentials.accountId,
+        planType: this.cachedCredentials.planType,
+        isFedrampAccount: this.cachedCredentials.isFedrampAccount,
+      },
+    };
   }
 
   // -------------------------------------------------------------------------

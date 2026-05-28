@@ -207,6 +207,16 @@ export function createTables(db: BunDatabase): void {
       VALUES (1, 'none', datetime('now'))
     `);
 
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_credentials (
+        provider_id TEXT PRIMARY KEY,
+        encrypted_data BLOB NOT NULL,
+        iv BLOB NOT NULL,
+        tag BLOB NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
   // Global tools configuration table
   db.exec(`
       CREATE TABLE IF NOT EXISTS global_tools_config (

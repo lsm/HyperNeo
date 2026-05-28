@@ -50,6 +50,16 @@ export interface ProviderSdkConfig {
   apiVersion?: string;
 }
 
+export type ProviderCredentials =
+  | { type: 'api_key'; apiKey: string }
+  | {
+      type: 'oauth';
+      accessToken?: string;
+      refreshToken?: string;
+      expiresAt?: number;
+      raw?: Record<string, unknown>;
+    };
+
 /**
  * Per-session provider configuration
  * Allows overriding API keys, base URLs, etc. for a specific session
@@ -186,6 +196,16 @@ export interface Provider {
    * Returns detailed auth info including method, expiration, and user info.
    */
   getAuthStatus?(): Promise<ProviderAuthStatusInfo>;
+
+  /**
+   * Optional: Set in-memory credentials loaded from persistent credential storage.
+   */
+  setCredentials?(credentials: ProviderCredentials): void;
+
+  /**
+   * Optional: Return current in-memory credentials for persistence after refresh.
+   */
+  getCredentials?(): Promise<ProviderCredentials | null> | ProviderCredentials | null;
 
   /**
    * Optional: Start OAuth authentication flow.

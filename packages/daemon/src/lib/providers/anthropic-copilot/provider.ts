@@ -51,6 +51,7 @@ import type {
   ProviderSessionConfig,
   ModelTier,
   ProviderAuthStatusInfo,
+  ProviderCredentials,
   ProviderOAuthFlowData,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
@@ -308,6 +309,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     authDir?: string
   ) {
     this.authPath = path.join(authDir || path.join(os.homedir(), '.neokai'), 'auth.json');
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    const token = credentials.type === 'api_key' ? credentials.apiKey : credentials.refreshToken;
+    if (!token) return;
+    this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    if (!this.tokenCache?.token) return null;
+    return { type: 'oauth', refreshToken: this.tokenCache.token };
   }
 
   async isAvailable(): Promise<boolean> {
