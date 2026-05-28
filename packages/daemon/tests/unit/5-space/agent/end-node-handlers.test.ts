@@ -346,6 +346,34 @@ describe('createMarkCompleteHandler', () => {
     expect(updated?.reportedSummary).toBe('PR #2007 merged to dev via squash merge.');
   });
 
+  test('mark_complete preserves meaningful task result before reported summary', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    ctx.taskRepo.updateTask(task.id, {
+      result: 'Manual correction: deployment verified.',
+      reportedSummary: 'Older reported summary from previous cycle.',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+
+    const updated = ctx.taskRepo.getTask(task.id);
+    expect(updated?.status).toBe('done');
+    expect(updated?.result).toBe('Manual correction: deployment verified.');
+    expect(updated?.reportedSummary).toBe('Older reported summary from previous cycle.');
+  });
+
   test('emits space.task.updated for cascaded dependent tasks', async () => {
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,

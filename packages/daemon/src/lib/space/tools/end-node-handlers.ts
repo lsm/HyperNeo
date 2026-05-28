@@ -185,7 +185,7 @@ export function createMarkCompleteHandler(
       const artifactSummary = normalizeMeaningfulTaskResult(resolveResultArtifactSummary?.(task));
       const reportedSummary = normalizeMeaningfulTaskResult(task.reportedSummary);
       const existingResult = normalizeMeaningfulTaskResult(task.result);
-      const result = artifactSummary ?? reportedSummary ?? existingResult ?? 'Task completed.';
+      const result = artifactSummary ?? existingResult ?? reportedSummary ?? 'Task completed.';
       if (result !== task.result || (artifactSummary && artifactSummary !== task.reportedSummary)) {
         await taskManager.updateTask(taskId, {
           result,
