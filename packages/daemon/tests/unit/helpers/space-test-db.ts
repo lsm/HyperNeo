@@ -59,6 +59,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			tools TEXT NOT NULL DEFAULT '[]',
 			thinking_level TEXT DEFAULT NULL,
 			system_prompt TEXT NOT NULL DEFAULT '',
+			custom_prompt TEXT,
 			instructions TEXT,
 			provider TEXT,
 			template_name TEXT DEFAULT NULL,
@@ -110,23 +111,6 @@ export function createSpaceTables(db: BunDatabase): void {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
-		)
-	`);
-
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
-			id TEXT PRIMARY KEY,
-			workflow_id TEXT NOT NULL,
-			from_node_id TEXT NOT NULL,
-			to_node_id TEXT NOT NULL,
-			condition TEXT,
-			order_index INTEGER NOT NULL DEFAULT 0,
-			is_cyclic INTEGER,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -225,6 +209,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			goal_id TEXT DEFAULT NULL,
 			evolution_scope_id TEXT DEFAULT NULL,
 			result TEXT,
+			workflow_model_overrides TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
@@ -463,17 +448,6 @@ export function createSpaceTables(db: BunDatabase): void {
   );
 
   // External Event Bus extension configuration tables.
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS external_event_source_configs (
-			source TEXT PRIMARY KEY,
-			globally_enabled INTEGER NOT NULL DEFAULT 0,
-			capabilities_json TEXT NOT NULL,
-			secrets_ref TEXT,
-			settings_json TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
 			space_id TEXT NOT NULL,
