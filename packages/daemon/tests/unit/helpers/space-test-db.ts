@@ -301,6 +301,118 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_goals_next_check_in ON space_goals(status, next_check_in_at)`
   );
 
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_worktrees (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			path TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			UNIQUE(space_id, task_id),
+			UNIQUE(space_id, slug),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
+
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory (
+			id INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_by_session TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at INTEGER,
+			embedding_status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(embedding_status IN ('pending', 'ready', 'failed')),
+			embedding_model TEXT,
+			embedding_updated_at INTEGER,
+			embedding_error TEXT,
+			embedding_revision INTEGER NOT NULL DEFAULT 0,
+			embedding_token TEXT NOT NULL DEFAULT '',
+			UNIQUE(space_id, key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
+			key,
+			content,
+			tags,
+			content='space_agent_memory',
+			content_rowid='id',
+			tokenize='trigram'
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS memory_vectors (
+			memory_id INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_core_memory (
+			space_id TEXT NOT NULL,
+			memory_id INTEGER NOT NULL,
+			score REAL NOT NULL,
+			rank INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (space_id, memory_id),
+			UNIQUE(space_id, rank),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
+		AFTER INSERT ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.id, new.key, new.content, new.tags);
+		END
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
+		AFTER DELETE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
+		END
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
+		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.id, new.key, new.content, new.tags);
+		END
+	`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
+  );
+
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
 

@@ -49,6 +49,9 @@ describe('EvolutionTraceEvidenceService', () => {
       slug: 'trace-evidence-test',
       name: 'Trace Evidence Test',
     }).id;
+    seedSession('session-1');
+    seedSession('session-2');
+    seedSession('session-3');
     sequence = 0;
   });
 
@@ -432,6 +435,20 @@ describe('EvolutionTraceEvidenceService', () => {
       .listEvidence(scopeId)
       .filter((item) => item.metadata.traceDerived === true)
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  }
+
+  function seedSession(sessionId: string) {
+    db.prepare(
+      `INSERT INTO sessions (
+        id, title, workspace_path, created_at, last_active_at, status, config, metadata
+      ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}')`
+    ).run(
+      sessionId,
+      `Session ${sessionId}`,
+      '/workspace/trace-evidence-test',
+      '2024-01-01T00:00:00.000Z',
+      '2024-01-01T00:00:00.000Z'
+    );
   }
 
   function insertToolExchange(
