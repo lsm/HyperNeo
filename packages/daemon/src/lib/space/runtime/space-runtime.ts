@@ -2447,9 +2447,10 @@ export class SpaceRuntime {
       const summaryFromWorkflow = workflow
         ? this.resolveCompletionSummary(run.id, workflow)
         : undefined;
-      const summaryFromSibling = runTasks
-        .filter((task) => task.id !== canonicalTask.id)
-        .find((task) => !!task.result)?.result;
+      const summaryFromSibling = normalizeMeaningfulTaskResult(
+        runTasks.filter((task) => task.id !== canonicalTask.id).find((task) => !!task.result)
+          ?.result
+      );
       const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
       const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
       const freshSummary = summaryFromArtifact ?? summaryFromWorkflow ?? null;

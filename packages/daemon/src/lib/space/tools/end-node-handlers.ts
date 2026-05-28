@@ -186,15 +186,10 @@ export function createMarkCompleteHandler(
       const reportedSummary = normalizeMeaningfulTaskResult(task.reportedSummary);
       const existingResult = normalizeMeaningfulTaskResult(task.result);
       const result = artifactSummary ?? existingResult ?? reportedSummary ?? 'Task completed.';
-      if (result !== task.result || (artifactSummary && artifactSummary !== task.reportedSummary)) {
-        await taskManager.updateTask(taskId, {
-          result,
-          reportedSummary: artifactSummary ?? reportedSummary ?? undefined,
-        });
-      }
       const updated = await taskManager.setTaskStatus(taskId, 'done', {
         approvalSource: task.approvalSource ?? 'agent',
         result,
+        reportedSummary: artifactSummary ?? reportedSummary ?? undefined,
         onCascadedTasks: async (cascadedTasks) => {
           for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
         },

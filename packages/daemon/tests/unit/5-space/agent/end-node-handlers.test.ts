@@ -254,6 +254,7 @@ describe('createMarkCompleteHandler', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe('transition raced');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+    expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
     const unchangedGoal = ctx.goalService.getGoal(goal.id);
     expect(unchangedGoal?.summary).toBe('');
     expect(unchangedGoal?.progress).toBe(0);

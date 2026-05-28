@@ -1715,6 +1715,45 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(taskAfter?.reportedSummary).toBe('PR #2007 merged to dev via squash merge.');
     });
 
+    test('ignores generic error sibling result when filling terminal run result', async () => {
+      const rt = makeRuntimeWithTam();
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Generic Sibling Fallback ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'generic-sibling-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'generic-sibling-end',
+        endNodeId: 'generic-sibling-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'done',
+        result: null,
+        reportedSummary: null,
+      });
+      const duplicate = await rt.getTaskManagerForSpace(SPACE_ID).createTask({
+        title: 'duplicate generic sibling',
+        description: '',
+        workflowRunId: run.id,
+        status: 'done',
+      });
+      taskRepo.updateTask(duplicate.id, {
+        result:
+          'An unexpected error occurred. Please try again or contact support if the issue persists.',
+      });
+      workflowRunRepo.updateRun(run.id, { status: 'done' });
+
+      await rt.executeTick();
+
+      const taskAfter = taskRepo.getTask(tasks[0].id);
+      expect(taskAfter?.result).toBeNull();
+      expect(taskAfter?.reportedSummary).toBeNull();
+    });
+
     test('reportedStatus alone is enough to mark a run for completion resolution', async () => {
       // Even when task.status has not yet flipped to a terminal state, a
       // non-null `reportedStatus` signals the runtime to resolve completion
