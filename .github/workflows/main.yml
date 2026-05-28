@@ -80,6 +80,9 @@ jobs:
       - name: Validate online test matrix coverage
         run: bash scripts/validate-online-test-matrix.sh
 
+      - name: Validate space task RPC handler tests
+        run: bun run check:space-task-handler-tests
+
       - name: Run linter
         id: lint
         run: bun run lint
