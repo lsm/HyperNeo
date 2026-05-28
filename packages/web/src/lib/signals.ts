@@ -27,6 +27,7 @@ export const navSectionSignal = signal<NavSection>('spaces');
 export const currentSpaceIdSignal = signal<string | null>(null);
 export const currentSpaceSessionIdSignal = signal<string | null>(null);
 export const currentSpaceTaskIdSignal = signal<string | null>(null);
+export const currentSpaceAgentHandleSignal = signal<string | null>(null);
 export type SpaceViewMode =
   | 'overview'
   | 'goals'

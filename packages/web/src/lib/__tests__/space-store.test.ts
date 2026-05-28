@@ -22,7 +22,10 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@neokai/shared';
+import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const currentSpaceIdSignal = signal<string | null>(null);
 
 // -------------------------------------------------------
 // Mocks — declared before imports so vi.mock hoisting works
@@ -229,7 +232,8 @@ function makeMockHub() {
     }),
     request: vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'space.overview') {
-        const spaceId = (params?.id ?? params?.slug ?? 'space-1') as string;
+        const requested = (params?.id ?? params?.slug ?? 'space-1') as string;
+        const spaceId = requested === 'test-space' ? 'space-1' : requested;
         return {
           space: makeSpace(spaceId),
           tasks: [],
@@ -307,6 +311,10 @@ vi.mock('../connection-manager.ts', () => ({
   },
 }));
 
+vi.mock('../signals.ts', () => ({
+  currentSpaceIdSignal,
+}));
+
 // -------------------------------------------------------
 // Import under test
 // -------------------------------------------------------
@@ -327,6 +335,7 @@ async function resetStore() {
   if (spaceStore.spaceId.value !== null) {
     await spaceStore.clearSpace();
   }
+  currentSpaceIdSignal.value = null;
   mockEventHandlers.clear();
 }
 
@@ -347,6 +356,15 @@ describe('SpaceStore — space selection', () => {
   it('sets spaceId after selectSpace()', async () => {
     await spaceStore.selectSpace('space-1');
     expect(spaceStore.spaceId.value).toBe('space-1');
+  });
+
+  it('updates route state to canonical id after slug selection resolves', async () => {
+    currentSpaceIdSignal.value = 'test-space';
+
+    await spaceStore.selectSpace('test-space');
+
+    expect(spaceStore.spaceId.value).toBe('space-1');
+    expect(currentSpaceIdSignal.value).toBe('space-1');
   });
 
   it('fetches initial state on selectSpace()', async () => {

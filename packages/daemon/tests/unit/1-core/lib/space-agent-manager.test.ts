@@ -72,6 +72,28 @@ describe('SpaceAgentManager', () => {
       if (!dup.ok) expect(dup.error).toContain('handle "worker"');
     });
 
+    it('rejects reserved explicit handles', async () => {
+      const result = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coordinator',
+        handle: 'coordinator',
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('reserved');
+    });
+
+    it('auto-generates collision handles within the slug length limit', async () => {
+      const name = 'A'.repeat(60);
+      const first = await manager.create({ spaceId: 'space-1', name });
+      const second = await manager.create({ spaceId: 'space-1', name: `${name} 2` });
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error('expected ok');
+      expect(second.value.handle.length).toBeLessThanOrEqual(60);
+      expect(second.value.handle.endsWith('-2')).toBe(true);
+    });
+
     it('creates agents with all valid roles', async () => {
       const roles = ['planner', 'coder', 'general'] as const;
       for (const role of roles) {

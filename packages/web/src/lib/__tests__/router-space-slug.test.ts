@@ -4,7 +4,7 @@
  * Verifies that space route patterns accept both UUIDs and slugs.
  */
 
-import { describe, test, expect } from 'vitest';
+import { beforeEach, describe, test, expect } from 'vitest';
 import {
   getSpaceIdFromPath,
   getSpaceSessionIdFromPath,
@@ -13,7 +13,22 @@ import {
   createSpaceSessionPath,
   createSpaceTaskPath,
   getSpaceAgentDetailFromPath,
+  initializeRouter,
 } from '../router';
+import { currentSpaceAgentHandleSignal } from '../signals';
+
+function setPath(path: string) {
+  const url = new URL(path, 'https://neokai.test');
+  Object.defineProperty(window, 'location', {
+    value: { pathname: url.pathname, search: url.search },
+    configurable: true,
+  });
+}
+
+beforeEach(() => {
+  currentSpaceAgentHandleSignal.value = null;
+  setPath('/');
+});
 
 describe('getSpaceIdFromPath — slug support', () => {
   test('matches UUID-based space route', () => {
@@ -130,5 +145,13 @@ describe('getSpaceAgentDetailFromPath — slug and handle support', () => {
       spaceId: 'neokai-dev',
       handle: 'reviewer',
     });
+  });
+
+  test('initializes agent detail handle route state', () => {
+    setPath('/space/neokai-dev/agent/reviewer');
+
+    initializeRouter();
+
+    expect(currentSpaceAgentHandleSignal.value).toBe('reviewer');
   });
 });

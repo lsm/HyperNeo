@@ -30,6 +30,11 @@ export function slugify(input: string, existingSlugs: string[] = []): string {
   return resolveCollision(base, existingSlugs);
 }
 
+export function slugifyWithinLimit(input: string, existingSlugs: string[] = []): string {
+  const base = generateBaseSlug(input);
+  return resolveCollisionWithinLimit(base, existingSlugs);
+}
+
 /**
  * Validate that a slug meets format requirements.
  * Returns null if valid, or an error message string if invalid.
@@ -106,6 +111,25 @@ export function resolveCollision(base: string, existingSlugs: string[]): string 
   let counter = 2;
   while (true) {
     const suffixed = `${base}-${counter}`;
+    if (!slugSet.has(suffixed)) {
+      return suffixed;
+    }
+    counter++;
+  }
+}
+
+function resolveCollisionWithinLimit(base: string, existingSlugs: string[]): string {
+  const slugSet = new Set(existingSlugs);
+
+  if (!slugSet.has(base)) {
+    return base;
+  }
+
+  let counter = 2;
+  while (true) {
+    const suffix = `-${counter}`;
+    const stem = base.slice(0, MAX_SLUG_LENGTH - suffix.length).replace(/-+$/, '') || DEFAULT_SLUG;
+    const suffixed = `${stem}${suffix}`;
     if (!slugSet.has(suffixed)) {
       return suffixed;
     }

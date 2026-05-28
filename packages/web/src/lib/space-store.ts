@@ -66,6 +66,7 @@ import type {
 import { isUUID, Logger } from '@neokai/shared';
 import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
+import { currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('kai:web:spacestore');
 
@@ -596,6 +597,9 @@ class SpaceStore {
           // Update spaceId to the canonical UUID if it was a slug
           if (resolvedId !== spaceIdOrSlug) {
             this.spaceId.value = resolvedId;
+            if (currentSpaceIdSignal.value === spaceIdOrSlug) {
+              currentSpaceIdSignal.value = resolvedId;
+            }
           }
           this.listGoals({ includeArchived: false }).catch((err) => {
             logger.warn('Failed to fetch space goals:', err);

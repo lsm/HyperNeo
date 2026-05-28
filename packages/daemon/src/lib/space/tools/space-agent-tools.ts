@@ -613,7 +613,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       const result = await spaceAgentManager.create({
         spaceId,
         name,
-        handle: template.handle,
         description: template.description,
         model: args.model,
         provider: args.provider,

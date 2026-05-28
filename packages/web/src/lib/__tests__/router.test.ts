@@ -36,6 +36,7 @@ import {
 } from '../router';
 import {
   currentSessionIdSignal,
+  currentSpaceAgentHandleSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
@@ -55,6 +56,7 @@ const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
 function resetSignals() {
   currentSessionIdSignal.value = null;
   currentSpaceIdSignal.value = null;
+  currentSpaceAgentHandleSignal.value = null;
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'overview';
@@ -332,6 +334,22 @@ describe('router', () => {
     navigateToSpaceAgent(SPACE_ID);
     expect(currentSpaceSessionIdSignal.value).toBeNull();
     expect(currentSpaceViewModeSignal.value).toBe('agents');
+    expect(currentSpaceAgentHandleSignal.value).toBeNull();
+    finishNavigation();
+
+    navigateToSpaceAgent(SPACE_ID, 'reviewer');
+    expect(currentSpaceViewModeSignal.value).toBe('agents');
+    expect(currentSpaceAgentHandleSignal.value).toBe('reviewer');
+    expect(window.history.pushState).toHaveBeenLastCalledWith(
+      {
+        spaceId: SPACE_ID,
+        handle: 'reviewer',
+        path: `/space/${SPACE_ID}/agent/reviewer`,
+        [IN_APP_HISTORY_DEPTH_KEY]: 9,
+      },
+      '',
+      `/space/${SPACE_ID}/agent/reviewer`
+    );
     finishNavigation();
 
     navigateToSpacesPage();

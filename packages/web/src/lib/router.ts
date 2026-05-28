@@ -9,6 +9,7 @@
 import { batch } from '@preact/signals';
 import {
   currentSessionIdSignal,
+  currentSpaceAgentHandleSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
@@ -313,6 +314,7 @@ function clearSpaceRouteState(): void {
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
 }
 
 function setSessionRoute(sessionId: string | null): void {
@@ -431,6 +433,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
     currentSpaceSessionIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
     currentSpaceTaskViewTabSignal.value = 'thread';
+    currentSpaceAgentHandleSignal.value = null;
     currentSessionIdSignal.value = null;
     navSectionSignal.value = 'spaces';
     return;
@@ -444,6 +447,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
     currentSpaceSessionIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
     currentSpaceTaskViewTabSignal.value = 'thread';
+    currentSpaceAgentHandleSignal.value = null;
     currentSessionIdSignal.value = null;
     navSectionSignal.value = 'spaces';
   } finally {
@@ -474,6 +478,7 @@ export function navigateToSpaceConfigure(
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -496,6 +501,7 @@ export function navigateToSpaceGoals(spaceId: string, replace = false): void {
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -518,6 +524,7 @@ export function navigateToSpaceForge(spaceId: string, replace = false): void {
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -545,6 +552,7 @@ export function navigateToSpaceTasks(
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -567,6 +575,7 @@ export function navigateToSpaceSessions(spaceId: string, replace = false): void 
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -589,6 +598,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
   currentSpaceSessionIdSignal.value = sessionId;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -615,6 +625,7 @@ export function navigateToSpaceTask(
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceTaskIdSignal.value = taskId;
   currentSpaceTaskViewTabSignal.value = view ?? 'thread';
+  currentSpaceAgentHandleSignal.value = null;
   currentSpaceSessionIdSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
@@ -644,6 +655,7 @@ export function navigateToSpaceAgent(
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceTaskViewTabSignal.value = 'thread';
+  currentSpaceAgentHandleSignal.value = handle ?? null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
 }
@@ -694,6 +706,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = spaceSession.sessionId;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceAgentDetail) {
@@ -702,6 +715,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = spaceAgentDetail.handle;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceAgent) {
@@ -710,6 +724,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceGoals) {
@@ -718,6 +733,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceForge) {
@@ -726,6 +742,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceTasks) {
@@ -735,6 +752,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceSessions) {
@@ -743,6 +761,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceConfigure) {
@@ -752,6 +771,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (spaceId) {
@@ -760,6 +780,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
       currentSpaceTaskViewTabSignal.value = 'thread';
+      currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
     } else if (SESSIONS_ROUTE_PATTERN.test(path)) {

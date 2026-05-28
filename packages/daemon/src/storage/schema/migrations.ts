@@ -10305,14 +10305,14 @@ function generateValidHandle(name: string, existingHandles: string[]): string {
   for (let len = maxLen; len > 0; len--) {
     const truncated = base.slice(0, len);
     const cleaned = truncated.replace(/-+$/, '');
-    const fallback = cleaned || 'workflow';
+    const fallback = cleaned || 'agent';
     const candidate = slugify(fallback, existingHandles);
     if (validateSlug(candidate) === null) {
       return candidate;
     }
   }
   // Absolute fallback — should never reach here in practice
-  return 'workflow';
+  return 'agent';
 }
 
 /**

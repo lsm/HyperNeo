@@ -320,7 +320,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'Coordinator',
-    handle: 'coordinator',
+    handle: 'space-coordinator',
     description:
       'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
     tools: GENERAL_TOOLS,
