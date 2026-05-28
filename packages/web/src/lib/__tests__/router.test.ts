@@ -37,6 +37,7 @@ import {
 import {
   currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
@@ -56,6 +57,7 @@ const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
 function resetSignals() {
   currentSessionIdSignal.value = null;
   currentSpaceIdSignal.value = null;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceAgentHandleSignal.value = null;
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;

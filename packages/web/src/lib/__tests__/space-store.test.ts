@@ -26,6 +26,7 @@ import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const currentSpaceIdSignal = signal<string | null>(null);
+const currentSpaceCanonicalIdSignal = signal<string | null>(null);
 
 // -------------------------------------------------------
 // Mocks — declared before imports so vi.mock hoisting works
@@ -312,6 +313,7 @@ vi.mock('../connection-manager.ts', () => ({
 }));
 
 vi.mock('../signals.ts', () => ({
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
 }));
 
@@ -336,6 +338,7 @@ async function resetStore() {
     await spaceStore.clearSpace();
   }
   currentSpaceIdSignal.value = null;
+  currentSpaceCanonicalIdSignal.value = null;
   mockEventHandlers.clear();
 }
 
@@ -358,13 +361,14 @@ describe('SpaceStore — space selection', () => {
     expect(spaceStore.spaceId.value).toBe('space-1');
   });
 
-  it('updates route state to canonical id after slug selection resolves', async () => {
+  it('stores canonical id separately after slug selection resolves', async () => {
     currentSpaceIdSignal.value = 'test-space';
 
     await spaceStore.selectSpace('test-space');
 
     expect(spaceStore.spaceId.value).toBe('space-1');
-    expect(currentSpaceIdSignal.value).toBe('space-1');
+    expect(currentSpaceIdSignal.value).toBe('test-space');
+    expect(currentSpaceCanonicalIdSignal.value).toBe('space-1');
   });
 
   it('fetches initial state on selectSpace()', async () => {

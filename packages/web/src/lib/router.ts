@@ -10,6 +10,7 @@ import { batch } from '@preact/signals';
 import {
   currentSessionIdSignal,
   currentSpaceAgentHandleSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
@@ -310,6 +311,7 @@ function finishNavigation(): void {
 
 function clearSpaceRouteState(): void {
   currentSpaceIdSignal.value = null;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
@@ -429,6 +431,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
   const targetPath = createSpacePath(spaceId);
   if (getCurrentPath() === targetPath) {
     currentSpaceIdSignal.value = spaceId;
+    currentSpaceCanonicalIdSignal.value = null;
     currentSpaceViewModeSignal.value = 'overview';
     currentSpaceSessionIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
@@ -443,6 +446,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
   try {
     pushPath(targetPath, { spaceId }, replace);
     currentSpaceIdSignal.value = spaceId;
+    currentSpaceCanonicalIdSignal.value = null;
     currentSpaceViewModeSignal.value = 'overview';
     currentSpaceSessionIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
@@ -473,6 +477,7 @@ export function navigateToSpaceConfigure(
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'configure';
   currentSpaceConfigureTabSignal.value = tab ?? 'agents';
   currentSpaceSessionIdSignal.value = null;
@@ -497,6 +502,7 @@ export function navigateToSpaceGoals(spaceId: string, replace = false): void {
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'goals';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
@@ -520,6 +526,7 @@ export function navigateToSpaceForge(spaceId: string, replace = false): void {
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'forge';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
@@ -547,6 +554,7 @@ export function navigateToSpaceTasks(
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'tasks';
   currentSpaceTasksFilterTabSignal.value = tab ?? 'active';
   currentSpaceSessionIdSignal.value = null;
@@ -571,6 +579,7 @@ export function navigateToSpaceSessions(spaceId: string, replace = false): void 
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'sessions';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
@@ -594,6 +603,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceSessionIdSignal.value = sessionId;
   currentSpaceTaskIdSignal.value = null;
@@ -622,6 +632,7 @@ export function navigateToSpaceTask(
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'overview';
   currentSpaceTaskIdSignal.value = taskId;
   currentSpaceTaskViewTabSignal.value = view ?? 'thread';
@@ -651,6 +662,7 @@ export function navigateToSpaceAgent(
   }
 
   currentSpaceIdSignal.value = spaceId;
+  currentSpaceCanonicalIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'agents';
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
@@ -694,6 +706,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
   batch(() => {
     if (spaceTask) {
       currentSpaceIdSignal.value = spaceTask.spaceId;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'overview';
       currentSpaceTaskIdSignal.value = spaceTask.taskId;
       currentSpaceTaskViewTabSignal.value = spaceTaskView?.view ?? 'thread';
@@ -702,6 +715,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceSession) {
       currentSpaceIdSignal.value = spaceSession.spaceId;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'overview';
       currentSpaceSessionIdSignal.value = spaceSession.sessionId;
       currentSpaceTaskIdSignal.value = null;
@@ -711,6 +725,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceAgentDetail) {
       currentSpaceIdSignal.value = spaceAgentDetail.spaceId;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'agents';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
@@ -720,6 +735,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceAgent) {
       currentSpaceIdSignal.value = spaceAgent;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'agents';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
@@ -729,6 +745,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceGoals) {
       currentSpaceIdSignal.value = spaceGoals;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'goals';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
@@ -738,6 +755,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceForge) {
       currentSpaceIdSignal.value = spaceForge;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'forge';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
@@ -747,6 +765,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceTasks) {
       currentSpaceIdSignal.value = spaceTasks;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'tasks';
       currentSpaceTasksFilterTabSignal.value = spaceTasksTab?.tab ?? 'active';
       currentSpaceSessionIdSignal.value = null;
@@ -757,6 +776,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceSessions) {
       currentSpaceIdSignal.value = spaceSessions;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'sessions';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;
@@ -766,6 +786,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceConfigure) {
       currentSpaceIdSignal.value = spaceConfigure;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'configure';
       currentSpaceConfigureTabSignal.value = spaceConfigureTab?.tab ?? 'agents';
       currentSpaceSessionIdSignal.value = null;
@@ -776,6 +797,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       navSectionSignal.value = 'spaces';
     } else if (spaceId) {
       currentSpaceIdSignal.value = spaceId;
+      currentSpaceCanonicalIdSignal.value = null;
       currentSpaceViewModeSignal.value = 'overview';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;

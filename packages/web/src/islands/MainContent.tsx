@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'preact/compat';
 import { useState, useEffect } from 'preact/hooks';
 import {
   currentSessionIdSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
@@ -329,7 +330,8 @@ export default function MainContent() {
   // IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
   // The @preact/preset-vite plugin will transform this to create proper subscriptions
   const sessionId = currentSessionIdSignal.value;
-  const spaceId = currentSpaceIdSignal.value;
+  const spaceRouteId = currentSpaceIdSignal.value;
+  const spaceId = currentSpaceCanonicalIdSignal.value ?? spaceRouteId;
   const spaceSessionViewId = currentSpaceSessionIdSignal.value;
   const spaceTaskViewId = currentSpaceTaskIdSignal.value;
   const spaceViewMode = currentSpaceViewModeSignal.value;
