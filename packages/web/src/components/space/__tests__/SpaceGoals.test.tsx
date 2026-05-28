@@ -10,6 +10,7 @@ const mockTasks = signal<SpaceTask[]>([]);
 const mockWorkflows = signal<unknown[]>([]);
 const mockListGoals = vi.fn(async () => [] as SpaceGoal[]);
 const mockListGoalEvents = vi.fn(async () => [] as SpaceGoalEvent[]);
+const mockEnsureConfigData = vi.fn(async () => {});
 const mockPauseGoal = vi.fn();
 const mockResumeGoal = vi.fn();
 const mockArchiveGoal = vi.fn();
@@ -50,6 +51,7 @@ const mutableSpaceStore = spaceStore as unknown as {
   workflows: Signal<unknown[]>;
   listGoals: typeof mockListGoals;
   listGoalEvents: typeof mockListGoalEvents;
+  ensureConfigData: typeof mockEnsureConfigData;
   pauseGoal: typeof mockPauseGoal;
   resumeGoal: typeof mockResumeGoal;
   archiveGoal: typeof mockArchiveGoal;
@@ -64,6 +66,7 @@ mutableSpaceStore.tasks = mockTasks;
 mutableSpaceStore.workflows = mockWorkflows;
 mutableSpaceStore.listGoals = mockListGoals;
 mutableSpaceStore.listGoalEvents = mockListGoalEvents;
+mutableSpaceStore.ensureConfigData = mockEnsureConfigData;
 mutableSpaceStore.pauseGoal = mockPauseGoal;
 mutableSpaceStore.resumeGoal = mockResumeGoal;
 mutableSpaceStore.archiveGoal = mockArchiveGoal;
@@ -166,6 +169,7 @@ describe('SpaceGoals', () => {
     mockWorkflows.value = [];
     mockListGoals.mockResolvedValue([]);
     mockListGoalEvents.mockResolvedValue([]);
+    mockEnsureConfigData.mockResolvedValue(undefined);
     mockPauseGoal.mockImplementation(async (goalId: string) =>
       makeGoal({ id: goalId, status: 'paused' })
     );
