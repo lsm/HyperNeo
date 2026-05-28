@@ -59,6 +59,7 @@ const { mockToastError } = vi.hoisted(() => ({
 // Real Preact signal for the configure tab (read during render — needs reactivity)
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
+const mockCurrentSpaceCanonicalIdSignal = signal<string | null>(null);
 const mockCurrentSpaceAgentHandleSignal = signal<string | null>(null);
 const mockCurrentSpaceViewModeSignal = signal<string>('overview');
 
@@ -75,6 +76,9 @@ vi.mock('../../lib/signals', async (importOriginal) => {
     },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
+    },
+    get currentSpaceCanonicalIdSignal() {
+      return mockCurrentSpaceCanonicalIdSignal;
     },
     get currentSpaceAgentHandleSignal() {
       return mockCurrentSpaceAgentHandleSignal;
@@ -306,6 +310,7 @@ beforeEach(() => {
   configureTabBridge.signal.value = 'agents';
   idBridge.signal.value = null;
   mockCurrentSpaceAgentHandleSignal.value = null;
+  mockCurrentSpaceCanonicalIdSignal.value = null;
   mockNavigateToSpaceConfigure.mockClear();
   mockNavigateToSpaceSession.mockClear();
   mockNavigateToSpaceTask.mockClear();
@@ -542,6 +547,7 @@ describe('SpaceIsland — sessions view', () => {
   it('navigates after slug-routed session creation when canonical space still matches', async () => {
     mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-123' });
     mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
     mockCurrentSpaceViewModeSignal.value = 'sessions';
 
     const { getByLabelText, getByTestId } = render(
@@ -558,6 +564,38 @@ describe('SpaceIsland — sessions view', () => {
 
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-slug', 'new-session-123');
+    });
+  });
+
+  it('skips slug-routed session navigation when canonical route state changed', async () => {
+    mockCreateSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ sessionId: 'new-session-123' }), 50);
+        })
+    );
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+
+    const { getByLabelText, getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create session'));
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-2';
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
     });
   });
 
@@ -714,6 +752,7 @@ describe('SpaceIsland — tasks view', () => {
 
   it('navigates after slug-routed task creation when canonical space still matches', async () => {
     mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
     mockCurrentSpaceViewModeSignal.value = 'tasks';
 
     const { getByLabelText, getByTestId, getByRole } = render(
@@ -734,5 +773,31 @@ describe('SpaceIsland — tasks view', () => {
     fireEvent.click(getByRole('button', { name: 'Create Test Task' }));
 
     expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'new-task-123');
+  });
+
+  it('skips slug-routed task navigation when canonical route state changed', async () => {
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'tasks';
+
+    const { getByLabelText, getByTestId, getByRole } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="tasks" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-tasks-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create task'));
+    await waitFor(() => {
+      expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
+    });
+
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-2';
+    fireEvent.click(getByRole('button', { name: 'Create Test Task' }));
+
+    expect(mockNavigateToSpaceTask).not.toHaveBeenCalled();
   });
 });

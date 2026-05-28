@@ -28,6 +28,7 @@ import {
 import type { SpaceViewMode } from '../lib/signals';
 import {
   currentSpaceAgentHandleSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
   spaceOverlayAgentNameSignal,
@@ -91,6 +92,12 @@ export default function SpaceIsland({
   taskViewId,
 }: SpaceIslandProps) {
   const navigationSpaceId = routeSpaceId ?? spaceId;
+  const stillOnThisRouteSpace = () => {
+    const currentRouteSpaceId = currentSpaceIdSignal.value;
+    if (currentRouteSpaceId !== navigationSpaceId) return false;
+    const currentCanonicalId = currentSpaceCanonicalIdSignal.value;
+    return currentCanonicalId === null || currentCanonicalId === spaceId;
+  };
   // Overlay session — shown as a slide-over on top of the current view
   const selectedAgentHandle = currentSpaceAgentHandleSignal.value;
   const overlaySessionId = spaceOverlaySessionIdSignal.value;
@@ -197,7 +204,6 @@ export default function SpaceIsland({
       const requestId = Date.now();
       setCreatingSession(true);
       setActiveSessionRequestId(requestId);
-      const originSpaceId = spaceId;
       const originViewMode = viewMode;
       try {
         const response = await createSession({
@@ -206,11 +212,7 @@ export default function SpaceIsland({
         });
         // Only navigate if the user is still in the same space and on the
         // Sessions view; prevents stale async redirect if they navigated elsewhere.
-        if (
-          (currentSpaceIdSignal.value === originSpaceId ||
-            spaceStore.space.value?.id === originSpaceId) &&
-          currentSpaceViewModeSignal.value === originViewMode
-        ) {
+        if (stillOnThisRouteSpace() && currentSpaceViewModeSignal.value === originViewMode) {
           navigateToSpaceSession(navigationSpaceId, response.sessionId);
         }
       } catch (err) {
@@ -227,7 +229,14 @@ export default function SpaceIsland({
         });
       }
     },
-    [spaceId, navigationSpaceId, space?.workspacePath, creatingSession, viewMode]
+    [
+      spaceId,
+      navigationSpaceId,
+      space?.workspacePath,
+      creatingSession,
+      viewMode,
+      stillOnThisRouteSpace,
+    ]
   );
 
   // Session/agent chat view — render immediately, don't block on space data
@@ -336,6 +345,7 @@ export default function SpaceIsland({
             <Suspense fallback={lazyFallback}>
               <SpaceTasks
                 spaceId={spaceId}
+                navigationSpaceId={navigationSpaceId}
                 onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
               />
             </Suspense>
@@ -347,10 +357,7 @@ export default function SpaceIsland({
           onCreated={(task) => {
             // Only navigate if the user is still on the Tasks view of this space;
             // prevents stale async redirect if they navigated elsewhere.
-            if (
-              currentSpaceViewModeSignal.value === 'tasks' &&
-              (currentSpaceIdSignal.value === spaceId || spaceStore.space.value?.id === spaceId)
-            ) {
+            if (currentSpaceViewModeSignal.value === 'tasks' && stillOnThisRouteSpace()) {
               navigateToSpaceTask(navigationSpaceId, task.id);
             }
           }}

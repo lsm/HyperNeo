@@ -3,6 +3,7 @@ import {
   navSectionSignal,
   contextPanelOpenSignal,
   currentSpaceIdSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
@@ -187,6 +188,8 @@ export function ContextPanel() {
   }, [navSection]);
   const activeSettingsSection = settingsSectionSignal.value;
   const currentSpaceId = currentSpaceIdSignal.value;
+  const currentSpaceCanonicalId = currentSpaceCanonicalIdSignal.value;
+  const detailPanelSpaceId = currentSpaceCanonicalId ?? currentSpaceId;
   const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
@@ -465,7 +468,8 @@ export function ContextPanel() {
                 </button>
               </div>
               <SpaceDetailPanel
-                spaceId={currentSpaceId!}
+                spaceId={detailPanelSpaceId!}
+                navigationSpaceId={currentSpaceId!}
                 onNavigate={() => (contextPanelOpenSignal.value = false)}
               />
             </div>

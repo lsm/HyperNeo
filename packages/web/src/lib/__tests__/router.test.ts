@@ -286,6 +286,28 @@ describe('router', () => {
     );
   });
 
+  it('preserves the canonical space id during same-route-space navigation', () => {
+    navigateToSpace('demo-slug');
+    currentSpaceCanonicalIdSignal.value = 'space-uuid';
+    finishNavigation();
+
+    navigateToSpaceTasks('demo-slug', 'action');
+
+    expect(currentSpaceIdSignal.value).toBe('demo-slug');
+    expect(currentSpaceCanonicalIdSignal.value).toBe('space-uuid');
+  });
+
+  it('clears the canonical space id when the route space changes', () => {
+    navigateToSpace('demo-slug');
+    currentSpaceCanonicalIdSignal.value = 'space-uuid';
+    finishNavigation();
+
+    navigateToSpaceTasks('other-space', 'action');
+
+    expect(currentSpaceIdSignal.value).toBe('other-space');
+    expect(currentSpaceCanonicalIdSignal.value).toBeNull();
+  });
+
   it('navigates space routes and clears regular session selection', () => {
     currentSessionIdSignal.value = SESSION_ID;
 
