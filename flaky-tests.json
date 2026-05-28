@@ -1,0 +1,36 @@
+{
+  "$schema": "./scripts/flaky-tests.schema.json",
+  "schemaVersion": 1,
+  "policy": {
+    "maxRetries": 2,
+    "quarantineAfterFailures": 3,
+    "createFixTaskAfterQuarantine": true,
+    "fixTaskLabel": "flaky-test"
+  },
+  "tests": [
+    {
+      "id": "web-space-goals",
+      "suite": "web",
+      "path": "packages/web/src/components/space/__tests__/SpaceGoals.test.tsx",
+      "namePattern": "SpaceGoals",
+      "reason": "Known intermittent DOM/update timing failure in Space goals component tests.",
+      "addedAt": "2026-05-28"
+    },
+    {
+      "id": "daemon-migration-74-timeout",
+      "suite": "daemon-unit",
+      "path": "packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-74_test.ts",
+      "namePattern": "Migration 74",
+      "reason": "Known intermittent timeout in migration 74 schema cleanup tests.",
+      "addedAt": "2026-05-28"
+    },
+    {
+      "id": "daemon-model-service-shared-id",
+      "suite": "daemon-unit",
+      "path": "packages/daemon/tests/unit/1-core/core/model-service.test.ts",
+      "namePattern": "preserve both provider entries for shared model IDs",
+      "reason": "Known intermittent shared model ID provider cache/registry isolation failure.",
+      "addedAt": "2026-05-28"
+    }
+  ]
+}

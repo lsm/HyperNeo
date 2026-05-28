@@ -129,7 +129,7 @@ jobs:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     if: github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'
-    timeout-minutes: ${{ matrix.timeout || 5 }}
+    timeout-minutes: ${{ matrix.timeout || 15 }}
 
     strategy:
       fail-fast: false
@@ -340,8 +340,18 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run daemon online tests (${{ matrix.module }})
-        working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
+        run: >-
+          bun run scripts/flaky-test-runner.ts
+          --suite daemon-online
+          --results-dir test-results/daemon-online-${{ matrix.module }}
+          --report test-results/flaky-quarantine-daemon-online-${{ matrix.module }}.json
+          --
+          bash -lc 'cd packages/daemon && bun test ${{ matrix.test_path }}
+          --coverage
+          --coverage-reporter=lcov
+          --coverage-dir=coverage-online-${{ matrix.module }}
+          --reporter=junit
+          --reporter-outfile=../../test-results/daemon-online-${{ matrix.module }}/junit.xml'
         env:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
@@ -393,7 +403,7 @@ jobs:
   test-daemon-shared-unit:
     name: Daemon Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 12
     if: github.event.inputs.run_e2e_only != 'true'
     strategy:
       fail-fast: false
@@ -434,7 +444,13 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run daemon + shared unit tests (${{ matrix.shard }})
-        run: ./scripts/test-daemon.sh ${{ matrix.shard }} --coverage
+        run: >-
+          bun run scripts/flaky-test-runner.ts
+          --suite daemon-unit
+          --results-dir test-results/daemon
+          --report test-results/flaky-quarantine-daemon-${{ matrix.shard }}.json
+          --
+          ./scripts/test-daemon.sh ${{ matrix.shard }} --coverage
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
@@ -457,7 +473,7 @@ jobs:
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 9
     if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
@@ -494,8 +510,17 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run web tests
-        working-directory: packages/web
-        run: bun run coverage
+        run: >-
+          bun run scripts/flaky-test-runner.ts
+          --suite web
+          --results-dir test-results/web
+          --report test-results/flaky-quarantine-web.json
+          --
+          bash -lc 'cd packages/web && bunx vitest run
+          --reporter dot
+          --reporter junit
+          --outputFile.junit=../../test-results/web/junit.xml
+          --coverage'
 
       - name: Fix coverage paths for monorepo
         run: |

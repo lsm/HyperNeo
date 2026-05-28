@@ -302,22 +302,23 @@ export class EvolutionScopeService {
     const scope = this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
     if (!scope || scope.spaceId !== task.spaceId) return { scope: null, evidence: [] };
 
+    const taskResultSummary = buildTaskResultEvidenceSummary(task);
+    const taskResultMetadata = buildTaskResultEvidenceMetadata(task);
     const evidence: EvidenceRef[] = [
       this.createAutoEvidenceOnce({
         scopeId: scope.id,
         kind: 'task_result',
         sourceId: task.id,
-        summary: buildTaskResultEvidenceSummary(task),
-        metadata: {
-          status: task.status,
-          priority: task.priority,
-          workflowRunId: task.workflowRunId ?? null,
-          result: task.result ?? null,
-          reportedSummary: task.reportedSummary ?? null,
-          completedAt: task.completedAt ?? null,
-        },
+        summary: taskResultSummary,
+        metadata: taskResultMetadata,
       }),
     ];
+
+    const crossPost = this.createProposalOriginEvidence(scope.id, task, {
+      summary: taskResultSummary,
+      metadata: taskResultMetadata,
+    });
+    if (crossPost) evidence.push(crossPost);
 
     if (task.workflowRunId) {
       const run = this.deps.workflowRunRepo.getRun(task.workflowRunId);
@@ -510,6 +511,29 @@ export class EvolutionScopeService {
     });
   }
 
+  private createProposalOriginEvidence(
+    assignedScopeId: string,
+    task: SpaceTask,
+    params: Pick<CreateEvidenceRefParams, 'summary' | 'metadata'>
+  ): EvidenceRef | null {
+    const proposal = this.deps.evolutionRepo.getTaskProposalByCreatedTaskId(task.id);
+    if (!proposal || proposal.scopeId === assignedScopeId) return null;
+    const originScope = this.deps.evolutionRepo.getScope(proposal.scopeId);
+    if (!originScope || originScope.spaceId !== task.spaceId) return null;
+    return this.createAutoEvidenceOnce({
+      scopeId: originScope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: params.summary,
+      metadata: {
+        ...params.metadata,
+        crossLinkedTaskId: task.id,
+        originatingProposalId: proposal.id,
+        assignedScopeId,
+      },
+    });
+  }
+
   private createTraceDiagnosticEvidence(
     scopeId: string,
     taskId: string,
@@ -621,6 +645,17 @@ export class EvolutionScopeService {
 function buildTaskResultEvidenceSummary(task: SpaceTask): string {
   const outcome = task.result ?? task.reportedSummary ?? 'completed without task.result';
   return `Task #${task.taskNumber} done: ${task.title} — ${truncateText(outcome, 180)}`;
+}
+
+function buildTaskResultEvidenceMetadata(task: SpaceTask): Record<string, unknown> {
+  return {
+    status: task.status,
+    priority: task.priority,
+    workflowRunId: task.workflowRunId ?? null,
+    result: task.result ?? null,
+    reportedSummary: task.reportedSummary ?? null,
+    completedAt: task.completedAt ?? null,
+  };
 }
 
 function summarizeTaskForPreflight(task: SpaceTask): EvolutionPreflightTaskSummary {
