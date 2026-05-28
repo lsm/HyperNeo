@@ -122,9 +122,10 @@ function estimateTokens(text: string): number {
 
 function toolResultText(toolResult: AnthropicContentBlockToolResult): string {
   if (typeof toolResult.content === 'string') return toolResult.content;
-  return toolResult.content
-    .map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
-    .join('');
+  if (toolResult.content.some((part) => part.type === 'image')) {
+    throw new Error('Ollama bridge does not support image content blocks');
+  }
+  return toolResult.content.map((part) => (part as { type: 'text'; text: string }).text).join('');
 }
 
 function extractText(content: string | AnthropicRequest['messages'][number]['content']): string {

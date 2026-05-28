@@ -5,16 +5,31 @@
  * Adapted from copilot-sdk-proxy/claude/prompt.ts (MIT).
  */
 
-import type { AnthropicMessage, ContentBlock, TextBlock, ToolResultBlock } from './types.js';
+import type {
+  AnthropicMessage,
+  ContentBlock,
+  ImageBlock,
+  TextBlock,
+  ToolResultBlock,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function extractToolResultText(content: string | TextBlock[] | undefined): string {
+function isImageBlock(block: TextBlock | ImageBlock): block is ImageBlock {
+  return block.type === 'image';
+}
+
+function extractToolResultText(
+  content: string | Array<TextBlock | ImageBlock> | undefined
+): string {
   if (content == null) return '';
   if (typeof content === 'string') return content;
-  return content.map((b) => b.text).join('\n');
+  if (content.some(isImageBlock)) {
+    throw new Error('Copilot bridge does not support image content blocks');
+  }
+  return content.map((b) => (b as TextBlock).text).join('\n');
 }
 
 function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts: string[]): void {

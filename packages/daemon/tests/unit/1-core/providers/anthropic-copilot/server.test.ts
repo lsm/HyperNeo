@@ -392,6 +392,35 @@ describe('startEmbeddedServer', () => {
     expect(client.lastSession).toBeUndefined();
   });
 
+  it('rejects image blocks nested in Copilot tool results', async () => {
+    const r = await postMessages(serverUrl, {
+      model: 'gpt-5-mini',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_1',
+              content: [
+                { type: 'text', text: 'screenshot:' },
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc' } },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(r.status).toBe(400);
+    const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+    const err = body['error'] as Record<string, unknown>;
+    expect(err['type']).toBe('invalid_request_error');
+    expect(err['message']).toContain('image content blocks');
+    expect(client.lastSession).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // SSE streaming
   // -------------------------------------------------------------------------

@@ -509,18 +509,27 @@ describe('ProviderService', () => {
   });
 
   describe('getTitleGenerationModel', () => {
-    it('should return session model when provider has no title override', async () => {
+    it('should return translated session model when provider has no title override', async () => {
       const model = await service.getTitleGenerationModel('glm', 'glm-4.7');
 
-      expect(model).toBe('glm-4.7');
+      expect(model).toBe('translated-4.7');
     });
 
-    it('should return provider title override when configured', async () => {
+    it('should return translated provider title override when configured', async () => {
       registry.register(new TitleOverrideMockProvider());
 
       const model = await service.getTitleGenerationModel('title-override', 'title-1');
 
-      expect(model).toBe('title-turbo');
+      expect(model).toBe('translated-turbo');
+    });
+
+    it('should translate GLM title override to an SDK-compatible model', async () => {
+      const provider = registry.get('glm') as GlmMockProvider;
+      provider.getTitleGenerationModel = () => 'glm-5-turbo';
+
+      const model = await service.getTitleGenerationModel('glm', 'glm-4.7');
+
+      expect(model).toBe('translated-5-turbo');
     });
   });
 

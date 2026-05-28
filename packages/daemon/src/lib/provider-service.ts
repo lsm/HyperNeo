@@ -296,11 +296,13 @@ export class ProviderService {
   /**
    * Get SDK-facing model for title generation.
    * Defaults to the session model unless the provider declares an override.
+   * Provider-specific IDs are translated to SDK-compatible model names.
    */
   async getTitleGenerationModel(providerId: string, sessionModelId: string): Promise<string> {
     const registry = this.getRegistry();
     const provider = registry.get(providerId);
-    return provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    return provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
   }
 
   /**
