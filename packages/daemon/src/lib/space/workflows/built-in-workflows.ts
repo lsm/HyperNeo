@@ -390,7 +390,7 @@ const CODEX_REACTION_APPROVAL_BASH_SCRIPT = [
   'OWNER="${BASH_REMATCH[1]}"',
   'REPO="${BASH_REMATCH[2]}"',
   'NUMBER="${BASH_REMATCH[3]}"',
-  'if ! REACTIONS_JSON=$(gh api "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions" -H "Accept: application/vnd.github+json"); then',
+  'if ! REACTIONS_JSON=$(gh api "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions?per_page=100" -H "Accept: application/vnd.github+json"); then',
   '  echo "Failed to fetch PR reactions for ${PR_URL}" >&2',
   '  exit 1',
   'fi',
@@ -402,7 +402,7 @@ const CODEX_REACTION_APPROVAL_BASH_SCRIPT = [
   'CODEX_EYES_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "eyes")] | length\' <<< "$REACTIONS_JSON")',
   'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
   'if [ -n "$START_ISO" ]; then',
-  `  START_EPOCH=$(node -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$START_ISO" 2>/dev/null || true)`,
+  `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$START_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
   `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REACTION_TIMEOUT_SECONDS} ]; then`,
   '    jq -n --arg url "$PR_URL" --arg status "timeout" \'{"pr_url":$url,"codex_bot_reaction":$status,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
@@ -1299,7 +1299,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Expected outputs: Approval gate write or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: write to review-approval-gate (field: approved = true)\n' +
+              '2. If approved: wait for codex[bot] +1 or timeout, then write to review-approval-gate (field: approved = true)\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },

@@ -3353,8 +3353,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(approvalField.writers).toEqual(['Review', 'reviewer']);
     expect(approvalField.check).toEqual({ op: '==', value: true });
     expect(gate.script?.source).toContain('codex[bot]');
-    expect(gate.script?.source).toContain('issues/${NUMBER}/reactions');
+    expect(gate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
     expect(gate.script?.source).toContain('.content == "+1"');
+    expect(gate.script?.source).toContain('bun -e');
+    expect(gate.script?.source).not.toContain('node -e');
     expect(gate.poll?.intervalMs).toBe(60_000);
   });
 
@@ -3371,7 +3373,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions" ]; then',
+          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
           `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"eyes"}]'`,
           '  exit 0',
           'fi',
@@ -3413,7 +3415,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions" ]; then',
+          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
           `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1"}]'`,
           '  exit 0',
           'fi',
@@ -3455,7 +3457,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions" ]; then',
+          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
           `  printf '%s\n' '[]'`,
           '  exit 0',
           'fi',
