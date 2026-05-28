@@ -312,7 +312,9 @@ export async function initializeModels(): Promise<void> {
   }
 
   // Initialize the provider system (registers built-in providers)
+  const { waitForOptionalProviderRegistration } = await import('./providers/factory.js');
   initializeProviders();
+  await waitForOptionalProviderRegistration();
 
   try {
     const models = await loadModelsFromProviders();

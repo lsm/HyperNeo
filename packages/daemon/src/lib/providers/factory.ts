@@ -14,7 +14,6 @@ import { MinimaxProvider } from './minimax-provider.js';
 import { OpenRouterProvider } from './openrouter-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
-import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
 import {
   CustomEndpointProvider,
   customProviderIdFor,
@@ -83,7 +82,9 @@ export function initializeProviders(): ProviderRegistry {
   // Register Anthropic Copilot provider (embedded Anthropic-compatible server).
   // process.cwd() is the fallback cwd; per-session workspace is threaded via
   // ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
-  registry.register(new AnthropicToCopilotBridgeProvider(process.cwd()));
+  // Lazy registration keeps @github/copilot-sdk out of the startup import graph so
+  // bun build --compile can tree-shake and bundle the SDK without crashing startup.
+  registerCopilotProvider(registry);
 
   // Additional built-in providers can be registered here
   // Example:
@@ -186,6 +187,28 @@ function canonicalise(value: unknown): unknown {
   return out;
 }
 
+function registerCopilotProvider(registry: ProviderRegistry): void {
+  copilotProviderRegistration ??= import('./anthropic-copilot/index.js')
+    .then((providerModule) => {
+      // This dynamic import must remain a literal string: bun build --compile
+      // discovers and embeds @github/copilot-sdk and vscode-jsonrpc through it.
+      if (!registry.has('anthropic-copilot')) {
+        registry.register(new providerModule.AnthropicToCopilotBridgeProvider(process.cwd()));
+      }
+    })
+    .catch((err) => {
+      logger.warn(`Skipping Anthropic Copilot provider registration: ${err}`);
+    });
+}
+
+export async function waitForOptionalProviderRegistration(): Promise<void> {
+  if (copilotProviderRegistration) {
+    await copilotProviderRegistration;
+  }
+}
+
+let copilotProviderRegistration: Promise<void> | null = null;
+
 /** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
 const lastSyncedConfigByProviderId = new Map<string, string>();
 
@@ -211,6 +234,7 @@ export function getProviderContextManager(): ProviderContextManager {
  */
 export function resetProviderFactory(): void {
   initialized = false;
+  copilotProviderRegistration = null;
   lastSyncedConfigByProviderId.clear();
 }
 
