@@ -128,11 +128,35 @@ describe('check-space-task-handler-tests', () => {
     writeProjectFile(
       cwd,
       'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
-      "describe('spaceTask.publish', () => {});\n// 'spaceTask.publish' needs tests\n" +
-        "await call('spaceTask.create', {});\n"
+      "describe('spaceTask.publish', () => {});\n// await call('spaceTask.publish', {});\n" +
+        "it('covers create', async () => { await call('spaceTask.create', {}); });\n"
     );
     git(cwd, ['add', '.']);
     git(cwd, ['commit', '-m', 'mention handler']);
+
+    const result = runGate(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('spaceTask.publish');
+  });
+
+  it('flags handlers that are called only in skipped tests', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    writeProjectFile(
+      cwd,
+      'packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts',
+      "messageHub.onRequest('spaceTask.create', async () => {});\n" +
+        "messageHub.onRequest('spaceTask.publish', async () => {});\n"
+    );
+    writeProjectFile(
+      cwd,
+      'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
+      "it('covers create', async () => { await call('spaceTask.create', {}); });\n" +
+        "it.skip('covers publish', async () => { await call('spaceTask.publish', {}); });\n"
+    );
+    git(cwd, ['add', '.']);
+    git(cwd, ['commit', '-m', 'skip handler test']);
 
     const result = runGate(cwd);
     expect(result.status).toBe(1);
@@ -152,7 +176,8 @@ describe('check-space-task-handler-tests', () => {
     writeProjectFile(
       cwd,
       'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
-      "await call('spaceTask.create', {});\nawait call('spaceTask.publish', {});\n"
+      "it('covers create', async () => { await call('spaceTask.create', {}); });\n" +
+        "it('covers publish', async () => { await call('spaceTask.publish', {}); });\n"
     );
     git(cwd, ['add', '.']);
     git(cwd, ['commit', '-m', 'add handler and test']);

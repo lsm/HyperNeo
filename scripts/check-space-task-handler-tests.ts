@@ -42,12 +42,123 @@ function changedFiles(): Set<string> {
   }
 }
 
+function stripComments(source: string): string {
+  let output = '';
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (quote) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      output += char;
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      while (index < source.length && source[index] !== '\n') {
+        output += ' ';
+        index++;
+      }
+      output += source[index] ?? '';
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      output += '  ';
+      index += 2;
+      while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) {
+        output += source[index] === '\n' ? '\n' : ' ';
+        index++;
+      }
+      output += '  ';
+      index++;
+      continue;
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+function findCallEnd(source: string, openParenIndex: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = openParenIndex; index < source.length; index++) {
+    const char = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '(') depth++;
+    if (char === ')') {
+      depth--;
+      if (depth === 0) return index;
+    }
+  }
+
+  return -1;
+}
+
+function blankDisabledTestCalls(source: string): string {
+  const disabledCallPattern = /\b(?:describe|it|test)\.(?:skip|todo)\s*\(/g;
+  let output = source;
+  for (const match of source.matchAll(disabledCallPattern)) {
+    const openParenIndex = (match.index ?? 0) + match[0].length - 1;
+    const end = findCallEnd(source, openParenIndex);
+    if (end === -1) continue;
+    output =
+      output.slice(0, match.index) +
+      ' '.repeat(end - (match.index ?? 0) + 1) +
+      output.slice(end + 1);
+  }
+  return output;
+}
+
 function parseTestedHandlers(source: string): Set<string> {
-  return new Set(
-    Array.from(source.matchAll(/\bcall\(\s*['"]([^'"]+)['"]/g), (match) => match[1]).filter(
-      (method) => method.startsWith('spaceTask.')
-    )
-  );
+  const executableSource = blankDisabledTestCalls(stripComments(source));
+  const tested = new Set<string>();
+  for (const match of executableSource.matchAll(/\b(?:it|test)(?:\.only)?\s*\(/g)) {
+    const openParenIndex = (match.index ?? 0) + match[0].length - 1;
+    const end = findCallEnd(executableSource, openParenIndex);
+    if (end === -1) continue;
+    const testBody = executableSource.slice(openParenIndex, end + 1);
+    for (const callMatch of testBody.matchAll(/\bcall\(\s*['"]([^'"]+)['"]/g)) {
+      const method = callMatch[1];
+      if (method.startsWith('spaceTask.')) tested.add(method);
+    }
+  }
+  return tested;
 }
 
 function main() {
