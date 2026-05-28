@@ -1481,19 +1481,22 @@ export interface GatePoll {
   messageTemplate?: string;
 }
 
-export interface GateFeatures {
-  /** Require codex[bot] `+1` reaction before this gate can open. */
-  codex_review_bot?: boolean | { enabled?: boolean };
-}
+export type GateFeatureFlag = boolean | { enabled?: boolean };
+export type GateFeatures = Record<string, GateFeatureFlag>;
 
-export function hasCodexReviewBotFeature(gate: { features?: GateFeatures } | undefined): boolean {
-  const flag = gate?.features?.codex_review_bot;
+export function hasEnabledGateFeature(
+  gate: { features?: GateFeatures } | undefined,
+  featureName: string
+): boolean {
+  const flag = gate?.features?.[featureName];
   if (flag === true) return true;
   return !!flag && typeof flag === 'object' && flag.enabled !== false;
 }
 
 export function hasGateFeatures(gate: { features?: GateFeatures } | undefined): boolean {
-  return hasCodexReviewBotFeature(gate);
+  return Object.keys(gate?.features ?? {}).some((featureName) =>
+    hasEnabledGateFeature(gate, featureName)
+  );
 }
 
 export interface Gate {

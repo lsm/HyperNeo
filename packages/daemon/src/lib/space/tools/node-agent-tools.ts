@@ -51,7 +51,7 @@ import {
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, hasCodexReviewBotFeature, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, hasGateFeatures, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -135,7 +135,7 @@ async function evaluateTerminalGateFeatures(
   if (!workflow || !scriptExecutor || !scriptContext) return null;
 
   for (const gate of workflow.gates ?? []) {
-    if (!hasCodexReviewBotFeature(gate)) continue;
+    if (!hasGateFeatures(gate)) continue;
     const effectiveGate = getEffectiveGate(gate);
     if (!effectiveGate.script) continue;
 

@@ -1,6 +1,25 @@
-import { hasCodexReviewBotFeature } from '@neokai/shared';
+import { hasEnabledGateFeature } from '@neokai/shared';
 import type { Gate, GatePoll, GateScript } from '@neokai/shared';
 
+export interface GateFeatureDefinition {
+  script?: () => GateScript;
+  poll?: () => GatePoll;
+}
+
+const gateFeatureRegistry = new Map<string, GateFeatureDefinition>();
+
+export function registerGateFeature(name: string, definition: GateFeatureDefinition): void {
+  gateFeatureRegistry.set(name, definition);
+}
+
+function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
+  return Object.keys(gate.features ?? {})
+    .filter((name) => hasEnabledGateFeature(gate, name))
+    .map((name) => gateFeatureRegistry.get(name))
+    .filter((definition): definition is GateFeatureDefinition => !!definition);
+}
+
+export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 600;
 export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 60_000;
 
@@ -64,16 +83,28 @@ export function getCodexReviewBotGatePoll(): GatePoll {
   };
 }
 
+registerGateFeature(CODEX_REVIEW_BOT_FEATURE, {
+  script: getCodexReviewBotGateScript,
+  poll: getCodexReviewBotGatePoll,
+});
+
 export function getEffectiveGate(gate: Gate): Gate {
-  if (!hasCodexReviewBotFeature(gate)) return gate;
+  const definitions = getEnabledGateFeatureDefinitions(gate);
+  const scriptDefinition = definitions.find((definition) => definition.script);
+  const pollDefinition = definitions.find((definition) => definition.poll);
+
+  if (!scriptDefinition?.script && !pollDefinition?.poll) return gate;
+
   return {
     ...gate,
-    script: getCodexReviewBotGateScript(),
-    poll: getCodexReviewBotGatePoll(),
+    script: scriptDefinition?.script?.() ?? gate.script,
+    poll: pollDefinition?.poll?.() ?? gate.poll,
   };
 }
 
 export function getEffectiveGatePoll(gate: Gate): GatePoll | undefined {
-  if (hasCodexReviewBotFeature(gate)) return getCodexReviewBotGatePoll();
-  return gate.poll;
+  const pollDefinition = getEnabledGateFeatureDefinitions(gate).find(
+    (definition) => definition.poll
+  );
+  return pollDefinition?.poll?.() ?? gate.poll;
 }

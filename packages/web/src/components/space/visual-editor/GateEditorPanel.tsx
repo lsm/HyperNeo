@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'preact/hooks';
-import { hasCodexReviewBotFeature } from '@neokai/shared';
+import { hasEnabledGateFeature, hasGateFeatures } from '@neokai/shared';
 import type {
   Gate,
   GateField,
@@ -139,11 +139,11 @@ export function GateEditorPanel({
   const scriptTimeoutSec = gate.script?.timeoutMs
     ? Math.round(gate.script.timeoutMs / 1000)
     : SCRIPT_TIMEOUT_DEFAULT;
-  const codexReviewBotEnabled = hasCodexReviewBotFeature(gate);
+  const codexReviewBotEnabled = hasEnabledGateFeature(gate, 'codex_review_bot');
 
   // Gate-level validation: must have at least one of fields, features, or script
   const hasFields = (gate.fields ?? []).length > 0;
-  const hasFeatures = codexReviewBotEnabled;
+  const hasFeatures = hasGateFeatures(gate);
   const gateError = useMemo(
     () => validateGateCompleteness(hasFields, scriptEnabled, hasFeatures),
     [hasFields, scriptEnabled, hasFeatures]
@@ -235,12 +235,10 @@ export function GateEditorPanel({
   }
 
   function toggleCodexReviewBot(checked: boolean) {
-    updateGate({
-      features: {
-        ...gate.features,
-        codex_review_bot: checked ? true : undefined,
-      },
-    });
+    const features = { ...gate.features };
+    if (checked) features.codex_review_bot = true;
+    else delete features.codex_review_bot;
+    updateGate({ features });
   }
 
   // NOTE: Presets reset timeout to the default (30s). If the user has
