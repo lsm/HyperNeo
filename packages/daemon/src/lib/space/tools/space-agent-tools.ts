@@ -69,6 +69,7 @@ import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 
 const log = new Logger('space-agent-tools');
 
@@ -2033,7 +2034,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
       try {
         const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
-          result: task.result ?? undefined,
+          result:
+            normalizeMeaningfulTaskResult(task.result) ??
+            normalizeMeaningfulTaskResult(task.reportedSummary) ??
+            undefined,
           approvalSource: 'agent',
           approvalReason: args.reason,
           onCascadedTasks: async (cascadedTasks) => {
