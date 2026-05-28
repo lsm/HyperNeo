@@ -6,7 +6,7 @@
 # Usage:
 #   ./scripts/test-daemon.sh                # All shards in parallel (fast, no coverage)
 #   ./scripts/test-daemon.sh --coverage     # All shards with coverage
-#   ./scripts/test-daemon.sh 2-handlers     # Run a single shard
+#   ./scripts/test-daemon.sh 5-space-runtime-a # Run a single shard
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
 
@@ -68,6 +68,7 @@ shard_paths() {
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-29_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-33_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-35-36_test.ts" \
+			"$TEST_ROOT/4-space-storage/storage/migrations/migration-38_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-42_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-43_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-44_test.ts" \
@@ -97,6 +98,7 @@ shard_paths() {
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-28_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-30_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-34_test.ts" \
+			"$TEST_ROOT/4-space-storage/storage/migrations/migration-40_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-45_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-47_test.ts" \
 			"$TEST_ROOT/4-space-storage/storage/migrations/migration-51_test.ts" \
@@ -244,6 +246,10 @@ for shard in "${RUN_SHARDS[@]}"; do
 	LOG_FILE="$RESULTS_DIR/output-${shard}.log"
 	rm -f "$JUNIT_FILE" "$LOG_FILE"
 	TEST_PATHS=($(shard_paths "$shard"))
+	if [ "${#TEST_PATHS[@]}" -eq 0 ]; then
+		echo "Unknown daemon test shard: $shard" >&2
+		exit 1
+	fi
 
 	# shellcheck disable=SC2086
 	NODE_ENV=test bun test \
