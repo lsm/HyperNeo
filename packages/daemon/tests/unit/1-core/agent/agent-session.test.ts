@@ -2190,6 +2190,7 @@ describe('AgentSession', () => {
       );
 
       expect(session.title).toBe('Task #427: Forge MVP 3 — Coder');
+      expect(session.metadata.titleGenerated).toBe(true);
     });
 
     it('falls back to New Session when title is omitted', () => {
@@ -2203,6 +2204,7 @@ describe('AgentSession', () => {
       );
 
       expect(session.title).toBe('New Session');
+      expect(session.metadata.titleGenerated).toBe(false);
     });
 
     it('should create a session without mcpServers in config to avoid cyclic serialization errors', () => {

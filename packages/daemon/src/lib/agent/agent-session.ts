@@ -666,6 +666,7 @@ export class AgentSession
       outputTokens: 0,
       totalCost: 0,
       toolCallCount: 0,
+      titleGenerated: Boolean(init.title),
       ...(init.promptProvenance ? { promptProvenance: init.promptProvenance } : {}),
     };
 
