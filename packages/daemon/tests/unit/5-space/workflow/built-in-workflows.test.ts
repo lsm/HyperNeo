@@ -2147,7 +2147,7 @@ describe('seedBuiltInWorkflows()', () => {
       isWorkflowTerminalNode(
         {
           ...CODING_WORKFLOW,
-          channels: [{ from: 'validator', to: 'coder', maxCycles: 5, label: 'Validator → coder' }],
+          channels: [{ from: 'validator', to: 'coder', label: 'Validator → coder' }],
         },
         validationNode.id
       )

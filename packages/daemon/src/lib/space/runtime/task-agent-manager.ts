@@ -170,7 +170,6 @@ export function isWorkflowTerminalNode(
   );
 
   return outgoingChannels.every((channel) => {
-    if (!channel.maxCycles) return false;
     const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
     return targets.every((target) => startRefs.has(target));
   });

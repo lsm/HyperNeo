@@ -86,6 +86,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'GH_TOKEN',
   'GITHUB_TOKEN',
   'GH_HOST',
+  'NEOKAI_VALIDATION_BASE_REF',
 ]);
 
 /** Keys that are rejected during deep-merge to prevent prototype pollution. */
@@ -153,11 +154,13 @@ export function buildRestrictedEnv(
       ) {
         continue;
       }
-      // User env cannot carry credentials
-      const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
-      if (isPrefixRestricted) continue;
-      const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
-      if (isKeyRestricted) continue;
+      if (!ALLOWED_ENV_KEYS.has(key)) {
+        // User env cannot carry credentials
+        const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+        if (isPrefixRestricted) continue;
+        const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+        if (isKeyRestricted) continue;
+      }
 
       env[key] = value;
     }

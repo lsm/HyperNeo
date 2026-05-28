@@ -282,7 +282,7 @@ export class PostApprovalRouter {
         status: 'done',
         completedAt: Date.now(),
         pendingCheckpointType: null,
-        pendingCompletionSubmittedByNodeId: null,
+        pendingCompletionSubmittedByNodeId: sourceNodeId,
         pendingCompletionSubmittedAt: null,
         pendingCompletionReason: null,
         postApprovalSessionId: null,

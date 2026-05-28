@@ -303,7 +303,7 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned).toHaveLength(0);
     const final = taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
-    expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
+    expect(final?.pendingCompletionSubmittedByNodeId).toBe('n1');
   });
 
   test('already-routed (live session) → no re-spawn', async () => {
