@@ -512,6 +512,8 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'reaction means it has not started or has not reported yet. Poll every 60 seconds ' +
   'for up to 10 minutes before proceeding. If codex[bot] still has not posted `+1` ' +
   'after the timeout, proceed only with a warning recorded in your result artifact. ' +
+  'If codex[bot] has not reacted at all, comment `@codex review` on the PR to trigger ' +
+  'its review, then wait for an `eyes` or `+1` reaction. ' +
   'Do not close the task or write the approval gate before codex[bot] has `+1` unless ' +
   'that timeout has elapsed.';
 
@@ -859,6 +861,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'accuracy, and clarity. If more research is needed, message Research with specific ' +
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
+              ' ' +
+              CODEX_REACTION_APPROVAL_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
@@ -1164,6 +1168,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
           check: { op: 'count', match: 'approved', min: 4 },
         },
       ],
+      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],

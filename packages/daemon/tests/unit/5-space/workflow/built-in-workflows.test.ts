@@ -1207,6 +1207,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     expect(gate.fields[0].type).toBe('map');
     expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
     expect(gate.fields[0].writers).toEqual(['Plan Review']);
+    expect(gate.features?.codex_review_bot).toBe(true);
     expect(gate.resetOnCycle).toBe(true);
   });
 
@@ -2585,6 +2586,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(approvalsField.type).toBe('map');
     expect(approvalsField.writers).toEqual(['Plan Review']);
     expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
+    expect(gate.features?.codex_review_bot).toBe(true);
   });
 
   test('seeded plan-approval-gate preserves map-count check with min=4', () => {
@@ -3319,6 +3321,14 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(requestBranch).toMatch(
       /If more research is needed|If findings remain|do not .*submit_for_approval/i
     );
+  });
+
+  test('RESEARCH_WORKFLOW Review node prompt waits for codex before approval close', () => {
+    const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const prompt = reviewNode.agents[0].customPrompt!.value;
+    expect(prompt).toContain('verify codex[bot] reaction status');
+    expect(prompt).toContain('@codex review');
+    expect(prompt).toContain('wait for an `eyes` or `+1` reaction');
   });
 
   test('REVIEW_ONLY_WORKFLOW prompt forbids terminal calls when verdict is REQUEST_CHANGES', () => {
