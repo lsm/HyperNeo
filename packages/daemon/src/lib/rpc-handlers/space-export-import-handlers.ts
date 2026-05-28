@@ -568,6 +568,7 @@ export function setupSpaceExportImportHandlers(
         // create/rename imports earlier in the bundle from claiming them first.
         const replacedAgentByName = new Map<string, SpaceAgent>();
         const preservedReplaceHandleByName = new Map<string, string>();
+        const fallbackReplaceHandleByName = new Map<string, string>();
         for (const exportedAgent of bundle.agents) {
           const existing = existingAgentByName.get(exportedAgent.name);
           if (!existing) continue;
@@ -577,10 +578,14 @@ export function setupSpaceExportImportHandlers(
           usedAgentHandles.delete(existing.handle);
         }
         for (const exportedAgent of bundle.agents) {
-          if (!replacedAgentByName.has(exportedAgent.name)) continue;
+          const existing = replacedAgentByName.get(exportedAgent.name);
+          if (!existing) continue;
           if (shouldPreserveAgentHandle(exportedAgent.handle, usedAgentHandles)) {
             preservedReplaceHandleByName.set(exportedAgent.name, exportedAgent.handle!);
             usedAgentHandles.add(exportedAgent.handle!);
+          } else {
+            fallbackReplaceHandleByName.set(exportedAgent.name, existing.handle);
+            usedAgentHandles.add(existing.handle);
           }
         }
         if (replacedAgentByName.size > 0) {
@@ -648,7 +653,8 @@ export function setupSpaceExportImportHandlers(
               settingSources: exportedAgent.settingSources ?? null,
             };
             const preservedHandle = preservedReplaceHandleByName.get(exportedAgent.name);
-            updateParams.handle = preservedHandle ?? existing.handle;
+            updateParams.handle =
+              preservedHandle ?? fallbackReplaceHandleByName.get(exportedAgent.name);
             warnOnAgentHandleRewrite(
               exportedAgent,
               exportedAgent.name,

@@ -166,13 +166,17 @@ vi.mock('../../components/space/SpaceAgentList', () => ({
 }));
 
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
-  SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => (
-    <div
-      data-testid="space-long-horizon-agents"
-      data-space-id={props.spaceId}
-      data-selected-handle={props.selectedHandle ?? ''}
-    />
-  ),
+  SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => {
+    const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
+    return (
+      <div
+        data-testid="space-long-horizon-agents"
+        data-space-id={props.spaceId}
+        data-selected-handle={props.selectedHandle ?? ''}
+        data-space-agent={spaceAgent?.handle ?? ''}
+      />
+    );
+  },
 }));
 
 vi.mock('../../components/space/SpaceSettings', () => ({
@@ -603,12 +607,25 @@ describe('SpaceIsland — sessions view', () => {
 describe('SpaceIsland — agents view', () => {
   it('passes the selected agent handle to the agents page', async () => {
     mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
+    mockAgents.value = [
+      {
+        id: 'agent-1',
+        spaceId: 'space-1',
+        name: 'Reviewer',
+        handle: 'reviewer',
+        status: 'active',
+        customPrompt: 'Review code.',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
 
     const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
 
     const agentsPage = await findByTestId('space-long-horizon-agents');
     expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
     expect(agentsPage.getAttribute('data-selected-handle')).toBe('reviewer');
+    expect(agentsPage.getAttribute('data-space-agent')).toBe('reviewer');
   });
 });
 
