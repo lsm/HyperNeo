@@ -95,7 +95,11 @@ function validateScriptTimeout(value: number): string {
   return '';
 }
 
-function validateGateCompleteness(hasFields: boolean, hasScript: boolean, hasFeatures: boolean): string {
+function validateGateCompleteness(
+  hasFields: boolean,
+  hasScript: boolean,
+  hasFeatures: boolean
+): string {
   if (!hasFields && !hasScript && !hasFeatures) {
     return 'gate: must have at least one field, feature, or script check';
   }
@@ -243,7 +247,6 @@ export function GateEditorPanel({
       },
     });
   }
-
 
   // NOTE: Presets reset timeout to the default (30s). If the user has
   // customized the timeout, clicking a preset will overwrite it.
