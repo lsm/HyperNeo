@@ -421,6 +421,127 @@ describe('Forge evidence capture on task completion', () => {
     expect(evidence.map((item) => item.kind).sort()).toEqual(['session', 'task_result']);
   });
 
+  it('does not cross-post proposal evidence when proposal and task scopes match', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Same-scope proposal',
+      objective: 'Avoid duplicate same-scope proposal evidence',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Complete same-scope proposal task',
+      description: 'Task stays with proposal scope',
+      evolutionScopeId: scope.id,
+    });
+    evolutionRepo.createTaskProposal({
+      scopeId: scope.id,
+      title: task.title,
+      description: task.description,
+      reason: 'Same scope proposal',
+      status: 'created',
+      createdTaskId: task.id,
+    });
+    taskRepo.updateTask(task.id, { status: 'done', result: 'Same scope done' });
+
+    evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+    const evidence = evolutionRepo.listEvidence(scope.id);
+    expect(evidence).toHaveLength(2);
+    expect(evidence.filter((item) => item.kind === 'task_result')).toHaveLength(1);
+    expect(evidence.some((item) => item.metadata.crossLinkedTaskId === task.id)).toBe(false);
+  });
+
+  it('cross-posts proposal-originating task evidence to different originating scope', () => {
+    const originScope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Originating Forge scope',
+      objective: 'Learn from proposed tasks',
+    });
+    const assignedScope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Assigned execution scope',
+      objective: 'Run tasks from other scopes',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Complete cross-scope proposal task',
+      description: 'Task runs under assigned scope',
+      evolutionScopeId: assignedScope.id,
+    });
+    const proposal = evolutionRepo.createTaskProposal({
+      scopeId: originScope.id,
+      title: task.title,
+      description: task.description,
+      reason: 'Origin scope proposed this work',
+      status: 'created',
+      createdTaskId: task.id,
+    });
+    taskRepo.updateTask(task.id, { status: 'done', result: 'Cross-scope done' });
+
+    evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+    const assignedEvidence = evolutionRepo.listEvidence(assignedScope.id);
+    const originEvidence = evolutionRepo.listEvidence(originScope.id);
+    expect(assignedEvidence.map((item) => item.kind).sort()).toEqual(['session', 'task_result']);
+    expect(originEvidence.map((item) => item.kind)).toEqual(['task_result']);
+    expect(originEvidence[0].sourceId).toBe(task.id);
+    expect(originEvidence[0].metadata).toMatchObject({
+      autoCaptured: true,
+      crossLinkedTaskId: task.id,
+      originatingProposalId: proposal.id,
+      assignedScopeId: assignedScope.id,
+      result: 'Cross-scope done',
+    });
+  });
+
+  it('deduplicates repeated proposal-origin evidence cross-posts', () => {
+    const originScope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Dedupe origin scope',
+      objective: 'Avoid duplicate cross-post evidence',
+    });
+    const assignedScope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Dedupe assigned scope',
+      objective: 'Run duplicated capture events',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Complete cross-post once',
+      description: 'Repeated capture should update existing cross-post',
+      evolutionScopeId: assignedScope.id,
+    });
+    const proposal = evolutionRepo.createTaskProposal({
+      scopeId: originScope.id,
+      title: task.title,
+      description: task.description,
+      reason: 'Needs dedupe',
+      status: 'created',
+      createdTaskId: task.id,
+    });
+    taskRepo.updateTask(task.id, { status: 'done', result: 'Initial result' });
+
+    evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+    taskRepo.updateTask(task.id, { result: 'Updated result' });
+    evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+
+    const originEvidence = evolutionRepo.listEvidence(originScope.id);
+    expect(originEvidence).toHaveLength(1);
+    expect(originEvidence[0].summary).toContain('Updated result');
+    expect(originEvidence[0].metadata).toMatchObject({
+      autoCaptured: true,
+      crossLinkedTaskId: task.id,
+      originatingProposalId: proposal.id,
+      assignedScopeId: assignedScope.id,
+      result: 'Updated result',
+    });
+  });
+
   it('keeps manual workflow_run evidence and adds artifact evidence for the same run', () => {
     const scope = evolutionRepo.createScope({
       spaceId,

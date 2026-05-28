@@ -1684,6 +1684,124 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(taskAfter?.reportedSummary).toBe('Fresh artifact summary after retry');
     });
 
+    test('reported summary replaces generic error task result when no artifact exists', async () => {
+      const rt = makeRuntimeWithTam();
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Generic Error Fallback ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'generic-error-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'generic-error-end',
+        endNodeId: 'generic-error-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'in_progress',
+        result:
+          'An unexpected error occurred. Please try again or contact support if the issue persists.',
+        reportedStatus: 'done',
+        reportedSummary: 'PR #2007 merged to dev via squash merge.',
+      });
+      seedNodeExec(db, run.id, 'generic-error-end', 'End', 'idle');
+
+      await rt.executeTick();
+
+      const taskAfter = taskRepo.getTask(tasks[0].id);
+      expect(taskAfter?.result).toBe('PR #2007 merged to dev via squash merge.');
+      expect(taskAfter?.reportedSummary).toBe('PR #2007 merged to dev via squash merge.');
+    });
+
+    test('ignores generic error sibling result when filling terminal run result', async () => {
+      const rt = makeRuntimeWithTam();
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Generic Sibling Fallback ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'generic-sibling-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'generic-sibling-end',
+        endNodeId: 'generic-sibling-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'done',
+        result: null,
+        reportedSummary: null,
+      });
+      const duplicate = await rt.getTaskManagerForSpace(SPACE_ID).createTask({
+        title: 'duplicate generic sibling',
+        description: '',
+        workflowRunId: run.id,
+        status: 'done',
+      });
+      taskRepo.updateTask(duplicate.id, {
+        result:
+          'An unexpected error occurred. Please try again or contact support if the issue persists.',
+      });
+      workflowRunRepo.updateRun(run.id, { status: 'done' });
+
+      await rt.executeTick();
+
+      const taskAfter = taskRepo.getTask(tasks[0].id);
+      expect(taskAfter?.result).toBeNull();
+      expect(taskAfter?.reportedSummary).toBeNull();
+    });
+
+    test('uses later meaningful sibling result after earlier generic sibling result', async () => {
+      const rt = makeRuntimeWithTam();
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Meaningful Sibling Fallback ${Date.now()}`,
+        description: '',
+        nodes: [{ id: 'meaningful-sibling-end', name: 'End', agentId: AGENT_A }],
+        startNodeId: 'meaningful-sibling-end',
+        endNodeId: 'meaningful-sibling-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'done',
+        result: null,
+        reportedSummary: null,
+      });
+      const genericDuplicate = await rt.getTaskManagerForSpace(SPACE_ID).createTask({
+        title: 'duplicate generic sibling',
+        description: '',
+        workflowRunId: run.id,
+        status: 'done',
+      });
+      taskRepo.updateTask(genericDuplicate.id, {
+        result:
+          'An unexpected error occurred. Please try again or contact support if the issue persists.',
+      });
+      const meaningfulDuplicate = await rt.getTaskManagerForSpace(SPACE_ID).createTask({
+        title: 'duplicate meaningful sibling',
+        description: '',
+        workflowRunId: run.id,
+        status: 'done',
+      });
+      taskRepo.updateTask(meaningfulDuplicate.id, {
+        result: 'PR #2007 merged to dev via squash merge.',
+      });
+      workflowRunRepo.updateRun(run.id, { status: 'done' });
+
+      await rt.executeTick();
+
+      const taskAfter = taskRepo.getTask(tasks[0].id);
+      expect(taskAfter?.result).toBe('PR #2007 merged to dev via squash merge.');
+      expect(taskAfter?.reportedSummary).toBe('PR #2007 merged to dev via squash merge.');
+    });
+
     test('reportedStatus alone is enough to mark a run for completion resolution', async () => {
       // Even when task.status has not yet flipped to a terminal state, a
       // non-null `reportedStatus` signals the runtime to resolve completion

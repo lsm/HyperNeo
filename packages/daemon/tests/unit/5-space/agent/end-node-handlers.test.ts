@@ -254,6 +254,7 @@ describe('createMarkCompleteHandler', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe('transition raced');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+    expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
     const unchangedGoal = ctx.goalService.getGoal(goal.id);
     expect(unchangedGoal?.summary).toBe('');
     expect(unchangedGoal?.progress).toBe(0);
@@ -282,6 +283,96 @@ describe('createMarkCompleteHandler', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('not linked to a goal');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+  });
+
+  test('mark_complete uses result artifact before stale generic task result', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    ctx.taskRepo.updateTask(task.id, {
+      result:
+        'An unexpected error occurred. Please try again or contact support if the issue persists.',
+      reportedSummary: 'PR #2007 merged to dev via squash merge.',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+      resolveResultArtifactSummary: () =>
+        'Merge artifact: PR #2007 merged to dev via squash merge.',
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+
+    const updated = ctx.taskRepo.getTask(task.id);
+    expect(updated?.status).toBe('done');
+    expect(updated?.result).toBe('Merge artifact: PR #2007 merged to dev via squash merge.');
+    expect(updated?.reportedSummary).toBe(
+      'Merge artifact: PR #2007 merged to dev via squash merge.'
+    );
+  });
+
+  test('mark_complete falls back to reported summary instead of generic task result', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    ctx.taskRepo.updateTask(task.id, {
+      result:
+        'An unexpected error occurred. Please try again or contact support if the issue persists.',
+      reportedSummary: 'PR #2007 merged to dev via squash merge.',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+
+    const updated = ctx.taskRepo.getTask(task.id);
+    expect(updated?.status).toBe('done');
+    expect(updated?.result).toBe('PR #2007 merged to dev via squash merge.');
+    expect(updated?.reportedSummary).toBe('PR #2007 merged to dev via squash merge.');
+  });
+
+  test('mark_complete preserves meaningful task result before reported summary', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    ctx.taskRepo.updateTask(task.id, {
+      result: 'Manual correction: deployment verified.',
+      reportedSummary: 'Older reported summary from previous cycle.',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+
+    const updated = ctx.taskRepo.getTask(task.id);
+    expect(updated?.status).toBe('done');
+    expect(updated?.result).toBe('Manual correction: deployment verified.');
+    expect(updated?.reportedSummary).toBe('Older reported summary from previous cycle.');
   });
 
   test('emits space.task.updated for cascaded dependent tasks', async () => {
