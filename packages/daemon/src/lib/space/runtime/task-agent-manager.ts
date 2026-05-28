@@ -133,6 +133,32 @@ function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
   return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
 }
 
+export function isWorkflowTerminalNode(
+  workflow: SpaceWorkflow | null | undefined,
+  workflowNodeId: string
+): boolean {
+  if (!workflow) return false;
+  if (workflow.endNodeId === workflowNodeId) return true;
+
+  const node = workflow.nodes.find((candidate) => candidate.id === workflowNodeId);
+  if (!node) return false;
+
+  const outgoingChannels = (workflow.channels ?? []).filter(
+    (channel) => channel.from === '*' || channel.from === node.name || channel.from === node.id
+  );
+  if (outgoingChannels.some((channel) => channel.from === '*')) return false;
+  if (outgoingChannels.length === 0) return true;
+
+  const startNode = workflow.nodes.find((candidate) => candidate.id === workflow.startNodeId);
+  const startRefs = new Set([workflow.startNodeId, startNode?.name].filter(Boolean));
+
+  return outgoingChannels.every((channel) => {
+    if (!channel.maxCycles) return false;
+    const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+    return targets.every((target) => startRefs.has(target));
+  });
+}
+
 function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): string {
   const agentDisplayName = agentName ? agentName[0].toUpperCase() + agentName.slice(1) : '';
   const agentLabel = agentDisplayName ? ` — ${agentDisplayName}` : '';
@@ -2397,13 +2423,7 @@ export class TaskAgentManager {
     workflow: SpaceWorkflow | null | undefined,
     workflowNodeId: string
   ): boolean {
-    if (!workflow) return false;
-    if (workflow.endNodeId === workflowNodeId) return true;
-
-    const node = workflow.nodes.find((candidate) => candidate.id === workflowNodeId);
-    if (!node) return false;
-
-    return !(workflow.channels ?? []).some((channel) => channel.from === node.name);
+    return isWorkflowTerminalNode(workflow, workflowNodeId);
   }
 
   private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {

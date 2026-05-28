@@ -703,6 +703,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           },
         },
       ],
+      postApproval: undefined,
     },
     {
       id: CODING_REVIEW_NODE,
@@ -840,7 +841,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           check: { op: 'exists' },
         },
       ],
-      resetOnCycle: false,
+      resetOnCycle: true,
     },
     {
       id: 'review-posted-gate',
@@ -888,6 +889,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Validation Complete',
       to: 'Coding',
+      gateId: 'validation-complete-gate',
+      maxCycles: 5,
       label: 'Validation Complete → Coding (evidence missing)',
     },
     {
@@ -1643,7 +1646,8 @@ export interface SeedBuiltInWorkflowsResult {
  */
 function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[]
+  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[],
+  resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
   const existingNodeNames = new Set(existingNodes.map((node) => node.name));
@@ -1652,7 +1656,10 @@ function mergeNodeStructuralFieldsFromTemplate(
     .map((node) => ({
       ...node,
       id: generateUUID(),
-      agents: node.agents.map((agent) => ({ ...agent })),
+      agents: node.agents.map((agent) => ({
+        ...agent,
+        agentId: resolveAgentId(agent.agentId) ?? agent.agentId,
+      })),
     }));
   const templateAgentsByKey = new Map<string, DeclarativeToolGuard[] | undefined>();
   for (const node of templateNodes) {
@@ -1677,6 +1684,28 @@ function mergeNodeStructuralFieldsFromTemplate(
   });
 
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
+}
+
+function mergeChannelsFromTemplate(
+  existingChannels: SpaceWorkflow['channels'],
+  templateChannels: SpaceWorkflow['channels']
+): SpaceWorkflow['channels'] {
+  if (!templateChannels) return existingChannels;
+  if (!existingChannels) return templateChannels;
+
+  const existingKeys = new Set(
+    existingChannels.map((channel) =>
+      JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
+    )
+  );
+  const missingTemplateChannels = templateChannels.filter(
+    (channel) =>
+      !existingKeys.has(
+        JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
+      )
+  );
+
+  return [...existingChannels, ...missingTemplateChannels];
 }
 
 function mergeGateStructuralFieldsFromTemplate(
@@ -1727,10 +1756,12 @@ function mergeGateStructuralFieldsFromTemplate(
  *   field name) so structural authorization changes land on pre-existing spaces.
  *   Missing template gates are appended. Existing checks, scripts, and gate
  *   topology remain untouched.
- * - Channels, layout, and existing node rows are NOT re-stamped. Workflow IDs,
- *   node IDs, and persisted node-agent slots are stable identifiers for
- *   in-flight runs, so template drift must never replace node rows. Agent
- *   `toolGuards` are updated in-place on existing node configs instead.
+ * - Missing template channels are appended so newly-added built-in branches become
+ *   reachable on pre-existing spaces. Existing channels, layout, and node rows
+ *   are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
+ *   are stable identifiers for in-flight runs, so template drift must never
+ *   replace node rows. Agent `toolGuards` are updated in-place on existing node
+ *   configs instead.
  */
 const RESTAMP_FIELDS = [
   'legacy postApproval(clear)',
@@ -1738,6 +1769,7 @@ const RESTAMP_FIELDS = [
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
   'gates(field writers in-place + missing template gates)',
+  'channels(missing template channels)',
 ] as const;
 
 /**
@@ -1801,9 +1833,15 @@ export function seedBuiltInWorkflows(
       try {
         // Targeted merge of structural template fields that must stay in sync while
         // preserving user-configurable prompts and workflow topology.
-        const mergedNodes = mergeNodeStructuralFieldsFromTemplate(row.nodes, template.nodes);
+        const mergedNodes = mergeNodeStructuralFieldsFromTemplate(
+          row.nodes,
+          template.nodes,
+          resolveAgentId
+        );
+        const mergedChannels = mergeChannelsFromTemplate(row.channels, template.channels);
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
         const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
+        const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1812,6 +1850,7 @@ export function seedBuiltInWorkflows(
           postApproval: null,
           gates: mergedGates,
           ...(hasNewTemplateNodes ? { nodes: mergedNodes } : {}),
+          ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
         });
         if (!hasNewTemplateNodes) {

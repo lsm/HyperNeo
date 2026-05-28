@@ -257,10 +257,11 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
       try {
         const updated = taskRepo.updateTask(taskId, {
           reportedStatus: 'done',
-          // Clear any pending-completion state in case a prior submit_for_approval
-          // set it; approval supersedes the pending request.
+          // Preserve the approving node as the completion source so post-approval
+          // routing resolves against this terminal node instead of falling back
+          // to the workflow end node.
           pendingCheckpointType: null,
-          pendingCompletionSubmittedByNodeId: null,
+          pendingCompletionSubmittedByNodeId: workflowNodeId,
           pendingCompletionSubmittedAt: null,
           pendingCompletionReason: null,
         });
