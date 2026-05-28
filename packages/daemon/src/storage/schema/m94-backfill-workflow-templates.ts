@@ -94,12 +94,10 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
     description:
       'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
     instructions: '',
-    nodeNames: ['Coding', 'Validation Complete', 'Review'],
+    nodeNames: ['Coding', 'Review'],
     endNodeName: 'Review',
     channels: [
       { from: 'Coding', to: 'Review' },
-      { from: 'Coding', to: 'Validation Complete' },
-      { from: 'Validation Complete', to: 'Coding' },
       { from: 'Review', to: 'Coding' },
     ],
     gates: [
@@ -107,28 +105,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
         id: 'code-ready-gate',
         resetOnCycle: true,
         fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' } }],
-        scriptSource: PR_READY_SCRIPT_PREFIX,
-      },
-      {
-        id: 'validation-complete-gate',
-        resetOnCycle: true,
-        fields: [
-          { name: 'changed_files', type: 'number', check: { op: '==', value: 0 } },
-          {
-            name: 'completion_mode',
-            type: 'string',
-            check: { op: '==', value: 'validation_only' },
-          },
-          { name: 'validation_outcome', type: 'string', check: { op: 'exists' } },
-        ],
-      },
-      {
-        id: 'review-posted-gate',
-        resetOnCycle: true,
-        fields: [
-          { name: 'pr_url', type: 'string', check: { op: 'exists' } },
-          { name: 'review_url', type: 'string', check: { op: 'exists' } },
-        ],
         scriptSource: PR_READY_SCRIPT_PREFIX,
       },
     ],

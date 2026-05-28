@@ -253,21 +253,67 @@ describe('CODING_WORKFLOW template', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'validation-gate-'));
     try {
       await Bun.$`git init`.cwd(tmp).quiet();
+      await Bun.$`git config user.email test@example.com`.cwd(tmp).quiet();
+      await Bun.$`git config user.name Test`.cwd(tmp).quiet();
+      writeFileSync(join(tmp, 'base.txt'), 'base');
+      await Bun.$`git add base.txt`.cwd(tmp).quiet();
+      await Bun.$`git commit -m base`.cwd(tmp).quiet();
       writeFileSync(join(tmp, 'changed.txt'), 'dirty');
 
-      const result = await executeGateScript(gate.script!, {
-        workspacePath: tmp,
-        gateId: gate.id,
-        runId: 'run-validation-dirty',
-        gateData: {
-          completion_mode: 'validation_only',
-          changed_files: 0,
-          validation_outcome: 'claimed clean',
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: tmp,
+          gateId: gate.id,
+          runId: 'run-validation-dirty',
+          gateData: {
+            completion_mode: 'validation_only',
+            changed_files: 0,
+            validation_outcome: 'claimed clean',
+          },
         },
-      });
+        { VALIDATION_BASE_REF: 'HEAD' }
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('clean worktree');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('validation-complete-gate script blocks committed changes against base ref', async () => {
+    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'validation-complete-gate')!;
+    const tmp = mkdtempSync(join(tmpdir(), 'validation-gate-committed-'));
+    try {
+      await Bun.$`git init`.cwd(tmp).quiet();
+      await Bun.$`git config user.email test@example.com`.cwd(tmp).quiet();
+      await Bun.$`git config user.name Test`.cwd(tmp).quiet();
+      writeFileSync(join(tmp, 'base.txt'), 'base');
+      await Bun.$`git add base.txt`.cwd(tmp).quiet();
+      await Bun.$`git commit -m base`.cwd(tmp).quiet();
+      const baseRef = (await Bun.$`git rev-parse HEAD`.cwd(tmp).text()).trim();
+      writeFileSync(join(tmp, 'committed.txt'), 'changed');
+      await Bun.$`git add committed.txt`.cwd(tmp).quiet();
+      await Bun.$`git commit -m changed`.cwd(tmp).quiet();
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: tmp,
+          gateId: gate.id,
+          runId: 'run-validation-committed',
+          gateData: {
+            completion_mode: 'validation_only',
+            changed_files: 0,
+            validation_outcome: 'claimed clean',
+          },
+        },
+        { VALIDATION_BASE_REF: baseRef }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('no committed changes');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
