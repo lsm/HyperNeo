@@ -4,10 +4,11 @@ All notable changes to NeoKai will be documented in this file.
 
 ## [0.33.0] - 2026-05-26
 
-Recurring goal progress visibility, Forge trace diagnostics coverage, and graph tooling evaluation. 3 commits since v0.32.0.
+Spaces home command center, recurring goal progress visibility, Forge trace diagnostics coverage, and graph tooling evaluation. 4 commits since v0.32.0.
 
 ### Added
 
+- **Spaces home command center**: Spaces home now includes command-center updates, mobile navigation, and task tab routing
 - **Forge trace diagnostics coverage**: Clean scoped task traces now assert no-friction diagnostic capture and conversation-friction analysis enqueueing
 - **Graph tooling evaluation**: Benchmarked CodeGraph, code-review-graph, Graphify, and baseline exploration against task planning workflows
 
