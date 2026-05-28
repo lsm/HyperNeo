@@ -156,14 +156,16 @@ function warnOnAgentHandleRewrite(
   exported: ExportedSpaceAgent,
   finalName: string,
   usedAgentHandles: Set<string>,
-  warnings: string[]
+  warnings: string[],
+  preservedHandle?: string
 ): void {
   const exportedHandle = typeof exported.handle === 'string' ? exported.handle.trim() : '';
-  if (exportedHandle && RESERVED_AGENT_HANDLE_SET.has(exportedHandle)) {
+  if (!exportedHandle || exportedHandle === preservedHandle) return;
+  if (RESERVED_AGENT_HANDLE_SET.has(exportedHandle)) {
     warnings.push(
       `Agent "${finalName}": exported handle "${exportedHandle}" is reserved; a new handle was auto-generated`
     );
-  } else if (exportedHandle && usedAgentHandles.has(exportedHandle)) {
+  } else if (usedAgentHandles.has(exportedHandle)) {
     warnings.push(
       `Agent "${finalName}": exported handle "${exportedHandle}" already exists in the target space; a new handle was auto-generated`
     );
@@ -560,6 +562,37 @@ export function setupSpaceExportImportHandlers(
           existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
         );
 
+        // ── Phase 1 pre-step: reserve/free handles for replace-strategy agents.
+        // Freeing all replaced handles upfront lets two replaced agents swap handles
+        // within one import batch. Tracking new preserved handles upfront prevents
+        // create/rename imports earlier in the bundle from claiming them first.
+        const replacedAgentByName = new Map<string, SpaceAgent>();
+        const preservedReplaceHandleByName = new Map<string, string>();
+        for (const exportedAgent of bundle.agents) {
+          const existing = existingAgentByName.get(exportedAgent.name);
+          if (!existing) continue;
+          const strategy: ConflictResolutionStrategy = res.agents?.[exportedAgent.name] ?? 'skip';
+          if (strategy !== 'replace') continue;
+          replacedAgentByName.set(exportedAgent.name, existing);
+          usedAgentHandles.delete(existing.handle);
+        }
+        for (const exportedAgent of bundle.agents) {
+          if (!replacedAgentByName.has(exportedAgent.name)) continue;
+          if (shouldPreserveAgentHandle(exportedAgent.handle, usedAgentHandles)) {
+            preservedReplaceHandleByName.set(exportedAgent.name, exportedAgent.handle!);
+            usedAgentHandles.add(exportedAgent.handle!);
+          }
+        }
+        if (replacedAgentByName.size > 0) {
+          const now = Date.now();
+          const clearAgentHandle = db.prepare(
+            `UPDATE space_agents SET handle = NULL, updated_at = ? WHERE id = ?`
+          );
+          for (const agent of replacedAgentByName.values()) {
+            clearAgentHandle.run(now, agent.id);
+          }
+        }
+
         // ── Phase 1: import agents ──────────────────────────────────────
         // Maps original bundle agent name → assigned UUID (used for workflow cross-refs)
         const importedAgentNameToId = new Map<string, string>();
@@ -614,19 +647,17 @@ export function setupSpaceExportImportHandlers(
               tools: exportedAgent.tools ?? null,
               settingSources: exportedAgent.settingSources ?? null,
             };
-            usedAgentHandles.delete(existing.handle);
-            if (shouldPreserveAgentHandle(exportedAgent.handle, usedAgentHandles)) {
-              updateParams.handle = exportedAgent.handle;
-            }
+            const preservedHandle = preservedReplaceHandleByName.get(exportedAgent.name);
+            updateParams.handle = preservedHandle ?? existing.handle;
             warnOnAgentHandleRewrite(
               exportedAgent,
               exportedAgent.name,
               usedAgentHandles,
-              allWarnings
+              allWarnings,
+              preservedHandle
             );
             const updated = agentRepo.update(existing.id, updateParams);
             const id = updated?.id ?? existing.id;
-            if (updated) usedAgentHandles.add(updated.handle);
             importedAgentNameToId.set(exportedAgent.name, id);
             agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
           } else {

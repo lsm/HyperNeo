@@ -59,6 +59,7 @@ const { mockToastError } = vi.hoisted(() => ({
 // Real Preact signal for the configure tab (read during render — needs reactivity)
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
+const mockCurrentSpaceAgentHandleSignal = signal<string | null>(null);
 const mockCurrentSpaceViewModeSignal = signal<string>('overview');
 
 // Wire bridge so mockNavigateToSpaceConfigure can update the real signal
@@ -74,6 +75,9 @@ vi.mock('../../lib/signals', async (importOriginal) => {
     },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
+    },
+    get currentSpaceAgentHandleSignal() {
+      return mockCurrentSpaceAgentHandleSignal;
     },
     get currentSpaceViewModeSignal() {
       return mockCurrentSpaceViewModeSignal;
@@ -139,8 +143,36 @@ vi.mock('../../components/space/SpaceTaskPane', () => ({
   ),
 }));
 
+vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
+  SpaceCreateTaskDialog: (props: {
+    isOpen: boolean;
+    onCreated?: (task: { id: string; title: string }) => void;
+  }) =>
+    props.isOpen ? (
+      <div>
+        <h2>Create Task</h2>
+        <button
+          type="button"
+          onClick={() => props.onCreated?.({ id: 'new-task-123', title: 'New Task' })}
+        >
+          Create Test Task
+        </button>
+      </div>
+    ) : null,
+}));
+
 vi.mock('../../components/space/SpaceAgentList', () => ({
   SpaceAgentList: () => <div data-testid="space-agent-list" />,
+}));
+
+vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
+  SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => (
+    <div
+      data-testid="space-long-horizon-agents"
+      data-space-id={props.spaceId}
+      data-selected-handle={props.selectedHandle ?? ''}
+    />
+  ),
 }));
 
 vi.mock('../../components/space/SpaceSettings', () => ({
@@ -209,6 +241,7 @@ beforeAll(async () => {
     import('../../components/space/SpaceTaskPane'),
     import('../../components/space/SpaceTasks'),
     import('../../components/space/SpaceSessionsPage'),
+    import('../../components/space/SpaceLongHorizonAgents'),
   ]);
 });
 
@@ -250,6 +283,7 @@ beforeEach(() => {
   capturedVisualEditorProps = {};
   configureTabBridge.signal.value = 'agents';
   idBridge.signal.value = null;
+  mockCurrentSpaceAgentHandleSignal.value = null;
   mockNavigateToSpaceConfigure.mockClear();
   mockNavigateToSpaceSession.mockClear();
   mockNavigateToSpaceTask.mockClear();
@@ -566,6 +600,18 @@ describe('SpaceIsland — sessions view', () => {
   });
 });
 
+describe('SpaceIsland — agents view', () => {
+  it('passes the selected agent handle to the agents page', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
+
+    const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
+
+    const agentsPage = await findByTestId('space-long-horizon-agents');
+    expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
+    expect(agentsPage.getAttribute('data-selected-handle')).toBe('reviewer');
+  });
+});
+
 describe('SpaceIsland — tasks view', () => {
   it('renders Create Task button in the header', async () => {
     const { getByLabelText, getByTestId } = render(
@@ -596,5 +642,29 @@ describe('SpaceIsland — tasks view', () => {
     await waitFor(() => {
       expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
     });
+  });
+
+  it('navigates after slug-routed task creation when canonical space still matches', async () => {
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceViewModeSignal.value = 'tasks';
+
+    const { getByLabelText, getByTestId, getByRole } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="tasks" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-tasks-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create task'));
+    await waitFor(() => {
+      expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
+    });
+
+    fireEvent.click(getByRole('button', { name: 'Create Test Task' }));
+
+    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'new-task-123');
   });
 });

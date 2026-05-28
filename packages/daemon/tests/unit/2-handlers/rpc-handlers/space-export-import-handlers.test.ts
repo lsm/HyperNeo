@@ -963,6 +963,34 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(agent.handle).toBe('reviewer');
       });
 
+      it('preserves swapped handles when replacing multiple agents', async () => {
+        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+        const existingB = agentRepo.create({ spaceId: SPACE_ID, name: 'B', handle: 'b' });
+
+        const bundle = makeBundle(
+          [
+            { name: 'A', handle: 'b', model: 'claude-new-a' },
+            { name: 'B', handle: 'a', model: 'claude-new-b' },
+          ],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { A: 'replace', B: 'replace' } },
+        });
+
+        expect(result.warnings).toHaveLength(0);
+        expect(result.agents).toEqual([
+          { name: 'A', id: existingA.id, action: 'replaced' },
+          { name: 'B', id: existingB.id, action: 'replaced' },
+        ]);
+
+        expect(agentRepo.getById(existingA.id)?.handle).toBe('b');
+        expect(agentRepo.getById(existingB.id)?.handle).toBe('a');
+      });
+
       it('replaces conflicting workflow (delete + create)', async () => {
         const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
         workflowManager.createWorkflow({

@@ -27,6 +27,7 @@ import {
 } from '../lib/router';
 import type { SpaceViewMode } from '../lib/signals';
 import {
+  currentSpaceAgentHandleSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
   spaceOverlayAgentNameSignal,
@@ -91,6 +92,7 @@ export default function SpaceIsland({
 }: SpaceIslandProps) {
   const navigationSpaceId = routeSpaceId ?? spaceId;
   // Overlay session — shown as a slide-over on top of the current view
+  const selectedAgentHandle = currentSpaceAgentHandleSignal.value;
   const overlaySessionId = spaceOverlaySessionIdSignal.value;
   const overlayAgentName = spaceOverlayAgentNameSignal.value;
   const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
@@ -341,7 +343,7 @@ export default function SpaceIsland({
             // prevents stale async redirect if they navigated elsewhere.
             if (
               currentSpaceViewModeSignal.value === 'tasks' &&
-              currentSpaceIdSignal.value === spaceId
+              (currentSpaceIdSignal.value === spaceId || spaceStore.space.value?.id === spaceId)
             ) {
               navigateToSpaceTask(navigationSpaceId, task.id);
             }
@@ -446,7 +448,7 @@ export default function SpaceIsland({
           <SpacePageHeader pageTitle="Agents" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
-              <SpaceLongHorizonAgents spaceId={spaceId} />
+              <SpaceLongHorizonAgents spaceId={spaceId} selectedHandle={selectedAgentHandle} />
             </Suspense>
           </div>
         </div>

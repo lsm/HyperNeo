@@ -407,7 +407,13 @@ function TemplateCard({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
+export function SpaceLongHorizonAgents({
+  spaceId,
+  selectedHandle,
+}: {
+  spaceId: string;
+  selectedHandle?: string | null;
+}) {
   const agents = spaceStore.longHorizonAgents.value;
   const templates = spaceStore.longHorizonAgentTemplates.value;
   const loading = !spaceStore.configDataLoaded.value;
@@ -476,6 +482,9 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const coordinator = agents.find(isCoordinator);
   const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
+  const selectedAgent = selectedHandle
+    ? sortedAgents.find((agent) => agent.handle === selectedHandle)
+    : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
   // Count how many active instances exist per template handle
@@ -495,6 +504,53 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   return (
     <div class="h-full overflow-y-auto scrollbar-dark">
       <div class="max-w-3xl mx-auto px-4 py-4 space-y-6">
+        {selectedHandle && (
+          <section
+            class="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4"
+            data-testid="space-agent-detail"
+          >
+            {selectedAgent ? (
+              <>
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-blue-300/70">
+                      Selected agent
+                    </p>
+                    <h2 class="mt-1 text-base font-semibold text-gray-100">
+                      {selectedAgent.displayName}
+                    </h2>
+                    <p class="mt-0.5 text-xs text-gray-400">@{selectedAgent.handle}</p>
+                  </div>
+                  <span class="flex-shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-gray-300">
+                    {selectedAgent.status}
+                  </span>
+                </div>
+                {selectedAgent.instructions && (
+                  <p class="mt-3 text-sm text-gray-300 whitespace-pre-wrap">
+                    {selectedAgent.instructions}
+                  </p>
+                )}
+                <div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-400">
+                  {selectedAgent.autonomyLevel && (
+                    <span>
+                      L{selectedAgent.autonomyLevel} {AUTONOMY_LABELS[selectedAgent.autonomyLevel]}
+                    </span>
+                  )}
+                  {selectedAgent.model && <span>Model: {selectedAgent.model}</span>}
+                  {selectedAgent.thinkingLevel && (
+                    <span>Thinking: {selectedAgent.thinkingLevel}</span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div data-testid="space-agent-detail-missing">
+                <p class="text-sm font-medium text-gray-100">Agent not found</p>
+                <p class="mt-1 text-xs text-gray-400">No agent found for @{selectedHandle}.</p>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Configured agents */}
         <section class="rounded-xl border border-white/8 bg-white/[0.03] p-4">
           <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
