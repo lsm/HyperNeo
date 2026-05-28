@@ -53,6 +53,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -79,6 +81,12 @@ jobs:
 
       - name: Validate online test matrix coverage
         run: bash scripts/validate-online-test-matrix.sh
+
+      - name: Validate space task RPC handler tests
+        run: bun run check:space-task-handler-tests
+
+      - name: Test space task RPC handler gate
+        run: bun run test:space-task-handler-gate
 
       - name: Run linter
         id: lint
