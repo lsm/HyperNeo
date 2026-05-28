@@ -404,6 +404,19 @@ describe('ProviderRegistry', () => {
       const globalReg = getProviderRegistry();
       expect(globalReg.size).toBe(9);
     });
+
+    it('should restore anthropic-copilot after the registry is reset without factory reset', async () => {
+      const reg = initializeProviders();
+      await waitForOptionalProviderRegistration();
+      expect(reg.has('anthropic-copilot')).toBe(true);
+
+      resetProviderRegistry();
+      const resetReg = initializeProviders();
+      await waitForOptionalProviderRegistration();
+
+      expect(resetReg.has('anthropic-copilot')).toBe(true);
+      expect(resetReg.size).toBe(9);
+    });
   });
 
   describe('ownsModel collision — anthropic vs anthropic-copilot vs anthropic-codex', () => {

@@ -12,7 +12,7 @@
 
 import type { ModelInfo, Session } from '@neokai/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import { initializeProviders } from './providers/factory.js';
+import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
@@ -312,7 +312,6 @@ export async function initializeModels(): Promise<void> {
   }
 
   // Initialize the provider system (registers built-in providers)
-  const { waitForOptionalProviderRegistration } = await import('./providers/factory.js');
   initializeProviders();
   await waitForOptionalProviderRegistration();
 

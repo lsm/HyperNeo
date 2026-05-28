@@ -188,26 +188,30 @@ function canonicalise(value: unknown): unknown {
 }
 
 function registerCopilotProvider(registry: ProviderRegistry): void {
-  copilotProviderRegistration ??= import('./anthropic-copilot/index.js')
-    .then((providerModule) => {
-      // This dynamic import must remain a literal string: bun build --compile
-      // discovers and embeds @github/copilot-sdk and vscode-jsonrpc through it.
-      if (!registry.has('anthropic-copilot')) {
-        registry.register(new providerModule.AnthropicToCopilotBridgeProvider(process.cwd()));
-      }
-    })
-    .catch((err) => {
-      logger.warn(`Skipping Anthropic Copilot provider registration: ${err}`);
-    });
+  copilotProviderModule ??= import('./anthropic-copilot/index.js').catch((err) => {
+    logger.warn(`Skipping Anthropic Copilot provider registration: ${err}`);
+    return null;
+  });
+  void registerLoadedCopilotProvider(registry);
 }
 
 export async function waitForOptionalProviderRegistration(): Promise<void> {
-  if (copilotProviderRegistration) {
-    await copilotProviderRegistration;
+  await registerLoadedCopilotProvider(getProviderRegistry());
+}
+
+async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promise<void> {
+  if (registry.has('anthropic-copilot')) return;
+
+  // This dynamic import must remain a literal string: bun build --compile
+  // discovers and embeds @github/copilot-sdk and vscode-jsonrpc through it.
+  const providerModule = await copilotProviderModule;
+  if (providerModule && !registry.has('anthropic-copilot')) {
+    registry.register(new providerModule.AnthropicToCopilotBridgeProvider(process.cwd()));
   }
 }
 
-let copilotProviderRegistration: Promise<void> | null = null;
+let copilotProviderModule: Promise<typeof import('./anthropic-copilot/index.js') | null> | null =
+  null;
 
 /** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
 const lastSyncedConfigByProviderId = new Map<string, string>();
@@ -221,6 +225,9 @@ const lastSyncedConfigByProviderId = new Map<string, string>();
  */
 export function getProviderContextManager(): ProviderContextManager {
   const registry = initializeProviders();
+  if (!registry.has('anthropic-copilot')) {
+    logger.warn('Anthropic Copilot provider registration is still pending.');
+  }
   return new ProviderContextManager(registry);
 }
 
@@ -234,7 +241,7 @@ export function getProviderContextManager(): ProviderContextManager {
  */
 export function resetProviderFactory(): void {
   initialized = false;
-  copilotProviderRegistration = null;
+  copilotProviderModule = null;
   lastSyncedConfigByProviderId.clear();
 }
 
