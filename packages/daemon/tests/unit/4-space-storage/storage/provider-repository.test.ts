@@ -205,6 +205,48 @@ describe('ProviderRepository', () => {
     expect(repo.listProviders().filter((provider) => provider.isDefault)).toHaveLength(1);
   });
 
+  test('setDefaultProvider preserves current default when target is missing', () => {
+    const provider = repo.createProvider({
+      providerId: 'anthropic',
+      displayName: 'Anthropic',
+      kind: 'built_in',
+      authType: 'api_key',
+      isDefault: true,
+      sortOrder: 10,
+    });
+    notifyChangeSpy.mockClear();
+
+    repo.setDefaultProvider('missing');
+
+    expect(repo.getProvider(provider.id)!.isDefault).toBe(true);
+    expect(repo.listProviders().filter((item) => item.isDefault)).toHaveLength(1);
+    expect(notifyChangeSpy).not.toHaveBeenCalled();
+  });
+
+  test('updateProvider with isDefault true leaves exactly one default provider', () => {
+    const first = repo.createProvider({
+      providerId: 'anthropic',
+      displayName: 'Anthropic',
+      kind: 'built_in',
+      authType: 'api_key',
+      isDefault: true,
+      sortOrder: 10,
+    });
+    const second = repo.createProvider({
+      providerId: 'custom:lmstudio',
+      displayName: 'LM Studio',
+      kind: 'custom_endpoint',
+      authType: 'none',
+      sortOrder: 20,
+    });
+
+    repo.updateProvider(second.id, { isDefault: true });
+
+    expect(repo.getProvider(first.id)!.isDefault).toBe(false);
+    expect(repo.getProvider(second.id)!.isDefault).toBe(true);
+    expect(repo.listProviders().filter((provider) => provider.isDefault)).toHaveLength(1);
+  });
+
   test('notifies providers live query after writes', () => {
     notifyChangeSpy.mockClear();
     const provider = repo.createProvider({

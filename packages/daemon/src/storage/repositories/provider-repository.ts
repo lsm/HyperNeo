@@ -132,9 +132,9 @@ export class ProviderRepository {
       fields.push('is_enabled = ?');
       values.push(params.isEnabled ? 1 : 0);
     }
-    if (params.isDefault !== undefined) {
+    if (params.isDefault === false) {
       fields.push('is_default = ?');
-      values.push(params.isDefault ? 1 : 0);
+      values.push(0);
     }
     if (params.sortOrder !== undefined) {
       fields.push('sort_order = ?');
@@ -166,7 +166,13 @@ export class ProviderRepository {
       values.push(Date.now());
       values.push(id);
       this.db.prepare(`UPDATE providers SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-      this.reactiveDb.notifyChange('providers');
+      if (params.isDefault === true) {
+        this.setDefaultProvider(id);
+      } else {
+        this.reactiveDb.notifyChange('providers');
+      }
+    } else if (params.isDefault === true) {
+      this.setDefaultProvider(id);
     }
 
     return this.getProvider(id);
@@ -182,12 +188,21 @@ export class ProviderRepository {
   }
 
   setDefaultProvider(id: string): void {
-    this.db.transaction(() => {
-      this.db.prepare(`UPDATE providers SET is_default = 0, updated_at = ?`).run(Date.now());
-      this.db
+    const didUpdate = this.db.transaction(() => {
+      const now = Date.now();
+      const result = this.db
         .prepare(`UPDATE providers SET is_default = 1, updated_at = ? WHERE id = ?`)
-        .run(Date.now(), id);
+        .run(now, id);
+      if (result.changes === 0) return false;
+
+      this.db
+        .prepare(`UPDATE providers SET is_default = 0, updated_at = ? WHERE id != ?`)
+        .run(now, id);
+      return true;
     })();
-    this.reactiveDb.notifyChange('providers');
+
+    if (didUpdate) {
+      this.reactiveDb.notifyChange('providers');
+    }
   }
 }
