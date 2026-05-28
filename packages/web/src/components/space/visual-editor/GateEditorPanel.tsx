@@ -95,11 +95,17 @@ function validateScriptTimeout(value: number): string {
   return '';
 }
 
-function validateGateCompleteness(hasFields: boolean, hasScript: boolean): string {
-  if (!hasFields && !hasScript) {
-    return 'gate: must have at least one field or a script check';
+function validateGateCompleteness(hasFields: boolean, hasScript: boolean, hasFeatures: boolean): string {
+  if (!hasFields && !hasScript && !hasFeatures) {
+    return 'gate: must have at least one field, feature, or script check';
   }
   return '';
+}
+
+function hasCodexReviewBotFeature(gate: Gate): boolean {
+  const flag = gate.features?.codex_review_bot;
+  if (flag === true) return true;
+  return !!flag && typeof flag === 'object' && flag.enabled !== false;
 }
 
 function defaultCheckForType(type: GateFieldType): GateFieldCheck {
@@ -134,12 +140,14 @@ export function GateEditorPanel({
   const scriptTimeoutSec = gate.script?.timeoutMs
     ? Math.round(gate.script.timeoutMs / 1000)
     : SCRIPT_TIMEOUT_DEFAULT;
+  const codexReviewBotEnabled = hasCodexReviewBotFeature(gate);
 
-  // Gate-level validation: must have at least one of fields or script
+  // Gate-level validation: must have at least one of fields, features, or script
   const hasFields = (gate.fields ?? []).length > 0;
+  const hasFeatures = codexReviewBotEnabled;
   const gateError = useMemo(
-    () => validateGateCompleteness(hasFields, scriptEnabled),
-    [hasFields, scriptEnabled]
+    () => validateGateCompleteness(hasFields, scriptEnabled, hasFeatures),
+    [hasFields, scriptEnabled, hasFeatures]
   );
 
   // Script validation errors (only shown when script is enabled)
@@ -226,6 +234,16 @@ export function GateEditorPanel({
     };
     updateGate({ script: { ...current, ...partial } });
   }
+
+  function toggleCodexReviewBot(checked: boolean) {
+    updateGate({
+      features: {
+        ...gate.features,
+        codex_review_bot: checked ? true : undefined,
+      },
+    });
+  }
+
 
   // NOTE: Presets reset timeout to the default (30s). If the user has
   // customized the timeout, clicking a preset will overwrite it.
@@ -408,6 +426,27 @@ export function GateEditorPanel({
           {gateError}
         </p>
       )}
+
+      {/* Gate Features */}
+      <div class="space-y-2">
+        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Features</label>
+        <label class="flex items-start gap-2 cursor-pointer rounded border border-dark-700 bg-dark-800 px-2 py-2">
+          <input
+            type="checkbox"
+            data-testid="gate-editor-feature-codex-review-bot"
+            checked={codexReviewBotEnabled}
+            onChange={(e) => toggleCodexReviewBot((e.currentTarget as HTMLInputElement).checked)}
+            class="mt-0.5 rounded border-dark-600 text-blue-500 focus:ring-blue-500"
+          />
+          <span class="space-y-0.5">
+            <span class="block text-xs text-gray-200">Codex Review Bot</span>
+            <span class="block text-[11px] text-gray-500 leading-snug">
+              Require codex[bot] +1 before this gate opens. If Codex has not reacted, reviewers
+              should wait or comment @codex review on the PR.
+            </span>
+          </span>
+        </label>
+      </div>
 
       {/* Fields */}
       <div class="space-y-2">

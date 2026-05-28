@@ -386,6 +386,35 @@ describe('GateEditorPanel — Existing functionality preserved', () => {
   });
 });
 
+describe('GateEditorPanel — Features', () => {
+  it('renders Codex Review Bot feature checkbox', () => {
+    const gate = makeGate();
+    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+    const checkbox = getByTestId('gate-editor-feature-codex-review-bot') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it('checks Codex Review Bot feature checkbox from gate features', () => {
+    const gate = makeGate({ features: { codex_review_bot: true } });
+    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
+
+    const checkbox = getByTestId('gate-editor-feature-codex-review-bot') as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it('updates gate features when Codex Review Bot checkbox changes', () => {
+    const gate = makeGate();
+    const onChange = vi.fn();
+    const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} onChange={onChange} />);
+
+    fireEvent.click(getByTestId('gate-editor-feature-codex-review-bot'));
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange.mock.calls[0][0].features).toEqual({ codex_review_bot: true });
+  });
+});
+
 describe('GateEditorPanel — Script Check toggle', () => {
   it('renders script toggle switch in off state by default', () => {
     const gate = makeGate();
@@ -748,7 +777,7 @@ describe('GateEditorPanel — Gate-level validation', () => {
     const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
     expect(getByTestId('gate-editor-gate-error').textContent).toContain(
-      'must have at least one field or a script check'
+      'must have at least one field, feature, or script check'
     );
   });
 
@@ -757,7 +786,7 @@ describe('GateEditorPanel — Gate-level validation', () => {
     const { getByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
     expect(getByTestId('gate-editor-gate-error').textContent).toContain(
-      'must have at least one field or a script check'
+      'must have at least one field, feature, or script check'
     );
   });
 

@@ -27,6 +27,7 @@ import {
 } from '../../../../src/lib/space/export-format.ts';
 import { evaluateFields } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
+import { getEffectiveGate } from '../../../../src/lib/space/runtime/gate-features.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
@@ -3352,16 +3353,23 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(approvalField.type).toBe('boolean');
     expect(approvalField.writers).toEqual(['Review', 'reviewer']);
     expect(approvalField.check).toEqual({ op: '==', value: true });
-    expect(gate.script?.source).toContain('codex[bot]');
-    expect(gate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
-    expect(gate.script?.source).toContain('.content == "+1"');
-    expect(gate.script?.source).toContain('bun -e');
-    expect(gate.script?.source).not.toContain('node -e');
-    expect(gate.poll?.intervalMs).toBe(60_000);
+    expect(gate.features?.codex_review_bot).toBe(true);
+    expect(gate.script).toBeUndefined();
+    expect(gate.poll).toBeUndefined();
+
+    const effectiveGate = getEffectiveGate(gate);
+    expect(effectiveGate.script?.source).toContain('codex[bot]');
+    expect(effectiveGate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
+    expect(effectiveGate.script?.source).toContain('.content == "+1"');
+    expect(effectiveGate.script?.source).toContain('bun -e');
+    expect(effectiveGate.script?.source).not.toContain('node -e');
+    expect(effectiveGate.poll?.intervalMs).toBe(60_000);
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks without codex thumbs-up', async () => {
-    const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-blocked-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3403,7 +3411,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes with codex thumbs-up', async () => {
-    const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-passed-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3445,7 +3455,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes after codex timeout', async () => {
-    const gate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');

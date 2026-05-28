@@ -1481,6 +1481,11 @@ export interface GatePoll {
   messageTemplate?: string;
 }
 
+export interface GateFeatures {
+  /** Require codex[bot] `+1` reaction before this gate can open. */
+  codex_review_bot?: boolean | { enabled?: boolean };
+}
+
 export interface Gate {
   /** Unique identifier */
   id: string;
@@ -1494,6 +1499,8 @@ export interface Gate {
   fields?: GateField[];
   /** Optional script-based pre-check executed before field evaluation. */
   script?: GateScript;
+  /** Data-driven gate features compiled into runtime checks/polls. */
+  features?: GateFeatures;
   /**
    * When true, gate data is reset to defaults on cyclic channel traversal.
    * Used for cyclic workflows where gate state should be cleared each loop.

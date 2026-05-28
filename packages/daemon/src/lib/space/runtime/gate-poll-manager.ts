@@ -22,8 +22,9 @@
  * - All state is in-memory only; no DB persistence needed
  */
 
-import type { GatePoll, SpaceWorkflow } from '@neokai/shared';
+import type { Gate, GatePoll, SpaceWorkflow } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { getEffectiveGatePoll } from './gate-features';
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
 
 const log = new Logger('gate-poll-manager');
@@ -193,6 +194,17 @@ export interface PollWorkflowDefProvider {
 /**
  * In-memory state for a single active poll timer.
  */
+interface PolledGate {
+  gate: Gate;
+  poll: GatePoll;
+}
+
+function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
+  return (workflow.gates ?? [])
+    .map((gate) => ({ gate, poll: getEffectiveGatePoll(gate) }))
+    .filter((entry): entry is PolledGate => !!entry.poll);
+}
+
 interface ActivePoll {
   /** The timer handle */
   timer: ReturnType<typeof setInterval>;
@@ -267,8 +279,7 @@ export class GatePollManager {
     spaceId: string,
     scriptContext: PollScriptContext
   ): void {
-    const gates = workflow.gates ?? [];
-    const polledGates = gates.filter((g) => g.poll);
+    const polledGates = getPolledGates(workflow);
 
     // Always store run context so refreshPollsForWorkflow can find this run
     // even when no gates have poll initially (polls may be added later).
@@ -285,8 +296,7 @@ export class GatePollManager {
       return;
     }
 
-    for (const gate of polledGates) {
-      const poll = gate.poll as GatePoll;
+    for (const { gate, poll } of polledGates) {
       const key = `${runId}:${gate.id}`;
 
       // Validate interval — skip polls with malformed intervalMs (e.g. NaN, string)
@@ -481,14 +491,10 @@ export class GatePollManager {
     // Update the cached workflow in runContexts
     ctx.workflow = latestWorkflow;
 
-    const latestGates = latestWorkflow.gates ?? [];
     const latestPolledGateIds = new Set<string>();
 
     // Start or update polls for gates that now have poll config
-    for (const gate of latestGates) {
-      if (!gate.poll) continue;
-
-      const poll = gate.poll as GatePoll;
+    for (const { gate, poll } of getPolledGates(latestWorkflow)) {
       const key = `${runId}:${gate.id}`;
       const existing = this.activePolls.get(key);
 

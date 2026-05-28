@@ -319,13 +319,14 @@ export function validateGate(gate: unknown): string[] {
     errors.push(...validateGateFields(g.fields));
   }
 
-  // At least one of fields (non-empty array) or script must be present
+  // At least one of fields (non-empty array), features, or script must be present
   // Note: poll does NOT count as a gate check mechanism — it is a side-channel
-  // for message injection only. A gate still needs fields or a script.
+  // for message injection only. A gate still needs fields, features, or a script.
   const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
   const hasScript = g.script !== undefined && g.script !== null;
-  if (!hasFields && !hasScript) {
-    errors.push('gate: must have at least one non-empty "fields" array or a "script"');
+  const hasFeatures = g.features !== undefined && g.features !== null;
+  if (!hasFields && !hasScript && !hasFeatures) {
+    errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
   }
 
   return errors;

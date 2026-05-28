@@ -57,6 +57,7 @@ import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import { getEffectiveGate } from './gate-features';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
@@ -1162,6 +1163,7 @@ export class ChannelRouter {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }
+    gateDef = getEffectiveGate(gateDef);
 
     // Load runtime data from DB; fall back to computed defaults from fields
     const record = this.config.gateDataRepo?.get(runId, gateId);

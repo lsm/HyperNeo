@@ -98,6 +98,7 @@ import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
+import { getEffectiveGate, hasCodexReviewBotFeature } from '../runtime/gate-features';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -122,6 +123,38 @@ const log = new Logger('node-agent-tools');
 
 function normalizeAgentNameToken(value: string): string {
   return value.trim().toLowerCase();
+}
+
+async function evaluateTerminalGateFeatures(
+  workflow: SpaceWorkflow | null,
+  gateDataRepo: GateDataRepository,
+  workflowRunId: string,
+  scriptExecutor?: GateScriptExecutorFn,
+  scriptContext?: GateScriptExecutorContext
+): Promise<ToolResult | null> {
+  if (!workflow || !scriptExecutor || !scriptContext) return null;
+
+  for (const gate of workflow.gates ?? []) {
+    if (!hasCodexReviewBotFeature(gate)) continue;
+    const effectiveGate = getEffectiveGate(gate);
+    if (!effectiveGate.script) continue;
+
+    const data = gateDataRepo.get(workflowRunId, gate.id)?.data ?? computeGateDefaults(gate.fields);
+    const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
+      ...scriptContext,
+      gateId: gate.id,
+      gateData: data,
+    });
+    if (!result.open) {
+      return jsonResult({
+        success: false,
+        error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+        gateId: gate.id,
+      });
+    }
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,6 +1390,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           error: 'approve_task is not available in this node-agent session.',
         });
       }
+      const gateBlock = await evaluateTerminalGateFeatures(
+        workflow,
+        gateDataRepo,
+        workflowRunId,
+        scriptExecutor,
+        scriptContext
+      );
+      if (gateBlock) return gateBlock;
+
       const result = await config.onApproveTask(args);
       const payload = decodeToolResultPayload(result);
       if (payload?.success) {
@@ -1546,6 +1588,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   const handlers = createNodeAgentToolHandlers(config);
 
+  async function submitForApproval(args: SubmitForApprovalInput): Promise<ToolResult> {
+    const gateBlock = await evaluateTerminalGateFeatures(
+      config.workflow,
+      config.gateDataRepo,
+      config.workflowRunId,
+      config.scriptExecutor,
+      config.scriptContext
+    );
+    if (gateBlock) return gateBlock;
+    return config.onSubmitForApproval!(args);
+  }
+
   const tools = [
     tool(
       'list_peers',
@@ -1701,7 +1755,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Same approval semantic and preconditions as approve_task: use only when work is approved/QA-passed, all findings are resolved, and required review/artifact evidence is saved. ' +
               'Use when autonomy blocks self-close or risk warrants human sign-off. Never use to defer judgment while findings, QA failures, or dispatch work remain open.',
             SubmitForApprovalSchema.shape,
-            (args) => config.onSubmitForApproval!(args)
+            submitForApproval
           ),
         ]
       : []),
