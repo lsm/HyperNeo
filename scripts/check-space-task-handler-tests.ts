@@ -32,12 +32,22 @@ function changedFiles(): Set<string> {
     const output = runGit(['diff', '--name-only', `${mergeBase}...HEAD`]);
     return new Set(output ? output.split('\n') : []);
   } catch (err) {
-    fail(
-      `Unable to compare branch against ${baseRef}. Ensure base ref is fetched. ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
+    const message = `Unable to compare branch against ${baseRef}. Ensure base ref is fetched. ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    if (process.env.CI) fail(message);
+
+    console.warn(`${message}\nSkipping space task handler test gate for this local check.`);
+    return new Set();
   }
+}
+
+function parseTestedHandlers(source: string): Set<string> {
+  return new Set(
+    Array.from(source.matchAll(/\bcall\(\s*['"]([^'"]+)['"]/g), (match) => match[1]).filter(
+      (method) => method.startsWith('spaceTask.')
+    )
+  );
 }
 
 function main() {
@@ -50,7 +60,8 @@ function main() {
   const handlerSource = readFileSync(handlerFile, 'utf8');
   const testSource = readFileSync(testFile, 'utf8');
   const methods = parseHandlers(handlerSource);
-  const missing = Array.from(methods).filter((method) => !testSource.includes(`'${method}'`));
+  const testedMethods = parseTestedHandlers(testSource);
+  const missing = Array.from(methods).filter((method) => !testedMethods.has(method));
 
   if (missing.length > 0) {
     fail(

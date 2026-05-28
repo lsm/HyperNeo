@@ -39,10 +39,10 @@ function createRepo() {
   return cwd;
 }
 
-function runGate(cwd: string) {
+function runGate(cwd: string, env: NodeJS.ProcessEnv = {}) {
   return spawnSync('bun', [scriptPath], {
     cwd,
-    env: { ...process.env, SPACE_TASK_HANDLER_TEST_BASE: 'origin/dev' },
+    env: { ...process.env, SPACE_TASK_HANDLER_TEST_BASE: 'origin/dev', ...env },
     encoding: 'utf8',
   });
 }
@@ -75,6 +75,28 @@ describe('check-space-task-handler-tests', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('skips local checks when the comparison ref is unavailable', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    git(cwd, ['branch', '-D', 'origin/dev']);
+
+    const result = runGate(cwd, { CI: '' });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Skipping space task handler test gate for this local check.');
+  });
+
+  it('fails CI checks when the comparison ref is unavailable', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    git(cwd, ['branch', '-D', 'origin/dev']);
+
+    const result = runGate(cwd, { CI: 'true' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unable to compare branch against origin/dev');
+  });
+
   it('flags new spaceTask handlers without tests', () => {
     const cwd = createRepo();
     repos.push(cwd);
@@ -93,7 +115,31 @@ describe('check-space-task-handler-tests', () => {
     expect(result.stderr).toContain('spaceTask.publish');
   });
 
-  it('passes when each spaceTask handler appears in handler tests', () => {
+  it('flags handlers that only appear in descriptions or comments', () => {
+    const cwd = createRepo();
+    repos.push(cwd);
+
+    writeProjectFile(
+      cwd,
+      'packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts',
+      "messageHub.onRequest('spaceTask.create', async () => {});\n" +
+        "messageHub.onRequest('spaceTask.publish', async () => {});\n"
+    );
+    writeProjectFile(
+      cwd,
+      'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts',
+      "describe('spaceTask.publish', () => {});\n// 'spaceTask.publish' needs tests\n" +
+        "await call('spaceTask.create', {});\n"
+    );
+    git(cwd, ['add', '.']);
+    git(cwd, ['commit', '-m', 'mention handler']);
+
+    const result = runGate(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('spaceTask.publish');
+  });
+
+  it('passes when each spaceTask handler is called in handler tests', () => {
     const cwd = createRepo();
     repos.push(cwd);
 
