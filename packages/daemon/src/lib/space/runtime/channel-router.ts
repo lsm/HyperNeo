@@ -1166,7 +1166,7 @@ export class ChannelRouter {
     let gateDef = storedGateDef;
     if (workflow.templateName) {
       const liveScript = getBuiltInGateScript(workflow.templateName, gateId);
-      if (liveScript) {
+      if (liveScript && storedGateDef.script) {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }

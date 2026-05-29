@@ -57,16 +57,26 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   '  exit 1',
   'fi',
   'START_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
+  // Use PR head push time as the freshness anchor so multi-writer gates
+  // (e.g. plan-approval-gate) do not treat a codex +1 as stale when the
+  // last vote updates the gate data row. Falls back to START_ISO when the
+  // PR API is unavailable (e.g. deleted fork).
+  'PR_HEAD_PUSHED_AT=$(gh api "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.repo.pushed_at\' 2>/dev/null || true)',
+  'FRESHNESS_ISO="${PR_HEAD_PUSHED_AT:-${START_ISO}}"',
+  'if [ -n "$FRESHNESS_ISO" ]; then',
+  '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
+  'else',
+  '  FRESH_REACTIONS="$REACTIONS_JSON"',
+  'fi',
+  // Timeout is based on START_ISO (gate data update time or workflow start),
+  // independent of the freshness anchor.
   'if [ -n "$START_ISO" ]; then',
   `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$START_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
-  '  FRESH_REACTIONS=$(jq --arg start "$START_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
   `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REVIEW_BOT_TIMEOUT_SECONDS} ]; then`,
   '    jq -n --arg url "$PR_URL" --arg status "timeout" \'{"pr_url":$url,"codex_bot_reaction":$status,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
   '    exit 0',
   '  fi',
-  'else',
-  '  FRESH_REACTIONS="$REACTIONS_JSON"',
   'fi',
   'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
   'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',

@@ -667,8 +667,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'post visible GitHub review before gate write. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' ' +
-              CODEX_REACTION_APPROVAL_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },

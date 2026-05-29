@@ -66,6 +66,8 @@ export interface PollScriptContext {
   WORKFLOW_RUN_ID: string;
   /** Workflow run start timestamp, if known. */
   WORKFLOW_START_ISO?: string;
+  /** Gate data last-updated timestamp, if known. */
+  GATE_DATA_UPDATED_ISO?: string;
 }
 
 /**
@@ -189,6 +191,19 @@ export interface PollWorkflowDefProvider {
   getWorkflow(workflowId: string): SpaceWorkflow | null;
 }
 
+/**
+ * Callback for resolving the last-updated timestamp of a gate's runtime data.
+ * Used by poll ticks so feature scripts (e.g. codex_review_bot) can base their
+ * timeout on the gate data write time rather than the workflow start time.
+ */
+export interface PollGateDataResolver {
+  /**
+   * Returns the ISO8601 timestamp of the most recent gate data write for
+   * the given (runId, gateId), or undefined if no gate data exists.
+   */
+  getGateDataUpdatedIsoForRun(runId: string, gateId: string): string | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // GatePollManager
 // ---------------------------------------------------------------------------
@@ -261,7 +276,8 @@ export class GatePollManager {
     private readonly messageInjector: PollMessageInjector,
     private readonly sessionResolver: PollSessionResolver,
     private readonly prUrlResolver?: PollPrUrlResolver,
-    private readonly workflowDefProvider?: PollWorkflowDefProvider
+    private readonly workflowDefProvider?: PollWorkflowDefProvider,
+    private readonly gateDataResolver?: PollGateDataResolver
   ) {}
 
   /**
@@ -722,6 +738,19 @@ export class GatePollManager {
         }
       }
 
+      // Refresh gate data updated timestamp so poll scripts can base timeouts
+      // on the gate data write time rather than the workflow start time.
+      if (this.gateDataResolver) {
+        try {
+          const freshIso = this.gateDataResolver.getGateDataUpdatedIsoForRun(runId, gateId);
+          if (freshIso) {
+            context = { ...context, GATE_DATA_UPDATED_ISO: freshIso };
+          }
+        } catch {
+          // Resolver failure should not block the tick
+        }
+      }
+
       const output = await this.executePollScript(poll.script, workspacePath, context);
 
       // Bail out if the poll was stopped while the script was executing
@@ -793,6 +822,7 @@ export class GatePollManager {
       runId: context.WORKFLOW_RUN_ID,
       gateData: context.PR_URL ? { pr_url: context.PR_URL } : undefined,
       workflowStartIso: context.WORKFLOW_START_ISO,
+      gateDataUpdatedIso: context.GATE_DATA_UPDATED_ISO,
     };
 
     // Build restricted env from process environment (strips credentials)
@@ -813,6 +843,9 @@ export class GatePollManager {
     env.WORKFLOW_RUN_ID = context.WORKFLOW_RUN_ID;
     if (context.WORKFLOW_START_ISO) {
       env.WORKFLOW_START_ISO = context.WORKFLOW_START_ISO;
+    }
+    if (context.GATE_DATA_UPDATED_ISO) {
+      env.NEOKAI_GATE_DATA_UPDATED_ISO = context.GATE_DATA_UPDATED_ISO;
     }
 
     let proc: Bun.Subprocess<'pipe', 'pipe', 'pipe'>;

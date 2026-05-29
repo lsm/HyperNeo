@@ -157,7 +157,8 @@ function buildWorkflowWithGates(
     agents?: Array<{ agentId: string; name: string }>;
   }>,
   channels: WorkflowChannel[],
-  gates: Gate[]
+  gates: Gate[],
+  templateName?: string
 ): SpaceWorkflow {
   const { nodes: finalNodes, startNodeId, endNodeId } = withSyntheticEndNode(nodes);
   return workflowManager.createWorkflow({
@@ -178,6 +179,7 @@ function buildWorkflowWithGates(
     channels,
     gates,
     completionAutonomyLevel: 3,
+    templateName,
   });
 }
 
@@ -1883,6 +1885,7 @@ describe('ChannelRouter', () => {
       const gate: Gate = {
         id: 'script-only-gate',
         resetOnCycle: true,
+        script: { interpreter: 'bash', source: 'true', timeoutMs: 30000 },
       };
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'script-only-gate' }, // index 0
@@ -3029,6 +3032,57 @@ describe('ChannelRouter', () => {
         expect(activated).toHaveLength(0);
         expect(pendingCalls).toHaveLength(0);
       });
+    });
+
+    test('built-in live script is not injected when persisted gate has no script', async () => {
+      // Regression for: removing a script from a built-in gate should not be
+      // silently re-introduced by the live-script resolution path.
+      const gate: Gate = {
+        id: 'code-ready-gate',
+        fields: [
+          {
+            name: 'pr_url',
+            type: 'string',
+            writers: ['Coding', 'coder'],
+            check: { op: 'exists' },
+          },
+        ],
+        // Intentionally no script — user removed it after seeding
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'Coder Node', to: 'Planner Node', gateId: 'code-ready-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate],
+        'Coding Workflow'
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Live Script Guard Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Write gate data that satisfies the field check
+      gateDataRepo.set(run.id, 'code-ready-gate', {
+        pr_url: 'https://github.com/test/repo/pull/1',
+      });
+
+      // Delivery should succeed because the gate is field-only (no script injected)
+      const result = await router.deliverMessage(run.id, 'coder', 'planner', 'ready');
+      expect(result.fromRole).toBe('coder');
     });
   });
 
