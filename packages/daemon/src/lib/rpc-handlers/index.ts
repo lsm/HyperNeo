@@ -15,6 +15,7 @@ import type { ExternalEventStore } from '../external-events/external-event-store
 import type { ExternalEventService } from '../external-events/external-event-service';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import type { SettingsManager } from '../settings-manager';
 import type { Config } from '../../config';
 import type { Database } from '../../storage/database';
@@ -270,6 +271,7 @@ export interface RPCHandlerDependencies {
   messageHub: MessageHub;
   sessionManager: SessionManager;
   authManager: AuthManager;
+  credentialManager?: ProviderCredentialManager;
   settingsManager: SettingsManager;
   config: Config;
   /** Semantic internal event bus for daemon domain events. */
@@ -411,7 +413,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
   setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
-  setupAuthHandlers(deps.messageHub, deps.authManager);
+  setupAuthHandlers(deps.messageHub, deps.authManager, deps.credentialManager);
   registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
   registerSettingsHandlers(
     deps.messageHub,

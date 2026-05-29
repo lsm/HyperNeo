@@ -1,0 +1,112 @@
+import type { Provider, ProviderCredentials } from '@neokai/shared/provider';
+import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
+import type { ProviderCredentialManager } from './provider-credential-manager.js';
+
+const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
+const DEFAULT_MAX_RETRIES = 3;
+
+export interface OAuthRefreshSchedulerOptions {
+  intervalMs?: number;
+  refreshWindowMs?: number;
+  maxRetries?: number;
+  registry?: ProviderRegistry;
+  now?: () => number;
+}
+
+export class OAuthRefreshScheduler {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly retryCounts = new Map<string, number>();
+  private readonly intervalMs: number;
+  private readonly refreshWindowMs: number;
+  private readonly maxRetries: number;
+  private readonly registry: ProviderRegistry;
+  private readonly now: () => number;
+
+  constructor(
+    private readonly credentialManager: ProviderCredentialManager,
+    options: OAuthRefreshSchedulerOptions = {}
+  ) {
+    this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+    this.refreshWindowMs = options.refreshWindowMs ?? DEFAULT_REFRESH_WINDOW_MS;
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.registry = options.registry ?? getProviderRegistry();
+    this.now = options.now ?? Date.now;
+  }
+
+  start(): void {
+    if (this.timer) return;
+    this.tick().catch(() => {});
+    this.timer = setInterval(() => {
+      this.tick().catch(() => {});
+    }, this.intervalMs);
+  }
+
+  stop(): void {
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  async tick(): Promise<void> {
+    await Promise.all(
+      this.registry.getAll().map((provider) => this.refreshProviderIfNeeded(provider))
+    );
+  }
+
+  private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
+    if (!provider.refreshToken) return;
+    const credentials = await this.credentialsForProvider(provider);
+    if (!credentials || credentials.type !== 'oauth') return;
+
+    const expiresAt = credentials.expiresAt;
+    if (typeof expiresAt !== 'number') return;
+    if (expiresAt - this.now() > this.refreshWindowMs) return;
+
+    const retryKey = this.retryKey(provider.id, credentials);
+    if ((this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
+
+    let refreshed = false;
+    try {
+      refreshed = await provider.refreshToken();
+    } catch {
+      refreshed = false;
+    }
+
+    if (refreshed) {
+      this.retryCounts.delete(retryKey);
+      const nextCredentials = await this.credentialsFromProvider(provider, credentials);
+      if (nextCredentials) {
+        await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
+      }
+      this.credentialManager.markProviderHealth(provider.id, 'healthy');
+      return;
+    }
+
+    const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
+    this.retryCounts.set(retryKey, retries);
+    if (retries >= this.maxRetries) {
+      this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
+    }
+  }
+
+  private async credentialsForProvider(provider: Provider): Promise<ProviderCredentials | null> {
+    const stored = await this.credentialManager.getCredentials(provider.id);
+    if (stored) return stored;
+    if (!provider.getCredentials) return null;
+    return await provider.getCredentials();
+  }
+
+  private async credentialsFromProvider(
+    provider: Provider,
+    fallback: ProviderCredentials
+  ): Promise<ProviderCredentials> {
+    if (!provider.getCredentials) return fallback;
+    return (await provider.getCredentials()) ?? fallback;
+  }
+
+  private retryKey(providerId: string, credentials: ProviderCredentials): string {
+    if (credentials.type !== 'oauth') return providerId;
+    return `${providerId}:${credentials.refreshToken ?? credentials.accessToken ?? ''}:${credentials.expiresAt ?? ''}`;
+  }
+}

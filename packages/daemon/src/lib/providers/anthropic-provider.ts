@@ -8,7 +8,9 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   Provider,
+  ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ModelTier,
 } from '@neokai/shared/provider';
@@ -132,22 +134,30 @@ export class AnthropicProvider implements Provider {
    * Cache for dynamically loaded models
    */
   private modelCache: ModelInfo[] | null = null;
+  private credentials: ProviderCredentials | null = null;
+  private readonly capturedAnthropicBaseUrl: string | undefined;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly modelCacheKey: string = 'anthropic-global'
-  ) {}
+  ) {
+    this.capturedAnthropicBaseUrl = env.ANTHROPIC_BASE_URL;
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
+  }
 
   /**
    * Check if Anthropic is available
    * Requires ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_AUTH_TOKEN
    */
   isAvailable(): boolean {
-    return !!(
-      this.env.ANTHROPIC_API_KEY ||
-      this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN
-    );
+    return !!this.getApiKey();
   }
 
   /**
@@ -157,8 +167,19 @@ export class AnthropicProvider implements Provider {
     return (
       this.env.ANTHROPIC_API_KEY ||
       this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN
+      this.env.ANTHROPIC_AUTH_TOKEN ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined) ||
+      (this.credentials?.type === 'oauth' ? this.credentials.accessToken : undefined)
     );
+  }
+
+  async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    const apiKey = this.getApiKey();
+    return {
+      isAuthenticated: !!apiKey,
+      method: this.credentials?.type ?? 'api_key',
+      error: apiKey ? undefined : 'Set ANTHROPIC_API_KEY or log in with Claude Code OAuth.',
+    };
   }
 
   async shutdown(): Promise<void> {}
@@ -196,31 +217,37 @@ export class AnthropicProvider implements Provider {
    */
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-    // Create a temporary query to fetch models
-    const tmpQuery = query({
-      prompt: '',
-      options: {
-        model: 'default',
-        cwd: process.cwd(),
-        maxTurns: 0,
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-      },
-    });
+    const env = this.buildSdkConfig().envVars;
+    const restoreEnv = this.applyEnvVarsForSdk(env);
 
     try {
-      // Add timeout to prevent hanging in CI/slow environments
-      const sdkModels = await Promise.race([
-        tmpQuery.supportedModels(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
-        ),
-      ]);
-      return this.convertSdkModels(sdkModels);
+      // Create a temporary query to fetch models
+      const tmpQuery = query({
+        prompt: '',
+        options: {
+          model: 'default',
+          cwd: process.cwd(),
+          maxTurns: 0,
+          pathToClaudeCodeExecutable: resolveSDKCliPath(),
+          executable: isRunningUnderBun() ? 'bun' : undefined,
+        },
+      });
+
+      try {
+        // Add timeout to prevent hanging in CI/slow environments
+        const sdkModels = await Promise.race([
+          tmpQuery.supportedModels(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
+          ),
+        ]);
+        return this.convertSdkModels(sdkModels);
+      } finally {
+        // Fire-and-forget interrupt
+        tmpQuery.interrupt().catch(() => {});
+      }
     } finally {
-      // Fire-and-forget interrupt
-      tmpQuery.interrupt().catch(() => {});
+      restoreEnv();
     }
   }
 
@@ -392,10 +419,58 @@ export class AnthropicProvider implements Provider {
    * Returns empty env vars (SDK handles auth from environment).
    */
   buildSdkConfig(): ProviderSdkConfig {
+    const envVars: Record<string, string> = {};
+    const hasEnvAuth =
+      !!this.env.ANTHROPIC_API_KEY ||
+      !!this.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      (!!this.env.ANTHROPIC_AUTH_TOKEN &&
+        !this.env.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:'));
+    if (!hasEnvAuth && this.credentials?.type === 'api_key') {
+      envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
+    } else if (!hasEnvAuth && this.credentials?.type === 'oauth' && this.credentials.accessToken) {
+      envVars.CLAUDE_CODE_OAUTH_TOKEN = this.credentials.accessToken;
+    }
+
     return {
-      envVars: {},
+      envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
+    };
+  }
+
+  private applyEnvVarsForSdk(envVars: Record<string, string>): () => void {
+    const originals = new Map<string, string | undefined>();
+
+    // Clear stale routing vars from other providers (e.g. Copilot) so the SDK
+    // talks to the real Anthropic API, not an embedded proxy.
+    // Preserve user-configured ANTHROPIC_BASE_URL (captured at construction).
+    if (process.env.ANTHROPIC_BASE_URL !== undefined) {
+      if (process.env.ANTHROPIC_BASE_URL !== this.capturedAnthropicBaseUrl) {
+        originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
+        delete process.env.ANTHROPIC_BASE_URL;
+      }
+    }
+    // Only clear ANTHROPIC_AUTH_TOKEN when it is a known provider-routing token
+    // (Copilot sets it to 'anthropic-copilot-proxy:<workspace>'). Preserve real
+    // user auth tokens so model loading succeeds for ANTHROPIC_AUTH_TOKEN users.
+    if (process.env.ANTHROPIC_AUTH_TOKEN?.startsWith('anthropic-copilot-proxy:')) {
+      originals.set('ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN);
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+    }
+
+    for (const [key, value] of Object.entries(envVars)) {
+      originals.set(key, process.env[key]);
+      process.env[key] = value;
+    }
+
+    return () => {
+      for (const [key, value] of originals) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
     };
   }
 

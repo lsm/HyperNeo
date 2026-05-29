@@ -317,6 +317,66 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
   });
 
+  describe('stored credentials', () => {
+    it('accepts OAuth access tokens', async () => {
+      provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
+
+      expect(await provider.isAvailable()).toBe(true);
+      expect(await provider.getCredentials()).toEqual({
+        type: 'oauth',
+        accessToken: 'gho_access_token',
+      });
+    });
+
+    it('reports stored credential-store tokens as authenticated', async () => {
+      provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.needsRefresh).toBe(false);
+    });
+
+    it('keeps stored credential-store tokens beyond token cache expiry', async () => {
+      provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
+      (provider as unknown as Record<string, unknown>)['tokenCache'] = {
+        token: 'gho_access_token',
+        expiresAt: Date.now() - 1,
+      };
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+
+      expect(await provider.isAvailable()).toBe(true);
+    });
+
+    it('notifies listeners when provider-owned OAuth credentials are saved', async () => {
+      const seen: unknown[] = [];
+      const unsubscribe = provider.onCredentialsChanged((credentials) => seen.push(credentials));
+
+      (provider as unknown as Record<string, unknown>)['notifyCredentialsChanged']({
+        type: 'oauth',
+        accessToken: 'new-copilot-token',
+      });
+      unsubscribe();
+
+      expect(seen).toEqual([{ type: 'oauth', accessToken: 'new-copilot-token' }]);
+    });
+
+    it('reads auth file when no in-memory token exists', async () => {
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue('file-auth-token' as never);
+
+      expect(await provider.getCredentials()).toEqual({
+        type: 'oauth',
+        accessToken: 'file-auth-token',
+      });
+    });
+  });
+
   describe('buildSdkConfig', () => {
     const fakeServerUrl = 'http://127.0.0.1:54321';
 

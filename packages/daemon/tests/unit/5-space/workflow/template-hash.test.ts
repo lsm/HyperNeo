@@ -420,7 +420,60 @@ describe('buildWorkflowFingerprint', () => {
     ]);
   });
 
-  it('produces same hash regardless of gate field insertion order', () => {
+  it('serializes check objects with deterministic key ordering', () => {
+    const wf = makeWorkflow({
+      gates: [
+        {
+          id: 'gate-1',
+          resetOnCycle: false,
+          fields: [
+            {
+              name: 'votes',
+              type: 'map',
+              writers: [],
+              check: { op: 'count', match: 'approved', min: 3 },
+            },
+          ],
+        },
+      ],
+    });
+    const fp = buildWorkflowFingerprint(wf);
+    const parsed = JSON.parse(fp.gates[0]);
+    // Keys should be in fixed order: op, match, min
+    expect(Object.keys(parsed.fields[0].check)).toEqual(['op', 'match', 'min']);
+    expect(parsed.fields[0].check).toEqual({ op: 'count', match: 'approved', min: 3 });
+  });
+});
+
+describe('computeWorkflowHash', () => {
+  it('returns a 64-character hex string (SHA-256)', () => {
+    const hash = computeWorkflowHash(makeWorkflow());
+    expect(hash).toHaveLength(64);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('is deterministic for the same workflow', () => {
+    const wf = makeWorkflow();
+    expect(computeWorkflowHash(wf)).toBe(computeWorkflowHash(wf));
+  });
+
+  it('is stable regardless of node insertion order', () => {
+    const wf1 = makeWorkflow({
+      nodes: [
+        { id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'Coder' }] },
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
+      ],
+    });
+    const wf2 = makeWorkflow({
+      nodes: [
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
+        { id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'Coder' }] },
+      ],
+    });
+    expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
+  });
+
+  it('is stable regardless of gate field insertion order', () => {
     const wf1 = makeWorkflow({
       gates: [
         {
@@ -479,31 +532,7 @@ describe('buildWorkflowFingerprint', () => {
     expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
   });
 
-  it('serializes check objects with deterministic key ordering', () => {
-    const wf = makeWorkflow({
-      gates: [
-        {
-          id: 'gate-1',
-          resetOnCycle: false,
-          fields: [
-            {
-              name: 'votes',
-              type: 'map',
-              writers: [],
-              check: { op: 'count', match: 'approved', min: 3 },
-            },
-          ],
-        },
-      ],
-    });
-    const fp = buildWorkflowFingerprint(wf);
-    const parsed = JSON.parse(fp.gates[0]);
-    // Keys should be in fixed order: op, match, min
-    expect(Object.keys(parsed.fields[0].check)).toEqual(['op', 'match', 'min']);
-    expect(parsed.fields[0].check).toEqual({ op: 'count', match: 'approved', min: 3 });
-  });
-
-  it('produces same hash for scalar checks regardless of key insertion order', () => {
+  it('is stable for scalar checks regardless of key insertion order', () => {
     // Simulate a check object parsed from JSON with different key ordering
     const checkObj = JSON.parse('{"value":true,"op":"=="}') as { op: string; value: unknown };
     const wf1 = makeWorkflow({
@@ -536,35 +565,6 @@ describe('buildWorkflowFingerprint', () => {
             },
           ],
         },
-      ],
-    });
-    expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
-  });
-});
-
-describe('computeWorkflowHash', () => {
-  it('returns a 64-character hex string (SHA-256)', () => {
-    const hash = computeWorkflowHash(makeWorkflow());
-    expect(hash).toHaveLength(64);
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
-  });
-
-  it('is deterministic for the same workflow', () => {
-    const wf = makeWorkflow();
-    expect(computeWorkflowHash(wf)).toBe(computeWorkflowHash(wf));
-  });
-
-  it('is stable regardless of node insertion order', () => {
-    const wf1 = makeWorkflow({
-      nodes: [
-        { id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'Coder' }] },
-        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
-      ],
-    });
-    const wf2 = makeWorkflow({
-      nodes: [
-        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
-        { id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'Coder' }] },
       ],
     });
     expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));

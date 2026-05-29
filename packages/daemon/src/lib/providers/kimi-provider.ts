@@ -15,6 +15,7 @@ import type {
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
@@ -64,9 +65,18 @@ export class KimiProvider implements Provider {
   ];
 
   private readonly env: NodeJS.ProcessEnv;
+  private credentials: ProviderCredentials | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     this.env = env;
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
   }
 
   isAvailable(): boolean {
@@ -74,7 +84,11 @@ export class KimiProvider implements Provider {
   }
 
   getApiKey(): string | undefined {
-    return this.env.KIMI_API_KEY?.trim() || this.env.MOONSHOT_API_KEY?.trim() || undefined;
+    return (
+      this.env.KIMI_API_KEY?.trim() ||
+      this.env.MOONSHOT_API_KEY?.trim() ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
+    );
   }
 
   async getModels(): Promise<ModelInfo[]> {

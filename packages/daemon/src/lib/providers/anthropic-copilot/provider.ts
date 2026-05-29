@@ -51,6 +51,7 @@ import type {
   ProviderSessionConfig,
   ModelTier,
   ProviderAuthStatusInfo,
+  ProviderCredentials,
   ProviderOAuthFlowData,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
@@ -267,6 +268,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   /** Resolved token cache with TTL */
   private tokenCache: TokenCacheEntry | null = null;
+  private storedCredentialToken: string | null = null;
+  private readonly credentialListeners = new Set<
+    (credentials: ProviderCredentials) => void | Promise<void>
+  >();
   /**
    * Dynamically fetched models from the Copilot API (via client.listModels()).
    * Populated in getModels() and used by ownsModel()/getModelForTier() so that
@@ -308,6 +313,41 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     authDir?: string
   ) {
     this.authPath = path.join(authDir || path.join(os.homedir(), '.neokai'), 'auth.json');
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    const token =
+      credentials.type === 'api_key'
+        ? credentials.apiKey
+        : (credentials.accessToken ?? credentials.refreshToken);
+    if (!token) return;
+    this.storedCredentialToken = token;
+    this.tokenCache = { token, expiresAt: Number.POSITIVE_INFINITY };
+  }
+
+  async getCredentials(): Promise<ProviderCredentials | null> {
+    const token = this.storedCredentialToken ?? this.tokenCache?.token;
+    if (token) return { type: 'oauth', accessToken: token };
+
+    // Read from auth file so startup reconciliation sees fresh provider-owned
+    // credentials before applying stale credential-manager rows.
+    const fileToken = await this.loadStoredGitHubToken();
+    if (fileToken) return { type: 'oauth', accessToken: fileToken };
+
+    return null;
+  }
+
+  onCredentialsChanged(
+    listener: (credentials: ProviderCredentials) => void | Promise<void>
+  ): () => void {
+    this.credentialListeners.add(listener);
+    return () => this.credentialListeners.delete(listener);
+  }
+
+  private notifyCredentialsChanged(credentials: ProviderCredentials): void {
+    for (const listener of this.credentialListeners) {
+      void listener(credentials);
+    }
   }
 
   async isAvailable(): Promise<boolean> {
@@ -452,7 +492,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    */
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token = await this.loadStoredGitHubToken();
+      const token = this.storedCredentialToken ?? (await this.loadStoredGitHubToken());
       if (!token) {
         return {
           isAuthenticated: false,
@@ -531,6 +571,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    */
   async logout(): Promise<void> {
     // Invalidate token cache
+    this.storedCredentialToken = null;
     this.tokenCache = null;
 
     try {
@@ -609,6 +650,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    * check before being returned. The result is cached for TOKEN_CACHE_TTL_MS.
    */
   private async resolveGitHubToken(): Promise<string | undefined> {
+    if (this.storedCredentialToken) {
+      return this.storedCredentialToken;
+    }
+
     if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
       return this.tokenCache.token;
     }
@@ -855,7 +900,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
         await this.saveCredentials(credentials);
         // Invalidate token cache so next call picks up the new token
+        this.storedCredentialToken = null;
         this.tokenCache = null;
+        this.notifyCredentialsChanged({ type: 'oauth', accessToken: data.access_token });
 
         logger.debug('GitHub Copilot OAuth login successful');
 

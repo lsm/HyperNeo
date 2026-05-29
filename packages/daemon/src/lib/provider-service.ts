@@ -401,16 +401,18 @@ export class ProviderService {
     const registry = this.getRegistry();
     const provider = registry.detectProviderForModel(modelId, providerId);
 
-    if (!provider || provider.id === 'anthropic') {
-      // When Dev Proxy is enabled, route Anthropic API calls through the proxy
-      if (process.env.NEOKAI_USE_DEV_PROXY === '1') {
-        return { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000' };
-      }
+    if (!provider) {
       return {};
     }
 
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
+      if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
+        sdkConfig.envVars = {
+          ...sdkConfig.envVars,
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+        };
+      }
       return sdkConfigToEnvVars(sdkConfig);
     } catch {
       // provider not yet initialised (e.g. embedded server not started)
@@ -428,11 +430,7 @@ export class ProviderService {
     const providerId = session.config.provider || 'anthropic';
     const provider = registry.get(providerId);
 
-    if (!provider || providerId === 'anthropic') {
-      // When Dev Proxy is enabled, route Anthropic API calls through the proxy
-      if (process.env.NEOKAI_USE_DEV_PROXY === '1') {
-        return { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000' };
-      }
+    if (!provider) {
       return {};
     }
 
@@ -454,6 +452,12 @@ export class ProviderService {
     const modelId = session.config.model || 'default';
     try {
       const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
+      if (provider.id === 'anthropic' && process.env.NEOKAI_USE_DEV_PROXY === '1') {
+        sdkConfig.envVars = {
+          ...sdkConfig.envVars,
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000',
+        };
+      }
       return sdkConfigToEnvVars(sdkConfig);
     } catch {
       // provider not yet initialised (e.g. embedded server not started)
@@ -475,7 +479,7 @@ export class ProviderService {
       return this.clearProviderRoutingEnvVars();
     }
 
-    return this.applyEnvVars(envVars);
+    return this.applyEnvVars(envVars, { preserveApiKey: session.config.provider === 'anthropic' });
   }
 
   /**
@@ -499,7 +503,7 @@ export class ProviderService {
       return this.clearProviderRoutingEnvVars();
     }
 
-    return this.applyEnvVars(envVars);
+    return this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' });
   }
 
   /**
@@ -524,7 +528,12 @@ export class ProviderService {
       return {};
     }
     if (providerId === 'anthropic') {
-      return this.clearProviderRoutingEnvVars();
+      const envVars = sdkConfigToEnvVars(provider.buildSdkConfig(modelId || 'default'));
+      const cleared = this.clearProviderRoutingEnvVars();
+      if (Object.keys(envVars).length === 0) {
+        return cleared;
+      }
+      return { ...cleared, ...this.applyEnvVars(envVars, { preserveApiKey: true }) };
     }
 
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;
@@ -537,13 +546,16 @@ export class ProviderService {
     }
     const envVars = sdkConfigToEnvVars(sdkConfig);
 
-    return this.applyEnvVars(envVars);
+    return this.applyEnvVars(envVars, { preserveApiKey: providerId === 'anthropic' });
   }
 
   /**
    * Internal helper to apply env vars and save originals
    */
-  private applyEnvVars(envVars: ProviderEnvVars): OriginalEnvVars {
+  private applyEnvVars(
+    envVars: ProviderEnvVars,
+    options: { preserveApiKey?: boolean } = {}
+  ): OriginalEnvVars {
     const original: OriginalEnvVars = {};
 
     // Save and set each env var
@@ -567,6 +579,9 @@ export class ProviderService {
         // ANTHROPIC_API_KEY to be explicitly empty.
         original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
         process.env.ANTHROPIC_API_KEY = '';
+      } else if (options.preserveApiKey) {
+        original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+        process.env.ANTHROPIC_API_KEY = envVars.ANTHROPIC_API_KEY;
       } else {
         // Non-empty: map API key value to ANTHROPIC_AUTH_TOKEN (legacy behaviour)
         original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
