@@ -9,6 +9,7 @@ import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
+import type { Provider } from '@neokai/shared/provider';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -33,7 +34,13 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager';
 import { GitHubEventExtension } from './lib/external-events/github';
+import {
+  initializeProviders,
+  waitForOptionalProviderRegistration,
+} from './lib/providers/factory.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
+import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
+import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
@@ -71,6 +78,34 @@ import {
   ProcessWatchdog,
   type ProcessSnapshot,
 } from './lib/process-watchdog';
+
+async function applyStoredProviderCredentials(
+  providers: Provider[],
+  credentialManager: ProviderCredentialManager,
+  logError: (...args: unknown[]) => void
+): Promise<void> {
+  for (const provider of providers) {
+    try {
+      const providerCredentials = await provider.getCredentials?.();
+      if (providerCredentials?.type === 'oauth') {
+        await credentialManager.storeOAuthTokens(provider.id, providerCredentials);
+        continue;
+      }
+      if (providerCredentials?.type === 'api_key') {
+        await credentialManager.storeApiKey(provider.id, providerCredentials.apiKey);
+        continue;
+      }
+
+      const credentials = await credentialManager.getCredentials(provider.id);
+      if (credentials && provider.setCredentials) {
+        provider.setCredentials(credentials);
+      }
+    } catch (error) {
+      credentialManager.markProviderHealth(provider.id, 'unhealthy');
+      logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
+    }
+  }
+}
 
 export interface CreateDaemonAppOptions {
   config: Config;
@@ -271,6 +306,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
+    const providerRegistry = initializeProviders();
+    await waitForOptionalProviderRegistration(providerRegistry);
+    const credentialManager = ProviderCredentialManager.create(db.getDatabase());
+    await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
+    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
+      registry: providerRegistry,
+    });
+
     // Register user-defined OpenAI-compatible endpoints (LM Studio, vLLM, LiteLLM, etc.)
     // stored under `settings.customEndpoints`. Synchronous failure is non-fatal — bad
     // endpoint configs are logged and skipped rather than blocking daemon startup.
@@ -279,11 +322,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       await syncCustomEndpointProviders(settingsManager.getGlobalSettings().customEndpoints);
     }
 
-    // Check authentication status
+    // Check authentication status.
+    // AuthManager only checks env vars; also consider stored provider credentials
+    // so that startup gates work when the sole auth source is the credential store.
     const authStatus = await authManager.getAuthStatus();
+    const anthropicProvider = providerRegistry.get('anthropic');
+    const hasAnthropicAuth =
+      authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
 
     // Initialize dynamic models on app startup (global cache fallback)
-    if (authStatus.isAuthenticated) {
+    if (hasAnthropicAuth) {
       const { initializeModels } = await import('./lib/model-service');
       await initializeModels();
     } /* v8 ignore next 3 */ else {
@@ -422,10 +470,27 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       config.githubWebhookSecret ||
       (config.githubPollingInterval && config.githubPollingInterval > 0);
 
-    if (shouldEnableGitHub && authStatus.isAuthenticated) {
-      // Get API key for AI agents (security + routing)
+    if (shouldEnableGitHub && hasAnthropicAuth) {
+      // Get API key for AI agents (security + routing).
+      // Fall back to stored provider credentials so GitHub works when the sole
+      // auth source is the credential store.
+      const storedCredentials = await anthropicProvider?.getCredentials?.();
       const apiKey =
-        config.anthropicApiKey || config.claudeCodeOAuthToken || config.anthropicAuthToken;
+        config.anthropicApiKey ||
+        config.claudeCodeOAuthToken ||
+        config.anthropicAuthToken ||
+        (storedCredentials?.type === 'api_key' ? storedCredentials.apiKey : undefined) ||
+        (storedCredentials?.type === 'oauth' ? storedCredentials.accessToken : undefined);
+      const apiKeyType: 'api_key' | 'oauth' | undefined =
+        storedCredentials?.type === 'api_key'
+          ? 'api_key'
+          : storedCredentials?.type === 'oauth'
+            ? 'oauth'
+            : apiKey === config.claudeCodeOAuthToken || apiKey === config.anthropicAuthToken
+              ? 'oauth'
+              : apiKey === config.anthropicApiKey
+                ? 'api_key'
+                : undefined;
 
       if (apiKey) {
         gitHubService = createGitHubService({
@@ -433,6 +498,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           internalEventBus,
           config,
           apiKey,
+          apiKeyType,
           githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
           jobQueue,
           jobProcessor,
@@ -511,6 +577,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       messageHub,
       sessionManager,
       authManager,
+      credentialManager,
       settingsManager,
       config,
       internalEventBus,
@@ -768,6 +835,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
+    oauthRefreshScheduler.start();
+    logInfo('[Daemon] OAuth refresh scheduler started');
+
     // Enqueue the initial cleanup job if none is already pending.
     const pendingCleanup = jobQueue.listJobs({
       queue: JOB_QUEUE_CLEANUP,
@@ -887,6 +957,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // Stop background processors before MessageHub cleanup
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
+        oauthRefreshScheduler.stop();
+        logInfo('[Daemon] OAuth refresh scheduler stopped');
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
 

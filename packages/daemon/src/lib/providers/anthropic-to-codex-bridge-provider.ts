@@ -22,6 +22,7 @@
 import type {
   Provider,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
@@ -92,7 +93,10 @@ export interface OpenAIOAuthToken {
  * Returns the full token response, or null if the exchange fails for any reason.
  * Exported for provider auth discovery and online test setup helpers.
  */
-export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
+export async function refreshCodexToken(
+  refreshToken: string,
+  timeoutMs = 5000
+): Promise<OpenAIOAuthToken | null> {
   try {
     const response = await fetch(OAUTH_CONFIG.tokenUrl, {
       method: 'POST',
@@ -102,6 +106,7 @@ export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAu
         refresh_token: refreshToken,
         client_id: OAUTH_CONFIG.clientId,
       }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       logger.warn(
@@ -170,6 +175,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   /** In-memory cache of credentials read from the NeoKai auth file. */
   private cachedCredentials: StoredCredentials | null = null;
+  private readonly credentialListeners = new Set<
+    (credentials: ProviderCredentials) => void | Promise<void>
+  >();
 
   /**
    * Cached resolved bridge auth.
@@ -203,6 +211,73 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   async isAvailable(): Promise<boolean> {
     return (await this.getBridgeAuth()) !== undefined;
+  }
+
+  setCredentials(credentials: ProviderCredentials): void {
+    if (credentials.type === 'api_key') {
+      this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
+      this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
+      this.cachedApiKey = credentials.apiKey;
+      return;
+    }
+
+    const raw = credentials.raw ?? {};
+    const stored: StoredCredentials = {
+      type: 'oauth',
+      access: credentials.accessToken,
+      refresh: credentials.refreshToken,
+      expires: credentials.expiresAt,
+      accountId: typeof raw.accountId === 'string' ? raw.accountId : undefined,
+      planType: typeof raw.planType === 'string' ? raw.planType : undefined,
+      isFedrampAccount:
+        typeof raw.isFedrampAccount === 'boolean' ? raw.isFedrampAccount : undefined,
+    };
+    this.cachedCredentials = stored;
+    this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
+    this.cachedApiKey = stored.access ?? '';
+  }
+
+  async getCredentials(): Promise<ProviderCredentials | null> {
+    let credentials = await this.loadCredentials();
+    if (!credentials) {
+      // Import from ~/.codex/auth.json if the user has valid Codex CLI
+      // credentials but no NeoKai auth file, so startup reconciliation
+      // sees provider-owned credentials before applying stale rows.
+      await this.importFromCodexAuth();
+      credentials = await this.loadCredentials();
+    }
+    if (!credentials) return null;
+    if (credentials.type === 'api_key' && credentials.access) {
+      return { type: 'api_key', apiKey: credentials.access };
+    }
+    return this.toProviderCredentials(credentials);
+  }
+
+  onCredentialsChanged(
+    listener: (credentials: ProviderCredentials) => void | Promise<void>
+  ): () => void {
+    this.credentialListeners.add(listener);
+    return () => this.credentialListeners.delete(listener);
+  }
+
+  private notifyCredentialsChanged(credentials: ProviderCredentials): void {
+    for (const listener of this.credentialListeners) {
+      void listener(credentials);
+    }
+  }
+
+  private toProviderCredentials(credentials: StoredCredentials): ProviderCredentials {
+    return {
+      type: 'oauth',
+      accessToken: credentials.access,
+      refreshToken: credentials.refresh,
+      expiresAt: credentials.expires,
+      raw: {
+        accountId: credentials.accountId,
+        planType: credentials.planType,
+        isFedrampAccount: credentials.isFedrampAccount,
+      },
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -620,6 +695,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
               this.cachedCredentials = credentials;
               this.cachedBridgeAuth = this.toBridgeAuth(credentials) ?? null;
               this.cachedApiKey = credentials.access ?? '';
+              this.notifyCredentialsChanged(this.toProviderCredentials(credentials));
               if (this.activeOAuthFlow) {
                 this.activeOAuthFlow.completed = true;
                 this.activeOAuthFlow.success = true;

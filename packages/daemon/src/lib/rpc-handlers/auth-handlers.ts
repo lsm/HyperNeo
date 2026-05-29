@@ -16,24 +16,22 @@ import type {
   ProviderRefreshRequest,
   ProviderRefreshResponse,
   ListProviderAuthStatusResponse,
+  ProviderCredentials,
 } from '@neokai/shared/provider';
 import type { AuthManager } from '../auth-manager';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { getProviderRegistry } from '../providers/registry';
 import { Logger } from '../logger';
-import { initializeProviders, waitForOptionalProviderRegistration } from '../providers/factory';
-
 const log = new Logger('auth-handlers');
-
-async function getReadyProviderRegistry() {
-  initializeProviders();
-  await waitForOptionalProviderRegistration();
-  return getProviderRegistry();
-}
 
 /**
  * Setup authentication-related RPC handlers
  */
-export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManager): void {
+export function setupAuthHandlers(
+  messageHub: MessageHub,
+  authManager: AuthManager,
+  credentialManager?: ProviderCredentialManager
+): void {
   // NeoKai auth status (Anthropic)
   messageHub.onRequest('auth.status', async () => {
     const authStatus = await authManager.getAuthStatus();
@@ -42,7 +40,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 
   // List all providers with their auth status
   messageHub.onRequest('auth.providers', async (): Promise<ListProviderAuthStatusResponse> => {
-    const registry = await getReadyProviderRegistry();
+    const registry = getProviderRegistry();
     const providers = registry.getAll();
 
     const providerStatuses: ProviderAuthStatus[] = await Promise.all(
@@ -98,7 +96,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
     'auth.login',
     async (req: ProviderAuthRequest): Promise<ProviderAuthResponse> => {
       const { providerId } = req;
-      const registry = await getReadyProviderRegistry();
+      const registry = getProviderRegistry();
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -116,7 +114,21 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
       }
 
       try {
+        let unsubscribe: (() => void) | undefined;
+        const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
+          if (credentials.type === 'oauth') {
+            await credentialManager?.storeOAuthTokens(providerId, credentials);
+          }
+          unsubscribe?.();
+        };
+        unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();
+        if (!provider.onCredentialsChanged) {
+          const credentials = await provider.getCredentials?.();
+          if (credentials) {
+            await persistCredentials(credentials);
+          }
+        }
 
         return {
           success: true,
@@ -140,7 +152,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
     'auth.logout',
     async (req: ProviderLogoutRequest): Promise<{ success: boolean; error?: string }> => {
       const { providerId } = req;
-      const registry = await getReadyProviderRegistry();
+      const registry = getProviderRegistry();
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -150,17 +162,60 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
         };
       }
 
-      if (!provider.logout) {
-        return {
-          success: false,
-          error: `Provider ${providerId} does not support logout`,
-        };
-      }
-
       try {
-        await provider.logout();
+        const hasEnvironmentCredentials =
+          credentialManager?.hasEnvironmentCredentials(providerId) ?? false;
+        if (!provider.logout && hasEnvironmentCredentials) {
+          await credentialManager?.removeCredentials(providerId);
+          return {
+            success: false,
+            error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
+          };
+        }
+
+        let storedCredentials: ProviderCredentials | null = null;
+        try {
+          storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
+        } catch (readError) {
+          // Unreadable stored row — clear it, then run provider logout if available
+          if (credentialManager) {
+            await credentialManager.removeCredentials(providerId);
+          }
+          if (provider.logout) {
+            try {
+              await provider.logout();
+            } catch (logoutError) {
+              log.error(`Provider logout failed for ${providerId}:`, logoutError);
+            }
+          }
+          log.error(`Logout failed for ${providerId}:`, readError);
+          return {
+            success: false,
+            error: readError instanceof Error ? readError.message : 'Logout failed',
+          };
+        }
+
+        if (!provider.logout && !storedCredentials) {
+          return {
+            success: false,
+            error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
+          };
+        }
+
+        if (provider.logout) {
+          await provider.logout();
+        }
+        if (storedCredentials) {
+          await credentialManager?.removeCredentials(providerId);
+          if (!provider.logout && provider.setCredentials) {
+            provider.setCredentials({ type: 'api_key', apiKey: '' });
+          }
+        }
         return { success: true };
       } catch (error) {
+        if (credentialManager) {
+          await credentialManager.removeCredentials(providerId);
+        }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,
@@ -175,7 +230,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
     'auth.refresh',
     async (req: ProviderRefreshRequest): Promise<ProviderRefreshResponse> => {
       const { providerId } = req;
-      const registry = await getReadyProviderRegistry();
+      const registry = getProviderRegistry();
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -199,6 +254,10 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',
           };
+        }
+        const credentials = await provider.getCredentials?.();
+        if (credentials?.type === 'oauth') {
+          await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
         return { success: true };
       } catch (error) {

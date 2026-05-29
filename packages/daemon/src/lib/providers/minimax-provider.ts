@@ -9,7 +9,9 @@
 
 import type {
   Provider,
+  ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
@@ -87,7 +89,17 @@ export class MinimaxProvider implements Provider {
     },
   ];
 
+  private credentials: ProviderCredentials | null = null;
+
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
+  }
 
   /**
    * Check if MiniMax is available
@@ -101,7 +113,19 @@ export class MinimaxProvider implements Provider {
    * Get API key from environment
    */
   getApiKey(): string | undefined {
-    return this.env.MINIMAX_API_KEY;
+    return (
+      this.env.MINIMAX_API_KEY ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
+    );
+  }
+
+  async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    const apiKey = this.getApiKey();
+    return {
+      isAuthenticated: !!apiKey,
+      method: 'api_key',
+      error: apiKey ? undefined : 'Set MINIMAX_API_KEY to enable MiniMax models.',
+    };
   }
 
   /**

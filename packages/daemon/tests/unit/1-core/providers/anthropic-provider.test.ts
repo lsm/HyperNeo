@@ -120,6 +120,100 @@ describe('AnthropicProvider', () => {
   });
 
   describe('getModels with SDK failure', () => {
+    it('should apply stored API key env while loading SDK models', async () => {
+      const seenEnv: Array<string | undefined> = [];
+      class MockMcpServer {
+        readonly _registeredTools: Record<string, object> = {};
+        connect(): void {}
+        disconnect(): void {}
+      }
+      mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+        query: () => {
+          seenEnv.push(process.env.ANTHROPIC_API_KEY);
+          return {
+            interrupt: mock(async () => {}),
+            supportedModels: mock(async () => [
+              {
+                value: 'sonnet',
+                displayName: 'Sonnet',
+                description: 'Sonnet 4.5 · Test',
+              },
+            ]),
+          };
+        },
+        interrupt: mock(async () => {}),
+        createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => ({
+          type: 'sdk' as const,
+          name: _options.name,
+          version: '1.0.0',
+          tools: _options.tools ?? [],
+          instance: new MockMcpServer(),
+        })),
+        tool: mock((name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+          name,
+          description,
+          inputSchema,
+          handler,
+        })),
+      }));
+
+      const providerWithStoredCreds = new AnthropicProvider();
+      providerWithStoredCreds.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
+
+      const models = await providerWithStoredCreds.getModels();
+
+      expect(seenEnv).toEqual(['stored-key']);
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(models.map((model) => model.id)).toEqual(['sonnet']);
+    });
+
+    it('should apply stored OAuth env while loading SDK models', async () => {
+      const seenEnv: Array<string | undefined> = [];
+      class MockMcpServer {
+        readonly _registeredTools: Record<string, object> = {};
+        connect(): void {}
+        disconnect(): void {}
+      }
+      mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+        query: () => {
+          seenEnv.push(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+          return {
+            interrupt: mock(async () => {}),
+            supportedModels: mock(async () => [
+              {
+                value: 'sonnet',
+                displayName: 'Sonnet',
+                description: 'Sonnet 4.5 · Test',
+              },
+            ]),
+          };
+        },
+        interrupt: mock(async () => {}),
+        createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => ({
+          type: 'sdk' as const,
+          name: _options.name,
+          version: '1.0.0',
+          tools: _options.tools ?? [],
+          instance: new MockMcpServer(),
+        })),
+        tool: mock((name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+          name,
+          description,
+          inputSchema,
+          handler,
+        })),
+      }));
+
+      const providerWithStoredCreds = new AnthropicProvider();
+      providerWithStoredCreds.setCredentials({ type: 'oauth', accessToken: 'stored-oauth-token' });
+
+      const models = await providerWithStoredCreds.getModels();
+
+      expect(seenEnv).toEqual(['stored-oauth-token']);
+      expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(models.map((model) => model.id)).toEqual(['sonnet']);
+    });
+
     it('should return empty array when SDK loading fails', async () => {
       // Set credentials so SDK load is attempted
       process.env.ANTHROPIC_API_KEY = 'test-key';
@@ -222,6 +316,16 @@ describe('AnthropicProvider', () => {
       expect(config.envVars).toEqual({});
       expect(config.isAnthropicCompatible).toBe(true);
       expect(config.apiVersion).toBe('v1');
+    });
+
+    it('should skip stored API key injection when any Anthropic auth env var is set', () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
+      const providerWithStoredKey = new AnthropicProvider();
+      providerWithStoredKey.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
+
+      const config = providerWithStoredKey.buildSdkConfig('default');
+
+      expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
     });
   });
 
