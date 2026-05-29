@@ -61,7 +61,9 @@ export class KeychainCredentialStore implements CredentialStore {
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`security add-generic-password failed (exit ${code}): ${stderr.trim()}`));
+          reject(
+            new Error(`security add-generic-password failed (exit ${code}): ${stderr.trim()}`)
+          );
         }
       });
 
@@ -95,15 +97,22 @@ export class KeychainCredentialStore implements CredentialStore {
 }
 
 export class DatabaseCredentialStore implements CredentialStore {
-  private readonly key: Buffer;
+  private _key: Buffer | undefined;
 
   constructor(
     private readonly db: Database,
-    secret?: string
+    private readonly secret?: string
   ) {
-    secret ??= process.env[ENCRYPTION_KEY_ENV] || loadOrGenerateCredentialKey();
-    this.key = createHash('sha256').update(secret).digest();
     ensureProviderCredentialsTable(db);
+  }
+
+  private get key(): Buffer {
+    if (!this._key) {
+      const secret =
+        this.secret ?? process.env[ENCRYPTION_KEY_ENV] ?? loadOrGenerateCredentialKey();
+      this._key = createHash('sha256').update(secret).digest();
+    }
+    return this._key;
   }
 
   async get(service: string, account: string): Promise<string | null> {

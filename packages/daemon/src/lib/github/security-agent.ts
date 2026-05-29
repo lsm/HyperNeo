@@ -218,19 +218,42 @@ export class SecurityAgent {
         ? `${contextInfo.join('\n')}\n\nContent to analyze:\n${content}`
         : `Analyze the following content:\n${content}`;
 
+    // Inject the API key into process.env so the SDK subprocess can find it.
+    // The SDK inherits the parent environment; without this, stored credentials
+    // that never reached process.env are invisible to the CLI.
+    const originalApiKey = process.env.ANTHROPIC_API_KEY;
+    const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.ANTHROPIC_API_KEY = this.options.apiKey;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
+
     // Create sandboxed query with NO tools
-    const queryObj = query({
-      prompt: userPrompt,
-      options: {
-        model: this.model,
-        cwd: '/tmp', // Isolated directory - no real workspace access
-        maxTurns: 1, // Single response only
-        systemPrompt: SECURITY_AGENT_SYSTEM_PROMPT,
-        // NO tools array - truly sandboxed
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-      },
-    });
+    let queryObj: ReturnType<typeof query>;
+    try {
+      queryObj = query({
+        prompt: userPrompt,
+        options: {
+          model: this.model,
+          cwd: '/tmp', // Isolated directory - no real workspace access
+          maxTurns: 1, // Single response only
+          systemPrompt: SECURITY_AGENT_SYSTEM_PROMPT,
+          // NO tools array - truly sandboxed
+          pathToClaudeCodeExecutable: resolveSDKCliPath(),
+          executable: isRunningUnderBun() ? 'bun' : undefined,
+        },
+      });
+    } finally {
+      // Restore env immediately after spawn so we don't leak the key globally
+      if (originalApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = originalApiKey;
+      }
+      if (originalOAuthToken === undefined) {
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      } else {
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
+      }
+    }
 
     try {
       // Collect response with timeout

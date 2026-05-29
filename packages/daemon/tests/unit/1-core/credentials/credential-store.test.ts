@@ -3,9 +3,7 @@ import { Database } from 'bun:sqlite';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {
-  DatabaseCredentialStore,
-} from '../../../../src/lib/credentials/credential-store';
+import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store';
 
 function createStore(secret?: string): { db: Database; store: DatabaseCredentialStore } {
   const db = new Database(':memory:');
@@ -112,4 +110,3 @@ describe('DatabaseCredentialStore', () => {
     }
   });
 });
-
