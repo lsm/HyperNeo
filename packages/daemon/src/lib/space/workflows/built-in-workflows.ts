@@ -424,6 +424,9 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
   'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
   'for an `eyes` or `+1` reaction. ' +
+  'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+  'an older +1 from a previous cycle is stale and will not open the gate. If the +1 ' +
+  'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
   'Write the approval gate to start the Codex timeout (10 minutes). If the gate ' +
   'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
   'gate write. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
