@@ -76,6 +76,21 @@ describe('GateDataRepository — get/set', () => {
     expect(record!.data).toEqual({ count: 5, extra: true });
   });
 
+  test('set preserves updated_at when data is unchanged', () => {
+    const data = { approved: true };
+    const first = repo.set(RUN_ID, GATE_ID_A, data);
+
+    // Sleep briefly to ensure a different timestamp would be generated
+    const start = Date.now();
+    while (Date.now() < start + 10) {
+      // busy wait
+    }
+
+    const second = repo.set(RUN_ID, GATE_ID_A, data);
+    expect(second.updatedAt).toBe(first.updatedAt);
+    expect(repo.get(RUN_ID, GATE_ID_A)!.updatedAt).toBe(first.updatedAt);
+  });
+
   test('different gate IDs are independent', () => {
     repo.set(RUN_ID, GATE_ID_A, { a: 1 });
     repo.set(RUN_ID, GATE_ID_B, { b: 2 });

@@ -56,8 +56,17 @@ export class GateDataRepository {
   /**
    * Upsert gate data for a `(run_id, gate_id)` pair.
    * Replaces the entire data object — callers must merge before calling.
+   *
+   * When the new data is structurally identical to the existing data, `updated_at`
+   * is preserved so timeout anchors (e.g. codex_review_bot) do not advance on
+   * retry writes.
    */
   set(runId: string, gateId: string, data: Record<string, unknown>): GateDataRecord {
+    const existing = this.get(runId, gateId);
+    if (existing && JSON.stringify(existing.data) === JSON.stringify(data)) {
+      return existing;
+    }
+
     const now = Date.now();
     this.db
       .prepare(
