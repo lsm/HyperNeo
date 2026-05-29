@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { homedir, platform } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -37,20 +37,37 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
-    // Use expect(1) with a pseudo-terminal to feed the password interactively,
-    // avoiding argv exposure that occurs with the -w flag. The password is
-    // passed via an environment variable; while env vars are still visible to
-    // same-UID processes, they are not exposed in argv to tools like ps.
-    const expectScript = buildKeychainExpectScript(service, account);
-    const scriptPath = `/tmp/neokai-keychain-${Date.now()}.exp`;
-    try {
-      fs.writeFileSync(scriptPath, expectScript, { mode: 0o600 });
-      await execFileAsync('expect', [scriptPath], {
-        env: { ...process.env, NEOKAI_KEYCHAIN_SECRET: data },
+    // Write the password to stdin so it never appears in argv (visible to ps).
+    // security with -w as the last flag reads the password from stdin, then
+    // reads the retype confirmation on the next line.
+    return new Promise((resolve, reject) => {
+      const child = spawn('security', [
+        'add-generic-password',
+        '-U',
+        '-s',
+        service,
+        '-a',
+        account,
+        '-w',
+      ]);
+
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
       });
-    } finally {
-      fs.unlinkSync(scriptPath);
-    }
+
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`security add-generic-password failed (exit ${code}): ${stderr.trim()}`));
+        }
+      });
+
+      child.stdin.write(`${data}\n${data}\n`);
+      child.stdin.end();
+    });
   }
 
   async delete(service: string, account: string): Promise<void> {
@@ -190,16 +207,6 @@ function loadOrGenerateCredentialKey(): string {
     );
   }
   return key;
-}
-
-export function buildKeychainExpectScript(service: string, account: string): string {
-  return `set password $env(NEOKAI_KEYCHAIN_SECRET)
-spawn security add-generic-password -w -U -s "${service.replace(/"/g, '\\"')}" -a "${account.replace(/"/g, '\\"')}"
-expect "password data for new item:"
-send "$password\\r"
-expect "retype password for new item:"
-send "$password\\r"
-expect eof`;
 }
 
 function escapeLike(value: string): string {

@@ -135,11 +135,14 @@ export class AnthropicProvider implements Provider {
    */
   private modelCache: ModelInfo[] | null = null;
   private credentials: ProviderCredentials | null = null;
+  private readonly capturedAnthropicBaseUrl: string | undefined;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly modelCacheKey: string = 'anthropic-global'
-  ) {}
+  ) {
+    this.capturedAnthropicBaseUrl = env.ANTHROPIC_BASE_URL;
+  }
 
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
@@ -439,10 +442,12 @@ export class AnthropicProvider implements Provider {
 
     // Clear stale routing vars from other providers (e.g. Copilot) so the SDK
     // talks to the real Anthropic API, not an embedded proxy.
-    // ANTHROPIC_BASE_URL redirects to a different backend; always clear it.
+    // Preserve user-configured ANTHROPIC_BASE_URL (captured at construction).
     if (process.env.ANTHROPIC_BASE_URL !== undefined) {
-      originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
-      delete process.env.ANTHROPIC_BASE_URL;
+      if (process.env.ANTHROPIC_BASE_URL !== this.capturedAnthropicBaseUrl) {
+        originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
+        delete process.env.ANTHROPIC_BASE_URL;
+      }
     }
     // Only clear ANTHROPIC_AUTH_TOKEN when it is a known provider-routing token
     // (Copilot sets it to 'anthropic-copilot-proxy:<workspace>'). Preserve real

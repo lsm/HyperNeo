@@ -5,7 +5,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   DatabaseCredentialStore,
-  buildKeychainExpectScript,
 } from '../../../../src/lib/credentials/credential-store';
 
 function createStore(secret?: string): { db: Database; store: DatabaseCredentialStore } {
@@ -114,26 +113,3 @@ describe('DatabaseCredentialStore', () => {
   });
 });
 
-describe('buildKeychainExpectScript', () => {
-  it('generates a valid expect script with quoted arguments', () => {
-    const script = buildKeychainExpectScript('neokai.provider.test', 'default');
-    expect(script).toContain(
-      'spawn security add-generic-password -w -U -s "neokai.provider.test" -a "default"'
-    );
-    expect(script).toContain('expect "password data for new item:"');
-    expect(script).toContain('send "$password\\r"');
-    expect(script).toContain('expect "retype password for new item:"');
-  });
-
-  it('escapes embedded quotes in service and account', () => {
-    const script = buildKeychainExpectScript('service"with"quotes', 'account"with"quotes');
-    expect(script).toContain('-s "service\\"with\\"quotes"');
-    expect(script).toContain('-a "account\\"with\\"quotes"');
-  });
-
-  it('does not contain malformed double quotes', () => {
-    const script = buildKeychainExpectScript('s', 'a');
-    // Reject spawn lines that end with "" (malformed extra quote before newline)
-    expect(script).not.toMatch(/""\s*$/m);
-  });
-});

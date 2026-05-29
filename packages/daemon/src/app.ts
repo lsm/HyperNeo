@@ -467,9 +467,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       (config.githubPollingInterval && config.githubPollingInterval > 0);
 
     if (shouldEnableGitHub && hasAnthropicAuth) {
-      // Get API key for AI agents (security + routing)
+      // Get API key for AI agents (security + routing).
+      // Fall back to stored provider credentials so GitHub works when the sole
+      // auth source is the credential store.
+      const storedCredentials = await anthropicProvider?.getCredentials?.();
       const apiKey =
-        config.anthropicApiKey || config.claudeCodeOAuthToken || config.anthropicAuthToken;
+        config.anthropicApiKey ||
+        config.claudeCodeOAuthToken ||
+        config.anthropicAuthToken ||
+        (storedCredentials?.type === 'api_key' ? storedCredentials.apiKey : undefined) ||
+        (storedCredentials?.type === 'oauth' ? storedCredentials.accessToken : undefined);
 
       if (apiKey) {
         gitHubService = createGitHubService({
