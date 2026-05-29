@@ -64,8 +64,13 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   // Timeout is based only on gate-data update time (no fallback), so the
   // timeout does not start until the reviewer writes approval data.
   'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
-  // Freshness uses gate-data update time with workflow-start fallback.
-  'FRESHNESS_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
+  // Freshness uses workflow start time so vote-counting gate writes do not
+  // advance the cutoff and filter out valid codex reactions.
+  'FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  // GitHub created_at is second-precision; normalize JS millisecond ISO to match.
+  'if [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
+  '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
+  'fi',
   // Resolve current PR head for inclusion in success output (audit trail).
   'HEAD_SHA=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
   'if [ -n "$FRESHNESS_ISO" ]; then',
@@ -124,7 +129,10 @@ const CODEX_REVIEW_BOT_POLL_SCRIPT = [
   'fi',
   'REACTIONS_JSON=$(jq -s \'add // []\' <<< "$REACTIONS_RAW")',
   'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
-  'FRESHNESS_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
+  'FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'if [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
+  '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
+  'fi',
   'HEAD_SHA=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
   'if [ -n "$FRESHNESS_ISO" ]; then',
   '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',

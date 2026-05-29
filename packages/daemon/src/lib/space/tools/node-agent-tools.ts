@@ -50,6 +50,7 @@ import {
 } from '../runtime/gate-evaluator';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
 import { computeGateDefaults, hasGateFeatures, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
@@ -92,13 +93,56 @@ import type {
   SubscribeExternalEventInput,
   UnsubscribeExternalEventInput,
 } from './node-agent-tool-schemas';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
 import { getEffectiveGate } from '../runtime/gate-features';
+
+/**
+ * Resolves the most recent PR URL for a workflow run by scanning gate
+ * data records and artifacts, sorted by recency.
+ */
+function resolvePrUrlForRun(
+  gateDataRepo: GateDataRepository,
+  artifactRepo: WorkflowRunArtifactRepository | undefined,
+  runId: string
+): string {
+  const fromData = (data: Record<string, unknown> | undefined): string =>
+    (typeof data?.prUrl === 'string' && data.prUrl) ||
+    (typeof data?.pr_url === 'string' && data.pr_url) ||
+    '';
+
+  try {
+    const records = gateDataRepo.listByRun(runId);
+    if (records) {
+      const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
+      for (const record of sorted) {
+        const candidate = fromData(record.data);
+        if (candidate) return candidate;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (artifactRepo) {
+    try {
+      const artifacts = artifactRepo.listByRun(runId);
+      if (artifacts) {
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const candidate = fromData(artifacts[i]?.data);
+          if (candidate) return candidate;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return '';
+}
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -131,9 +175,14 @@ async function evaluateTerminalGateFeatures(
   workflowRunId: string,
   scriptExecutor?: GateScriptExecutorFn,
   scriptContext?: GateScriptExecutorContext,
-  currentNodeId?: string
+  currentNodeId?: string,
+  artifactRepo?: WorkflowRunArtifactRepository
 ): Promise<ToolResult | null> {
   if (!workflow || !scriptExecutor || !scriptContext) return null;
+
+  // Resolve freshest PR URL for this run so terminal checks evaluate against
+  // the correct PR even when it was written after the MCP server was created.
+  const freshPrUrl = resolvePrUrlForRun(gateDataRepo, artifactRepo, workflowRunId);
 
   // Scope terminal checks to gates on channels connected to the current node.
   // Outgoing channels (from current node) are always included. Incoming channels
@@ -178,6 +227,7 @@ async function evaluateTerminalGateFeatures(
       gateDataUpdatedIso: gateDataRecord
         ? new Date(gateDataRecord.updatedAt).toISOString()
         : undefined,
+      prUrl: freshPrUrl || scriptContext.prUrl,
     });
     if (!result.open) {
       return jsonResult({
@@ -422,48 +472,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   );
 
   const pendingGateChangeNotifications = new Map<string, Promise<unknown>>();
-
-  /**
-   * Resolves the most recent PR URL for this workflow run by scanning gate
-   * data records and artifacts, sorted by recency. Used to inject a fresh
-   * `PR_URL` into feature script evaluations so cyclic workflows that write
-   * a new PR URL on a later cycle evaluate against the correct PR.
-   */
-  function resolvePrUrlForRun(runId: string): string {
-    const fromData = (data: Record<string, unknown> | undefined): string =>
-      (typeof data?.prUrl === 'string' && data.prUrl) ||
-      (typeof data?.pr_url === 'string' && data.pr_url) ||
-      '';
-
-    try {
-      const records = gateDataRepo.listByRun(runId);
-      if (records) {
-        const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
-        for (const record of sorted) {
-          const candidate = fromData(record.data);
-          if (candidate) return candidate;
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    if (config.artifactRepo) {
-      try {
-        const artifacts = config.artifactRepo.listByRun(runId);
-        if (artifacts) {
-          for (let i = artifacts.length - 1; i >= 0; i--) {
-            const candidate = fromData(artifacts[i]?.data);
-            if (candidate) return candidate;
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    return '';
-  }
 
   async function notifyGateDataChanged(gateId: string): Promise<void> {
     if (!config.onGateDataChanged) return;
@@ -879,7 +887,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       )
                     : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
                 const updatedRecord = gateDataRepo.get(workflowRunId, gateId);
-                const freshPrUrl = resolvePrUrlForRun(workflowRunId);
+                const freshPrUrl = resolvePrUrlForRun(
+                  gateDataRepo,
+                  config.artifactRepo,
+                  workflowRunId
+                );
                 const evalResult = await evaluateGate(
                   getEffectiveGate(gateDef),
                   updated.data,
@@ -1253,7 +1265,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
-      const freshPrUrl = resolvePrUrlForRun(workflowRunId);
+      const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
       const evalResult = await evaluateGate(
         getEffectiveGate(gateDef),
         currentData,
@@ -1493,7 +1505,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         workflowRunId,
         scriptExecutor,
         scriptContext,
-        workflowNodeId
+        workflowNodeId,
+        config.artifactRepo
       );
       if (gateBlock) return gateBlock;
 
@@ -1693,7 +1706,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       config.workflowRunId,
       config.scriptExecutor,
       config.scriptContext,
-      config.workflowNodeId
+      config.workflowNodeId,
+      config.artifactRepo
     );
     if (gateBlock) return gateBlock;
     return config.onSubmitForApproval!(args);
