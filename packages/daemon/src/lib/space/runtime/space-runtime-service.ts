@@ -36,7 +36,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
@@ -1682,6 +1682,7 @@ export class SpaceRuntimeService {
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
+      getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     return router.onGateDataChanged(runId, gateId);
   }
@@ -1744,8 +1745,51 @@ export class SpaceRuntimeService {
       // Forward the InternalEventBus so activation-driven reopens also publish
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
+      getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     return router.activateNode(runId, nodeId);
+  }
+
+  /**
+   * Resolves the PR URL for a workflow run by scanning gate data records
+   * and artifacts. Mirrors SpaceRuntime.resolvePrUrlForRun so temporary
+   * ChannelRouters built by notifyGateDataChanged / activateWorkflowNode
+   * can inject PR_URL into feature scripts.
+   */
+  private resolvePrUrlForRun(runId: string): string {
+    const fromData = (data: Record<string, unknown> | undefined): string =>
+      (typeof data?.prUrl === 'string' && data.prUrl) ||
+      (typeof data?.pr_url === 'string' && data.pr_url) ||
+      '';
+
+    try {
+      const gateDataRepo = this.config.gateDataRepo ?? new GateDataRepository(this.config.db);
+      const gateRecords = gateDataRepo.listByRun(runId).sort((a, b) => b.updatedAt - a.updatedAt);
+      for (const record of gateRecords) {
+        const candidate = fromData(record.data);
+        if (candidate) return candidate;
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntimeService.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (this.config.artifactRepo) {
+      try {
+        const artifacts = this.config.artifactRepo.listByRun(runId);
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const candidate = fromData(artifacts[i]?.data);
+          if (candidate) return candidate;
+        }
+      } catch (err) {
+        log.warn(
+          `SpaceRuntimeService.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    return '';
   }
 
   /**

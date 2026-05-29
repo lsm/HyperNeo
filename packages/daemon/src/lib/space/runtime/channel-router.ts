@@ -57,6 +57,7 @@ import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import { getEffectiveGate } from './gate-features';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
@@ -280,6 +281,13 @@ export interface ChannelRouterConfig {
    * by a script failure, or when it has no external-approval field.
    */
   onGatePendingApproval?: (runId: string, gateId: string) => Promise<void>;
+  /**
+   * Optional callback that resolves the current PR URL for a workflow run.
+   * Injected into gate script environments as `PR_URL` so feature scripts
+   * (e.g. codex reaction checks) can access the PR even when the gate's
+   * own data does not contain `pr_url`.
+   */
+  getPrUrlForRun?: (runId: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,11 +1045,14 @@ export class ChannelRouter {
     const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!gateDef) return true;
 
-    // Template-backed scripted gates must always re-evaluate because their
-    // scripts can change independently of workflow.updatedAt (via getBuiltInGateScript).
-    // Caching such gates would create a fail-open path where a once-open gate
-    // bypasses evaluation even after template script updates.
-    if (workflow.templateName && gateDef.script) return true;
+    // Gates with an effective script must always re-evaluate when:
+    // - The workflow is template-backed (scripts can change via getBuiltInGateScript)
+    // - OR the script is compiled from a registered feature (registry can change
+    //   independently of workflow.updatedAt). Caching such gates would create a
+    //   fail-open path where a once-open gate bypasses evaluation even after
+    //   script updates or external state changes.
+    const effectiveGateDef = getEffectiveGate(gateDef);
+    if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
 
     if (!channelIsCyclic) return false;
     return gateDef.resetOnCycle === true;
@@ -1156,12 +1167,13 @@ export class ChannelRouter {
     // fixes, new fallback logic, etc.) take immediate effect for all running
     // workflow instances without requiring a resync.
     let gateDef = storedGateDef;
-    if (workflow.templateName && storedGateDef.script) {
+    if (workflow.templateName) {
       const liveScript = getBuiltInGateScript(workflow.templateName, gateId);
-      if (liveScript) {
+      if (liveScript && storedGateDef.script) {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }
+    gateDef = getEffectiveGate(gateDef);
 
     // Load runtime data from DB; fall back to computed defaults from fields
     const record = this.config.gateDataRepo?.get(runId, gateId);
@@ -1185,6 +1197,8 @@ export class ChannelRouter {
       runId,
       gateData: runtimeData,
       workflowStartIso,
+      gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
+      prUrl: this.config.getPrUrlForRun?.(runId),
     };
 
     return this.withScriptSemaphore(async () => {

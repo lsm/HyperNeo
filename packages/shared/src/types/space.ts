@@ -1481,6 +1481,24 @@ export interface GatePoll {
   messageTemplate?: string;
 }
 
+export type GateFeatureFlag = boolean | { enabled?: boolean };
+export type GateFeatures = Record<string, GateFeatureFlag>;
+
+export function hasEnabledGateFeature(
+  gate: { features?: GateFeatures } | undefined,
+  featureName: string
+): boolean {
+  const flag = gate?.features?.[featureName];
+  if (flag === true) return true;
+  return !!flag && typeof flag === 'object' && flag.enabled !== false;
+}
+
+export function hasGateFeatures(gate: { features?: GateFeatures } | undefined): boolean {
+  return Object.keys(gate?.features ?? {}).some((featureName) =>
+    hasEnabledGateFeature(gate, featureName)
+  );
+}
+
 export interface Gate {
   /** Unique identifier */
   id: string;
@@ -1494,6 +1512,8 @@ export interface Gate {
   fields?: GateField[];
   /** Optional script-based pre-check executed before field evaluation. */
   script?: GateScript;
+  /** Data-driven gate features compiled into runtime checks/polls. */
+  features?: GateFeatures;
   /**
    * When true, gate data is reset to defaults on cyclic channel traversal.
    * Used for cyclic workflows where gate state should be cleared each loop.

@@ -50,8 +50,9 @@ import {
 } from '../runtime/gate-evaluator';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, hasGateFeatures, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -92,12 +93,56 @@ import type {
   SubscribeExternalEventInput,
   UnsubscribeExternalEventInput,
 } from './node-agent-tool-schemas';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
+import { getEffectiveGate } from '../runtime/gate-features';
+
+/**
+ * Resolves the most recent PR URL for a workflow run by scanning gate
+ * data records and artifacts, sorted by recency.
+ */
+function resolvePrUrlForRun(
+  gateDataRepo: GateDataRepository,
+  artifactRepo: WorkflowRunArtifactRepository | undefined,
+  runId: string
+): string {
+  const fromData = (data: Record<string, unknown> | undefined): string =>
+    (typeof data?.prUrl === 'string' && data.prUrl) ||
+    (typeof data?.pr_url === 'string' && data.pr_url) ||
+    '';
+
+  try {
+    const records = gateDataRepo.listByRun(runId);
+    if (records) {
+      const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
+      for (const record of sorted) {
+        const candidate = fromData(record.data);
+        if (candidate) return candidate;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (artifactRepo) {
+    try {
+      const artifacts = artifactRepo.listByRun(runId);
+      if (artifacts) {
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          const candidate = fromData(artifacts[i]?.data);
+          if (candidate) return candidate;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return '';
+}
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -122,6 +167,78 @@ const log = new Logger('node-agent-tools');
 
 function normalizeAgentNameToken(value: string): string {
   return value.trim().toLowerCase();
+}
+
+async function evaluateTerminalGateFeatures(
+  workflow: SpaceWorkflow | null,
+  gateDataRepo: GateDataRepository,
+  workflowRunId: string,
+  scriptExecutor?: GateScriptExecutorFn,
+  scriptContext?: GateScriptExecutorContext,
+  currentNodeId?: string,
+  artifactRepo?: WorkflowRunArtifactRepository
+): Promise<ToolResult | null> {
+  if (!workflow || !scriptExecutor || !scriptContext) return null;
+
+  // Resolve freshest PR URL for this run so terminal checks evaluate against
+  // the correct PR even when it was written after the MCP server was created.
+  const freshPrUrl = resolvePrUrlForRun(gateDataRepo, artifactRepo, workflowRunId);
+
+  // Scope terminal checks to gates on channels connected to the current node.
+  // Outgoing channels (from current node) are always included. Incoming channels
+  // (to current node) are only included when there is exactly one incoming
+  // channel total, so we do not falsely treat an unrelated incoming gate as the
+  // traversed path when multiple paths converge on a shared terminal node.
+  let relevantGateIds: Set<string> | undefined;
+  if (currentNodeId && workflow.channels) {
+    const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
+    if (currentNodeName) {
+      const incomingChannels = workflow.channels.filter((ch) => {
+        const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+        return toList.includes(currentNodeName) || toList.includes('*');
+      });
+      const includeIncoming = incomingChannels.length === 1;
+      relevantGateIds = new Set(
+        workflow.channels
+          .filter((ch) => {
+            if (ch.from === currentNodeName || ch.from === '*') return true;
+            if (!includeIncoming) return false;
+            const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+            return toList.includes(currentNodeName) || toList.includes('*');
+          })
+          .map((ch) => ch.gateId)
+          .filter((id): id is string => !!id)
+      );
+    }
+  }
+
+  for (const gate of workflow.gates ?? []) {
+    if (!hasGateFeatures(gate)) continue;
+    if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
+    const effectiveGate = getEffectiveGate(gate);
+    if (!effectiveGate.script) continue;
+
+    const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
+    const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
+    const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
+      ...scriptContext,
+      gateId: gate.id,
+      gateData: data,
+      gateDataUpdatedIso: gateDataRecord
+        ? new Date(gateDataRecord.updatedAt).toISOString()
+        : undefined,
+      prUrl: freshPrUrl || scriptContext.prUrl,
+    });
+    if (!result.open) {
+      return jsonResult({
+        success: false,
+        error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+        gateId: gate.id,
+      });
+    }
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -769,11 +886,27 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                         mapFields
                       )
                     : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
+                const updatedRecord = gateDataRepo.get(workflowRunId, gateId);
+                const freshPrUrl = resolvePrUrlForRun(
+                  gateDataRepo,
+                  config.artifactRepo,
+                  workflowRunId
+                );
                 const evalResult = await evaluateGate(
-                  gateDef,
+                  getEffectiveGate(gateDef),
                   updated.data,
                   scriptExecutor,
-                  scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
+                  scriptContext
+                    ? {
+                        ...scriptContext,
+                        gateId,
+                        gateData: updated.data,
+                        gateDataUpdatedIso: updatedRecord
+                          ? new Date(updatedRecord.updatedAt).toISOString()
+                          : undefined,
+                        prUrl: freshPrUrl || scriptContext.prUrl,
+                      }
+                    : undefined
                 );
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
@@ -1132,11 +1265,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
+      const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
       const evalResult = await evaluateGate(
-        gateDef,
+        getEffectiveGate(gateDef),
         currentData,
         scriptExecutor,
-        scriptContext ? { ...scriptContext, gateId, gateData: currentData } : undefined
+        scriptContext
+          ? {
+              ...scriptContext,
+              gateId,
+              gateData: currentData,
+              gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
+              prUrl: freshPrUrl || scriptContext.prUrl,
+            }
+          : undefined
       );
 
       return jsonResult({
@@ -1357,6 +1499,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           error: 'approve_task is not available in this node-agent session.',
         });
       }
+      const gateBlock = await evaluateTerminalGateFeatures(
+        workflow,
+        gateDataRepo,
+        workflowRunId,
+        scriptExecutor,
+        scriptContext,
+        workflowNodeId,
+        config.artifactRepo
+      );
+      if (gateBlock) return gateBlock;
+
       const result = await config.onApproveTask(args);
       const payload = decodeToolResultPayload(result);
       if (payload?.success) {
@@ -1546,6 +1699,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   const handlers = createNodeAgentToolHandlers(config);
 
+  async function submitForApproval(args: SubmitForApprovalInput): Promise<ToolResult> {
+    const gateBlock = await evaluateTerminalGateFeatures(
+      config.workflow,
+      config.gateDataRepo,
+      config.workflowRunId,
+      config.scriptExecutor,
+      config.scriptContext,
+      config.workflowNodeId,
+      config.artifactRepo
+    );
+    if (gateBlock) return gateBlock;
+    return config.onSubmitForApproval!(args);
+  }
+
   const tools = [
     tool(
       'list_peers',
@@ -1701,7 +1868,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Same approval semantic and preconditions as approve_task: use only when work is approved/QA-passed, all findings are resolved, and required review/artifact evidence is saved. ' +
               'Use when autonomy blocks self-close or risk warrants human sign-off. Never use to defer judgment while findings, QA failures, or dispatch work remain open.',
             SubmitForApprovalSchema.shape,
-            (args) => config.onSubmitForApproval!(args)
+            submitForApproval
           ),
         ]
       : []),

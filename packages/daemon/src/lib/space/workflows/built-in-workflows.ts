@@ -416,12 +416,31 @@ const PD_PLANNING_PROMPT =
   '`data: { pr_url }` on every send to Plan Review — `plan-pr-gate` resets each cycle, so the ' +
   'URL must be reasserted after every revision.';
 
+const CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify codex[bot] reaction status before ' +
+  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+  'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
+  'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
+  'for an `eyes` or `+1` reaction. ' +
+  'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
+  'an older +1 from a previous cycle is stale and will not open the gate. If the +1 ' +
+  'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
+  'Write the approval gate to start the Codex timeout (10 minutes). If the gate ' +
+  'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
+  'gate write. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+  'only with a warning recorded in your result artifact. Do not close the task ' +
+  'before codex[bot] has `+1` unless that timeout has elapsed.';
+
 const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
   'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
   'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
   'action is your `approvals` vote on `plan-approval-gate`. Vote approved only for zero P0-P3 ' +
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
+  CODEX_REACTION_APPROVAL_GUIDANCE +
+  '\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
@@ -517,9 +536,12 @@ const FULLSTACK_REVIEW_PROMPT =
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is writing approved = true to review-approval-gate, only after an ' +
-  'APPROVE verdict with zero P0-P3 findings. If findings remain, do not write the gate; ' +
-  'send actionable feedback to Coding and stop. Never set a PR to auto-merge.';
+  'terminal hand-off is writing approved = true to review-approval-gate after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Write the gate first to start the 10-minute ' +
+  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
+  CODEX_REACTION_APPROVAL_GUIDANCE +
+  ' If findings remain, do not write the gate; send actionable feedback to Coding and stop. ' +
+  'Never set a PR to auto-merge.';
 
 const FULLSTACK_QA_PROMPT =
   QA_SYSTEM_CONTRACT +
@@ -1149,6 +1171,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
           check: { op: 'count', match: 'approved', min: 4 },
         },
       ],
+      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1238,7 +1261,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Expected outputs: Approval gate write or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: write to review-approval-gate (field: approved = true)\n' +
+              '2. If approved: write review-approval-gate (field: approved = true) to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },
@@ -1321,7 +1344,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: 'review-approval-gate',
       label: 'Review',
-      description: 'Reviewer approved the PR for QA.',
+      description: 'Reviewer approved the PR for QA and codex[bot] review passed or timed out.',
       fields: [
         {
           name: 'approved',
@@ -1330,6 +1353,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           check: { op: '==', value: true },
         },
       ],
+      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1572,7 +1596,8 @@ function mergeChannelsFromTemplate(
   return [...existingChannels, ...missingTemplateChannels];
 }
 
-function mergeGateStructuralFieldsFromTemplate(
+/** @internal Exported for testing. */
+export function mergeGateStructuralFieldsFromTemplate(
   existingGates: Gate[] | undefined,
   templateGates: Gate[] | undefined
 ): Gate[] | undefined {
@@ -1597,7 +1622,20 @@ function mergeGateStructuralFieldsFromTemplate(
         return { ...field, writers: templateField.writers };
       });
 
-      return { ...gate, fields };
+      // Skip copying template features if the existing gate already has a custom
+      // script or poll, so feature-backed mechanisms do not silently override
+      // custom gate logic at runtime. When copying is allowed, propagate the
+      // template's features (including undefined when the template removed them).
+      const shouldCopyFeatures = !gate.script && !gate.poll;
+      return {
+        ...gate,
+        fields,
+        features: shouldCopyFeatures
+          ? templateGate.features
+            ? { ...templateGate.features }
+            : undefined
+          : gate.features,
+      };
     })
     .concat(missingTemplateGates);
 }
@@ -1618,8 +1656,9 @@ function mergeGateStructuralFieldsFromTemplate(
  *   land without replacing existing node IDs.
  * - Gate field `writers` are merged onto matching gate fields (by gate id +
  *   field name) so structural authorization changes land on pre-existing spaces.
- *   Missing template gates are appended. Existing checks, scripts, and gate
- *   topology remain untouched.
+ *   Gate `features` are copied from matching template gates so data-driven runtime
+ *   checks land on pre-existing spaces. Missing template gates are appended.
+ *   Existing checks, scripts, and gate topology remain untouched.
  * - Missing template channels are appended so newly-added built-in branches become
  *   reachable on pre-existing spaces. Existing channels, layout, and node rows
  *   are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
@@ -1632,7 +1671,7 @@ const RESTAMP_FIELDS = [
   'completionAutonomyLevel',
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
-  'gates(field writers in-place + missing template gates)',
+  'gates(field writers + features in-place + missing template gates)',
   'channels(missing template channels)',
 ] as const;
 

@@ -434,6 +434,14 @@ describe('SpaceRuntime', () => {
             {
               id: 'recover-gate',
               resetOnCycle: false,
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: 'exists' as const },
+                },
+              ],
               poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
             },
           ],
@@ -480,6 +488,14 @@ describe('SpaceRuntime', () => {
             {
               id: 'recover-gate-2',
               resetOnCycle: false,
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: 'exists' as const },
+                },
+              ],
               poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
             },
           ],

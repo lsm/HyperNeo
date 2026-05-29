@@ -426,6 +426,9 @@ export function setupSpaceWorkflowRunHandlers(
     if (params.approved) {
       // Idempotent: already approved — return existing state
       if (existing?.data?.approved === true) {
+        // Re-trigger gate evaluation so feature scripts (e.g. codex_review_bot)
+        // get a chance to run even though the human approval data has not changed.
+        fireGateChanged(params.runId, params.gateId);
         return { run, gateData: existing };
       }
 

@@ -48,6 +48,19 @@ export interface GateScriptContext {
    * (e.g. in unit tests); the env var is only injected when set.
    */
   workflowStartIso?: string;
+  /**
+   * ISO8601 timestamp marking when the current gate data was last updated.
+   * Exposed as NEOKAI_GATE_DATA_UPDATED_ISO for checks whose timeout window
+   * starts when approval data is written, not when the workflow run starts.
+   */
+  gateDataUpdatedIso?: string;
+  /**
+   * Resolved PR URL for the current workflow run, if known.
+   * Injected into the script environment as `PR_URL` so feature scripts
+   * (e.g. codex reaction checks) can access the PR even when the gate's
+   * own data does not contain `pr_url`.
+   */
+  prUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +98,8 @@ const ALLOWED_ENV_KEYS = new Set([
   'TMPDIR',
   'GH_TOKEN',
   'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
   'NEOKAI_VALIDATION_BASE_REF',
 ]);
@@ -133,6 +148,13 @@ export function buildRestrictedEnv(
   if (context.workflowStartIso) {
     env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
   }
+  if (context.gateDataUpdatedIso) {
+    env['NEOKAI_GATE_DATA_UPDATED_ISO'] = context.gateDataUpdatedIso;
+  }
+
+  if (context.prUrl) {
+    env['PR_URL'] = context.prUrl;
+  }
 
   const gateData = context.gateData ?? {};
   try {
@@ -150,7 +172,8 @@ export function buildRestrictedEnv(
         key === 'NEOKAI_WORKFLOW_RUN_ID' ||
         key === 'NEOKAI_WORKSPACE_PATH' ||
         key === 'NEOKAI_GATE_DATA_JSON' ||
-        key === 'NEOKAI_WORKFLOW_START_ISO'
+        key === 'NEOKAI_WORKFLOW_START_ISO' ||
+        key === 'NEOKAI_GATE_DATA_UPDATED_ISO'
       ) {
         continue;
       }

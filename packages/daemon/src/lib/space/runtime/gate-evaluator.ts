@@ -22,6 +22,12 @@
  */
 
 import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
+import { hasEnabledGateFeature } from '@neokai/shared';
+import {
+  hasRegisteredGateFeatures,
+  isRegisteredGateFeature,
+  validateGateFeatures,
+} from './gate-features';
 import {
   deepMergeWithDepthLimit,
   type GateScriptContext,
@@ -38,6 +44,13 @@ export interface GateEvalResult {
   open: boolean;
   /** Human-readable explanation when the gate is closed. */
   reason?: string;
+  /**
+   * Gate data after script pre-check, including any deep-merged script
+   * output. Present when evaluation reached the field-check stage (i.e.
+   * not present when the script itself failed). Consumers can persist
+   * selected keys back to storage without re-running the script.
+   */
+  data?: Record<string, unknown>;
 }
 
 // Re-export executor types from gate-script-executor for consumer convenience.
@@ -319,13 +332,43 @@ export function validateGate(gate: unknown): string[] {
     errors.push(...validateGateFields(g.fields));
   }
 
-  // At least one of fields (non-empty array) or script must be present
+  // At least one of fields (non-empty array), features, or script must be present
   // Note: poll does NOT count as a gate check mechanism — it is a side-channel
-  // for message injection only. A gate still needs fields or a script.
+  // for message injection only. A gate still needs fields, features, or a script.
   const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
   const hasScript = g.script !== undefined && g.script !== null;
-  if (!hasFields && !hasScript) {
-    errors.push('gate: must have at least one non-empty "fields" array or a "script"');
+  const hasPoll = g.poll !== undefined && g.poll !== null;
+  const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
+  if (!hasFields && !hasScript && !hasFeatures) {
+    errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
+  }
+
+  // Reject unknown/unregistered feature names so misspelled features do not
+  // silently pass validation when the gate also has fields or a script.
+  const enabledFeatures = Object.keys(
+    (g.features as Record<string, unknown> | undefined) ?? {}
+  ).filter((name) => hasEnabledGateFeature(g as { features?: Gate['features'] }, name));
+  for (const name of enabledFeatures) {
+    if (!isRegisteredGateFeature(name)) {
+      errors.push(`gate: unknown feature "${name}" — must be a registered gate feature`);
+    }
+  }
+
+  // Reject feature + custom script/poll combinations to prevent silent override.
+  // Features compile into script/poll at runtime; mixing them with custom
+  // script/poll would silently drop the custom checks. Remove the custom
+  // script/poll or disable the feature, not both.
+  if (hasFeatures && (hasScript || hasPoll)) {
+    errors.push(
+      'gate: cannot combine registered features with a custom "script" or "poll". ' +
+        'Either remove the custom script/poll or disable the feature.'
+    );
+  }
+
+  // Reject gates that enable multiple features defining the same runtime
+  // artifact (script or poll) so nothing is silently dropped.
+  if (hasFeatures) {
+    errors.push(...validateGateFeatures(gate as Gate));
   }
 
   return errors;
@@ -458,7 +501,8 @@ export async function evaluateGate(
   }
 
   // ── Field evaluation ──────────────────────────────────────────────────
-  return evaluateFields(gate, gateData);
+  const fieldResult = evaluateFields(gate, gateData);
+  return { ...fieldResult, data: gateData };
 }
 
 /**

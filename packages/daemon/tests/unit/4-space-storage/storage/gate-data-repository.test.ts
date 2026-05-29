@@ -76,6 +76,21 @@ describe('GateDataRepository — get/set', () => {
     expect(record!.data).toEqual({ count: 5, extra: true });
   });
 
+  test('set preserves updated_at when data is unchanged', () => {
+    const data = { approved: true };
+    const first = repo.set(RUN_ID, GATE_ID_A, data);
+
+    // Sleep briefly to ensure a different timestamp would be generated
+    const start = Date.now();
+    while (Date.now() < start + 10) {
+      // busy wait
+    }
+
+    const second = repo.set(RUN_ID, GATE_ID_A, data);
+    expect(second.updatedAt).toBe(first.updatedAt);
+    expect(repo.get(RUN_ID, GATE_ID_A)!.updatedAt).toBe(first.updatedAt);
+  });
+
   test('different gate IDs are independent', () => {
     repo.set(RUN_ID, GATE_ID_A, { a: 1 });
     repo.set(RUN_ID, GATE_ID_B, { b: 2 });
@@ -102,6 +117,37 @@ describe('GateDataRepository — merge', () => {
 
     const record = repo.get(RUN_ID, GATE_ID_A);
     expect(record!.data).toEqual({ count: 2, name: 'test', extra: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergePreserveTimestamp
+// ---------------------------------------------------------------------------
+
+describe('GateDataRepository — mergePreserveTimestamp', () => {
+  test('creates record with current timestamp when none exists', () => {
+    const before = Date.now();
+    const result = repo.mergePreserveTimestamp(RUN_ID, GATE_ID_A, { approved: true });
+    const after = Date.now();
+    expect(result.data).toEqual({ approved: true });
+    expect(result.updatedAt).toBeGreaterThanOrEqual(before);
+    expect(result.updatedAt).toBeLessThanOrEqual(after);
+  });
+
+  test('merges data without advancing updated_at', () => {
+    repo.set(RUN_ID, GATE_ID_A, { count: 1 });
+    const original = repo.get(RUN_ID, GATE_ID_A)!;
+
+    // Small delay to ensure a different timestamp would be detectable
+    const delay = 50;
+    const start = Date.now();
+    while (Date.now() - start < delay) {
+      // busy wait
+    }
+
+    const result = repo.mergePreserveTimestamp(RUN_ID, GATE_ID_A, { extra: true });
+    expect(result.data).toEqual({ count: 1, extra: true });
+    expect(result.updatedAt).toBe(original.updatedAt);
   });
 });
 
@@ -205,9 +251,9 @@ describe('GateDataRepository — mergeWithMapFields', () => {
       new Set(['approvals'])
     );
 
-    expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({
-      approvals: { ux: 'approved' },
-    });
+    const afterReset = repo.get(RUN_ID, GATE_ID_A)!.data;
+    expect(afterReset.approvals).toEqual({ ux: 'approved' });
+    expect(typeof afterReset.cycle_start_at).toBe('number');
   });
 });
 
@@ -266,14 +312,23 @@ describe('GateDataRepository — listByRun', () => {
 // ---------------------------------------------------------------------------
 
 describe('GateDataRepository — initializeForRun', () => {
-  test('initializes gate data with defaults', () => {
+  test('initializes gate data with defaults and cycle_start_at', () => {
+    const before = Date.now();
     repo.initializeForRun(RUN_ID, [
       { id: GATE_ID_A, data: { approved: false } },
       { id: GATE_ID_B, data: { count: 0 } },
     ]);
+    const after = Date.now();
 
-    expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({ approved: false });
-    expect(repo.get(RUN_ID, GATE_ID_B)!.data).toEqual({ count: 0 });
+    const recordA = repo.get(RUN_ID, GATE_ID_A)!;
+    expect(recordA.data.approved).toBe(false);
+    expect(typeof recordA.data.cycle_start_at).toBe('number');
+    expect(recordA.data.cycle_start_at).toBeGreaterThanOrEqual(before);
+    expect(recordA.data.cycle_start_at).toBeLessThanOrEqual(after);
+
+    const recordB = repo.get(RUN_ID, GATE_ID_B)!;
+    expect(recordB.data.count).toBe(0);
+    expect(typeof recordB.data.cycle_start_at).toBe('number');
   });
 
   test('does not overwrite existing data (INSERT OR IGNORE)', () => {
@@ -291,12 +346,21 @@ describe('GateDataRepository — initializeForRun', () => {
 // ---------------------------------------------------------------------------
 
 describe('GateDataRepository — reset', () => {
-  test('resets gate data to defaults', () => {
+  test('resets gate data to defaults with cycle_start_at', () => {
     repo.set(RUN_ID, GATE_ID_A, { approved: true, extra: 'value' });
 
+    const before = Date.now();
     const result = repo.reset(RUN_ID, GATE_ID_A, { approved: false });
-    expect(result.data).toEqual({ approved: false });
-    expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({ approved: false });
+    const after = Date.now();
+
+    expect(result.data.approved).toBe(false);
+    expect(typeof result.data.cycle_start_at).toBe('number');
+    expect(result.data.cycle_start_at).toBeGreaterThanOrEqual(before);
+    expect(result.data.cycle_start_at).toBeLessThanOrEqual(after);
+
+    const fetched = repo.get(RUN_ID, GATE_ID_A)!;
+    expect(fetched.data.approved).toBe(false);
+    expect(typeof fetched.data.cycle_start_at).toBe('number');
   });
 });
 

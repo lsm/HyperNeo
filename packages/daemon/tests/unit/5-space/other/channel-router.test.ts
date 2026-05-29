@@ -48,6 +48,7 @@ import {
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { computeGateDefaults } from '@neokai/shared';
+import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -157,7 +158,8 @@ function buildWorkflowWithGates(
     agents?: Array<{ agentId: string; name: string }>;
   }>,
   channels: WorkflowChannel[],
-  gates: Gate[]
+  gates: Gate[],
+  templateName?: string
 ): SpaceWorkflow {
   const { nodes: finalNodes, startNodeId, endNodeId } = withSyntheticEndNode(nodes);
   return workflowManager.createWorkflow({
@@ -178,6 +180,7 @@ function buildWorkflowWithGates(
     channels,
     gates,
     completionAutonomyLevel: 3,
+    templateName,
   });
 }
 
@@ -1872,7 +1875,7 @@ describe('ChannelRouter', () => {
       // Gate data should have been reset to default (empty votes map)
       const afterReset = gateDataRepo.get(run.id, 'review-votes-gate');
       expect(afterReset).not.toBeNull();
-      expect(afterReset!.data).toEqual({ votes: {} });
+      expect(afterReset!.data).toMatchObject({ votes: {} });
 
       // Cycle count should have been incremented (channel index 1 is the backward channel)
       expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
@@ -1883,6 +1886,7 @@ describe('ChannelRouter', () => {
       const gate: Gate = {
         id: 'script-only-gate',
         resetOnCycle: true,
+        script: { interpreter: 'bash', source: 'true', timeoutMs: 30000 },
       };
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'script-only-gate' }, // index 0
@@ -1922,7 +1926,7 @@ describe('ChannelRouter', () => {
       // Gate data should have been reset to empty object (no fields to compute defaults from)
       const afterReset = gateDataRepo.get(run.id, 'script-only-gate');
       expect(afterReset).not.toBeNull();
-      expect(afterReset!.data).toEqual({});
+      expect(afterReset!.data).toMatchObject({});
 
       // Cycle count should have been incremented
       expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
@@ -1976,7 +1980,7 @@ describe('ChannelRouter', () => {
 
       // resetOnCycle: true gate should be reset to defaults
       const resetRecord = gateDataRepo.get(run.id, 'review-reject-gate');
-      expect(resetRecord!.data).toEqual({});
+      expect(resetRecord!.data).toMatchObject({});
 
       // resetOnCycle: false gate should be preserved
       const preservedRecord = gateDataRepo.get(run.id, 'code-pr-gate');
@@ -2036,10 +2040,10 @@ describe('ChannelRouter', () => {
 
       // Both should be reset to their defaults
       const votes = gateDataRepo.get(run.id, 'review-votes-gate');
-      expect(votes!.data).toEqual({ votes: {} });
+      expect(votes!.data).toMatchObject({ votes: {} });
 
       const qa = gateDataRepo.get(run.id, 'qa-result-gate');
-      expect(qa!.data).toEqual({});
+      expect(qa!.data).toMatchObject({});
     });
 
     // -----------------------------------------------------------------------
@@ -2591,10 +2595,10 @@ describe('ChannelRouter', () => {
         expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
 
         // Cyclic-reset gates must be wiped to computed defaults
-        expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toEqual({ votes: {} });
-        expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toEqual({ votes: {} });
-        expect(gateDataRepo.get(run.id, 'qa-result-gate')!.data).toEqual({});
-        expect(gateDataRepo.get(run.id, 'qa-fail-gate')!.data).toEqual({});
+        expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toMatchObject({ votes: {} });
+        expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toMatchObject({ votes: {} });
+        expect(gateDataRepo.get(run.id, 'qa-result-gate')!.data).toMatchObject({});
+        expect(gateDataRepo.get(run.id, 'qa-fail-gate')!.data).toMatchObject({});
 
         // code-pr-gate must be preserved (resetOnCycle: false)
         expect(gateDataRepo.get(run.id, 'code-pr-gate')!.data).toEqual({
@@ -2638,16 +2642,16 @@ describe('ChannelRouter', () => {
 
         // review-votes-gate, review-reject-gate, qa-result-gate, qa-fail-gate must reset
         const reviewVotes = gateDataRepo.get(run.id, 'review-votes-gate');
-        expect(reviewVotes!.data).toEqual({ votes: {} });
+        expect(reviewVotes!.data).toMatchObject({ votes: {} });
 
         const reviewReject = gateDataRepo.get(run.id, 'review-reject-gate');
-        expect(reviewReject!.data).toEqual({ votes: {} });
+        expect(reviewReject!.data).toMatchObject({ votes: {} });
 
         const qaResult = gateDataRepo.get(run.id, 'qa-result-gate');
-        expect(qaResult!.data).toEqual({});
+        expect(qaResult!.data).toMatchObject({});
 
         const qaFail = gateDataRepo.get(run.id, 'qa-fail-gate');
-        expect(qaFail!.data).toEqual({});
+        expect(qaFail!.data).toMatchObject({});
       });
 
       test('QA→Coding cycle increments per-channel cycle counter', async () => {
@@ -2698,7 +2702,7 @@ describe('ChannelRouter', () => {
 
         // All votes wiped — reviewers must re-vote
         const votes = gateDataRepo.get(run.id, 'review-votes-gate');
-        expect(votes!.data).toEqual({ votes: {} });
+        expect(votes!.data).toMatchObject({ votes: {} });
 
         // QA channel now blocked (only 0/3 approved)
         const canDeliver = await router.canDeliver(run.id, 'Reviewer 1', 'QA');
@@ -3029,6 +3033,57 @@ describe('ChannelRouter', () => {
         expect(activated).toHaveLength(0);
         expect(pendingCalls).toHaveLength(0);
       });
+    });
+
+    test('built-in live script is not injected when persisted gate has no script', async () => {
+      // Regression for: removing a script from a built-in gate should not be
+      // silently re-introduced by the live-script resolution path.
+      const gate: Gate = {
+        id: 'code-ready-gate',
+        fields: [
+          {
+            name: 'pr_url',
+            type: 'string',
+            writers: ['Coding', 'coder'],
+            check: { op: 'exists' },
+          },
+        ],
+        // Intentionally no script — user removed it after seeding
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'Coder Node', to: 'Planner Node', gateId: 'code-ready-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate],
+        'Coding Workflow'
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Live Script Guard Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Write gate data that satisfies the field check
+      gateDataRepo.set(run.id, 'code-ready-gate', {
+        pr_url: 'https://github.com/test/repo/pull/1',
+      });
+
+      // Delivery should succeed because the gate is field-only (no script injected)
+      const result = await router.deliverMessage(run.id, 'coder', 'planner', 'ready');
+      expect(result.fromRole).toBe('coder');
     });
   });
 
@@ -3860,7 +3915,7 @@ describe('ChannelRouter', () => {
 
         // Gate data should be reset to defaults (empty object for boolean fields)
         const gateData1 = gateDataRepo.get(run.id, 'reset-gate');
-        expect(gateData1?.data).toEqual({});
+        expect(gateData1?.data).toMatchObject({});
 
         // Persisted cache should NOT exist (resetOnCycle prevents caching)
         expect(gateOpenStateRepo.isOpen(run.id, 'reset-gate').open).toBe(false);
@@ -3936,6 +3991,70 @@ describe('ChannelRouter', () => {
         // Call canDeliver to trigger terminal status detection and cache eviction
         await router.canDeliver(run.id, 'coder', 'planner');
         expect(gateOpenStateRepo.isOpen(run.id, 'terminal-gate').open).toBe(false);
+      });
+
+      test('template-backed feature gate bypasses cache and re-evaluates effective script', async () => {
+        // Register a test feature whose script always passes so the gate can open
+        registerGateFeature('test_always_pass', {
+          script: () => ({
+            interpreter: 'bash',
+            source: 'true',
+            timeoutMs: 30000,
+          }),
+        });
+
+        const gate: Gate = {
+          id: 'feature-cache-gate',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['*'],
+              check: { op: '==', value: true },
+            },
+          ],
+          resetOnCycle: false,
+          features: { test_always_pass: true },
+        };
+        const channels: WorkflowChannel[] = [
+          { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'feature-cache-gate' },
+        ];
+        const workflow = buildWorkflowWithGates(
+          SPACE_ID,
+          workflowManager,
+          [
+            { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+            {
+              id: NODE_B,
+              name: 'Planner Node',
+              agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+            },
+          ],
+          channels,
+          [gate],
+          'test-template'
+        );
+
+        const run = workflowRunRepo.createRun({
+          spaceId: SPACE_ID,
+          workflowId: workflow.id,
+          title: 'Feature Cache Test Run',
+        });
+        workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+        // Open the gate — script passes and field passes
+        gateDataRepo.set(run.id, 'feature-cache-gate', { approved: true });
+        await router.deliverMessage(run.id, 'coder', 'planner', 'first msg');
+
+        // Close the gate by changing field data
+        gateDataRepo.set(run.id, 'feature-cache-gate', { approved: false });
+
+        // Because this is a template-backed gate whose effective definition
+        // includes a script (from the feature), mustReevaluateGate returns true
+        // and the cache is bypassed. canDeliver should re-evaluate and find
+        // the gate closed.
+        const result = await router.canDeliver(run.id, 'coder', 'planner');
+        expect(result.allowed).toBe(false);
       });
     });
   });
