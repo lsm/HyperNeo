@@ -12,7 +12,7 @@
 
 import type { ModelInfo, Session } from '@neokai/shared';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import { initializeProviders } from './providers/factory.js';
+import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
@@ -240,7 +240,18 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 /**
  * Load models from all available providers
  */
+function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boolean {
+  return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
+}
+
 async function loadModelsFromProviders(): Promise<ModelInfo[]> {
+  const registry = getProviderRegistry();
+  if (registry.size === 0) {
+    initializeProviders();
+    await waitForOptionalProviderRegistration();
+  } else if (shouldWaitForOptionalProviders(registry)) {
+    await waitForOptionalProviderRegistration(registry);
+  }
   const providers = getAvailableProviders();
   const allModels: ModelInfo[] = [];
 
@@ -313,6 +324,7 @@ export async function initializeModels(): Promise<void> {
 
   // Initialize the provider system (registers built-in providers)
   initializeProviders();
+  await waitForOptionalProviderRegistration();
 
   try {
     const models = await loadModelsFromProviders();

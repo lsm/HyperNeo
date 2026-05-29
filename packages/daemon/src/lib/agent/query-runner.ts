@@ -254,8 +254,11 @@ export class QueryRunner {
 
     try {
       // Verify authentication for the selected provider
-      const { initializeProviders } = await import('../providers/factory.js');
+      const { initializeProviders, waitForOptionalProviderRegistration } = await import(
+        '../providers/factory.js'
+      );
       const providerRegistry = initializeProviders();
+      await waitForOptionalProviderRegistration();
       const modelId = session.config.model || 'sonnet';
       // As of PR #466, all new agent sessions store an explicit provider ID in
       // session.config.provider. The registry.get('anthropic') fallback below is a

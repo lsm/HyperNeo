@@ -1112,7 +1112,7 @@ export class SessionLifecycle {
     // Apply provider-specific environment variables to process.env.
     // Use provider-facing title model so SDK tier/default routing points at the
     // provider's title override, not the session model.
-    const originalEnv = providerService.applyEnvVarsToProcessForProvider(
+    const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
       provider,
       titleModels.providerModelId
     );
@@ -1134,7 +1134,7 @@ ${messageText.slice(0, 2000)}`;
       // Pass the provider ID so that providers whose model IDs overlap with
       // Anthropic (e.g. anthropic-copilot using claude-opus-4.6) are looked up
       // by ID rather than auto-detected, which would return the wrong provider.
-      const providerEnvVars = providerService.getEnvVarsForModel(
+      const providerEnvVars = await providerService.getEnvVarsForModel(
         titleModels.providerModelId,
         provider
       );

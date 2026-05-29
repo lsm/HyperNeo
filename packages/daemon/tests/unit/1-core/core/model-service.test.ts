@@ -1075,7 +1075,16 @@ describe('Model Service', () => {
       clearModelsCache();
       expect(getAvailableModels('global')).toEqual([]);
 
-      // With no registered providers available, refreshModels should restore fallbacks
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      // With no providers returning models, refreshModels should restore fallbacks.
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
@@ -1087,6 +1096,15 @@ describe('Model Service', () => {
     });
 
     it('should preserve existing cache when refresh returns no models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
       // Seed cache with mock models
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', mockModels);
