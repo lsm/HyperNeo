@@ -431,7 +431,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   // Provider registry handlers (unified CRUD over providers table)
-  const providerCredentialManager = ProviderCredentialManager.create(deps.db.getDatabase());
+  const providerCredentialManager =
+    deps.credentialManager ?? ProviderCredentialManager.create(deps.db.getDatabase());
   setupProviderHandlers({
     messageHub: deps.messageHub,
     providerRepo: deps.db.providers,

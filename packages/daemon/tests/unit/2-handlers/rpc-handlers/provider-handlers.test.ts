@@ -92,7 +92,16 @@ function createMockCredentialManager(): ProviderCredentialManager {
     }),
     getCredentials: mock(async (providerId: string) => {
       const raw = store.get(providerId);
-      return raw ? { apiKey: raw } : null;
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.accessToken !== undefined) {
+          return { type: 'oauth' as const, accessToken: parsed.accessToken };
+        }
+      } catch {
+        // not JSON, treat as api key
+      }
+      return { type: 'api_key' as const, apiKey: raw };
     }),
     removeCredentials: mock(async (providerId: string) => {
       store.delete(providerId);
@@ -258,6 +267,193 @@ describe('Provider RPC handlers', () => {
     });
   });
 
+  describe('providers.create', () => {
+    it('creates a provider and stores apiKey credentials', async () => {
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'openrouter',
+            displayName: 'OpenRouter',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'sk-or-test' },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(result.provider.providerId).toBe('openrouter');
+      expect(creds.storeApiKey).toHaveBeenCalledWith('openrouter', 'sk-or-test');
+    });
+
+    it('creates a provider and stores OAuth credentials', async () => {
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'anthropic-codex',
+            displayName: 'OpenAI (Codex)',
+            kind: 'built_in',
+            authType: 'oauth',
+          },
+          credentials: {
+            oauthAccessToken: 'tok-test',
+            oauthRefreshToken: 'ref-test',
+            oauthExpiresAt: 12345678,
+          },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(creds.storeOAuthTokens).toHaveBeenCalledWith('anthropic-codex', {
+        accessToken: 'tok-test',
+        refreshToken: 'ref-test',
+        expiresAt: 12345678,
+      });
+    });
+
+    it('rejects invalid kind', async () => {
+      const handlers = setup();
+      await expect(
+        handlers.get('providers.create')!(
+          {
+            params: {
+              providerId: 'x',
+              displayName: 'X',
+              kind: 'invalid',
+              authType: 'api_key',
+            },
+          },
+          {}
+        )
+      ).rejects.toThrow('kind must be one of');
+    });
+  });
+
+  describe('providers.get', () => {
+    it('returns a provider by id with availability', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      const result = (await handlers.get('providers.get')!({ id: created.id }, {})) as {
+        provider: ProviderRecord & { available: boolean };
+      };
+
+      expect(result.provider.providerId).toBe('anthropic');
+      expect(result.provider.available).toBe(false);
+    });
+
+    it('throws when provider not found', async () => {
+      const handlers = setup();
+      await expect(handlers.get('providers.get')!({ id: 'missing' }, {})).rejects.toThrow(
+        'not found'
+      );
+    });
+  });
+
+  describe('providers.update', () => {
+    it('updates display name', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      const result = (await handlers.get('providers.update')!(
+        { id: created.id, params: { displayName: 'Anthropic Inc' } },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(result.provider.displayName).toBe('Anthropic Inc');
+    });
+
+    it('updates OAuth credentials', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic-codex',
+        displayName: 'OpenAI (Codex)',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const handlers = setup();
+      const result = (await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {},
+          credentials: {
+            oauthAccessToken: 'new-tok',
+            oauthRefreshToken: 'new-ref',
+            oauthExpiresAt: 87654321,
+          },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(result.provider.authType).toBe('oauth');
+      expect(creds.storeOAuthTokens).toHaveBeenCalledWith('anthropic-codex', {
+        accessToken: 'new-tok',
+        refreshToken: 'new-ref',
+        expiresAt: 87654321,
+      });
+    });
+  });
+
+  describe('providers.delete', () => {
+    it('deletes a provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      const result = (await handlers.get('providers.delete')!({ id: created.id }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(repo.getProvider(created.id)).toBeNull();
+    });
+
+    it('throws when provider not found', async () => {
+      const handlers = setup();
+      await expect(handlers.get('providers.delete')!({ id: 'missing' }, {})).rejects.toThrow(
+        'not found'
+      );
+    });
+  });
+
+  describe('providers.setDefault', () => {
+    it('sets default provider', async () => {
+      const a = repo.createProvider({
+        providerId: 'a',
+        displayName: 'A',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const b = repo.createProvider({
+        providerId: 'b',
+        displayName: 'B',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.setDefault')!({ id: b.id }, {});
+      expect(repo.getProvider(a.id)?.isDefault).toBe(false);
+      expect(repo.getProvider(b.id)?.isDefault).toBe(true);
+    });
+  });
+
   describe('providers.test', () => {
     it('returns healthy for available provider', async () => {
       repo.createProvider({
@@ -310,6 +506,125 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(false);
+    });
+  });
+
+  describe('providers.healthCheck', () => {
+    it('returns healthy results for available providers', async () => {
+      repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      repo.createProvider({
+        providerId: 'openrouter',
+        displayName: 'OpenRouter',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        displayName: 'Anthropic',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          thinkingModes: 'granular',
+          maxContextWindow: 200000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        getModelForTier: () => 'sonnet',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.healthCheck')!({}, {})) as {
+        results: Array<{ providerId: string; healthy: boolean; error?: string }>;
+      };
+
+      expect(result.results.length).toBe(2);
+      const anthropic = result.results.find((r) => r.providerId === 'anthropic');
+      const openrouter = result.results.find((r) => r.providerId === 'openrouter');
+      expect(anthropic?.healthy).toBe(true);
+      expect(openrouter?.healthy).toBe(false);
+      expect(openrouter?.error).toBe('Not registered');
+    });
+
+    it('returns unhealthy when provider is not available', async () => {
+      repo.createProvider({
+        providerId: 'unavailable',
+        displayName: 'Unavailable',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'unavailable',
+        displayName: 'Unavailable',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => false,
+        getModels: async () => [],
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.healthCheck')!({}, {})) as {
+        results: Array<{ providerId: string; healthy: boolean; error?: string }>;
+      };
+
+      expect(result.results[0].healthy).toBe(false);
+      expect(result.results[0].error).toBe('Not available');
+    });
+
+    it('returns unhealthy when getModels throws', async () => {
+      repo.createProvider({
+        providerId: 'broken',
+        displayName: 'Broken',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'broken',
+        displayName: 'Broken',
+        capabilities: {
+          streaming: true,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => {
+          throw new Error('model fetch failed');
+        },
+        ownsModel: () => true,
+        getModelForTier: () => 'default',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as Provider);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.healthCheck')!({}, {})) as {
+        results: Array<{ providerId: string; healthy: boolean; error?: string }>;
+      };
+
+      expect(result.results[0].healthy).toBe(false);
+      expect(result.results[0].error).toBe('model fetch failed');
     });
   });
 });

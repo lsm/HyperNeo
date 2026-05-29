@@ -258,14 +258,6 @@ export interface Provider {
    * thinking for this model.
    */
   getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
-
-  /**
-   * Optional: Inject credentials discovered from the providers table or
-   * keychain store. When set, `isAvailable()` should prefer these credentials
-   * over environment variables so the unified provider registry is the source
-   * of truth.
-   */
-  setCredentials?(credentials: ProviderCredentials): void;
 }
 
 /**

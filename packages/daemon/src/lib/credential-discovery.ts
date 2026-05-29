@@ -5,6 +5,7 @@ import { execSync } from 'node:child_process';
 import type { Database } from '../storage/database';
 import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
 import type { GlobalSettings } from '@neokai/shared';
+import { customProviderIdFor } from './providers/custom-endpoint-provider.js';
 
 export interface DiscoveryResult {
   credentialSource: 'env' | 'credentials-file' | 'keychain' | 'settings-json' | 'none';
@@ -289,7 +290,7 @@ export async function migrateProvidersIfNeeded(
   if (globalSettings.customEndpoints) {
     for (const endpoint of globalSettings.customEndpoints) {
       db.providers.createProvider({
-        providerId: `custom:${endpoint.id}`,
+        providerId: customProviderIdFor(endpoint.id),
         displayName: endpoint.name,
         kind: 'custom_endpoint',
         authType: 'none',

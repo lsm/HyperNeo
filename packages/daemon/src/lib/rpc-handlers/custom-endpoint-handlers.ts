@@ -9,6 +9,7 @@
 
 import type { MessageHub } from '@neokai/shared';
 import type { CustomEndpointConfig, CustomEndpointType } from '@neokai/shared';
+import { customProviderIdFor } from '../providers/custom-endpoint-provider.js';
 import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
@@ -95,10 +96,6 @@ export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefi
   }
 }
 
-function customProviderIdForEndpoint(endpointId: string): string {
-  return `custom:${endpointId}`;
-}
-
 function endpointToProviderRecord(endpoint: CustomEndpointConfig): {
   providerId: string;
   displayName: string;
@@ -108,7 +105,7 @@ function endpointToProviderRecord(endpoint: CustomEndpointConfig): {
   customEndpointConfigJson: string;
 } {
   return {
-    providerId: customProviderIdForEndpoint(endpoint.id),
+    providerId: customProviderIdFor(endpoint.id),
     displayName: endpoint.name,
     kind: 'custom_endpoint' as const,
     authType: 'none' as const,
@@ -122,7 +119,7 @@ function syncEndpointToProviderTable(
   endpoint: CustomEndpointConfig
 ): void {
   if (!db) return;
-  const existing = db.providers.getProviderByProviderId(customProviderIdForEndpoint(endpoint.id));
+  const existing = db.providers.getProviderByProviderId(customProviderIdFor(endpoint.id));
   if (existing) {
     db.providers.updateProvider(existing.id, {
       displayName: endpoint.name,
@@ -143,7 +140,7 @@ function syncEndpointToProviderTable(
 
 function removeEndpointFromProviderTable(db: Database | undefined, endpointId: string): void {
   if (!db) return;
-  const existing = db.providers.getProviderByProviderId(customProviderIdForEndpoint(endpointId));
+  const existing = db.providers.getProviderByProviderId(customProviderIdFor(endpointId));
   if (existing) {
     db.providers.deleteProvider(existing.id);
   }
@@ -172,7 +169,7 @@ async function persistAndSync(
   // Compat: sync the full list to the providers table so the unified registry
   // stays in sync with the legacy customEndpoints JSON blob.
   if (db) {
-    const allProviderIds = new Set(endpoints.map((e) => customProviderIdForEndpoint(e.id)));
+    const allProviderIds = new Set(endpoints.map((e) => customProviderIdFor(e.id)));
     for (const endpoint of endpoints) {
       syncEndpointToProviderTable(db, endpoint);
     }

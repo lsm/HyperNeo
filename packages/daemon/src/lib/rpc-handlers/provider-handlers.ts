@@ -168,9 +168,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.authType = 'api_key';
           } else if (data.credentials.oauthAccessToken) {
             await credentialManager.storeOAuthTokens(existing.providerId, {
-              oauthAccessToken: data.credentials.oauthAccessToken,
-              oauthRefreshToken: data.credentials.oauthRefreshToken,
-              oauthExpiresAt: data.credentials.oauthExpiresAt,
+              accessToken: data.credentials.oauthAccessToken,
+              refreshToken: data.credentials.oauthRefreshToken,
+              expiresAt: data.credentials.oauthExpiresAt,
             });
             updates.authType = 'oauth';
           }

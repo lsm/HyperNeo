@@ -180,7 +180,9 @@ export class ProviderRepository {
       );
 
     this.reactiveDb.notifyChange('providers');
-    return this.getProvider(id)!;
+    const result = this.getProvider(id);
+    if (!result) throw new Error(`Failed to read provider ${id} after write`);
+    return result;
   }
 
   /**
@@ -247,7 +249,9 @@ export class ProviderRepository {
     }
 
     this.reactiveDb.notifyChange('providers');
-    return this.getProvider(id)!;
+    const result = this.getProvider(id);
+    if (!result) throw new Error(`Failed to read provider ${id} after write`);
+    return result;
   }
 
   /**
