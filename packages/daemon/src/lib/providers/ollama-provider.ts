@@ -120,9 +120,10 @@ export class OllamaProvider implements Provider {
   }
 
   getApiKey(): string | undefined {
-    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
     const apiKey = this.kind === 'cloud' ? this.env.OLLAMA_CLOUD_API_KEY : this.env.OLLAMA_API_KEY;
-    return apiKey?.trim() || undefined;
+    return (
+      apiKey?.trim() || (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
+    );
   }
 
   getBaseUrl(): string {

@@ -113,8 +113,10 @@ export class MinimaxProvider implements Provider {
    * Get API key from environment
    */
   getApiKey(): string | undefined {
-    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
-    return this.env.MINIMAX_API_KEY;
+    return (
+      this.env.MINIMAX_API_KEY ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
+    );
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

@@ -168,9 +168,8 @@ export class OpenRouterProvider implements Provider {
   }
 
   getApiKey(): string | undefined {
-    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
     const apiKey = this.env.OPENROUTER_API_KEY?.trim();
-    return apiKey || undefined;
+    return apiKey || (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined);
   }
 
   private getAllowedModelIds(): Set<string> | null {

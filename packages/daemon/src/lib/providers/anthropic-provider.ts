@@ -161,12 +161,12 @@ export class AnthropicProvider implements Provider {
    * Get API key from environment
    */
   getApiKey(): string | undefined {
-    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
-    if (this.credentials?.type === 'oauth') return this.credentials.accessToken;
     return (
       this.env.ANTHROPIC_API_KEY ||
       this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN
+      this.env.ANTHROPIC_AUTH_TOKEN ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined) ||
+      (this.credentials?.type === 'oauth' ? this.credentials.accessToken : undefined)
     );
   }
 
@@ -411,9 +411,14 @@ export class AnthropicProvider implements Provider {
    */
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
-    if (this.credentials?.type === 'api_key') {
+    if (!this.env.ANTHROPIC_API_KEY && this.credentials?.type === 'api_key') {
       envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
-    } else if (this.credentials?.type === 'oauth' && this.credentials.accessToken) {
+    } else if (
+      !this.env.CLAUDE_CODE_OAUTH_TOKEN &&
+      !this.env.ANTHROPIC_AUTH_TOKEN &&
+      this.credentials?.type === 'oauth' &&
+      this.credentials.accessToken
+    ) {
       envVars.CLAUDE_CODE_OAUTH_TOKEN = this.credentials.accessToken;
     }
 

@@ -155,7 +155,7 @@ export function setupAuthHandlers(
         };
       }
 
-      if (!provider.logout) {
+      if (!provider.logout && !credentialManager) {
         return {
           success: false,
           error: `Provider ${providerId} does not support logout`,
@@ -163,8 +163,13 @@ export function setupAuthHandlers(
       }
 
       try {
-        await provider.logout();
+        if (provider.logout) {
+          await provider.logout();
+        }
         await credentialManager?.removeCredentials(providerId);
+        if (!provider.logout && provider.setCredentials) {
+          provider.setCredentials({ type: 'api_key', apiKey: '' });
+        }
         return { success: true };
       } catch (error) {
         log.error(`Logout failed for ${providerId}:`, error);
@@ -205,6 +210,10 @@ export function setupAuthHandlers(
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',
           };
+        }
+        const credentials = await provider.getCredentials?.();
+        if (credentials?.type === 'oauth') {
+          await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
         return { success: true };
       } catch (error) {

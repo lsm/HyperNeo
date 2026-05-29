@@ -128,8 +128,11 @@ export class GlmProvider implements Provider {
    * Supports both GLM_API_KEY and ZHIPU_API_KEY
    */
   getApiKey(): string | undefined {
-    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
-    return this.env.GLM_API_KEY || this.env.ZHIPU_API_KEY;
+    return (
+      this.env.GLM_API_KEY ||
+      this.env.ZHIPU_API_KEY ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
+    );
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

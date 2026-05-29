@@ -331,6 +331,29 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
+    it('removes provider credential store row when provider has no logout method', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
     it('handles logout errors', async () => {
       const mockProvider = createMockProvider({
         logout: mock(async () => {
@@ -399,6 +422,38 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(mockProvider.refreshToken).toHaveBeenCalled();
+    });
+
+    it('persists refreshed OAuth credentials to credential store', async () => {
+      const credentialManager = {
+        storeOAuthTokens: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const credentials = {
+        type: 'oauth' as const,
+        accessToken: 'new-token',
+        refreshToken: 'refresh-token',
+        expiresAt: Date.now() + 60_000,
+      };
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => true),
+        getCredentials: mock(() => credentials),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', credentials);
     });
 
     it('returns error when token refresh fails', async () => {

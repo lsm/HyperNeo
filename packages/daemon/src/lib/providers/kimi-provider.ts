@@ -84,8 +84,11 @@ export class KimiProvider implements Provider {
   }
 
   getApiKey(): string | undefined {
-    if (this.credentials?.type === 'api_key') return this.credentials.apiKey;
-    return this.env.KIMI_API_KEY?.trim() || this.env.MOONSHOT_API_KEY?.trim() || undefined;
+    return (
+      this.env.KIMI_API_KEY?.trim() ||
+      this.env.MOONSHOT_API_KEY?.trim() ||
+      (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
+    );
   }
 
   async getModels(): Promise<ModelInfo[]> {
