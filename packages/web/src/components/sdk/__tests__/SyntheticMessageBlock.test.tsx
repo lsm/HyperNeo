@@ -157,7 +157,9 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content={content} timestamp={Date.now()} />
       );
 
-      expect(container.textContent).toContain('This is a synthetic message');
+      const renderer = container.querySelector('[data-testid="markdown-renderer"]');
+      expect(renderer).toBeTruthy();
+      expect(renderer?.textContent).toContain('This is a synthetic message');
     });
 
     it('should pass text to MarkdownRenderer', () => {
@@ -179,7 +181,9 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content={content} timestamp={Date.now()} />
       );
 
-      expect(container.textContent).toContain('Text block content');
+      const renderer = container.querySelector('[data-testid="markdown-renderer"]');
+      expect(renderer).toBeTruthy();
+      expect(renderer?.textContent).toContain('Text block content');
     });
 
     it('should render image blocks', () => {
