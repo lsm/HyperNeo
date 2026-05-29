@@ -52,29 +52,34 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   'OWNER="${BASH_REMATCH[1]}"',
   'REPO="${BASH_REMATCH[2]}"',
   'NUMBER="${BASH_REMATCH[3]}"',
-  'if ! REACTIONS_JSON=$(gh api --paginate "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions?per_page=100" -H "Accept: application/vnd.github+json" | jq -s \'add // []\'); then',
+  'REACTIONS_RAW=$(gh api --paginate "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions?per_page=100" -H "Accept: application/vnd.github+json")',
+  'if [ $? -ne 0 ]; then',
   '  echo "Failed to fetch PR reactions for ${PR_URL}" >&2',
   '  exit 1',
   'fi',
-  'START_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
+  'REACTIONS_JSON=$(jq -s \'add // []\' <<< "$REACTIONS_RAW")',
+  // Timeout is based only on gate-data update time (no fallback), so the
+  // timeout does not start until the reviewer writes approval data.
+  'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
+  // Freshness uses gate-data update time with workflow-start fallback.
+  'FRESHNESS_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
   // Use the PR head commit timestamp as the freshness anchor so multi-writer
   // gates (e.g. plan-approval-gate) do not treat a codex +1 as stale when the
-  // last vote updates the gate data row. Falls back to START_ISO when the
+  // last vote updates the gate data row. Falls back to FRESHNESS_ISO when the
   // PR API is unavailable (e.g. deleted fork).
   'HEAD_SHA=$(gh api "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
   'if [ -n "$HEAD_SHA" ]; then',
   '  HEAD_COMMIT_DATE=$(gh api "repos/${OWNER}/${REPO}/commits/${HEAD_SHA}" -q \'.commit.committer.date\' 2>/dev/null || true)',
   'fi',
-  'FRESHNESS_ISO="${HEAD_COMMIT_DATE:-${START_ISO}}"',
+  'FRESHNESS_ISO="${HEAD_COMMIT_DATE:-${FRESHNESS_ISO}}"',
   'if [ -n "$FRESHNESS_ISO" ]; then',
   '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
   'else',
   '  FRESH_REACTIONS="$REACTIONS_JSON"',
   'fi',
-  // Timeout is based on START_ISO (gate data update time or workflow start),
-  // independent of the freshness anchor.
-  'if [ -n "$START_ISO" ]; then',
-  `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$START_ISO" 2>/dev/null || true)`,
+  // Timeout check uses TIMEOUT_ISO only (no workflow-start fallback).
+  'if [ -n "$TIMEOUT_ISO" ]; then',
+  `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$TIMEOUT_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
   `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REVIEW_BOT_TIMEOUT_SECONDS} ]; then`,
   '    jq -n --arg url "$PR_URL" --arg status "timeout" \'{"pr_url":$url,"codex_bot_reaction":$status,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',

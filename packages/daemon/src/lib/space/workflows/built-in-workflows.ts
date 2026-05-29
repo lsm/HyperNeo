@@ -1617,10 +1617,18 @@ function mergeGateStructuralFieldsFromTemplate(
         return { ...field, writers: templateField.writers };
       });
 
+      // Skip copying template features if the existing gate already has a custom
+      // script or poll, so feature-backed mechanisms do not silently override
+      // custom gate logic at runtime.
+      const shouldCopyFeatures = !gate.script && !gate.poll;
       return {
         ...gate,
         fields,
-        features: templateGate.features ? { ...templateGate.features } : gate.features,
+        features: shouldCopyFeatures
+          ? templateGate.features
+            ? { ...templateGate.features }
+            : gate.features
+          : gate.features,
       };
     })
     .concat(missingTemplateGates);

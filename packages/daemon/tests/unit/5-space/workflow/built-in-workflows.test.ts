@@ -2083,6 +2083,66 @@ describe('seedBuiltInWorkflows()', () => {
     expect(gate.features?.codex_review_bot).toBe(true);
   });
 
+  test('re-stamp does not copy features onto gates with custom script', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const gateWithCustomScript = workflow.gates!.map((gate) =>
+      gate.id !== 'review-approval-gate'
+        ? gate
+        : {
+            ...gate,
+            script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
+            features: undefined,
+          }
+    );
+
+    manager.updateWorkflow(workflow.id, { gates: gateWithCustomScript });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-custom-script-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
+    expect(gate.script?.source).toBe('echo custom');
+    expect(gate.features).toBeUndefined();
+  });
+
+  test('re-stamp does not copy features onto gates with custom poll', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const gateWithCustomPoll = workflow.gates!.map((gate) =>
+      gate.id !== 'review-approval-gate'
+        ? gate
+        : {
+            ...gate,
+            poll: { intervalMs: 30_000, target: 'to', script: 'echo custom poll' },
+            features: undefined,
+          }
+    );
+
+    manager.updateWorkflow(workflow.id, { gates: gateWithCustomPoll });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-custom-poll-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
+    expect(gate.poll?.script).toBe('echo custom poll');
+    expect(gate.features).toBeUndefined();
+  });
+
   test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -3803,6 +3863,96 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1' });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('codex script fails closed when gh api reactions fetch fails', async () => {
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-pipefail-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          '  echo "API rate limit exceeded" >&2',
+          '  exit 1',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to fetch PR reactions');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('codex timeout does not trigger when only workflowStartIso is old', async () => {
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-suppressed-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[]'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+          // Only workflowStartIso is old; gateDataUpdatedIso is missing.
+          // Timeout should not trigger because it only uses gateDataUpdatedIso.
+          workflowStartIso: '2026-05-01T00:00:00Z',
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('@codex review');
+      expect(result.error).not.toContain('timeout');
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

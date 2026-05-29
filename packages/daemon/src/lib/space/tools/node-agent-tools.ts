@@ -136,18 +136,24 @@ async function evaluateTerminalGateFeatures(
   if (!workflow || !scriptExecutor || !scriptContext) return null;
 
   // Scope terminal checks to gates on channels connected to the current node.
-  // Includes both outgoing (from) and incoming (to) gated channels so terminal
-  // actions from an end node are still guarded by the incoming gate that led
-  // to it. This prevents unrelated feature-backed gates from blocking terminal
-  // actions when the current node is on a different path.
+  // Outgoing channels (from current node) are always included. Incoming channels
+  // (to current node) are only included when there is exactly one incoming
+  // channel total, so we do not falsely treat an unrelated incoming gate as the
+  // traversed path when multiple paths converge on a shared terminal node.
   let relevantGateIds: Set<string> | undefined;
   if (currentNodeId && workflow.channels) {
     const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
+      const incomingChannels = workflow.channels.filter((ch) => {
+        const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+        return toList.includes(currentNodeName) || toList.includes('*');
+      });
+      const includeIncoming = incomingChannels.length === 1;
       relevantGateIds = new Set(
         workflow.channels
           .filter((ch) => {
             if (ch.from === currentNodeName || ch.from === '*') return true;
+            if (!includeIncoming) return false;
             const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
             return toList.includes(currentNodeName) || toList.includes('*');
           })
