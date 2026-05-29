@@ -3473,7 +3473,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain("comment '@codex review'");
     expect(effectiveGate.script?.source).not.toContain('node -e');
     expect(effectiveGate.script?.source).toContain('.head.sha');
-    expect(effectiveGate.script?.source).toContain('commits/${HEAD_SHA}');
+    expect(effectiveGate.script?.source).toContain('head_sha');
     expect(effectiveGate.script?.source).toContain('^https://([^/]+)/');
     expect(effectiveGate.script?.source).not.toContain('github\\.com');
     expect(effectiveGate.poll?.intervalMs).toBe(60_000);
@@ -3556,6 +3556,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\n' 'sha-pass'`,
+          '  exit 0',
+          'fi',
           'printf "unexpected gh args: %s\n" "$*" >&2',
           'exit 2',
         ].join('\n')
@@ -3574,7 +3578,11 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       );
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1' });
+      expect(result.data).toEqual({
+        pr_url: prUrl,
+        codex_bot_reaction: '+1',
+        head_sha: 'sha-pass',
+      });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -3645,6 +3653,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           `  printf '%s\n' '[]'`,
           '  exit 0',
           'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\n' 'sha-timeout'`,
+          '  exit 0',
+          'fi',
           'printf "unexpected gh args: %s\n" "$*" >&2',
           'exit 2',
         ].join('\n')
@@ -3668,6 +3680,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       expect(result.data).toEqual({
         pr_url: prUrl,
         codex_bot_reaction: 'timeout',
+        head_sha: 'sha-timeout',
         codex_bot_warning: 'codex[bot] +1 reaction missing after timeout; allowing gate',
       });
     } finally {
@@ -3694,6 +3707,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'sha-timeout-plus-one'`,
+          '  exit 0',
+          'fi',
           'printf "unexpected gh args: %s\\n" "$*" >&2',
           'exit 2',
         ].join('\n')
@@ -3715,7 +3732,11 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       );
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1' });
+      expect(result.data).toEqual({
+        pr_url: prUrl,
+        codex_bot_reaction: '+1',
+        head_sha: 'sha-timeout-plus-one',
+      });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -3765,11 +3786,11 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate uses PR head commit date as freshness anchor', async () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate outputs head_sha on success', async () => {
     const gate = getEffectiveGate(
       FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
     );
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-pr-head-fresh-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-head-sha-output-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -3788,10 +3809,6 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           `  printf '%s\\n' 'abc123'`,
           '  exit 0',
           'fi',
-          'if [[ "$*" =~ repos/test/repo/commits/abc123 ]]; then',
-          `  printf '%s\\n' '2026-05-01T00:00:00Z'`,
-          '  exit 0',
-          'fi',
           'printf "unexpected gh args: %s\\n" "$*" >&2',
           'exit 2',
         ].join('\n')
@@ -3805,26 +3822,23 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           gateId: 'review-approval-gate',
           runId: 'run-1',
           gateData: { pr_url: prUrl, approved: true },
-          // Gate data updated ISO is current time — without the PR-head anchor
-          // this would filter out the +1. With PR-head anchor (2026-05-01),
-          // the +1 (2026-05-02) is fresh.
-          gateDataUpdatedIso: new Date().toISOString(),
+          gateDataUpdatedIso: '2026-05-01T00:00:00Z',
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1' });
+      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1', head_sha: 'abc123' });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 before PR head push time', async () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks when PR head changed', async () => {
     const gate = getEffectiveGate(
       FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
     );
-    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-pr-head-stale-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-head-changed-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
     const prUrl = 'https://github.com/test/repo/pull/42';
@@ -3843,10 +3857,6 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           `  printf '%s\\n' 'def456'`,
           '  exit 0',
           'fi',
-          'if [[ "$*" =~ repos/test/repo/commits/def456 ]]; then',
-          `  printf '%s\\n' '2026-05-02T00:00:00Z'`,
-          '  exit 0',
-          'fi',
           'printf "unexpected gh args: %s\\n" "$*" >&2',
           'exit 2',
         ].join('\n')
@@ -3859,15 +3869,15 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           workspacePath: workspace,
           gateId: 'review-approval-gate',
           runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          // Use fresh gate data updated time so timeout does not trigger.
+          // Stored head_sha differs from current PR head — gate should block.
+          gateData: { pr_url: prUrl, approved: true, head_sha: 'old-sha' },
           gateDataUpdatedIso: new Date().toISOString(),
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('@codex review');
+      expect(result.error).toContain('PR head changed');
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -3900,9 +3910,6 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           `  printf '%s\\n' 'ent123'`,
           '  exit 0',
           'fi',
-          'if [[ "$*" =~ repos/test/repo/commits/ent123 ]]; then',
-          `  printf '%s\\n' '2026-05-01T00:00:00Z'`,
-          '  exit 0',
           'fi',
           'printf "unexpected gh args: %s\\n" "$*" >&2',
           'exit 2',
@@ -3922,7 +3929,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       );
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1' });
+      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1', head_sha: 'ent123' });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

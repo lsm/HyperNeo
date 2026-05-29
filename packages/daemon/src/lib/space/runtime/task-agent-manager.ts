@@ -4019,7 +4019,8 @@ export class TaskAgentManager {
     try {
       const records = this.config.gateDataRepo?.listByRun(runId);
       if (records) {
-        for (const record of records) {
+        const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
+        for (const record of sorted) {
           const candidate = fromData(record.data);
           if (candidate) return candidate;
         }

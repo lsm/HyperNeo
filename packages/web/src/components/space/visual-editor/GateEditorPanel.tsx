@@ -521,10 +521,11 @@ export function GateEditorPanel({
             data-testid="gate-editor-script-enabled"
             role="switch"
             aria-checked={scriptEnabled}
+            disabled={codexReviewBotEnabled}
             onClick={() => toggleScriptEnabled(!scriptEnabled)}
             class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
               scriptEnabled ? 'bg-blue-500' : 'bg-dark-600'
-            }`}
+            } ${codexReviewBotEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <span
               class={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
@@ -672,6 +673,7 @@ function PollSection({ gate, onChange }: PollSectionProps) {
   const pollScript = gate.poll?.script ?? '';
   const pollTarget = gate.poll?.target ?? 'to';
   const pollTemplate = gate.poll?.messageTemplate ?? '';
+  const codexReviewBotEnabled = hasEnabledGateFeature(gate, 'codex_review_bot');
 
   const intervalError = useMemo(() => {
     if (!pollEnabled) return '';
@@ -720,10 +722,11 @@ function PollSection({ gate, onChange }: PollSectionProps) {
           data-testid="gate-editor-poll-enabled"
           role="switch"
           aria-checked={pollEnabled}
+          disabled={codexReviewBotEnabled}
           onClick={() => togglePollEnabled(!pollEnabled)}
           class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
             pollEnabled ? 'bg-blue-500' : 'bg-dark-600'
-          }`}
+          } ${codexReviewBotEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <span
             class={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${

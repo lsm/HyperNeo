@@ -66,15 +66,14 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
   // Freshness uses gate-data update time with workflow-start fallback.
   'FRESHNESS_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
-  // Use the PR head commit timestamp as the freshness anchor so multi-writer
-  // gates (e.g. plan-approval-gate) do not treat a codex +1 as stale when the
-  // last vote updates the gate data row. Falls back to FRESHNESS_ISO when the
-  // PR API is unavailable (e.g. deleted fork).
+  // Head-change guard: compare stored head SHA with current PR head. If they
+  // differ, the PR has changed since the last review and codex must re-review.
   'HEAD_SHA=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
-  'if [ -n "$HEAD_SHA" ]; then',
-  '  HEAD_COMMIT_DATE=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/commits/${HEAD_SHA}" -q \'.commit.committer.date\' 2>/dev/null || true)',
+  'STORED_HEAD_SHA=$(jq -r \'.head_sha // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'if [ -n "$STORED_HEAD_SHA" ] && [ -n "$HEAD_SHA" ] && [ "$STORED_HEAD_SHA" != "$HEAD_SHA" ]; then',
+  '  echo "PR head changed from ${STORED_HEAD_SHA} to ${HEAD_SHA}; codex[bot] must re-review ${PR_URL}" >&2',
+  '  exit 1',
   'fi',
-  'FRESHNESS_ISO="${HEAD_COMMIT_DATE:-${FRESHNESS_ISO}}"',
   'if [ -n "$FRESHNESS_ISO" ]; then',
   '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
   'else',
@@ -83,7 +82,7 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   // Check fresh +1 before timeout so a late +1 is reported as a pass, not a timeout.
   'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
   'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
-  '  jq -n --arg url "$PR_URL" \'{"pr_url":$url,"codex_bot_reaction":"+1"}\'',
+  '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
   '  exit 0',
   'fi',
   // Timeout check uses TIMEOUT_ISO only (no workflow-start fallback).
@@ -91,7 +90,7 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$TIMEOUT_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
   `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REVIEW_BOT_TIMEOUT_SECONDS} ]; then`,
-  '    jq -n --arg url "$PR_URL" --arg status "timeout" \'{"pr_url":$url,"codex_bot_reaction":$status,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
+  '    jq -n --arg url "$PR_URL" --arg status "timeout" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":$status,"head_sha":$sha,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
   '    exit 0',
   '  fi',
   'fi',

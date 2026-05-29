@@ -307,7 +307,15 @@ export class SpaceWorkflowManager {
     }
 
     if (params.gates && params.gates.length > 0) {
-      this.validateGates(params.gates);
+      const existingGates = existing.gates ?? [];
+      const changedGates = params.gates.filter((g) => {
+        const existingGate = existingGates.find((eg) => eg.id === g.id);
+        if (!existingGate) return true;
+        return JSON.stringify(existingGate) !== JSON.stringify(g);
+      });
+      if (changedGates.length > 0) {
+        this.validateGates(changedGates);
+      }
     }
 
     // Validate node-level postApproval plus the legacy workflow-level route
