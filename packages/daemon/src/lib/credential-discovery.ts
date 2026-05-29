@@ -2,6 +2,10 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execSync } from 'node:child_process';
+import type { Database } from '../storage/database';
+import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
+import type { GlobalSettings } from '@neokai/shared';
+import { customProviderIdFor } from './providers/custom-endpoint-provider.js';
 
 export interface DiscoveryResult {
   credentialSource: 'env' | 'credentials-file' | 'keychain' | 'settings-json' | 'none';
@@ -126,4 +130,184 @@ export function discoverCredentials(
     settingsEnvApplied,
     errors,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Provider migration — one-time import from env vars / auth files / settings
+// ---------------------------------------------------------------------------
+
+interface BuiltInProviderEnvMapping {
+  providerId: string;
+  displayName: string;
+  envVar: string;
+  altEnvVar?: string;
+  authType: 'api_key' | 'oauth' | 'none';
+}
+
+const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
+  {
+    providerId: 'anthropic',
+    displayName: 'Anthropic',
+    envVar: 'ANTHROPIC_API_KEY',
+    authType: 'api_key',
+  },
+  {
+    providerId: 'glm',
+    displayName: 'GLM',
+    envVar: 'GLM_API_KEY',
+    altEnvVar: 'ZHIPU_API_KEY',
+    authType: 'api_key',
+  },
+  {
+    providerId: 'kimi',
+    displayName: 'Kimi',
+    envVar: 'KIMI_API_KEY',
+    altEnvVar: 'MOONSHOT_API_KEY',
+    authType: 'api_key',
+  },
+  { providerId: 'minimax', displayName: 'MiniMax', envVar: 'MINIMAX_API_KEY', authType: 'api_key' },
+  {
+    providerId: 'openrouter',
+    displayName: 'OpenRouter',
+    envVar: 'OPENROUTER_API_KEY',
+    authType: 'api_key',
+  },
+  { providerId: 'ollama', displayName: 'Ollama', envVar: 'OLLAMA_API_KEY', authType: 'api_key' },
+  {
+    providerId: 'ollama-cloud',
+    displayName: 'Ollama Cloud',
+    envVar: 'OLLAMA_CLOUD_API_KEY',
+    authType: 'api_key',
+  },
+  {
+    providerId: 'anthropic-codex',
+    displayName: 'OpenAI (Codex)',
+    envVar: 'OPENAI_API_KEY',
+    authType: 'api_key',
+  },
+];
+
+function readNeokaiAuthJson(): Record<string, unknown> {
+  try {
+    const path = join(homedir(), '.neokai', 'auth.json');
+    if (!existsSync(path)) return {};
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * One-time migration of provider configuration into the providers table.
+ * Idempotent: skips if the table already has rows.
+ */
+export async function migrateProvidersIfNeeded(
+  db: Database,
+  credentialManager: ProviderCredentialManager
+): Promise<void> {
+  if (db.providers.countProviders() > 0) {
+    return; // Already migrated.
+  }
+
+  let sortOrder = 0;
+
+  // 1. Env var providers.
+  for (const mapping of BUILT_IN_PROVIDER_ENV_MAP) {
+    const apiKey =
+      process.env[mapping.envVar] ||
+      (mapping.altEnvVar ? process.env[mapping.altEnvVar] : undefined);
+    if (!apiKey) continue;
+
+    db.providers.createProvider({
+      providerId: mapping.providerId,
+      displayName: mapping.displayName,
+      kind: 'built_in',
+      authType: mapping.authType,
+      isEnabled: true,
+      isDefault: mapping.providerId === 'anthropic',
+      sortOrder: sortOrder++,
+    });
+
+    try {
+      await credentialManager.storeApiKey(mapping.providerId, apiKey);
+    } catch {
+      // Non-fatal: the provider record exists; credentials can be re-entered.
+    }
+  }
+
+  // 2. OAuth tokens from ~/.neokai/auth.json
+  const neokaiAuth = readNeokaiAuthJson();
+  if (neokaiAuth['openai']) {
+    const openaiCreds = neokaiAuth['openai'] as {
+      access?: string;
+      refresh?: string;
+      expires?: number;
+    };
+    if (openaiCreds.access) {
+      const existing = db.providers.getProviderByProviderId('anthropic-codex');
+      if (!existing) {
+        db.providers.createProvider({
+          providerId: 'anthropic-codex',
+          displayName: 'OpenAI (Codex)',
+          kind: 'built_in',
+          authType: 'oauth',
+          isEnabled: true,
+          isDefault: false,
+          sortOrder: sortOrder++,
+        });
+      }
+      try {
+        await credentialManager.storeOAuthTokens('anthropic-codex', {
+          accessToken: openaiCreds.access,
+          refreshToken: openaiCreds.refresh,
+          expiresAt: openaiCreds.expires,
+        });
+      } catch {
+        // Non-fatal: the provider record exists; credentials can be re-entered.
+      }
+    }
+  }
+
+  if (neokaiAuth['copilot']) {
+    const copilotCreds = neokaiAuth['copilot'] as { refresh?: string };
+    if (copilotCreds.refresh) {
+      const existing = db.providers.getProviderByProviderId('anthropic-copilot');
+      if (!existing) {
+        db.providers.createProvider({
+          providerId: 'anthropic-copilot',
+          displayName: 'GitHub Copilot',
+          kind: 'built_in',
+          authType: 'oauth',
+          isEnabled: true,
+          isDefault: false,
+          sortOrder: sortOrder++,
+        });
+      }
+      try {
+        await credentialManager.storeOAuthTokens('anthropic-copilot', {
+          accessToken: copilotCreds.refresh,
+        });
+      } catch {
+        // Non-fatal: the provider record exists; credentials can be re-entered.
+      }
+    }
+  }
+
+  // 3. Custom endpoints from global_settings.
+  const globalSettings: GlobalSettings = db.getGlobalSettings();
+  if (globalSettings.customEndpoints) {
+    for (const endpoint of globalSettings.customEndpoints) {
+      db.providers.createProvider({
+        providerId: customProviderIdFor(endpoint.id),
+        displayName: endpoint.name,
+        kind: 'custom_endpoint',
+        authType: 'none',
+        isEnabled: true,
+        isDefault: false,
+        sortOrder: sortOrder++,
+        baseUrl: endpoint.baseUrl,
+        customEndpointConfigJson: JSON.stringify(endpoint),
+      });
+    }
+  }
 }

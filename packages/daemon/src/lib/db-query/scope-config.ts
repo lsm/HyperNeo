@@ -472,6 +472,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'auth_config',
   'global_tools_config',
   'global_settings',
+  // Provider registry and credential store — admin tables, not queryable by agents
+  'providers',
   'provider_credentials',
   // session_groups, session_group_members, and sdk_messages are now in SPACE_SCOPE_TABLES.
   // task_group_events remains excluded — internal event log, not useful for ad-hoc queries.

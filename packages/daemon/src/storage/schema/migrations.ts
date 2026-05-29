@@ -683,6 +683,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 149: Add encrypted provider credentials fallback table.
   runMigration149(db);
+
+  // Migration 150: Create providers table for unified provider registry.
+  runMigration150(db);
 }
 
 /**
@@ -10382,4 +10385,31 @@ export function runMigration149(db: BunDatabase): void {
       updated_at INTEGER NOT NULL
     )
   `);
+}
+
+/**
+ * Migration 150 — Create providers table for unified provider registry.
+ */
+function runMigration150(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS providers (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT UNIQUE NOT NULL,
+      display_name TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('built_in', 'custom_endpoint')),
+      auth_type TEXT NOT NULL CHECK(auth_type IN ('api_key', 'oauth', 'none')),
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      base_url TEXT,
+      config_json TEXT,
+      custom_endpoint_config_json TEXT,
+      health_status TEXT NOT NULL DEFAULT 'unknown' CHECK(health_status IN ('unknown', 'healthy', 'unhealthy')),
+      last_health_check_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
 }
