@@ -29,6 +29,7 @@ import {
   validatePostApproval,
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator';
+import { validateGate } from '../runtime/gate-evaluator';
 import { slugify, validateSlug } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
@@ -100,6 +101,10 @@ export class SpaceWorkflowManager {
 
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
+    }
+
+    if (params.gates && params.gates.length > 0) {
+      this.validateGates(params.gates);
     }
 
     // Hard-reject invalid post-approval routes at create time. Stale routes
@@ -299,6 +304,18 @@ export class SpaceWorkflowManager {
 
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
+    }
+
+    if (params.gates && params.gates.length > 0) {
+      const existingGates = existing.gates ?? [];
+      const changedGates = params.gates.filter((g) => {
+        const existingGate = existingGates.find((eg) => eg.id === g.id);
+        if (!existingGate) return true;
+        return JSON.stringify(existingGate) !== JSON.stringify(g);
+      });
+      if (changedGates.length > 0) {
+        this.validateGates(changedGates);
+      }
     }
 
     // Validate node-level postApproval plus the legacy workflow-level route
@@ -582,6 +599,15 @@ export class SpaceWorkflowManager {
         if (!ch.to || !(ch.to as string).trim()) {
           throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
         }
+      }
+    }
+  }
+
+  private validateGates(gates: unknown[]): void {
+    for (let gi = 0; gi < gates.length; gi++) {
+      const errors = validateGate(gates[gi]);
+      if (errors.length > 0) {
+        throw new WorkflowValidationError(`gates[${gi}]: ${errors.join('; ')}`);
       }
     }
   }

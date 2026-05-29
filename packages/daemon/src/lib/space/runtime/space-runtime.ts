@@ -65,6 +65,7 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import { getEffectiveGate, getEffectiveGatePoll } from './gate-features';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -1774,6 +1775,19 @@ export class SpaceRuntime {
         // by re-reading the latest workflow definition from the DB.
         {
           getWorkflow: (workflowId) => this.config.spaceWorkflowManager.getWorkflow(workflowId),
+        },
+        // Gate data resolver: refreshes gate data updated timestamp on each
+        // poll tick so feature scripts (e.g. codex_review_bot) base their
+        // timeout on the gate data write time rather than workflow start.
+        {
+          getGateDataUpdatedIsoForRun: (runId, gateId) => {
+            try {
+              const record = this.config.gateDataRepo?.get(runId, gateId);
+              return record ? new Date(record.updatedAt).toISOString() : undefined;
+            } catch {
+              return undefined;
+            }
+          },
         }
       );
     }
@@ -2720,6 +2734,18 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
+    // Initialize gate data defaults so per-cycle anchors (e.g. cycle_start_at)
+    // are present from the start of the run.
+    if (this.config.gateDataRepo && workflow.gates) {
+      this.config.gateDataRepo.initializeForRun(
+        run.id,
+        workflow.gates.map((gate) => ({
+          id: gate.id,
+          data: computeGateDefaults(gate.fields ?? []),
+        }))
+      );
+    }
+
     // Register executor and meta. If a later step fails, we must clean these up.
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
     this.executorMeta.set(run.id, meta);
@@ -3077,7 +3103,7 @@ export class SpaceRuntime {
       this.pollManager.stopPolls(run.id);
       return;
     }
-    const pollGateCount = workflow.gates?.filter((gate) => gate.poll).length ?? 0;
+    const pollGateCount = workflow.gates?.filter((gate) => getEffectiveGatePoll(gate)).length ?? 0;
     if (pollGateCount === 0) {
       log.info(
         `SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow has no polled gates`
@@ -3861,13 +3887,14 @@ export class SpaceRuntime {
       };
     }
     let gate = storedGate;
-    if (workflow.templateName && storedGate.script) {
+    if (workflow.templateName) {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
-      if (liveScript) gate = { ...storedGate, script: liveScript };
+      if (liveScript && storedGate.script) gate = { ...storedGate, script: liveScript };
     }
+    gate = getEffectiveGate(gate);
     const gateDataRepo = new GateDataRepository(this.config.db);
-    const runtimeData =
-      gateDataRepo.get(runId, gate.id)?.data ?? computeGateDefaults(gate.fields ?? []);
+    const gateDataRecord = gateDataRepo.get(runId, gate.id);
+    const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);
     const run = this.config.workflowRunRepo.getRun(runId);
     const space = await this.config.spaceManager.getSpace(workflow.spaceId);
     const result = await evaluateGate(gate, runtimeData, executeGateScript, {
@@ -3876,6 +3903,10 @@ export class SpaceRuntime {
       runId,
       gateData: runtimeData,
       workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
+      gateDataUpdatedIso: gateDataRecord
+        ? new Date(gateDataRecord.updatedAt).toISOString()
+        : undefined,
+      prUrl: this.resolvePrUrlForRun(runId) || undefined,
     });
     return { open: result.open, reason: result.reason };
   }
@@ -5610,6 +5641,7 @@ export class SpaceRuntime {
       REPO_OWNER: prCtx.REPO_OWNER,
       REPO_NAME: prCtx.REPO_NAME,
       WORKFLOW_RUN_ID: run.id,
+      WORKFLOW_START_ISO: new Date(run.createdAt).toISOString(),
     };
   }
 

@@ -125,6 +125,8 @@ export function expandPrompt(
 export interface GateDataSnapshot {
   gateId: string;
   data: Record<string, unknown>;
+  /** Unix epoch ms when this gate data was last updated. */
+  updatedAt?: number;
 }
 
 export interface CustomAgentConfig {
@@ -405,7 +407,8 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
  */
 function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): string | undefined {
   if (!gateData || gateData.length === 0) return undefined;
-  for (const record of gateData) {
+  const sorted = [...gateData].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  for (const record of sorted) {
     const value = record.data?.pr_url;
     if (typeof value === 'string' && value.trim().length > 0) {
       return value.trim();

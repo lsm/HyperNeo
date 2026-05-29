@@ -56,8 +56,17 @@ export class GateDataRepository {
   /**
    * Upsert gate data for a `(run_id, gate_id)` pair.
    * Replaces the entire data object — callers must merge before calling.
+   *
+   * When the new data is structurally identical to the existing data, `updated_at`
+   * is preserved so timeout anchors (e.g. codex_review_bot) do not advance on
+   * retry writes.
    */
   set(runId: string, gateId: string, data: Record<string, unknown>): GateDataRecord {
+    const existing = this.get(runId, gateId);
+    if (existing && JSON.stringify(existing.data) === JSON.stringify(data)) {
+      return existing;
+    }
+
     const now = Date.now();
     this.db
       .prepare(
@@ -91,6 +100,35 @@ export class GateDataRepository {
       const existing = this.get(runId, gateId);
       const merged = existing ? { ...existing.data, ...partial } : { ...partial };
       return this.set(runId, gateId, merged);
+    })();
+  }
+
+  /**
+   * Merge partial data into an existing gate data record without advancing
+   * `updated_at`. Use this when persisting script-derived metadata (e.g.
+   * `head_sha`) that must not restamp the gate-data timestamp used by
+   * timeout/freshness anchors.
+   */
+  mergePreserveTimestamp(
+    runId: string,
+    gateId: string,
+    partial: Record<string, unknown>
+  ): GateDataRecord {
+    return this.db.transaction(() => {
+      const existing = this.get(runId, gateId);
+      const merged = existing ? { ...existing.data, ...partial } : { ...partial };
+      if (existing && JSON.stringify(existing.data) === JSON.stringify(merged)) {
+        return existing;
+      }
+      const updatedAt = existing?.updatedAt ?? Date.now();
+      this.db
+        .prepare(
+          `INSERT INTO gate_data (run_id, gate_id, data, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(run_id, gate_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
+        )
+        .run(runId, gateId, JSON.stringify(merged), updatedAt);
+      return { runId, gateId, data: merged, updatedAt };
     })();
   }
 
@@ -174,16 +212,19 @@ export class GateDataRepository {
     );
     const now = Date.now();
     for (const gate of gates) {
-      stmt.run(runId, gate.id, JSON.stringify(gate.data), now);
+      const data = { ...gate.data, cycle_start_at: now };
+      stmt.run(runId, gate.id, JSON.stringify(data), now);
     }
   }
 
   /**
    * Reset a gate's data to its defaults.
    * Used when a cyclic workflow loops back through a gate with `resetOnCycle: true`.
+   * Injects `cycle_start_at` so per-cycle freshness anchors (e.g. codex_review_bot)
+   * can distinguish reactions from the current cycle vs. prior cycles.
    */
   reset(runId: string, gateId: string, defaultData: Record<string, unknown>): GateDataRecord {
-    return this.set(runId, gateId, defaultData);
+    return this.set(runId, gateId, { ...defaultData, cycle_start_at: Date.now() });
   }
 
   /**

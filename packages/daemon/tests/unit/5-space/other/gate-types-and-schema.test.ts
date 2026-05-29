@@ -1463,7 +1463,9 @@ describe('validateGate is creation-time only — not applied on load', () => {
     // validateGate correctly rejects a gate with no fields and no script
     const errors = validateGate({ id: 'gate-bad', fields: [], resetOnCycle: false });
     expect(errors.length).toBeGreaterThan(0);
-    expect(errors).toContain('gate: must have at least one non-empty "fields" array or a "script"');
+    expect(errors).toContain(
+      'gate: must have at least one non-empty "fields" array, "features", or a "script"'
+    );
 
     // But the repository will happily load such a gate from storage
     const workflowRepo = new SpaceWorkflowRepository(db);

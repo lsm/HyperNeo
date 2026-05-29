@@ -794,7 +794,11 @@ export class TaskAgentManager {
         // message. Safe to call even on fresh runs — returns [] when empty.
         const gateDataSnapshot = this.config.gateDataRepo
           .listByRun(workflowRun.id)
-          .map((record) => ({ gateId: record.gateId, data: record.data }));
+          .map((record) => ({
+            gateId: record.gateId,
+            data: record.data,
+            updatedAt: record.updatedAt,
+          }));
         const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
         const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 
@@ -1663,6 +1667,7 @@ export class TaskAgentManager {
         internalEventBus: this.config.internalEventBus,
         onGatePendingApproval: (runId, gateId) =>
           this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+        getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
 
       await channelRouter.activateNode(run.id, targetNodeId, {
@@ -3533,6 +3538,7 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       onGatePendingApproval: (runId, gateId) =>
         this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
+      getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
     const agentMessageRouter = new AgentMessageRouter({
       nodeExecutionRepo: this.config.nodeExecutionRepo,
@@ -3843,6 +3849,7 @@ export class TaskAgentManager {
         runId: workflowRunId,
         gateId: '',
         workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
+        prUrl: this.resolvePrUrlForRun(workflowRunId) || undefined,
       },
       onApproveTask,
       onSubmitForApproval,
@@ -4005,5 +4012,45 @@ export class TaskAgentManager {
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
     );
     return { sessionId: actualSessionId };
+  }
+
+  private resolvePrUrlForRun(runId: string): string {
+    const fromData = (data: Record<string, unknown> | undefined): string =>
+      (typeof data?.prUrl === 'string' && data.prUrl) ||
+      (typeof data?.pr_url === 'string' && data.pr_url) ||
+      '';
+
+    try {
+      const records = this.config.gateDataRepo?.listByRun(runId);
+      if (records) {
+        const sorted = records.sort((a, b) => b.updatedAt - a.updatedAt);
+        for (const record of sorted) {
+          const candidate = fromData(record.data);
+          if (candidate) return candidate;
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager.resolvePrUrlForRun: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (this.config.artifactRepo) {
+      try {
+        const artifacts = this.config.artifactRepo.listByRun(runId, { artifactType: 'pr' });
+        if (artifacts) {
+          for (let i = artifacts.length - 1; i >= 0; i--) {
+            const candidate = fromData(artifacts[i]?.data);
+            if (candidate) return candidate;
+          }
+        }
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager.resolvePrUrlForRun: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    return '';
   }
 }

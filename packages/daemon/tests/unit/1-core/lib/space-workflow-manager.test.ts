@@ -858,4 +858,67 @@ describe('SpaceWorkflowManager', () => {
       expect(wf2.handle).toBe('shared');
     });
   });
+
+  describe('gate validation on create/update', () => {
+    it('createWorkflow rejects a gate with an unregistered feature', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Bad Gate',
+          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+          gates: [{ id: 'g1', features: { codex_review_bto: true }, resetOnCycle: false }],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('gates[0]');
+    });
+
+    it('createWorkflow rejects a gate with feature + custom script', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Conflicting Gate',
+          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+          gates: [
+            {
+              id: 'g1',
+              features: { codex_review_bot: true },
+              script: { interpreter: 'bash', source: 'echo hi' },
+              resetOnCycle: false,
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('cannot combine');
+    });
+
+    it('updateWorkflow rejects gates with invalid features', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Updatable',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+
+      expect(() =>
+        manager.updateWorkflow(wf.id, {
+          gates: [{ id: 'g1', features: { unknown_feature: true }, resetOnCycle: false }],
+        })
+      ).toThrow('gates[0]');
+    });
+
+    it('updateWorkflow accepts valid feature-only gates', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Updatable',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+
+      const updated = manager.updateWorkflow(wf.id, {
+        gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
+      });
+      expect(updated).not.toBeNull();
+      expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
+    });
+  });
 });
