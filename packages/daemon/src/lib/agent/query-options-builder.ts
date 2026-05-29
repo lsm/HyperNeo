@@ -777,29 +777,13 @@ export class QueryOptionsBuilder {
     return `
 IMPORTANT: Git Worktree Isolation
 
-This session is running in an isolated git worktree at:
+Work only inside this isolated worktree:
 ${wt.worktreePath}
 
 Branch: ${wt.branch}
-Main repository: ${wt.mainRepoPath}
+Main repository (read-only unless post-approval instructions say otherwise): ${wt.mainRepoPath}
 
-CRITICAL RULES:
-1. ALL file operations MUST stay within the worktree directory: ${wt.worktreePath}
-2. NEVER modify files in the main repository at: ${wt.mainRepoPath}
-3. Your current working directory (cwd) is already set to the worktree path
-4. Do NOT attempt to access or modify files outside the worktree path
-
-ALLOWED GIT OPERATIONS ON ROOT REPOSITORY:
-To merge changes from this session branch into the main branch of the root repository:
-
-git --git-dir=${wt.mainRepoPath}/.git --work-tree=${wt.mainRepoPath} merge ${wt.branch}
-
-To push the main branch to remote:
-
-git --git-dir=${wt.mainRepoPath}/.git --work-tree=${wt.mainRepoPath} push origin main
-
-These commands operate on the root repository without violating worktree isolation.
-This isolation ensures concurrent sessions don't conflict with each other.
+Your cwd is already the worktree path. Do not modify files in the main repository.
 `.trim();
   }
 
