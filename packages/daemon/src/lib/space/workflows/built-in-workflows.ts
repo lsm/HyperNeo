@@ -1258,7 +1258,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               'Expected outputs: Approval gate write or actionable feedback.\n\n' +
               'Steps:\n' +
               '1. Review diff quality, correctness, and test coverage\n' +
-              '2. If approved: wait for codex[bot] +1 or timeout, then write to review-approval-gate (field: approved = true)\n' +
+              '2. If approved: write review-approval-gate (field: approved = true) to start the 10-minute Codex timeout, then wait for codex[bot] +1 or timeout\n' +
               '3. If changes needed: send clear feedback to Coding',
           },
         },
