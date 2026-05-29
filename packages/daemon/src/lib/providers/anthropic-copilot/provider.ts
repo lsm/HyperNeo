@@ -268,6 +268,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   /** Resolved token cache with TTL */
   private tokenCache: TokenCacheEntry | null = null;
+  private storedCredentialToken: string | null = null;
   /**
    * Dynamically fetched models from the Copilot API (via client.listModels()).
    * Populated in getModels() and used by ownsModel()/getModelForTier() so that
@@ -317,12 +318,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         ? credentials.apiKey
         : (credentials.accessToken ?? credentials.refreshToken);
     if (!token) return;
-    this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
+    this.storedCredentialToken = token;
+    this.tokenCache = { token, expiresAt: Number.POSITIVE_INFINITY };
   }
 
   getCredentials(): ProviderCredentials | null {
-    if (!this.tokenCache?.token) return null;
-    return { type: 'oauth', accessToken: this.tokenCache.token };
+    const token = this.storedCredentialToken ?? this.tokenCache?.token;
+    if (!token) return null;
+    return { type: 'oauth', accessToken: token };
   }
 
   async isAvailable(): Promise<boolean> {
@@ -467,7 +470,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    */
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token = this.tokenCache?.token ?? (await this.loadStoredGitHubToken());
+      const token =
+        this.storedCredentialToken ??
+        this.tokenCache?.token ??
+        (await this.loadStoredGitHubToken());
       if (!token) {
         return {
           isAuthenticated: false,
@@ -546,6 +552,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    */
   async logout(): Promise<void> {
     // Invalidate token cache
+    this.storedCredentialToken = null;
     this.tokenCache = null;
 
     try {
@@ -624,6 +631,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    * check before being returned. The result is cached for TOKEN_CACHE_TTL_MS.
    */
   private async resolveGitHubToken(): Promise<string | undefined> {
+    if (this.storedCredentialToken) {
+      return this.storedCredentialToken;
+    }
+
     if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
       return this.tokenCache.token;
     }
@@ -870,6 +881,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
         await this.saveCredentials(credentials);
         // Invalidate token cache so next call picks up the new token
+        this.storedCredentialToken = null;
         this.tokenCache = null;
 
         logger.debug('GitHub Copilot OAuth login successful');

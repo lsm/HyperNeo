@@ -336,6 +336,20 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(status.isAuthenticated).toBe(true);
       expect(status.needsRefresh).toBe(false);
     });
+
+    it('keeps stored credential-store tokens beyond token cache expiry', async () => {
+      provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
+      (provider as unknown as Record<string, unknown>)['tokenCache'] = {
+        token: 'gho_access_token',
+        expiresAt: Date.now() - 1,
+      };
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+
+      expect(await provider.isAvailable()).toBe(true);
+    });
   });
 
   describe('buildSdkConfig', () => {

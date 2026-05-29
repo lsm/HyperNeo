@@ -114,6 +114,10 @@ export function setupAuthHandlers(
 
       try {
         const flowData = await provider.startOAuthFlow();
+        const credentials = await provider.getCredentials?.();
+        if (credentials?.type === 'oauth') {
+          await credentialManager?.storeOAuthTokens(providerId, credentials);
+        }
 
         return {
           success: true,
@@ -177,7 +181,10 @@ export function setupAuthHandlers(
         }
         return { success: true };
       } catch (error) {
-        if (!provider.logout && credentialManager) {
+        if (credentialManager) {
+          if (provider.logout) {
+            await provider.logout();
+          }
           await credentialManager.removeCredentials(providerId);
           return { success: true };
         }

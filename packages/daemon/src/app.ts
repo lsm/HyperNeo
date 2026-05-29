@@ -86,6 +86,12 @@ async function applyStoredProviderCredentials(
 ): Promise<void> {
   for (const provider of providers) {
     try {
+      const providerCredentials = await provider.getCredentials?.();
+      if (providerCredentials?.type === 'oauth') {
+        await credentialManager.storeOAuthTokens(provider.id, providerCredentials);
+        continue;
+      }
+
       const credentials = await credentialManager.getCredentials(provider.id);
       if (credentials && provider.setCredentials) {
         provider.setCredentials(credentials);
