@@ -436,6 +436,14 @@ export class AnthropicProvider implements Provider {
 
   private applyEnvVarsForSdk(envVars: Record<string, string>): () => void {
     const originals = new Map<string, string | undefined>();
+
+    // Clear stale routing vars from other providers (e.g. Copilot) so the SDK
+    // talks to the real Anthropic API, not an embedded proxy.
+    for (const key of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']) {
+      originals.set(key, process.env[key]);
+      delete process.env[key];
+    }
+
     for (const [key, value] of Object.entries(envVars)) {
       originals.set(key, process.env[key]);
       process.env[key] = value;

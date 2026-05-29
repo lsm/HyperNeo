@@ -492,10 +492,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
    */
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token =
-        this.storedCredentialToken ??
-        this.tokenCache?.token ??
-        (await this.loadStoredGitHubToken());
+      const token = this.storedCredentialToken ?? (await this.loadStoredGitHubToken());
       if (!token) {
         return {
           isAuthenticated: false,

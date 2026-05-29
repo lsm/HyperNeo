@@ -37,16 +37,26 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
-    await execFileAsync('security', [
-      'add-generic-password',
-      '-U',
-      '-s',
-      service,
-      '-a',
-      account,
-      '-w',
-      data,
-    ]);
+    // Use expect(1) with a pseudo-terminal to feed the password interactively,
+    // avoiding argv exposure that occurs with the -w flag. The password is
+    // passed via an environment variable; while env vars are still visible to
+    // same-UID processes, they are not exposed in argv to tools like ps.
+    const expectScript = `set password $env(NEOKAI_KEYCHAIN_SECRET)
+spawn security add-generic-password -U -s "${service.replace(/"/g, '\\"')}" -a "${account.replace(/"/g, '\\"')}""
+expect "password for new item:"
+send "$password\r"
+expect "retype password for new item:"
+send "$password\r"
+expect eof`;
+    const scriptPath = `/tmp/neokai-keychain-${Date.now()}.exp`;
+    try {
+      fs.writeFileSync(scriptPath, expectScript, { mode: 0o600 });
+      await execFileAsync('expect', [scriptPath], {
+        env: { ...process.env, NEOKAI_KEYCHAIN_SECRET: data },
+      });
+    } finally {
+      fs.unlinkSync(scriptPath);
+    }
   }
 
   async delete(service: string, account: string): Promise<void> {
