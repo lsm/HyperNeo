@@ -417,14 +417,13 @@ export class AnthropicProvider implements Provider {
    */
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
-    if (!this.env.ANTHROPIC_API_KEY && this.credentials?.type === 'api_key') {
+    const hasEnvAuth =
+      !!this.env.ANTHROPIC_API_KEY ||
+      !!this.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      !!this.env.ANTHROPIC_AUTH_TOKEN;
+    if (!hasEnvAuth && this.credentials?.type === 'api_key') {
       envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
-    } else if (
-      !this.env.CLAUDE_CODE_OAUTH_TOKEN &&
-      !this.env.ANTHROPIC_AUTH_TOKEN &&
-      this.credentials?.type === 'oauth' &&
-      this.credentials.accessToken
-    ) {
+    } else if (!hasEnvAuth && this.credentials?.type === 'oauth' && this.credentials.accessToken) {
       envVars.CLAUDE_CODE_OAUTH_TOKEN = this.credentials.accessToken;
     }
 

@@ -482,7 +482,7 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
-    it('removes unreadable credential store row without retrying provider logout', async () => {
+    it('removes unreadable credential store row and runs provider logout', async () => {
       const credentialManager = {
         getCredentials: mock(async () => {
           throw new Error('decrypt failed');
@@ -508,7 +508,7 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('decrypt failed');
-      expect(mockProvider.logout).not.toHaveBeenCalled();
+      expect(mockProvider.logout).toHaveBeenCalledTimes(1);
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 

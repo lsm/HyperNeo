@@ -173,7 +173,28 @@ export function setupAuthHandlers(
           };
         }
 
-        const storedCredentials = await credentialManager?.getCredentials(providerId);
+        let storedCredentials: ProviderCredentials | null = null;
+        try {
+          storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
+        } catch (readError) {
+          // Unreadable stored row — clear it, then run provider logout if available
+          if (credentialManager) {
+            await credentialManager.removeCredentials(providerId);
+          }
+          if (provider.logout) {
+            try {
+              await provider.logout();
+            } catch (logoutError) {
+              log.error(`Provider logout failed for ${providerId}:`, logoutError);
+            }
+          }
+          log.error(`Logout failed for ${providerId}:`, readError);
+          return {
+            success: false,
+            error: readError instanceof Error ? readError.message : 'Logout failed',
+          };
+        }
+
         if (!provider.logout && !storedCredentials) {
           return {
             success: false,

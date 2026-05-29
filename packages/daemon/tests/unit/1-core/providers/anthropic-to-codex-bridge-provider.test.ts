@@ -302,6 +302,16 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
     });
 
+    it('imports ~/.codex/auth.json into provider-owned credentials when no neokai auth exists', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai'); // no file written
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, { OPENAI_API_KEY: 'codex-imported-key' });
+
+      provider = makeProvider({}, neokaiDir, codexDir);
+      const credentials = await provider.getCredentials();
+      expect(credentials).toEqual({ type: 'api_key', apiKey: 'codex-imported-key' });
+    });
+
     it('Priority 4a: returns OPENAI_API_KEY from ~/.codex/auth.json when no higher source', async () => {
       const neokaiDir = path.join(tmpDir, 'neokai'); // no file written
       const codexDir = path.join(tmpDir, 'codex');

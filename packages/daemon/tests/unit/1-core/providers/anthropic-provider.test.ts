@@ -317,6 +317,16 @@ describe('AnthropicProvider', () => {
       expect(config.isAnthropicCompatible).toBe(true);
       expect(config.apiVersion).toBe('v1');
     });
+
+    it('should skip stored API key injection when any Anthropic auth env var is set', () => {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
+      const providerWithStoredKey = new AnthropicProvider();
+      providerWithStoredKey.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
+
+      const config = providerWithStoredKey.buildSdkConfig('default');
+
+      expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
+    });
   });
 
   describe('model cache', () => {

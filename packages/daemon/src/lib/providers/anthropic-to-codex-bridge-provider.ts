@@ -234,7 +234,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
-    const credentials = await this.loadCredentials();
+    let credentials = await this.loadCredentials();
+    if (!credentials) {
+      // Import from ~/.codex/auth.json if the user has valid Codex CLI
+      // credentials but no NeoKai auth file, so startup reconciliation
+      // sees provider-owned credentials before applying stale rows.
+      await this.importFromCodexAuth();
+      credentials = await this.loadCredentials();
+    }
     if (!credentials) return null;
     if (credentials.type === 'api_key' && credentials.access) {
       return { type: 'api_key', apiKey: credentials.access };

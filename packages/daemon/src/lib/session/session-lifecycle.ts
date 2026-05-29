@@ -1038,37 +1038,19 @@ export class SessionLifecycle {
       provider = await providerService.getDefaultProvider();
     }
 
-    // Providers whose credentials are managed by getProviderApiKey() (ANTHROPIC_API_KEY,
-    // GLM_API_KEY, MINIMAX_API_KEY). For these we can do a fast, synchronous key check.
-    //
-    // All other providers (e.g. 'anthropic-copilot' with GitHub auth) are NOT listed
-    // here because getProviderApiKey() does not handle their credentials. They use
-    // the isProviderAvailable() path below instead, which delegates to each
-    // provider's own isAvailable() implementation.
-    const legacyKeyProviders: string[] = ['anthropic', 'glm', 'minimax'];
-    if (legacyKeyProviders.includes(provider)) {
-      const apiKey = providerService.getProviderApiKey(provider as Provider);
-      if (!apiKey) {
-        this.logger.warn(
-          `[SessionLifecycle] No API key for provider ${provider}, using fallback title`
-        );
-        return {
-          title: messageText.substring(0, 50).trim() || 'New Session',
-          isFallback: true,
-        };
-      }
-    } else {
-      // For non-legacy providers (e.g. 'anthropic-copilot'), fall back if unavailable.
-      const available = await providerService.isProviderAvailable(provider);
-      if (!available) {
-        this.logger.warn(
-          `[SessionLifecycle] Provider ${provider} not available, using fallback title`
-        );
-        return {
-          title: messageText.substring(0, 50).trim() || 'New Session',
-          isFallback: true,
-        };
-      }
+    // Fall back to the first 50 characters when the provider reports it is not
+    // available (env vars, stored credentials, or provider-owned auth missing).
+    // This delegates to each provider's own isAvailable() implementation so that
+    // stored credentials are respected for title generation.
+    const available = await providerService.isProviderAvailable(provider);
+    if (!available) {
+      this.logger.warn(
+        `[SessionLifecycle] Provider ${provider} not available, using fallback title`
+      );
+      return {
+        title: messageText.substring(0, 50).trim() || 'New Session',
+        isFallback: true,
+      };
     }
 
     // Use session model if provided, otherwise fall back to title generation config
