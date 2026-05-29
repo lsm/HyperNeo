@@ -533,8 +533,9 @@ const FULLSTACK_REVIEW_PROMPT =
   'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
   'review quality and severity.\n\n' +
   'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-  'terminal hand-off is writing approved = true to review-approval-gate, only after an ' +
-  'APPROVE verdict with zero P0-P3 findings and codex[bot] `+1` or timeout. ' +
+  'terminal hand-off is writing approved = true to review-approval-gate after an ' +
+  'APPROVE verdict with zero P0-P3 findings. Write the gate first to start the 10-minute ' +
+  'Codex timeout, then wait for codex[bot] `+1` or timeout before proceeding. ' +
   CODEX_REACTION_APPROVAL_GUIDANCE +
   ' If findings remain, do not write the gate; send actionable feedback to Coding and stop. ' +
   'Never set a PR to auto-merge.';

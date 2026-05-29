@@ -3464,7 +3464,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).not.toContain('node -e');
     expect(effectiveGate.script?.source).toContain('.head.sha');
     expect(effectiveGate.script?.source).toContain('commits/${HEAD_SHA}');
-    expect(effectiveGate.script?.source).toContain('^https://[^/]+/');
+    expect(effectiveGate.script?.source).toContain('^https://([^/]+)/');
     expect(effectiveGate.script?.source).not.toContain('github\\.com');
     expect(effectiveGate.poll?.intervalMs).toBe(60_000);
   });
@@ -3832,6 +3832,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
+          'if [[ "$*" != *"--hostname github.enterprise.example.com"* ]]; then',
+          '  echo "Missing --hostname for GHE URL: $*" >&2',
+          '  exit 2',
+          'fi',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
