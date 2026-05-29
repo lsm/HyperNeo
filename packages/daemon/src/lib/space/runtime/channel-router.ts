@@ -1046,10 +1046,12 @@ export class ChannelRouter {
     if (!gateDef) return true;
 
     // Template-backed scripted gates must always re-evaluate because their
-    // scripts can change independently of workflow.updatedAt (via getBuiltInGateScript).
-    // Caching such gates would create a fail-open path where a once-open gate
-    // bypasses evaluation even after template script updates.
-    if (workflow.templateName && gateDef.script) return true;
+    // effective scripts can change independently of workflow.updatedAt (via
+    // getBuiltInGateScript or feature registry updates). Caching such gates
+    // would create a fail-open path where a once-open gate bypasses evaluation
+    // even after script updates.
+    const effectiveGateDef = getEffectiveGate(gateDef);
+    if (workflow.templateName && effectiveGateDef.script) return true;
 
     if (!channelIsCyclic) return false;
     return gateDef.resetOnCycle === true;

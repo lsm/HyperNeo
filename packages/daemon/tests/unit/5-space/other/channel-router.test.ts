@@ -48,6 +48,7 @@ import {
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { computeGateDefaults } from '@neokai/shared';
+import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -3990,6 +3991,70 @@ describe('ChannelRouter', () => {
         // Call canDeliver to trigger terminal status detection and cache eviction
         await router.canDeliver(run.id, 'coder', 'planner');
         expect(gateOpenStateRepo.isOpen(run.id, 'terminal-gate').open).toBe(false);
+      });
+
+      test('template-backed feature gate bypasses cache and re-evaluates effective script', async () => {
+        // Register a test feature whose script always passes so the gate can open
+        registerGateFeature('test_always_pass', {
+          script: () => ({
+            interpreter: 'bash',
+            source: 'true',
+            timeoutMs: 30000,
+          }),
+        });
+
+        const gate: Gate = {
+          id: 'feature-cache-gate',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['*'],
+              check: { op: '==', value: true },
+            },
+          ],
+          resetOnCycle: false,
+          features: { test_always_pass: true },
+        };
+        const channels: WorkflowChannel[] = [
+          { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'feature-cache-gate' },
+        ];
+        const workflow = buildWorkflowWithGates(
+          SPACE_ID,
+          workflowManager,
+          [
+            { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+            {
+              id: NODE_B,
+              name: 'Planner Node',
+              agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+            },
+          ],
+          channels,
+          [gate],
+          'test-template'
+        );
+
+        const run = workflowRunRepo.createRun({
+          spaceId: SPACE_ID,
+          workflowId: workflow.id,
+          title: 'Feature Cache Test Run',
+        });
+        workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+        // Open the gate — script passes and field passes
+        gateDataRepo.set(run.id, 'feature-cache-gate', { approved: true });
+        await router.deliverMessage(run.id, 'coder', 'planner', 'first msg');
+
+        // Close the gate by changing field data
+        gateDataRepo.set(run.id, 'feature-cache-gate', { approved: false });
+
+        // Because this is a template-backed gate whose effective definition
+        // includes a script (from the feature), mustReevaluateGate returns true
+        // and the cache is bypassed. canDeliver should re-evaluate and find
+        // the gate closed.
+        const result = await router.canDeliver(run.id, 'coder', 'planner');
+        expect(result.allowed).toBe(false);
       });
     });
   });

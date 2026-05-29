@@ -31,6 +31,7 @@ import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resol
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { jsonResult } from '../../../../src/lib/space/tools/tool-result.ts';
+import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 import type {
   DaemonInternalEventMap,
@@ -2682,6 +2683,53 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.gateOpen).toBe(true);
   });
 
+  test('read_gate evaluates effective gate (feature script) when scriptExecutor is provided', async () => {
+    registerGateFeature('test_read_feature', {
+      script: () => ({
+        interpreter: 'bash',
+        source: 'exit 1',
+        timeoutMs: 30000,
+      }),
+    });
+
+    const gate: Gate = {
+      id: 'gate-read-feature',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+      features: { test_read_feature: true },
+    };
+    const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+    const mockExecutor = async () => ({
+      success: false,
+      data: {},
+      error: 'Feature script failed',
+    });
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, 'gate-read-feature', { approved: true });
+
+    const config = makeConfig(ctx, {
+      workflow,
+      gateDataRepo,
+      scriptExecutor: mockExecutor,
+      scriptContext: {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: 'gate-read-feature',
+      },
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+    const result = await handlers.read_gate({ gateId: 'gate-read-feature' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.gateOpen).toBe(false);
+    expect(data.reason).toContain('Feature script failed');
+  });
+
   test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {
     const gate: Gate = {
       id: 'gate-write-no-exec',
@@ -3161,6 +3209,82 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
 
     const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
     expect(artifacts).toHaveLength(0);
+  });
+
+  test('send_message gate-write evaluates effective gate (feature script)', async () => {
+    registerGateFeature('test_send_feature', {
+      script: () => ({
+        interpreter: 'bash',
+        source: 'exit 1',
+        timeoutMs: 30000,
+      }),
+    });
+
+    const gate: Gate = {
+      id: 'gate-write-feature',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+      features: { test_send_feature: true },
+    };
+    const workflow: SpaceWorkflow = {
+      id: 'wf-1',
+      spaceId: ctx.spaceId,
+      name: 'Test Workflow',
+      description: '',
+      nodes: [
+        {
+          id: ctx.nodeId,
+          name: 'Coding',
+          agents: [{ agentId: 'agent-coder', name: 'coder' }],
+        },
+        {
+          id: 'node-review',
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      startNodeId: ctx.nodeId,
+      rules: [],
+      tags: [],
+      channels: [
+        { id: 'ch-coder-review', from: 'Coding', to: 'Review', gateId: 'gate-write-feature' },
+      ],
+      gates: [gate],
+    };
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, 'gate-write-feature', { approved: true });
+
+    const mockExecutor = async () => ({
+      success: false,
+      data: {},
+      error: 'Feature script blocked',
+    });
+
+    const config = makeConfig(ctx, {
+      workflow,
+      gateDataRepo,
+      scriptExecutor: mockExecutor,
+      scriptContext: {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: 'gate-write-feature',
+      },
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.send_message({
+      target: 'reviewer',
+      message: 'Ready for review',
+      data: { approved: true },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.gateWrite).toBeDefined();
+    expect(data.gateWrite.gateId).toBe('gate-write-feature');
+    expect(data.gateWrite.gateOpen).toBe(false);
   });
 });
 

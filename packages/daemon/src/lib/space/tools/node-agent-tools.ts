@@ -837,7 +837,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       )
                     : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
                 const evalResult = await evaluateGate(
-                  gateDef,
+                  getEffectiveGate(gateDef),
                   updated.data,
                   scriptExecutor,
                   scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
@@ -1200,7 +1200,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
       const evalResult = await evaluateGate(
-        gateDef,
+        getEffectiveGate(gateDef),
         currentData,
         scriptExecutor,
         scriptContext ? { ...scriptContext, gateId, gateData: currentData } : undefined
