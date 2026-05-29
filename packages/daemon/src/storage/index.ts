@@ -47,6 +47,7 @@ import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-tra
 import { AgentMemoryRepository } from './repositories/agent-memory-repository';
 import { EvolutionRepository } from './repositories/evolution-repository';
 import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
+import { ProviderRepository } from './repositories/provider-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -80,12 +81,18 @@ export { WorkspaceHistoryRepository } from './repositories/workspace-history-rep
 export { AgentMemoryRepository } from './repositories/agent-memory-repository';
 export { EvolutionRepository } from './repositories/evolution-repository';
 export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
+export { ProviderRepository } from './repositories/provider-repository';
 export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository';
 export type {
   AgentMemoryEntry,
   AgentMemorySearchResult,
 } from './repositories/agent-memory-repository';
 export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository';
+export type {
+  ProviderRecord,
+  CreateProviderParams,
+  UpdateProviderParams,
+} from '@neokai/shared';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -112,6 +119,7 @@ export class Database {
   private agentMemoryRepo!: AgentMemoryRepository;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
+  private providerRepo!: ProviderRepository;
   private shortIdAllocator!: ShortIdAllocator;
 
   constructor(dbPath: string) {
@@ -150,6 +158,7 @@ export class Database {
     );
     this.evolutionRepo = new EvolutionRepository(db);
     this.goalAutomationCursorRepo = new GoalAutomationCursorRepository(db);
+    this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.agentMemoryRepo.backfillPendingEmbeddings();
   }
 
@@ -607,6 +616,10 @@ export class Database {
 
   get goalAutomationCursors(): GoalAutomationCursorRepository {
     return this.goalAutomationCursorRepo;
+  }
+
+  get providers(): ProviderRepository {
+    return this.providerRepo;
   }
 
   close(): void {

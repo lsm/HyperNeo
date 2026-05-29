@@ -6,6 +6,7 @@ export type {
   Provider,
   ProviderCapabilities,
   ProviderContext,
+  ProviderCredentials,
   ProviderId,
   ProviderInfo,
   ProviderCredentials,
