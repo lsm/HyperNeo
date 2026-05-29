@@ -93,7 +93,10 @@ export interface OpenAIOAuthToken {
  * Returns the full token response, or null if the exchange fails for any reason.
  * Exported for provider auth discovery and online test setup helpers.
  */
-export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
+export async function refreshCodexToken(
+  refreshToken: string,
+  timeoutMs = 5000
+): Promise<OpenAIOAuthToken | null> {
   try {
     const response = await fetch(OAUTH_CONFIG.tokenUrl, {
       method: 'POST',
@@ -103,6 +106,7 @@ export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAu
         refresh_token: refreshToken,
         client_id: OAUTH_CONFIG.clientId,
       }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       logger.warn(

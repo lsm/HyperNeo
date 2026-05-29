@@ -486,7 +486,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           ? 'api_key'
           : storedCredentials?.type === 'oauth'
             ? 'oauth'
-            : undefined;
+            : apiKey === config.claudeCodeOAuthToken || apiKey === config.anthropicAuthToken
+              ? 'oauth'
+              : apiKey === config.anthropicApiKey
+                ? 'api_key'
+                : undefined;
 
       if (apiKey) {
         gitHubService = createGitHubService({
