@@ -35,6 +35,7 @@ import {
   FULLSTACK_QA_LOOP_WORKFLOW,
   getBuiltInGateScript,
   getBuiltInWorkflows,
+  mergeGateStructuralFieldsFromTemplate,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   validateWorkflowTemplateGateWriters,
   RESEARCH_WORKFLOW,
@@ -2141,6 +2142,15 @@ describe('seedBuiltInWorkflows()', () => {
     const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
     expect(gate.poll?.script).toBe('echo custom poll');
     expect(gate.features).toBeUndefined();
+  });
+
+  test('mergeGateStructuralFieldsFromTemplate clears features when template removes them', () => {
+    const existingGates = [{ id: 'g1', fields: [], features: { codex_review_bot: true } }];
+    const templateGates = [{ id: 'g1', fields: [] }];
+
+    const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
+    expect(result).toHaveLength(1);
+    expect(result![0].features).toBeUndefined();
   });
 
   test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {

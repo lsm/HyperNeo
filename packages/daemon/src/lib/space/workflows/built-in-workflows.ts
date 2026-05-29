@@ -1596,7 +1596,8 @@ function mergeChannelsFromTemplate(
   return [...existingChannels, ...missingTemplateChannels];
 }
 
-function mergeGateStructuralFieldsFromTemplate(
+/** @internal Exported for testing. */
+export function mergeGateStructuralFieldsFromTemplate(
   existingGates: Gate[] | undefined,
   templateGates: Gate[] | undefined
 ): Gate[] | undefined {
@@ -1623,7 +1624,8 @@ function mergeGateStructuralFieldsFromTemplate(
 
       // Skip copying template features if the existing gate already has a custom
       // script or poll, so feature-backed mechanisms do not silently override
-      // custom gate logic at runtime.
+      // custom gate logic at runtime. When copying is allowed, propagate the
+      // template's features (including undefined when the template removed them).
       const shouldCopyFeatures = !gate.script && !gate.poll;
       return {
         ...gate,
@@ -1631,7 +1633,7 @@ function mergeGateStructuralFieldsFromTemplate(
         features: shouldCopyFeatures
           ? templateGate.features
             ? { ...templateGate.features }
-            : gate.features
+            : undefined
           : gate.features,
       };
     })
