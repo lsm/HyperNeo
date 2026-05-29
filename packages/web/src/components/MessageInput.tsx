@@ -117,6 +117,9 @@ export default function MessageInput({
   // Textarea ref for programmatic focus after reference selection
   const textareaInputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Guard against stale onInput events racing with submit/clear
+  const submittingRef = useRef(false);
+
   // Use shared hooks
   const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
   const {
@@ -195,6 +198,9 @@ export default function MessageInput({
   // Wrap setContent to detect @-mentions
   const handleContentChange = useCallback(
     (value: string) => {
+      // Drop stale onInput events that race with submit/clear
+      if (submittingRef.current) return;
+
       // Track cursor position via the textarea ref
       const cursor = textareaInputRef.current?.selectionStart ?? value.length;
       lastCursorRef.current = cursor;
@@ -429,12 +435,23 @@ export default function MessageInput({
       const savedContent = outgoing.content;
       const savedAttachments = attachments;
 
+      // Guard against stale onInput events racing with clear/useLayoutEffect
+      submittingRef.current = true;
+
       // Clear UI optimistically
       clearDraft();
       clearAttachments();
 
+      // Immediately clear textarea DOM — don't wait for batched useLayoutEffect
+      if (textareaInputRef.current) {
+        textareaInputRef.current.value = '';
+      }
+
       // Send message with images; a boolean false return signals failure
       const result = await onSend(savedContent, outgoing.images, deliveryMode);
+
+      submittingRef.current = false;
+
       if (result === false) {
         // Restore the draft and attachments so the user doesn't lose their work
         setContent(savedContent);
