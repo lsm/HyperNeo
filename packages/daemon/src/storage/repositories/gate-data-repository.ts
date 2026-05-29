@@ -212,16 +212,19 @@ export class GateDataRepository {
     );
     const now = Date.now();
     for (const gate of gates) {
-      stmt.run(runId, gate.id, JSON.stringify(gate.data), now);
+      const data = { ...gate.data, cycle_start_at: now };
+      stmt.run(runId, gate.id, JSON.stringify(data), now);
     }
   }
 
   /**
    * Reset a gate's data to its defaults.
    * Used when a cyclic workflow loops back through a gate with `resetOnCycle: true`.
+   * Injects `cycle_start_at` so per-cycle freshness anchors (e.g. codex_review_bot)
+   * can distinguish reactions from the current cycle vs. prior cycles.
    */
   reset(runId: string, gateId: string, defaultData: Record<string, unknown>): GateDataRecord {
-    return this.set(runId, gateId, defaultData);
+    return this.set(runId, gateId, { ...defaultData, cycle_start_at: Date.now() });
   }
 
   /**

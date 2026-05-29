@@ -64,11 +64,17 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   // Timeout is based only on gate-data update time (no fallback), so the
   // timeout does not start until the reviewer writes approval data.
   'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
-  // Freshness uses workflow start time so vote-counting gate writes do not
-  // advance the cutoff and filter out valid codex reactions.
-  'FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  // Per-cycle freshness anchor: cycle_start_at from gate data (set on init and
+  // cyclic reset) so reactions from prior cycles are filtered out. Falls back
+  // to workflow start for gates that have not been written to yet.
+  'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'if [ -n "$CYCLE_START_MS" ]; then',
+  `  FRESHNESS_ISO=$(bun -e 'const d=new Date(parseInt(process.argv[1])); if(Number.isNaN(d.getTime())) process.exit(1); console.log(d.toISOString());' "$CYCLE_START_MS" 2>/dev/null || true)`,
+  'else',
+  '  FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'fi',
   // GitHub created_at is second-precision; normalize JS millisecond ISO to match.
-  'if [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
+  'if [ -n "$FRESHNESS_ISO" ] && [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
   '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
   'fi',
   // Resolve current PR head for inclusion in success output (audit trail).
@@ -129,8 +135,13 @@ const CODEX_REVIEW_BOT_POLL_SCRIPT = [
   'fi',
   'REACTIONS_JSON=$(jq -s \'add // []\' <<< "$REACTIONS_RAW")',
   'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
-  'FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
-  'if [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
+  'CYCLE_START_MS=$(jq -r \'.cycle_start_at // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'if [ -n "$CYCLE_START_MS" ]; then',
+  `  FRESHNESS_ISO=$(bun -e 'const d=new Date(parseInt(process.argv[1])); if(Number.isNaN(d.getTime())) process.exit(1); console.log(d.toISOString());' "$CYCLE_START_MS" 2>/dev/null || true)`,
+  'else',
+  '  FRESHNESS_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'fi',
+  'if [ -n "$FRESHNESS_ISO" ] && [[ "$FRESHNESS_ISO" =~ \\.[0-9]+Z$ ]]; then',
   '  FRESHNESS_ISO="${FRESHNESS_ISO%.*}Z"',
   'fi',
   'HEAD_SHA=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',

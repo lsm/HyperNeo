@@ -251,9 +251,9 @@ describe('GateDataRepository — mergeWithMapFields', () => {
       new Set(['approvals'])
     );
 
-    expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({
-      approvals: { ux: 'approved' },
-    });
+    const afterReset = repo.get(RUN_ID, GATE_ID_A)!.data;
+    expect(afterReset.approvals).toEqual({ ux: 'approved' });
+    expect(typeof afterReset.cycle_start_at).toBe('number');
   });
 });
 
@@ -312,14 +312,23 @@ describe('GateDataRepository — listByRun', () => {
 // ---------------------------------------------------------------------------
 
 describe('GateDataRepository — initializeForRun', () => {
-  test('initializes gate data with defaults', () => {
+  test('initializes gate data with defaults and cycle_start_at', () => {
+    const before = Date.now();
     repo.initializeForRun(RUN_ID, [
       { id: GATE_ID_A, data: { approved: false } },
       { id: GATE_ID_B, data: { count: 0 } },
     ]);
+    const after = Date.now();
 
-    expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({ approved: false });
-    expect(repo.get(RUN_ID, GATE_ID_B)!.data).toEqual({ count: 0 });
+    const recordA = repo.get(RUN_ID, GATE_ID_A)!;
+    expect(recordA.data.approved).toBe(false);
+    expect(typeof recordA.data.cycle_start_at).toBe('number');
+    expect(recordA.data.cycle_start_at).toBeGreaterThanOrEqual(before);
+    expect(recordA.data.cycle_start_at).toBeLessThanOrEqual(after);
+
+    const recordB = repo.get(RUN_ID, GATE_ID_B)!;
+    expect(recordB.data.count).toBe(0);
+    expect(typeof recordB.data.cycle_start_at).toBe('number');
   });
 
   test('does not overwrite existing data (INSERT OR IGNORE)', () => {
@@ -337,12 +346,21 @@ describe('GateDataRepository — initializeForRun', () => {
 // ---------------------------------------------------------------------------
 
 describe('GateDataRepository — reset', () => {
-  test('resets gate data to defaults', () => {
+  test('resets gate data to defaults with cycle_start_at', () => {
     repo.set(RUN_ID, GATE_ID_A, { approved: true, extra: 'value' });
 
+    const before = Date.now();
     const result = repo.reset(RUN_ID, GATE_ID_A, { approved: false });
-    expect(result.data).toEqual({ approved: false });
-    expect(repo.get(RUN_ID, GATE_ID_A)!.data).toEqual({ approved: false });
+    const after = Date.now();
+
+    expect(result.data.approved).toBe(false);
+    expect(typeof result.data.cycle_start_at).toBe('number');
+    expect(result.data.cycle_start_at).toBeGreaterThanOrEqual(before);
+    expect(result.data.cycle_start_at).toBeLessThanOrEqual(after);
+
+    const fetched = repo.get(RUN_ID, GATE_ID_A)!;
+    expect(fetched.data.approved).toBe(false);
+    expect(typeof fetched.data.cycle_start_at).toBe('number');
   });
 });
 

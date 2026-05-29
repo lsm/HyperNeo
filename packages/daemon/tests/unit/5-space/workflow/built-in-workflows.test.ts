@@ -3742,7 +3742,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 from before workflow start', async () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 from before cycle_start_at', async () => {
     const gate = getEffectiveGate(
       FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
     );
@@ -3773,9 +3773,12 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           workspacePath: workspace,
           gateId: 'review-approval-gate',
           runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-          // Reaction is before workflow start — should be filtered as stale.
-          workflowStartIso: '2026-05-02T00:00:00Z',
+          // Reaction is before cycle_start_at — should be filtered as stale.
+          gateData: {
+            pr_url: prUrl,
+            approved: true,
+            cycle_start_at: new Date('2026-05-02T00:00:00Z').getTime(),
+          },
           gateDataUpdatedIso: new Date().toISOString(),
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
