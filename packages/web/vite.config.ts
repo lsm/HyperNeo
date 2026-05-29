@@ -21,11 +21,27 @@ export default defineConfig({
       },
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules/marked')) {
-            return 'vendor-marked';
+          if (id.includes('node_modules/rehype-highlight')) {
+            return 'vendor-hljs';
           }
           if (id.includes('node_modules/highlight.js')) {
             return 'vendor-hljs';
+          }
+          if (id.includes('node_modules/rehype-katex')) {
+            return 'vendor-katex';
+          }
+          if (id.includes('node_modules/katex')) {
+            return 'vendor-katex';
+          }
+          if (
+            id.includes('node_modules/unified') ||
+            id.includes('node_modules/remark-') ||
+            id.includes('node_modules/rehype-')
+          ) {
+            return 'vendor-markdown';
+          }
+          if (id.includes('node_modules/mermaid')) {
+            return 'vendor-mermaid';
           }
         },
       },
@@ -81,7 +97,7 @@ export default defineConfig({
   },
 
   optimizeDeps: {
-    include: ['preact', '@preact/signals', 'marked', 'highlight.js', 'clsx', 'date-fns'],
+    include: ['preact', '@preact/signals', 'clsx', 'date-fns'],
     exclude: ['@neokai/shared'], // Exclude local packages from pre-bundling
     esbuildOptions: {
       jsx: 'automatic',
