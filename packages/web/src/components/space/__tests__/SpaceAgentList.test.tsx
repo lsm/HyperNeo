@@ -222,7 +222,12 @@ mockGoals = signal<any[]>([]);
 mockSchedules = signal<any[]>([]);
 mockLoading = signal(false);
 mockSpaceId = signal<string | null>('space-1');
-mockSpace = signal<any>({ id: 'space-1', defaultModel: undefined, taskAgentConfig: undefined });
+mockSpace = signal<any>({
+  id: 'space-1',
+  slug: 'neokai-dev',
+  defaultModel: undefined,
+  taskAgentConfig: undefined,
+});
 
 import { SpaceAgentList } from '../SpaceAgentList';
 
@@ -233,6 +238,7 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
     id: 'agent-1',
     spaceId: 'space-1',
     name: 'My Coder',
+    handle: 'my-coder',
     description: 'A worker agent',
     model: 'claude-sonnet-4-6',
     tools: ['Read', 'Write', 'Edit', 'Bash'],
@@ -414,8 +420,8 @@ describe('SpaceAgentList', () => {
     fireEvent.click(screen.getByText('View'));
     fireEvent.click(screen.getByText('Open Forge'));
 
-    expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('space-1');
-    expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('space-1');
+    expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('neokai-dev');
+    expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('neokai-dev');
   });
 
   it('shows Coordinator as default long-horizon agent with basic scopes', () => {

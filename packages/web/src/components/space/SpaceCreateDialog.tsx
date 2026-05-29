@@ -98,7 +98,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
         throw new Error('Server returned no data');
       }
 
-      navigateToSpace(space.id);
+      navigateToSpace(space.slug);
       handleClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create space');

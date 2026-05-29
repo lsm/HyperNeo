@@ -16,6 +16,7 @@ import { initializeApplicationState } from './lib/state.ts';
 import './lib/default-commands.ts';
 import {
   currentSessionIdSignal,
+  currentSpaceAgentHandleSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
@@ -127,6 +128,7 @@ export function App() {
       const spaceId = currentSpaceIdSignal.value;
       const spaceSessionId = currentSpaceSessionIdSignal.value;
       const spaceTaskId = currentSpaceTaskIdSignal.value;
+      const spaceAgentHandle = currentSpaceAgentHandleSignal.value;
       const spaceViewMode = currentSpaceViewModeSignal.value;
       const spaceConfigureTab = currentSpaceConfigureTabSignal.value;
       const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
@@ -142,7 +144,7 @@ export function App() {
               spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
             )
           : spaceId && spaceViewMode === 'agents'
-            ? createSpaceAgentPath(spaceId)
+            ? createSpaceAgentPath(spaceId, spaceAgentHandle ?? undefined)
             : spaceSessionId && spaceId
               ? createSpaceSessionPath(spaceId, spaceSessionId)
               : spaceId && spaceViewMode === 'sessions'
@@ -182,7 +184,7 @@ export function App() {
             true
           );
         } else if (spaceId && spaceViewMode === 'agents') {
-          navigateToSpaceAgent(spaceId, true);
+          navigateToSpaceAgent(spaceId, spaceAgentHandle ?? true, true);
         } else if (spaceSessionId && spaceId) {
           navigateToSpaceSession(spaceId, spaceSessionId, true);
         } else if (spaceId && spaceViewMode === 'sessions') {

@@ -225,6 +225,17 @@ describe('SpaceTasks', () => {
     expect(getByText('No tasks needing action')).toBeTruthy();
   });
 
+  it('uses the route space id for tab navigation', () => {
+    mockTasks.value = [makeTask('t1', 'open')];
+    const { getAllByText } = render(
+      <SpaceTasks spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.click(getAllByText('Action')[0]);
+
+    expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-slug', 'action');
+  });
+
   it('shows empty state for completed tab', () => {
     mockTasks.value = [makeTask('t1', 'open')];
     const { getAllByText, getByText } = render(<SpaceTasks spaceId="space-1" />);
@@ -329,7 +340,7 @@ describe('SpaceTasks', () => {
 
     fireEvent.click(completedItem);
 
-    expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('', 'completed');
+    expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-1', 'completed');
   });
 
   it('sorts tasks by updatedAt descending', async () => {

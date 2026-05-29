@@ -232,7 +232,7 @@ function spaceItems(spaces: SpaceWithTasks[], query: string, limit: number): Pal
     group: trimmed ? 'spaces' : 'recent',
     title: space.name,
     subtitle: workspaceLabel(space.workspacePath),
-    spaceId: space.id,
+    spaceId: space.slug,
   }));
 }
 
@@ -242,27 +242,28 @@ function taskItemsFromSpaces(
   limit: number
 ): PaletteItem[] {
   const trimmed = query.trim();
-  const ranked: Array<{ task: SpaceTask; spaceName: string; score: number }> = [];
+  const ranked: Array<{ task: SpaceTask; spaceName: string; spaceSlug: string; score: number }> =
+    [];
   for (const space of spaces) {
     for (const task of space.tasks) {
       const score = trimmed
         ? Math.max(fuzzyScore(task.title, trimmed), fuzzyScore(task.description, trimmed))
         : 1;
       if (score <= 0) continue;
-      ranked.push({ task, spaceName: space.name, score });
+      ranked.push({ task, spaceName: space.name, spaceSlug: space.slug, score });
     }
   }
   ranked.sort((a, b) => {
     if (trimmed && b.score !== a.score) return b.score - a.score;
     return b.task.updatedAt - a.task.updatedAt;
   });
-  return ranked.slice(0, limit).map(({ task, spaceName }) => ({
+  return ranked.slice(0, limit).map(({ task, spaceName, spaceSlug }) => ({
     type: 'space-task' as const,
     id: `space-task:${task.id}`,
     group: trimmed ? 'tasks' : 'recent',
     title: task.title,
     subtitle: `${spaceName} · Task #${task.taskNumber}`,
-    spaceId: task.spaceId,
+    spaceId: spaceSlug,
     taskId: task.id,
   }));
 }

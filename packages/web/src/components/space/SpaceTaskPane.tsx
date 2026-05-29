@@ -40,6 +40,7 @@ import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 interface SpaceTaskPaneProps {
   taskId: string | null;
   spaceId?: string;
+  navigationSpaceId?: string;
   onClose?: () => void;
 }
 
@@ -159,7 +160,12 @@ function formatEditTaskError(err: unknown): string {
   return message || 'Failed to update task';
 }
 
-export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
+export function SpaceTaskPane({
+  taskId,
+  spaceId,
+  navigationSpaceId: routeSpaceId,
+  onClose,
+}: SpaceTaskPaneProps) {
   // Lazy-load agents/workflows needed for mention autocomplete and canvas
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -238,20 +244,22 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
     : null;
   const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
   const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
-  const navigationSpaceIdForTask = spaceId ?? currentSpaceIdSignal.value ?? task?.spaceId;
+  const navigationSpaceIdForTask =
+    routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
+  const targetSpaceIdForTask = spaceId ?? task?.spaceId ?? navigationSpaceIdForTask;
 
   useEffect(() => {
-    if (!taskId || !navigationSpaceIdForTask) return;
+    if (!taskId || !targetSpaceIdForTask) return;
     const currentTarget = rightPanelTargetSignal.value;
     if (currentTarget?.type === 'task' && currentTarget.taskId === taskId) return;
     if (currentTarget === null) return;
     rightPanelTargetSignal.value = {
       type: 'task',
-      spaceId: navigationSpaceIdForTask,
+      spaceId: targetSpaceIdForTask,
       taskId,
       tab: 'details',
     };
-  }, [navigationSpaceIdForTask, taskId]);
+  }, [targetSpaceIdForTask, taskId]);
 
   if (!taskId) {
     return (
@@ -282,14 +290,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
       navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
       return;
     }
+    if (!targetSpaceIdForTask) return;
     rightPanelTargetSignal.value = {
       type: 'task',
-      spaceId: navigationSpaceId,
+      spaceId: targetSpaceIdForTask,
       taskId: task.id,
       tab: auxiliaryPanelTab,
     };
     navigateToSpaceTask(navigationSpaceId, task.id, 'thread', true);
-  }, [auxiliaryPanelTab, navigationSpaceId, task.id, task.workflowRunId]);
+  }, [auxiliaryPanelTab, navigationSpaceId, targetSpaceIdForTask, task.id, task.workflowRunId]);
 
   // Resolve the primary agent session from activity members (node-agent sessions).
   // Previously derived from threadSessionId (task-agent session), which no longer exists.

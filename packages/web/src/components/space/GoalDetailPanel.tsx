@@ -14,6 +14,7 @@ import {
 
 interface GoalDetailPanelProps {
   spaceId: string;
+  navigationSpaceId?: string;
   goalId: string;
 }
 
@@ -66,7 +67,8 @@ function formatDate(ts: number | null): string {
   });
 }
 
-export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
+export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDetailPanelProps) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const [editing, setEditing] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const goal =
@@ -262,7 +264,7 @@ export function GoalDetailPanel({ spaceId, goalId }: GoalDetailPanelProps) {
                   <button
                     key={task.id}
                     type="button"
-                    onClick={() => navigateToSpaceTask(spaceId, task.id)}
+                    onClick={() => navigateToSpaceTask(routeSpaceId, task.id)}
                     class="w-full rounded-md border border-dark-700 bg-dark-900/40 px-3 py-2 text-left hover:border-dark-600 hover:bg-dark-800/60"
                   >
                     <div class="truncate text-sm text-gray-200">{task.title}</div>

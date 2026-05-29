@@ -4,7 +4,7 @@
  * Verifies that space route patterns accept both UUIDs and slugs.
  */
 
-import { describe, test, expect } from 'vitest';
+import { beforeEach, describe, test, expect } from 'vitest';
 import {
   getSpaceIdFromPath,
   getSpaceSessionIdFromPath,
@@ -12,7 +12,23 @@ import {
   createSpacePath,
   createSpaceSessionPath,
   createSpaceTaskPath,
+  getSpaceAgentDetailFromPath,
+  initializeRouter,
 } from '../router';
+import { currentSpaceAgentHandleSignal } from '../signals';
+
+function setPath(path: string) {
+  const url = new URL(path, 'https://neokai.test');
+  Object.defineProperty(window, 'location', {
+    value: { pathname: url.pathname, search: url.search },
+    configurable: true,
+  });
+}
+
+beforeEach(() => {
+  currentSpaceAgentHandleSignal.value = null;
+  setPath('/');
+});
 
 describe('getSpaceIdFromPath — slug support', () => {
   test('matches UUID-based space route', () => {
@@ -65,6 +81,16 @@ describe('getSpaceSessionIdFromPath — slug support', () => {
       sessionId: '14062505-780f-4881-a3be-9cb9062790fb',
     });
   });
+
+  test('matches coordinator session ids with colons', () => {
+    const result = getSpaceSessionIdFromPath(
+      '/space/neokai-dev/session/space:chat:b90171e4-1111-2222-3333-444444444444'
+    );
+    expect(result).toEqual({
+      spaceId: 'neokai-dev',
+      sessionId: 'space:chat:b90171e4-1111-2222-3333-444444444444',
+    });
+  });
 });
 
 describe('getSpaceTaskIdFromPath — slug support', () => {
@@ -110,5 +136,22 @@ describe('createSpaceSessionPath — works with slugs', () => {
 describe('createSpaceTaskPath — works with slugs', () => {
   test('creates path with slug', () => {
     expect(createSpaceTaskPath('neokai-dev', 'task-456')).toBe('/space/neokai-dev/task/task-456');
+  });
+});
+
+describe('getSpaceAgentDetailFromPath — slug and handle support', () => {
+  test('matches agent detail route', () => {
+    expect(getSpaceAgentDetailFromPath('/space/neokai-dev/agent/reviewer')).toEqual({
+      spaceId: 'neokai-dev',
+      handle: 'reviewer',
+    });
+  });
+
+  test('initializes agent detail handle route state', () => {
+    setPath('/space/neokai-dev/agent/reviewer');
+
+    initializeRouter();
+
+    expect(currentSpaceAgentHandleSignal.value).toBe('reviewer');
   });
 });

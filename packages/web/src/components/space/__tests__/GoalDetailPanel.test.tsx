@@ -233,4 +233,12 @@ describe('GoalDetailPanel', () => {
 
     expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-1', 'task-1');
   });
+
+  it('uses the route space id for linked task navigation', () => {
+    render(<GoalDetailPanel spaceId="space-1" navigationSpaceId="space-slug" goalId="goal-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Investigate flaky build/ }));
+
+    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'task-1');
+  });
 });

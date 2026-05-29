@@ -12,7 +12,7 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
-import { slugify, validateSlug } from '../../lib/space/slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 
@@ -677,6 +677,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 147: Add model and thinking_level columns to long-horizon agents.
   runMigration147(db);
+
+  // Migration 148: Add persisted handles to Space agents.
+  runMigration148(db);
 }
 
 /**
@@ -2371,6 +2374,7 @@ function runMigration29(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
+			handle TEXT,
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
@@ -4909,6 +4913,7 @@ export function runMigration63(db: BunDatabase): void {
 				slug TEXT NOT NULL,
 				workspace_path TEXT NOT NULL UNIQUE,
 				name TEXT NOT NULL,
+				handle TEXT,
 				description TEXT NOT NULL DEFAULT '',
 				background_context TEXT NOT NULL DEFAULT '',
 				instructions TEXT NOT NULL DEFAULT '',
@@ -10295,14 +10300,14 @@ function generateValidHandle(name: string, existingHandles: string[]): string {
   for (let len = maxLen; len > 0; len--) {
     const truncated = base.slice(0, len);
     const cleaned = truncated.replace(/-+$/, '');
-    const fallback = cleaned || 'workflow';
+    const fallback = cleaned || 'agent';
     const candidate = slugify(fallback, existingHandles);
     if (validateSlug(candidate) === null) {
       return candidate;
     }
   }
   // Absolute fallback — should never reach here in practice
-  return 'workflow';
+  return 'agent';
 }
 
 /**
@@ -10321,4 +10326,42 @@ function runMigration147(db: BunDatabase): void {
       // Column already exists — safe to ignore.
     }
   }
+}
+
+/**
+ * Migration 148 — Add persisted handles to space_agents.
+ */
+export function runMigration148(db: BunDatabase): void {
+  if (!tableExists(db, 'space_agents')) return;
+  if (!tableHasColumn(db, 'space_agents', 'handle')) {
+    db.exec(`ALTER TABLE space_agents ADD COLUMN handle TEXT`);
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT id, space_id, name, handle FROM space_agents ORDER BY space_id, created_at, id`
+    )
+    .all() as Array<{ id: string; space_id: string; name: string; handle: string | null }>;
+
+  const handlesBySpace = new Map<string, string[]>();
+  for (const row of rows) {
+    const existingHandles = handlesBySpace.get(row.space_id) ?? [...RESERVED_SPACE_AGENT_HANDLES];
+    if (!handlesBySpace.has(row.space_id)) handlesBySpace.set(row.space_id, existingHandles);
+
+    const current = row.handle?.trim();
+    const handle =
+      current && validateSlug(current) === null && !existingHandles.includes(current)
+        ? current
+        : generateValidHandle(row.name, existingHandles);
+    existingHandles.push(handle);
+    if (row.handle !== handle) {
+      db.prepare(`UPDATE space_agents SET handle = ? WHERE id = ?`).run(handle, row.id);
+    }
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
+    ON space_agents(space_id, handle)
+    WHERE handle IS NOT NULL
+  `);
 }

@@ -162,6 +162,7 @@ export function setupSpaceAgentHandlers(
     const params = data as {
       spaceId: string;
       name: string;
+      handle?: string;
       description?: string;
       model?: string;
       thinkingLevel?: import('@neokai/shared').ThinkingLevel;
@@ -177,6 +178,7 @@ export function setupSpaceAgentHandlers(
     const result = await spaceAgentManager.create({
       spaceId: params.spaceId,
       name: params.name,
+      handle: params.handle,
       description: params.description,
       model: params.model,
       thinkingLevel: params.thinkingLevel,
@@ -218,6 +220,7 @@ export function setupSpaceAgentHandlers(
       spaceId: string;
       sessionId: string;
       name: string;
+      handle?: string;
       description?: string;
       model?: string;
       thinkingLevel?: import('@neokai/shared').ThinkingLevel;
@@ -245,6 +248,7 @@ export function setupSpaceAgentHandlers(
     const result = await spaceAgentManager.create({
       spaceId: params.spaceId,
       name: params.name,
+      handle: params.handle,
       description: params.description,
       model: params.model,
       thinkingLevel: params.thinkingLevel,
@@ -284,6 +288,7 @@ export function setupSpaceAgentHandlers(
     const params = data as {
       id: string;
       name?: string;
+      handle?: string;
       description?: string | null;
       model?: string | null;
       thinkingLevel?: import('@neokai/shared').ThinkingLevel | null;
@@ -298,6 +303,7 @@ export function setupSpaceAgentHandlers(
     const { id, ...updateFields } = params;
     const result = await spaceAgentManager.update(id, {
       name: updateFields.name,
+      handle: updateFields.handle,
       description: updateFields.description,
       model: updateFields.model,
       thinkingLevel: updateFields.thinkingLevel,

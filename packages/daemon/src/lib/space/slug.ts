@@ -17,6 +17,13 @@
 const MAX_SLUG_LENGTH = 60;
 const DEFAULT_SLUG = 'unnamed-space';
 
+export const RESERVED_SPACE_AGENT_HANDLES = [
+  'coordinator',
+  'system-runtime',
+  'system-workflow',
+  'system-messaging',
+] as const;
+
 /**
  * Generate a URL-safe slug from an input string.
  * If the generated slug collides with existing slugs, appends a numeric suffix (-2, -3, ...).
@@ -28,6 +35,11 @@ const DEFAULT_SLUG = 'unnamed-space';
 export function slugify(input: string, existingSlugs: string[] = []): string {
   const base = generateBaseSlug(input);
   return resolveCollision(base, existingSlugs);
+}
+
+export function slugifyWithinLimit(input: string, existingSlugs: string[] = []): string {
+  const base = generateBaseSlug(input);
+  return resolveCollisionWithinLimit(base, existingSlugs);
 }
 
 /**
@@ -106,6 +118,25 @@ export function resolveCollision(base: string, existingSlugs: string[]): string 
   let counter = 2;
   while (true) {
     const suffixed = `${base}-${counter}`;
+    if (!slugSet.has(suffixed)) {
+      return suffixed;
+    }
+    counter++;
+  }
+}
+
+function resolveCollisionWithinLimit(base: string, existingSlugs: string[]): string {
+  const slugSet = new Set(existingSlugs);
+
+  if (!slugSet.has(base)) {
+    return base;
+  }
+
+  let counter = 2;
+  while (true) {
+    const suffix = `-${counter}`;
+    const stem = base.slice(0, MAX_SLUG_LENGTH - suffix.length).replace(/-+$/, '') || DEFAULT_SLUG;
+    const suffixed = `${stem}${suffix}`;
     if (!slugSet.has(suffixed)) {
       return suffixed;
     }

@@ -96,6 +96,7 @@ import { SpaceCreateDialog } from '../SpaceCreateDialog';
 
 const SPACE_MOCK = {
   id: 'space-abc',
+  slug: 'my-app',
   name: 'my-app',
   workspacePath: '/projects/my-app',
   description: '',
@@ -254,7 +255,7 @@ describe('SpaceCreateDialog', () => {
     fireEvent.submit(form!);
 
     await waitFor(() => {
-      expect(mockNavigateToSpace).toHaveBeenCalledWith('space-abc');
+      expect(mockNavigateToSpace).toHaveBeenCalledWith('my-app');
       expect(onClose).toHaveBeenCalled();
     });
   });

@@ -61,6 +61,7 @@ function TaskStatusDot({ status }: { status: string }) {
 
 interface SpaceDetailPanelProps {
   spaceId: string;
+  navigationSpaceId?: string;
   onNavigate?: () => void;
 }
 
@@ -132,12 +133,17 @@ function SpaceNavItem({
   );
 }
 
-export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps) {
+export function SpaceDetailPanel({
+  spaceId,
+  navigationSpaceId,
+  onNavigate,
+}: SpaceDetailPanelProps) {
   const isLoading = spaceStore.loading.value;
   const loadedSpaceId = spaceStore.spaceId.value;
   const tasks = spaceStore.tasks.value;
   const goals = spaceStore.goals.value;
   const space = spaceStore.space.value;
+  const routeSpaceId = navigationSpaceId ?? spaceId;
 
   const isReady = !isLoading && loadedSpaceId === spaceId;
 
@@ -206,49 +212,49 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
   }, [spaceStore.sessions.value, spaceId]);
 
   const handleOverviewClick = useCallback(() => {
-    navigateToSpace(spaceId);
+    navigateToSpace(routeSpaceId);
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [routeSpaceId, onNavigate]);
 
   const handleSpaceAgentClick = useCallback(() => {
-    navigateToSpaceAgent(spaceId);
+    navigateToSpaceAgent(routeSpaceId);
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [routeSpaceId, onNavigate]);
 
   const handleGoalsClick = useCallback(() => {
-    navigateToSpaceGoals(spaceId);
+    navigateToSpaceGoals(routeSpaceId);
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [routeSpaceId, onNavigate]);
 
   const handleForgeClick = useCallback(() => {
-    navigateToSpaceForge(spaceId);
+    navigateToSpaceForge(routeSpaceId);
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [routeSpaceId, onNavigate]);
 
   const handleTasksClick = useCallback(() => {
-    navigateToSpaceTasks(spaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
+    navigateToSpaceTasks(routeSpaceId, actionCount === 0 && activeCount > 0 ? 'active' : 'action');
     onNavigate?.();
-  }, [spaceId, actionCount, activeCount, onNavigate]);
+  }, [routeSpaceId, actionCount, activeCount, onNavigate]);
 
   const handleSessionsClick = useCallback(() => {
-    navigateToSpaceSessions(spaceId);
+    navigateToSpaceSessions(routeSpaceId);
     onNavigate?.();
-  }, [spaceId, onNavigate]);
+  }, [routeSpaceId, onNavigate]);
 
   const handleTaskClick = useCallback(
     (taskId: string) => {
-      navigateToSpaceTask(spaceId, taskId);
+      navigateToSpaceTask(routeSpaceId, taskId);
       onNavigate?.();
     },
-    [spaceId, onNavigate]
+    [routeSpaceId, onNavigate]
   );
 
   const handleSessionClick = useCallback(
     (sessionId: string) => {
-      navigateToSpaceSession(spaceId, sessionId);
+      navigateToSpaceSession(routeSpaceId, sessionId);
       onNavigate?.();
     },
-    [spaceId, onNavigate]
+    [routeSpaceId, onNavigate]
   );
 
   const handleCreateSession = useCallback(
@@ -259,13 +265,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
           spaceId,
           workspacePath: space?.workspacePath,
         });
-        navigateToSpaceSession(spaceId, response.sessionId);
+        navigateToSpaceSession(routeSpaceId, response.sessionId);
         onNavigate?.();
       } catch {
         // Session creation failed silently
       }
     },
-    [spaceId, space?.workspacePath, onNavigate]
+    [spaceId, routeSpaceId, space?.workspacePath, onNavigate]
   );
 
   return (

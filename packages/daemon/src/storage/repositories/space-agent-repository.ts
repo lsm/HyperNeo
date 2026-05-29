@@ -12,6 +12,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
@@ -25,18 +26,20 @@ export class SpaceAgentRepository {
   create(params: CreateSpaceAgentParams): SpaceAgent {
     const id = generateUUID();
     const now = Date.now();
+    const handle = params.handle ?? this.generateUniqueHandle(params.spaceId, params.name);
 
     this.db
       .prepare(
         `INSERT INTO space_agents
-					(id, space_id, name, status, description, model, thinking_level, provider, tools, custom_prompt,
+					(id, space_id, name, handle, status, description, model, thinking_level, provider, tools, custom_prompt,
 					 setting_sources, template_name, template_hash, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         params.spaceId,
         params.name,
+        handle,
         params.status ?? 'active',
         params.description ?? '',
         params.model ?? null,
@@ -91,6 +94,30 @@ export class SpaceAgentRepository {
    * Check if a name is already taken within a space.
    * Case-insensitive. Pass excludeId to ignore the agent being updated.
    */
+  isHandleTaken(spaceId: string, handle: string, excludeId?: string): boolean {
+    if (excludeId) {
+      const row = this.db
+        .prepare(`SELECT 1 FROM space_agents WHERE space_id = ? AND handle = ? AND id != ? LIMIT 1`)
+        .get(spaceId, handle, excludeId);
+      return row !== null && row !== undefined;
+    }
+    const row = this.db
+      .prepare(`SELECT 1 FROM space_agents WHERE space_id = ? AND handle = ? LIMIT 1`)
+      .get(spaceId, handle);
+    return row !== null && row !== undefined;
+  }
+
+  getHandlesForSpace(spaceId: string): string[] {
+    const rows = this.db
+      .prepare(`SELECT handle FROM space_agents WHERE space_id = ? AND handle IS NOT NULL`)
+      .all(spaceId) as Array<{ handle: string }>;
+    return rows.map((row) => row.handle);
+  }
+
+  /**
+   * Check if a name is already taken within a space.
+   * Case-insensitive. Pass excludeId to ignore the agent being updated.
+   */
   isNameTaken(spaceId: string, name: string, excludeId?: string): boolean {
     if (excludeId) {
       const row = this.db
@@ -116,6 +143,10 @@ export class SpaceAgentRepository {
     if (params.name !== undefined) {
       fields.push('name = ?');
       values.push(params.name);
+    }
+    if (params.handle !== undefined) {
+      fields.push('handle = ?');
+      values.push(params.handle);
     }
     if (params.status !== undefined) {
       fields.push('status = ?');
@@ -200,6 +231,13 @@ export class SpaceAgentRepository {
     return { referenced: workflowNames.length > 0, workflowNames };
   }
 
+  private generateUniqueHandle(spaceId: string, name: string): string {
+    return slugifyWithinLimit(name, [
+      ...this.getHandlesForSpace(spaceId),
+      ...RESERVED_SPACE_AGENT_HANDLES,
+    ]);
+  }
+
   private rowToAgent(row: Record<string, unknown>): SpaceAgent {
     // Parse tools: '[]' or null → undefined; non-empty JSON array → string[]
     let tools: string[] | undefined;
@@ -218,6 +256,7 @@ export class SpaceAgentRepository {
       id: row.id as string,
       spaceId: row.space_id as string,
       name: row.name as string,
+      handle: (row.handle as string | null | undefined) ?? slugify(row.name as string),
       status: (row.status as SpaceAgent['status'] | null | undefined) ?? 'active',
       description: (row.description as string) || undefined,
       model: (row.model as string | null) ?? undefined,

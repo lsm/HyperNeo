@@ -109,6 +109,7 @@ export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
 
 interface PresetDefinition {
   name: string;
+  handle: string;
   description: string;
   tools: string[];
   /** Thinking-level override for sessions created from this preset; unset inherits app default. */
@@ -272,6 +273,7 @@ Treat the code as work from a competent but unfamiliar developer — it likely h
 const PRESET_AGENTS: PresetDefinition[] = [
   {
     name: 'Coder',
+    handle: 'coder',
     description:
       'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
     tools: CODER_TOOLS,
@@ -284,6 +286,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'General',
+    handle: 'general',
     description:
       'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
       'debugging, and analysis.',
@@ -295,6 +298,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'Planner',
+    handle: 'planner',
     description:
       'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
     tools: PLANNER_TOOLS,
@@ -305,6 +309,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'Research',
+    handle: 'research',
     description:
       'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
     tools: RESEARCH_TOOLS,
@@ -315,6 +320,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'Coordinator',
+    handle: 'space-coordinator',
     description:
       'Built-in long-horizon Space agent. Tracks goals, Forge scope, reminders, and event subscriptions for the Space.',
     tools: GENERAL_TOOLS,
@@ -325,6 +331,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'Reviewer',
+    handle: 'reviewer',
     description:
       'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
     tools: REVIEWER_TOOLS,
@@ -332,6 +339,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
   },
   {
     name: 'QA',
+    handle: 'qa',
     description:
       'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
     tools: QA_TOOLS,
@@ -392,6 +400,7 @@ export async function seedPresetAgents(
     const result: SpaceAgentResult<SpaceAgent> = await agentManager.create({
       spaceId,
       name: preset.name,
+      handle: preset.handle,
       description: preset.description,
       tools: preset.tools,
       thinkingLevel: preset.thinkingLevel,

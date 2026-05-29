@@ -510,6 +510,50 @@ describe('TaskAuxiliaryPanel', () => {
     );
   });
 
+  it('keeps the canonical space id when normalizing right-panel tabs', async () => {
+    render(
+      <TaskAuxiliaryPanel
+        spaceId="space-1"
+        navigationSpaceId="space-slug"
+        taskId="task-1"
+        tab="artifacts"
+      />
+    );
+
+    await waitFor(() =>
+      expect(rightPanelTargetSignal.value).toEqual({
+        type: 'task',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        tab: 'details',
+      })
+    );
+  });
+
+  it('uses the route space id for goal and forge links', async () => {
+    mockTasks.value = [
+      makeTask({
+        goalId: 'goal-1',
+        evolutionScopeId: 'scope-1',
+      }),
+    ];
+    const { getByText } = render(
+      <TaskAuxiliaryPanel
+        spaceId="space-1"
+        navigationSpaceId="space-slug"
+        taskId="task-1"
+        tab="details"
+      />
+    );
+
+    fireEvent.click(getByText('Launch Goal'));
+    await waitFor(() => expect(getByText('Launch Scope')).toBeTruthy());
+    fireEvent.click(getByText('Launch Scope'));
+
+    expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('space-slug');
+    expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('space-slug');
+  });
+
   it('routes submit for review through submitForReview in flat view', async () => {
     const { getByLabelText, getByText } = render(
       <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" tab="details" onClose={() => {}} />

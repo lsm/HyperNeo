@@ -189,6 +189,15 @@ describe('SpaceDetailPanel', () => {
     expect(onNavigate).toHaveBeenCalledOnce();
   });
 
+  it('uses the route space id for sidebar navigation', () => {
+    render(<SpaceDetailPanel spaceId="space-1" navigationSpaceId="space-slug" />);
+    fireEvent.click(screen.getByText('Overview'));
+    fireEvent.click(screen.getByText('Agents'));
+
+    expect(mockNavigateToSpace).toHaveBeenCalledWith('space-slug');
+    expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-slug');
+  });
+
   it('navigates to the space agent and calls onNavigate', () => {
     const onNavigate = vi.fn();
     render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);

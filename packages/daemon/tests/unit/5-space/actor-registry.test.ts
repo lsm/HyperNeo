@@ -235,7 +235,7 @@ describe('SpaceActorRegistryAdapter', () => {
     const actors = registry.listActors(space.id);
 
     expect(canonicalAgentHandle([agent, reservedNameAgent], reservedNameAgent)).toBe(
-      `@coordinator-${reservedNameAgent.id.slice(0, 8)}`
+      '@coordinator-2'
     );
 
     expect(actors).toContainEqual({
@@ -290,8 +290,8 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:${reservedNameAgent.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: `@coordinator-${reservedNameAgent.id.slice(0, 8)}`,
-      roles: [`actor-role:coordinator-${reservedNameAgent.id.slice(0, 8)}`, 'space-agent'],
+      handle: '@coordinator-2',
+      roles: ['actor-role:coordinator-2', 'space-agent'],
       status: 'active',
     });
     expect(actors).toContainEqual({
@@ -364,27 +364,21 @@ describe('SpaceActorRegistryAdapter', () => {
 
     const actors = registry.listActors(space.id);
 
-    expect(registry.getActor(space.id, `agent:${first.id}`)?.handle).toBe(
-      `@a-b-${first.id.slice(0, 8)}`
-    );
-    expect(registry.getActor(space.id, `agent:${second.id}`)?.handle).toBe(
-      `@a-b-${second.id.slice(0, 8)}`
-    );
+    expect(registry.getActor(space.id, `agent:${first.id}`)?.handle).toBe('@a-b');
+    expect(registry.getActor(space.id, `agent:${second.id}`)?.handle).toBe('@a-b-2');
     expect(registry.getActor(space.id, `agent:${first.id}`)?.roles).toEqual([
-      `actor-role:a-b-${first.id.slice(0, 8)}`,
+      'actor-role:a-b',
       'space-agent',
     ]);
     expect(registry.getActor(space.id, `agent:${second.id}`)?.roles).toEqual([
-      `actor-role:a-b-${second.id.slice(0, 8)}`,
+      'actor-role:a-b-2',
       'space-agent',
     ]);
     expect(registry.getActor(space.id, `agent:${prefixed.id}`)?.roles).toEqual([
       'actor-role:custom-coordinator',
       'space-agent',
     ]);
-    expect(registry.getActor(space.id, `agent:${cjk.id}`)?.handle).toBe(
-      `@agent-${cjk.id.slice(0, 8)}`
-    );
+    expect(registry.getActor(space.id, `agent:${cjk.id}`)?.handle).toBe('@unnamed-space');
     for (const actor of actors) {
       if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
     }
