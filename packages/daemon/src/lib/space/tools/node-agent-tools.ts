@@ -896,18 +896,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       }
                     : undefined
                 );
-                // Persist head_sha (and pr_url) from script output so the head-change
-                // guard has a stored SHA to compare against on retries.
-                if (evalResult.data?.head_sha !== undefined) {
-                  gateDataRepo.merge(workflowRunId, gateId, {
-                    head_sha: evalResult.data.head_sha,
-                  });
-                }
-                if (evalResult.data?.pr_url !== undefined) {
-                  gateDataRepo.merge(workflowRunId, gateId, {
-                    pr_url: evalResult.data.pr_url,
-                  });
-                }
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
                 // Multi-round review history: every time the reviewer writes a

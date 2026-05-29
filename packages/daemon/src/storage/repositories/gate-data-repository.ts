@@ -104,6 +104,35 @@ export class GateDataRepository {
   }
 
   /**
+   * Merge partial data into an existing gate data record without advancing
+   * `updated_at`. Use this when persisting script-derived metadata (e.g.
+   * `head_sha`) that must not restamp the gate-data timestamp used by
+   * timeout/freshness anchors.
+   */
+  mergePreserveTimestamp(
+    runId: string,
+    gateId: string,
+    partial: Record<string, unknown>
+  ): GateDataRecord {
+    return this.db.transaction(() => {
+      const existing = this.get(runId, gateId);
+      const merged = existing ? { ...existing.data, ...partial } : { ...partial };
+      if (existing && JSON.stringify(existing.data) === JSON.stringify(merged)) {
+        return existing;
+      }
+      const updatedAt = existing?.updatedAt ?? Date.now();
+      this.db
+        .prepare(
+          `INSERT INTO gate_data (run_id, gate_id, data, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(run_id, gate_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
+        )
+        .run(runId, gateId, JSON.stringify(merged), updatedAt);
+      return { runId, gateId, data: merged, updatedAt };
+    })();
+  }
+
+  /**
    * Merge partial data into an existing gate data record, deep-merging
    * nominated map-typed fields instead of replacing them wholesale.
    *

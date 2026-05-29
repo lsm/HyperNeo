@@ -42,9 +42,9 @@ export interface GateEvalResult {
   reason?: string;
   /**
    * Gate data after script pre-check, including any deep-merged script
-   * output. Present only when a script was executed; consumers can persist
-   * selected keys (e.g. `head_sha`) back to storage without re-running the
-   * script.
+   * output. Present when evaluation reached the field-check stage (i.e.
+   * not present when the script itself failed). Consumers can persist
+   * selected keys back to storage without re-running the script.
    */
   data?: Record<string, unknown>;
 }

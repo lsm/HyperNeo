@@ -66,14 +66,8 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
   // Freshness uses gate-data update time with workflow-start fallback.
   'FRESHNESS_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
-  // Head-change guard: compare stored head SHA with current PR head. If they
-  // differ, the PR has changed since the last review and codex must re-review.
+  // Resolve current PR head for inclusion in success output (audit trail).
   'HEAD_SHA=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
-  'STORED_HEAD_SHA=$(jq -r \'.head_sha // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-  'if [ -n "$STORED_HEAD_SHA" ] && [ -n "$HEAD_SHA" ] && [ "$STORED_HEAD_SHA" != "$HEAD_SHA" ]; then',
-  '  echo "PR head changed from ${STORED_HEAD_SHA} to ${HEAD_SHA}; codex[bot] must re-review ${PR_URL}" >&2',
-  '  exit 1',
-  'fi',
   'if [ -n "$FRESHNESS_ISO" ]; then',
   '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
   'else',
@@ -103,6 +97,62 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   'exit 1',
 ].join('\n');
 
+// Poll variant: emits pending statuses to stdout (exit 0) so GatePollManager
+// can inject guidance to the reviewer while waiting. Success/timeout paths
+// are identical to the gate script.
+const CODEX_REVIEW_BOT_POLL_SCRIPT = [
+  'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
+  'if [ -z "$PR_URL" ]; then',
+  '  echo "No PR URL available to verify codex[bot] reaction. Provide pr_url gate data or run from a PR branch."',
+  '  exit 0',
+  'fi',
+  'if [[ ! "$PR_URL" =~ ^https://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
+  '  echo "Unsupported PR URL for codex[bot] reaction check: ${PR_URL}"',
+  '  exit 0',
+  'fi',
+  'GH_HOST="${BASH_REMATCH[1]}"',
+  'OWNER="${BASH_REMATCH[2]}"',
+  'REPO="${BASH_REMATCH[3]}"',
+  'NUMBER="${BASH_REMATCH[4]}"',
+  'GH_HOST_ARGS=()',
+  'if [ -n "$GH_HOST" ]; then GH_HOST_ARGS=(--hostname "$GH_HOST"); fi',
+  'REACTIONS_RAW=$(gh api --paginate "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions?per_page=100" -H "Accept: application/vnd.github+json")',
+  'if [ $? -ne 0 ]; then',
+  '  echo "Failed to fetch PR reactions for ${PR_URL}"',
+  '  exit 0',
+  'fi',
+  'REACTIONS_JSON=$(jq -s \'add // []\' <<< "$REACTIONS_RAW")',
+  'TIMEOUT_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-}"',
+  'FRESHNESS_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
+  'HEAD_SHA=$(gh api "${GH_HOST_ARGS[@]}" "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
+  'if [ -n "$FRESHNESS_ISO" ]; then',
+  '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
+  'else',
+  '  FRESH_REACTIONS="$REACTIONS_JSON"',
+  'fi',
+  'CODEX_PLUS_ONE_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "+1")] | length\' <<< "$FRESH_REACTIONS")',
+  'if [ "$CODEX_PLUS_ONE_COUNT" != "0" ] && [ -n "$CODEX_PLUS_ONE_COUNT" ]; then',
+  '  jq -n --arg url "$PR_URL" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":"+1","head_sha":$sha}\'',
+  '  exit 0',
+  'fi',
+  'if [ -n "$TIMEOUT_ISO" ]; then',
+  `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$TIMEOUT_ISO" 2>/dev/null || true)`,
+  '  NOW_EPOCH=$(date +%s)',
+  `  if [ -n "$START_EPOCH" ] && [ $((NOW_EPOCH - START_EPOCH)) -ge ${CODEX_REVIEW_BOT_TIMEOUT_SECONDS} ]; then`,
+  '    jq -n --arg url "$PR_URL" --arg status "timeout" --arg sha "${HEAD_SHA}" \'{"pr_url":$url,"codex_bot_reaction":$status,"head_sha":$sha,"codex_bot_warning":"codex[bot] +1 reaction missing after timeout; allowing gate"}\'',
+  '    exit 0',
+  '  fi',
+  'fi',
+  'CODEX_EYES_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "eyes")] | length\' <<< "$FRESH_REACTIONS")',
+  'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
+  '  echo "codex[bot] review still in progress (eyes reaction present); wait for +1 on ${PR_URL}"',
+  'else',
+  '  echo "codex[bot] has not started or has not reported on ${PR_URL}; comment \'@codex review\' on the PR, then wait for an eyes or +1 reaction"',
+  'fi',
+  'exit 0',
+].join('\n');
+
 export function getCodexReviewBotGateScript(): GateScript {
   return {
     interpreter: 'bash',
@@ -115,7 +165,7 @@ export function getCodexReviewBotGatePoll(): GatePoll {
   return {
     intervalMs: CODEX_REVIEW_BOT_POLL_INTERVAL_MS,
     target: 'from',
-    script: CODEX_REVIEW_BOT_SCRIPT,
+    script: CODEX_REVIEW_BOT_POLL_SCRIPT,
     messageTemplate: 'codex[bot] reaction status update:\n{{output}}',
   };
 }

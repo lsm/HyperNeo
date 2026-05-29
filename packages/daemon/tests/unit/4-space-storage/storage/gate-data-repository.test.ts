@@ -121,6 +121,37 @@ describe('GateDataRepository — merge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// mergePreserveTimestamp
+// ---------------------------------------------------------------------------
+
+describe('GateDataRepository — mergePreserveTimestamp', () => {
+  test('creates record with current timestamp when none exists', () => {
+    const before = Date.now();
+    const result = repo.mergePreserveTimestamp(RUN_ID, GATE_ID_A, { approved: true });
+    const after = Date.now();
+    expect(result.data).toEqual({ approved: true });
+    expect(result.updatedAt).toBeGreaterThanOrEqual(before);
+    expect(result.updatedAt).toBeLessThanOrEqual(after);
+  });
+
+  test('merges data without advancing updated_at', () => {
+    repo.set(RUN_ID, GATE_ID_A, { count: 1 });
+    const original = repo.get(RUN_ID, GATE_ID_A)!;
+
+    // Small delay to ensure a different timestamp would be detectable
+    const delay = 50;
+    const start = Date.now();
+    while (Date.now() - start < delay) {
+      // busy wait
+    }
+
+    const result = repo.mergePreserveTimestamp(RUN_ID, GATE_ID_A, { extra: true });
+    expect(result.data).toEqual({ count: 1, extra: true });
+    expect(result.updatedAt).toBe(original.updatedAt);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // mergeWithMapFields
 // ---------------------------------------------------------------------------
 
