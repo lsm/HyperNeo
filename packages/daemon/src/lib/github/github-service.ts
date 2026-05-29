@@ -52,6 +52,8 @@ export interface GitHubServiceOptions {
   config: Config;
   /** API key for AI agents (security + routing) */
   apiKey: string;
+  /** Credential type so agents set the correct SDK env var */
+  apiKeyType?: 'api_key' | 'oauth';
   /** Optional GitHub token for polling and permission checks */
   githubToken?: string;
   /** Job queue repository — required to enqueue the initial github.poll job */
@@ -77,6 +79,7 @@ export class GitHubService {
   private internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   private config: Config;
   private apiKey: string;
+  private apiKeyType?: 'api_key' | 'oauth';
   private githubToken?: string;
 
   private pollingService?: GitHubPollingService;
@@ -94,6 +97,7 @@ export class GitHubService {
     this.internalEventBus = options.internalEventBus;
     this.config = options.config;
     this.apiKey = options.apiKey;
+    this.apiKeyType = options.apiKeyType;
     this.githubToken = options.githubToken;
     this.jobQueue = options.jobQueue;
     this.jobProcessor = options.jobProcessor;
@@ -111,11 +115,13 @@ export class GitHubService {
     // Initialize security agent
     this.securityAgent = createSecurityAgent({
       apiKey: this.apiKey,
+      apiKeyType: this.apiKeyType,
     });
 
     // Initialize router agent
     this.routerAgent = createRouterAgent({
       apiKey: this.apiKey,
+      apiKeyType: this.apiKeyType,
     });
 
     // Initialize inbox manager

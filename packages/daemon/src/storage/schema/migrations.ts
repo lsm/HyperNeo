@@ -680,6 +680,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 148: Add persisted handles to Space agents.
   runMigration148(db);
+
+  // Migration 149: Add encrypted provider credentials fallback table.
+  runMigration149(db);
 }
 
 /**
@@ -10363,5 +10366,20 @@ export function runMigration148(db: BunDatabase): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
     ON space_agents(space_id, handle)
     WHERE handle IS NOT NULL
+  `);
+}
+
+/**
+ * Migration 149 — Add encrypted provider credentials fallback table.
+ */
+export function runMigration149(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provider_credentials (
+      provider_id TEXT PRIMARY KEY,
+      encrypted_data BLOB NOT NULL,
+      iv BLOB NOT NULL,
+      tag BLOB NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
   `);
 }

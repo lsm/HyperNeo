@@ -56,6 +56,13 @@ describe('KimiProvider', () => {
       expect(provider.getApiKey()).toBe('kimi-key');
     });
 
+    it('should prefer env API keys over stored credentials', () => {
+      provider.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
+      process.env.KIMI_API_KEY = 'env-key';
+
+      expect(provider.getApiKey()).toBe('env-key');
+    });
+
     it('should return false when no API key is set', () => {
       expect(provider.isAvailable()).toBe(false);
     });

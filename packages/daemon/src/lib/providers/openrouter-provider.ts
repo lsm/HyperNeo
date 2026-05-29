@@ -10,6 +10,7 @@ import type {
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
+  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
@@ -138,6 +139,7 @@ export class OpenRouterProvider implements Provider {
 
   private modelCache: ModelInfo[] | null = null;
   private lastAuthError: string | undefined;
+  private credentials: ProviderCredentials | null = null;
 
   /**
    * Clear the model cache so the next getModels() call re-fetches from the API.
@@ -151,6 +153,15 @@ export class OpenRouterProvider implements Provider {
     private readonly fetchImpl: typeof fetch = fetch
   ) {}
 
+  setCredentials(credentials: ProviderCredentials): void {
+    this.credentials = credentials;
+    this.clearModelCache();
+  }
+
+  getCredentials(): ProviderCredentials | null {
+    return this.credentials;
+  }
+
   isAvailable(): boolean {
     const apiKey = this.getApiKey();
     return !!apiKey && isProbablyOpenRouterKey(apiKey);
@@ -158,7 +169,7 @@ export class OpenRouterProvider implements Provider {
 
   getApiKey(): string | undefined {
     const apiKey = this.env.OPENROUTER_API_KEY?.trim();
-    return apiKey || undefined;
+    return apiKey || (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined);
   }
 
   private getAllowedModelIds(): Set<string> | null {

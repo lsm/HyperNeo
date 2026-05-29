@@ -134,6 +134,21 @@ describe('Daemon App Cleanup', () => {
       expect(successLog).toBeTruthy();
     });
 
+    test('starts and stops OAuth refresh scheduler', async () => {
+      const daemonContext = await createDaemonApp({
+        config,
+        verbose: true,
+        standalone: false,
+      });
+
+      const activeHandlesBeforeCleanup = process._getActiveHandles().length;
+      await daemonContext.cleanup();
+      const activeHandlesAfterCleanup = process._getActiveHandles().length;
+
+      expect(activeHandlesAfterCleanup).toBeLessThanOrEqual(activeHandlesBeforeCleanup);
+      expect(logs.some((log) => log.includes('OAuth refresh scheduler stopped'))).toBe(true);
+    });
+
     test('should timeout and complete cleanup when pending calls never resolve', {
       timeout: 10_000,
     }, async () => {
@@ -307,6 +322,7 @@ describe('Daemon App Cleanup', () => {
       ).rejects.toThrow('bind failed');
 
       expect(console.error).toBe(originalError);
+      expect(logs.some((log) => log.includes('OAuth refresh scheduler stopped'))).toBe(false);
     });
 
     test('should capture logError aliases created during startup', async () => {
