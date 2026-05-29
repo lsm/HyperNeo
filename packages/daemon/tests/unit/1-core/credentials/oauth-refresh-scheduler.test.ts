@@ -23,6 +23,12 @@ class FakeCredentialManager {
 }
 
 function createProvider(refreshResult: boolean | Error): Provider {
+  let credentials = {
+    type: 'oauth' as const,
+    accessToken: 'new-token',
+    refreshToken: 'refresh-token',
+    expiresAt: Date.now() + 60_000,
+  };
   return {
     id: 'oauth-provider',
     displayName: 'OAuth Provider',
@@ -41,18 +47,78 @@ function createProvider(refreshResult: boolean | Error): Provider {
     buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
     refreshToken: async () => {
       if (refreshResult instanceof Error) throw refreshResult;
+      if (refreshResult) {
+        credentials = { ...credentials, accessToken: 'new-token', expiresAt: Date.now() + 60_000 };
+      }
       return refreshResult;
     },
-    getCredentials: () => ({
-      type: 'oauth',
-      accessToken: 'new-token',
-      refreshToken: 'refresh-token',
-      expiresAt: Date.now() + 60_000,
-    }),
+    getCredentials: () => credentials,
   };
 }
 
 describe('OAuthRefreshScheduler', () => {
+  it('runs an initial tick when started', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+    try {
+      scheduler.start();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(manager.stored).toHaveLength(1);
+    } finally {
+      scheduler.stop();
+    }
+  });
+
+  it('refreshes provider-owned OAuth credentials when store has no row', async () => {
+    const registry = new ProviderRegistry();
+    let credentials = {
+      type: 'oauth' as const,
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    };
+    const provider = createProvider(true);
+    provider.refreshToken = async () => {
+      credentials = { ...credentials, accessToken: 'new-token', expiresAt: Date.now() + 60_000 };
+      return true;
+    };
+    provider.getCredentials = () => credentials;
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+
+    await scheduler.tick();
+
+    expect(manager.stored).toEqual([
+      {
+        providerId: 'oauth-provider',
+        credentials: {
+          type: 'oauth',
+          accessToken: 'new-token',
+          refreshToken: 'refresh-token',
+          expiresAt: expect.any(Number),
+        },
+      },
+    ]);
+  });
+
   it('refreshes OAuth credentials that expire inside refresh window', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));

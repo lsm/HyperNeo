@@ -327,6 +327,15 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         accessToken: 'gho_access_token',
       });
     });
+
+    it('reports stored credential-store tokens as authenticated', async () => {
+      provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.needsRefresh).toBe(false);
+    });
   });
 
   describe('buildSdkConfig', () => {

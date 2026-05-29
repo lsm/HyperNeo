@@ -36,6 +36,7 @@ export class OAuthRefreshScheduler {
 
   start(): void {
     if (this.timer) return;
+    this.tick().catch(() => {});
     this.timer = setInterval(() => {
       this.tick().catch(() => {});
     }, this.intervalMs);
@@ -55,7 +56,7 @@ export class OAuthRefreshScheduler {
 
   private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
     if (!provider.refreshToken) return;
-    const credentials = await this.credentialManager.getCredentials(provider.id);
+    const credentials = await this.credentialsForProvider(provider);
     if (!credentials || credentials.type !== 'oauth') return;
 
     const expiresAt = credentials.expiresAt;
@@ -87,6 +88,13 @@ export class OAuthRefreshScheduler {
     if (retries >= this.maxRetries) {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
     }
+  }
+
+  private async credentialsForProvider(provider: Provider): Promise<ProviderCredentials | null> {
+    const stored = await this.credentialManager.getCredentials(provider.id);
+    if (stored) return stored;
+    if (!provider.getCredentials) return null;
+    return await provider.getCredentials();
   }
 
   private async credentialsFromProvider(

@@ -308,6 +308,29 @@ describe('Auth RPC Handlers', () => {
       expect(mockProvider.logout).toHaveBeenCalled();
     });
 
+    it('removes provider credential store row on logout', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider();
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
     it('handles logout errors', async () => {
       const mockProvider = createMockProvider({
         logout: mock(async () => {

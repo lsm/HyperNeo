@@ -277,15 +277,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const providerRegistry = initializeProviders();
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
     for (const provider of providerRegistry.getAll()) {
-      const credentials = await credentialManager.getCredentials(provider.id);
-      if (credentials && provider.setCredentials) {
-        provider.setCredentials(credentials);
+      try {
+        const credentials = await credentialManager.getCredentials(provider.id);
+        if (credentials && provider.setCredentials) {
+          provider.setCredentials(credentials);
+        }
+      } catch (error) {
+        credentialManager.markProviderHealth(provider.id, 'unhealthy');
+        logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
       }
     }
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
       registry: providerRegistry,
     });
-    oauthRefreshScheduler.start();
 
     // Register user-defined OpenAI-compatible endpoints (LM Studio, vLLM, LiteLLM, etc.)
     // stored under `settings.customEndpoints`. Synchronous failure is non-fatal — bad
@@ -527,6 +531,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       messageHub,
       sessionManager,
       authManager,
+      credentialManager,
       settingsManager,
       config,
       internalEventBus,
@@ -783,6 +788,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('[Daemon] Task schedule startup re-seed failed (non-fatal):', err);
       }
     }
+
+    oauthRefreshScheduler.start();
+    logInfo('[Daemon] OAuth refresh scheduler started');
 
     // Enqueue the initial cleanup job if none is already pending.
     const pendingCleanup = jobQueue.listJobs({

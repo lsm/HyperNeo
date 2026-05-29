@@ -322,6 +322,7 @@ describe('Daemon App Cleanup', () => {
       ).rejects.toThrow('bind failed');
 
       expect(console.error).toBe(originalError);
+      expect(logs.some((log) => log.includes('OAuth refresh scheduler stopped'))).toBe(false);
     });
 
     test('should capture logError aliases created during startup', async () => {

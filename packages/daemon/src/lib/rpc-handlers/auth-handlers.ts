@@ -18,6 +18,7 @@ import type {
   ListProviderAuthStatusResponse,
 } from '@neokai/shared/provider';
 import type { AuthManager } from '../auth-manager';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { getProviderRegistry } from '../providers/registry';
 import { Logger } from '../logger';
 import { initializeProviders, waitForOptionalProviderRegistration } from '../providers/factory';
@@ -33,7 +34,11 @@ async function getReadyProviderRegistry() {
 /**
  * Setup authentication-related RPC handlers
  */
-export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManager): void {
+export function setupAuthHandlers(
+  messageHub: MessageHub,
+  authManager: AuthManager,
+  credentialManager?: ProviderCredentialManager
+): void {
   // NeoKai auth status (Anthropic)
   messageHub.onRequest('auth.status', async () => {
     const authStatus = await authManager.getAuthStatus();
@@ -159,6 +164,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 
       try {
         await provider.logout();
+        await credentialManager?.removeCredentials(providerId);
         return { success: true };
       } catch (error) {
         log.error(`Logout failed for ${providerId}:`, error);
