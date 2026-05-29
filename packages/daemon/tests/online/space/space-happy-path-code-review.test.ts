@@ -598,7 +598,8 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 
       // Verify gate data is absent
       const codePrGate = await readGateData(daemon, runId, 'code-pr-gate');
-      expect(codePrGate).toBeNull();
+      expect(codePrGate).not.toBeNull();
+      expect(codePrGate!.data).toEqual({ cycle_start_at: expect.any(Number) });
     },
     TEST_TIMEOUT
   );

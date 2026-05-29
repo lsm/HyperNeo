@@ -270,7 +270,8 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
       // Confirm gate is still empty
       const gate = await readGateData(daemon, runId, 'qa-result-gate');
-      expect(gate).toBeNull();
+      expect(gate).not.toBeNull();
+      expect(gate!.data).toEqual({ cycle_start_at: expect.any(Number) });
     },
     TEST_TIMEOUT
   );

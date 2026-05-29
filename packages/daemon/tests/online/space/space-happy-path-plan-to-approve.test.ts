@@ -170,7 +170,8 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
       // Before any write, gate data should be null (or not present)
       const beforeWrite = await readGateData(daemon, runId, 'plan-pr-gate');
-      expect(beforeWrite).toBeNull();
+      expect(beforeWrite).not.toBeNull();
+      expect(beforeWrite!.data).toEqual({ cycle_start_at: expect.any(Number) });
 
       await writeGateData(daemon, runId, 'plan-pr-gate', {
         pr_url: 'https://github.com/example/repo/pull/42',
@@ -216,7 +217,8 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
       // Verify plan-approval-gate has no data yet
       const approvalGate = await readGateData(daemon, runId, 'plan-approval-gate');
-      expect(approvalGate).toBeNull();
+      expect(approvalGate).not.toBeNull();
+      expect(approvalGate!.data).toEqual({ cycle_start_at: expect.any(Number) });
     },
     TEST_TIMEOUT
   );

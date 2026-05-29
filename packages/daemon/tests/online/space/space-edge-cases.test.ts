@@ -131,7 +131,8 @@ describe('Space Workflow — Edge Cases', () => {
       expect(gateA).not.toBeNull();
       expect(gateA!.data.pr_url).toBe('https://github.com/example/repo/pull/100');
       // runB's gate is untouched — gate isolation verified
-      expect(gateB).toBeNull();
+      expect(gateB).not.toBeNull();
+      expect(gateB!.data).toEqual({ cycle_start_at: expect.any(Number) });
 
       // Plan Review activates for runA but NOT for runB
       const planReviewA = await waitForNodeActivated(
