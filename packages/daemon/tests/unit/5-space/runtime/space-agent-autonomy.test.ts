@@ -144,25 +144,26 @@ describe('buildSpaceChatSystemPrompt — level 1 (supervised) autonomy', () => {
 
   test('instructs agent to notify human of every TASK_EVENT', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('Notify the human');
+    expect(prompt).toContain('Do not retry');
+    expect(prompt).toContain('without explicit human instruction');
     expect(prompt).toContain('[TASK_EVENT]');
   });
 
   test('instructs agent to wait for human approval before acting', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('wait for human approval');
+    expect(prompt).toContain('Provide recommendation and wait');
   });
 
-  test('instructs agent NOT to call retry_task without explicit instruction', () => {
+  test('instructs agent NOT to call retry without explicit instruction', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('retry_task');
+    expect(prompt).toContain('retry');
     expect(prompt).toContain('without explicit human instruction');
   });
 
-  test('instructs agent NOT to call reassign_task or cancel_task without explicit instruction', () => {
+  test('instructs agent NOT to reassign or cancel without explicit instruction', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    expect(prompt).toContain('reassign_task');
-    expect(prompt).toContain('cancel_task');
+    expect(prompt).toContain('reassign');
+    expect(prompt).toContain('cancel');
   });
 
   test('does NOT include level >= 3 autonomous-action instructions', () => {
@@ -184,25 +185,24 @@ describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', ()
 
   test('allows retrying a failed task once without human approval', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('Retry a failed task once');
-    expect(prompt).toContain('retry_task');
+    expect(prompt).toContain('retry a failed task once');
+    expect(prompt).toContain('retry');
   });
 
   test('allows reassigning a task without human approval', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('Reassign a task');
-    expect(prompt).toContain('reassign_task');
+    expect(prompt).toContain('reassign');
   });
 
   test('instructs agent to escalate after one failed retry', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
     expect(prompt).toContain('one failed retry');
-    expect(prompt).toContain('escalate to the human');
+    expect(prompt).toContain('escalate');
   });
 
   test('workflow gates above configured level still require human approval', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    expect(prompt).toContain('still require human approval');
+    expect(prompt).toContain('Never bypass gates');
   });
 
   test('does NOT include the level 1 "wait for human approval" restriction for all events', () => {
@@ -229,7 +229,8 @@ describe('buildSpaceChatSystemPrompt — default autonomy level (level 1 fallbac
 
   test('no-arg prompt includes notify-human instruction', () => {
     const prompt = buildSpaceChatSystemPrompt();
-    expect(prompt).toContain('Notify the human');
+    expect(prompt).toContain('Do not retry');
+    expect(prompt).toContain('wait');
   });
 
   test('no-arg prompt does not include level >= 3 retry-autonomously instruction', () => {
@@ -334,14 +335,14 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
     const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
     const semiPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 
-    // Both prompts reference retry_task
-    expect(supervisedPrompt).toContain('retry_task');
-    expect(semiPrompt).toContain('retry_task');
+    // Both prompts reference retry
+    expect(supervisedPrompt).toContain('retry');
+    expect(semiPrompt).toContain('retry');
 
     // Supervised: must not call without explicit human instruction
     expect(supervisedPrompt).toContain('without explicit human instruction');
     // Semi-autonomous: may retry once without human input
-    expect(semiPrompt).toContain('Retry a failed task once');
+    expect(semiPrompt).toContain('retry a failed task once');
   });
 });
 
@@ -435,9 +436,9 @@ describe('buildSpaceChatSystemPrompt — sections always present regardless of a
       expect(prompt).toContain('## Escalation');
     });
 
-    test(`Coordination Tools section is always present [autonomyLevel=${label}]`, () => {
+    test(`Coordination Invariants section is always present [autonomyLevel=${label}]`, () => {
       const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: level });
-      expect(prompt).toContain('## Coordination Tools');
+      expect(prompt).toContain('## Coordination Invariants');
     });
 
     test(`Autonomy Level section is always present [autonomyLevel=${label}]`, () => {

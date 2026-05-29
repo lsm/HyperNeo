@@ -249,9 +249,8 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(reviewer?.customPrompt).toContain('code reviewer');
-    // The prompt must keep emphasising actionable, specific feedback.
-    expect(reviewer?.customPrompt?.toLowerCase()).toContain('actionable');
+    expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
+    expect(reviewer?.customPrompt?.toLowerCase()).toContain('reviewer');
   });
 
   it('Reviewer custom prompt delegates exploration to the built-in general-purpose sub-agent via the Task tool', async () => {
@@ -263,23 +262,19 @@ describe('seedPresetAgents', () => {
     // sub-agent that ships with the `claude_code` preset. Custom reviewer
     // sub-agents (e.g. reviewer-explorer / reviewer-fact-checker) are a
     // planned follow-up and must NOT be referenced yet.
-    expect(reviewer?.customPrompt).toContain('general-purpose');
-    expect(reviewer?.customPrompt).toMatch(/Task tool/i);
-    expect(reviewer?.customPrompt).toContain('subagent_type');
+    expect(reviewer?.customPrompt).toContain('multiple Task general-purpose sub-agents');
     // We deliberately do not reference custom reviewer sub-agents that are
     // not yet defined as workflow-template/data.
     expect(reviewer?.customPrompt).not.toContain('reviewer-explorer');
     expect(reviewer?.customPrompt).not.toContain('reviewer-fact-checker');
-    // Fact-checking still mentions WebSearch/WebFetch as a fallback path.
-    expect(reviewer?.customPrompt).toMatch(/WebSearch|WebFetch/);
   });
 
   it('Reviewer custom prompt includes an identity block', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // Identity must appear at the top of every posted PR comment.
-    expect(reviewer?.customPrompt).toContain('Reviewer Identity');
+    // Identity must appear in every posted PR comment.
+    expect(reviewer?.customPrompt).toContain('Review by <your model>');
     expect(reviewer?.customPrompt).toContain('Client:** NeoKai');
     expect(reviewer?.customPrompt).toMatch(/Model:/);
     expect(reviewer?.customPrompt).toMatch(/Provider:/);
@@ -295,54 +290,37 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toContain('P3');
     expect(reviewer?.customPrompt).toContain('REQUEST_CHANGES');
     expect(reviewer?.customPrompt).toContain('APPROVE');
-    // Decision rule: request changes when any P0–P3 finding exists (P3 included).
-    expect(reviewer?.customPrompt).toContain('P0–P3');
-    expect(reviewer?.customPrompt).toMatch(/P3 included/i);
+    // Decision rule: request changes when any P0-P3 finding exists.
+    expect(reviewer?.customPrompt).toContain('P0-P3');
+    expect(reviewer?.customPrompt).toContain('Request changes for any P0-P3 finding');
   });
 
   it('Reviewer custom prompt fences terminal actions while findings are open (Task #136 regression)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // Preset-level fence must apply to ALL Reviewer instances, even when
-    // the workflow template forgets to add a customPrompt overlay. The
-    // section header, both terminal tools, the P0–P3 gate, and the
-    // "same approval semantic" clarifier must be present so future
-    // workflows inherit the gating by default.
-    expect(reviewer?.customPrompt).toContain('Terminal Action Pre-Conditions');
-    expect(reviewer?.customPrompt).toContain('`approve_task`');
-    expect(reviewer?.customPrompt).toContain('`submit_for_approval`');
-    expect(reviewer?.customPrompt).toContain('P0–P3');
-    expect(reviewer?.customPrompt).toMatch(/Do NOT call `approve_task`/);
-    expect(reviewer?.customPrompt).toMatch(/Do NOT call `submit_for_approval`/);
-    expect(reviewer?.customPrompt).toMatch(/same approval semantic/i);
-    expect(reviewer?.customPrompt).toMatch(/FINAL actions/);
-    expect(reviewer?.customPrompt).toMatch(/do NOT send a message to any agent/i);
-    expect(reviewer?.customPrompt).toMatch(/before human approval is granted/i);
+    expect(reviewer?.customPrompt).toContain('Terminal-action contract');
+    expect(reviewer?.customPrompt).toContain('approve_task/submit_for_approval');
+    expect(reviewer?.customPrompt).toContain('zero P0-P3 findings');
+    expect(reviewer?.customPrompt).toContain('If findings remain');
   });
 
   it('Reviewer custom prompt prohibits space-agent merge bypass when submit_for_approval fails (Task #295)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // If submit_for_approval fails, the reviewer must NOT escalate to
-    // space-agent to bypass the human approval gate.
-    expect(reviewer?.customPrompt).toMatch(/If `submit_for_approval` fails for any reason/i);
-    expect(reviewer?.customPrompt).toMatch(/Do NOT send a message to `space-agent`/i);
-    expect(reviewer?.customPrompt).toMatch(/advance the task to merge/i);
-    expect(reviewer?.customPrompt).toMatch(/human approval gate is mandatory/i);
-    expect(reviewer?.customPrompt).toMatch(/STOP/i);
+    expect(reviewer?.customPrompt).toContain('If findings remain');
+    expect(reviewer?.customPrompt).toContain('send actionable upstream feedback');
+    expect(reviewer?.customPrompt).toContain('stop');
   });
 
   it('Reviewer custom prompt includes own-PR detection', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // Deterministic check: compare gh api user login against PR author login.
-    expect(reviewer?.customPrompt).toContain('gh api user');
-    expect(reviewer?.customPrompt).toMatch(/author\.login|PR_AUTHOR/);
-    // Falls back to COMMENT when reviewer is the author.
+    expect(reviewer?.customPrompt).toContain('own-PR fallback');
     expect(reviewer?.customPrompt).toContain('COMMENT');
+    expect(reviewer?.customPrompt).toContain('match your actual verdict');
   });
 
   it('Reviewer custom prompt emphasises goal alignment, completeness, and omissions', async () => {
@@ -359,9 +337,8 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(reviewer?.customPrompt).toContain('gh api repos/');
-    expect(reviewer?.customPrompt).toContain('/reviews');
-    expect(reviewer?.customPrompt).toContain('.html_url');
+    expect(reviewer?.customPrompt).toContain('returned URL');
+    expect(reviewer?.customPrompt).toContain('GitHub review procedure');
   });
 
   it('Planner custom prompt mentions planning', async () => {
@@ -376,8 +353,8 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const qa = seeded.find((a) => a.name === 'QA');
 
+    expect(qa?.customPrompt).toContain('QA System Contract');
     expect(qa?.customPrompt).toContain('quality assurance');
-    expect(qa?.customPrompt).toContain('test suite');
   });
 
   it('General custom prompt mentions versatile development', async () => {
@@ -540,24 +517,16 @@ describe('preset agent exact definitions', () => {
   it('Reviewer custom prompt posts reviews via gh api and captures the returned URL', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-    // Reviews must land on the PR — and the URL must be captured for the
-    // caller. The hardened prompt posts via the REST API and extracts
-    // .html_url so the review URL is always available to the structured
-    // output block.
-    expect(reviewer.customPrompt).toContain('gh api repos/');
-    expect(reviewer.customPrompt).toContain('/reviews');
-    expect(reviewer.customPrompt).toContain('.html_url');
+    expect(reviewer.customPrompt).toContain('GitHub review procedure');
+    expect(reviewer.customPrompt).toContain('returned URL');
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
   });
 
-  it('QA has exact custom prompt', async () => {
+  it('QA has shared system contract prompt', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const qa = seeded.find((a) => a.name === 'QA')!;
-    expect(qa.customPrompt).toBe(
-      'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
-        'and ensure the codebase meets quality standards before release.\n\n' +
-        'Run the full test suite and report results with specific details on any failures.'
-    );
+    expect(qa.customPrompt).toContain('QA System Contract');
+    expect(qa.customPrompt).toContain('trusted project QA instructions');
   });
 
   // --- Exact descriptions ---

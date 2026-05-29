@@ -52,6 +52,7 @@ const CLAUDE_CODE_BUILTIN_TOOLS = [
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
 const MEMORY_PROMPT_CONTENT_LIMIT = 500;
 const CORE_MEMORY_PROMPT_CHAR_LIMIT = 2_000;
+const OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT = 2_000;
 
 const log = new Logger('custom-agent');
 
@@ -329,13 +330,12 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   }
 
   // 6. Previous work summaries.
-  if (previousTaskSummaries && previousTaskSummaries.length > 0) {
+  const previousWorkLines = buildPreviousWorkLines(previousTaskSummaries);
+  if (previousWorkLines.length > 0) {
     sections.push('');
     sections.push('## Previous Work on This Goal');
     sections.push('');
-    for (const summary of previousTaskSummaries) {
-      sections.push(`- ${summary}`);
-    }
+    sections.push(...previousWorkLines);
   }
 
   // 7. Core memories are space-scoped and selected by background consolidation.
@@ -368,7 +368,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(space.backgroundContext);
   }
 
-  // 7. Standing instructions — space + workflow combined under one heading.
+  // 10. Standing instructions — space + workflow combined under one heading.
   const standingLines: string[] = [];
   if (space.instructions?.trim()) standingLines.push(space.instructions.trim());
   if (workflow?.instructions?.trim()) standingLines.push(workflow.instructions.trim());
@@ -417,6 +417,25 @@ function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): stri
 function truncateMemoryPromptContent(content: string): string {
   if (content.length <= MEMORY_PROMPT_CONTENT_LIMIT) return content;
   return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
+}
+
+function buildPreviousWorkLines(items: string[] | undefined): string[] {
+  if (!items || items.length === 0) return [];
+
+  const lines = items.map((item) => `- ${item}`);
+  const newestIndex = lines.length - 1;
+  if (lines[newestIndex].length > OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT) {
+    lines[newestIndex] = truncateBulletLine(
+      lines[newestIndex],
+      OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT
+    );
+  }
+  return lines;
+}
+
+function truncateBulletLine(line: string, limit: number): string {
+  if (line.length <= limit) return line;
+  return `${line.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 }
 
 function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined): string[] {
