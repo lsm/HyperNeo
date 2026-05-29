@@ -269,6 +269,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   /** Resolved token cache with TTL */
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
+  private readonly credentialListeners = new Set<
+    (credentials: ProviderCredentials) => void | Promise<void>
+  >();
   /**
    * Dynamically fetched models from the Copilot API (via client.listModels()).
    * Populated in getModels() and used by ownsModel()/getModelForTier() so that
@@ -326,6 +329,19 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const token = this.storedCredentialToken ?? this.tokenCache?.token;
     if (!token) return null;
     return { type: 'oauth', accessToken: token };
+  }
+
+  onCredentialsChanged(
+    listener: (credentials: ProviderCredentials) => void | Promise<void>
+  ): () => void {
+    this.credentialListeners.add(listener);
+    return () => this.credentialListeners.delete(listener);
+  }
+
+  private notifyCredentialsChanged(credentials: ProviderCredentials): void {
+    for (const listener of this.credentialListeners) {
+      void listener(credentials);
+    }
   }
 
   async isAvailable(): Promise<boolean> {
@@ -883,6 +899,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         // Invalidate token cache so next call picks up the new token
         this.storedCredentialToken = null;
         this.tokenCache = null;
+        this.notifyCredentialsChanged({ type: 'oauth', accessToken: data.access_token });
 
         logger.debug('GitHub Copilot OAuth login successful');
 

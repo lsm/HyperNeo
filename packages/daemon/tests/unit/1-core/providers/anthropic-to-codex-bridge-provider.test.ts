@@ -284,6 +284,24 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(await provider.getApiKey()).toBe('neokai-access-token');
     });
 
+    it('loads provider-owned credentials from disk before row replay checks', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'fresh-disk-token',
+        refresh: 'fresh-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      provider = makeProvider({}, neokaiDir, codexDir);
+      expect(await provider.getCredentials()).toMatchObject({
+        type: 'oauth',
+        accessToken: 'fresh-disk-token',
+        refreshToken: 'fresh-refresh-token',
+      });
+    });
+
     it('Priority 4a: returns OPENAI_API_KEY from ~/.codex/auth.json when no higher source', async () => {
       const neokaiDir = path.join(tmpDir, 'neokai'); // no file written
       const codexDir = path.join(tmpDir, 'codex');

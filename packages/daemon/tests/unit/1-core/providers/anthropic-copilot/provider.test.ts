@@ -350,6 +350,19 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
       expect(await provider.isAvailable()).toBe(true);
     });
+
+    it('notifies listeners when provider-owned OAuth credentials are saved', async () => {
+      const seen: unknown[] = [];
+      const unsubscribe = provider.onCredentialsChanged((credentials) => seen.push(credentials));
+
+      (provider as unknown as Record<string, unknown>)['notifyCredentialsChanged']({
+        type: 'oauth',
+        accessToken: 'new-copilot-token',
+      });
+      unsubscribe();
+
+      expect(seen).toEqual([{ type: 'oauth', accessToken: 'new-copilot-token' }]);
+    });
   });
 
   describe('buildSdkConfig', () => {

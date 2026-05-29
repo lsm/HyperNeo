@@ -16,6 +16,7 @@ import type {
   ProviderRefreshRequest,
   ProviderRefreshResponse,
   ListProviderAuthStatusResponse,
+  ProviderCredentials,
 } from '@neokai/shared/provider';
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
@@ -113,10 +114,20 @@ export function setupAuthHandlers(
       }
 
       try {
+        let unsubscribe: (() => void) | undefined;
+        const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
+          if (credentials.type === 'oauth') {
+            await credentialManager?.storeOAuthTokens(providerId, credentials);
+          }
+          unsubscribe?.();
+        };
+        unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();
-        const credentials = await provider.getCredentials?.();
-        if (credentials?.type === 'oauth') {
-          await credentialManager?.storeOAuthTokens(providerId, credentials);
+        if (!provider.onCredentialsChanged) {
+          const credentials = await provider.getCredentials?.();
+          if (credentials) {
+            await persistCredentials(credentials);
+          }
         }
 
         return {
@@ -182,11 +193,7 @@ export function setupAuthHandlers(
         return { success: true };
       } catch (error) {
         if (credentialManager) {
-          if (provider.logout) {
-            await provider.logout();
-          }
           await credentialManager.removeCredentials(providerId);
-          return { success: true };
         }
         log.error(`Logout failed for ${providerId}:`, error);
         return {

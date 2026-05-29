@@ -171,6 +171,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   /** In-memory cache of credentials read from the NeoKai auth file. */
   private cachedCredentials: StoredCredentials | null = null;
+  private readonly credentialListeners = new Set<
+    (credentials: ProviderCredentials) => void | Promise<void>
+  >();
 
   /**
    * Cached resolved bridge auth.
@@ -230,20 +233,38 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedApiKey = stored.access ?? '';
   }
 
-  getCredentials(): ProviderCredentials | null {
-    if (!this.cachedCredentials) return null;
-    if (this.cachedCredentials.type === 'api_key' && this.cachedCredentials.access) {
-      return { type: 'api_key', apiKey: this.cachedCredentials.access };
+  async getCredentials(): Promise<ProviderCredentials | null> {
+    const credentials = await this.loadCredentials();
+    if (!credentials) return null;
+    if (credentials.type === 'api_key' && credentials.access) {
+      return { type: 'api_key', apiKey: credentials.access };
     }
+    return this.toProviderCredentials(credentials);
+  }
+
+  onCredentialsChanged(
+    listener: (credentials: ProviderCredentials) => void | Promise<void>
+  ): () => void {
+    this.credentialListeners.add(listener);
+    return () => this.credentialListeners.delete(listener);
+  }
+
+  private notifyCredentialsChanged(credentials: ProviderCredentials): void {
+    for (const listener of this.credentialListeners) {
+      void listener(credentials);
+    }
+  }
+
+  private toProviderCredentials(credentials: StoredCredentials): ProviderCredentials {
     return {
       type: 'oauth',
-      accessToken: this.cachedCredentials.access,
-      refreshToken: this.cachedCredentials.refresh,
-      expiresAt: this.cachedCredentials.expires,
+      accessToken: credentials.access,
+      refreshToken: credentials.refresh,
+      expiresAt: credentials.expires,
       raw: {
-        accountId: this.cachedCredentials.accountId,
-        planType: this.cachedCredentials.planType,
-        isFedrampAccount: this.cachedCredentials.isFedrampAccount,
+        accountId: credentials.accountId,
+        planType: credentials.planType,
+        isFedrampAccount: credentials.isFedrampAccount,
       },
     };
   }
@@ -663,6 +684,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
               this.cachedCredentials = credentials;
               this.cachedBridgeAuth = this.toBridgeAuth(credentials) ?? null;
               this.cachedApiKey = credentials.access ?? '';
+              this.notifyCredentialsChanged(this.toProviderCredentials(credentials));
               if (this.activeOAuthFlow) {
                 this.activeOAuthFlow.completed = true;
                 this.activeOAuthFlow.success = true;

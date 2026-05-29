@@ -203,9 +203,16 @@ export interface Provider {
   setCredentials?(credentials: ProviderCredentials): void;
 
   /**
-   * Optional: Return current in-memory credentials for persistence after refresh.
+   * Optional: Return current provider-owned credentials for persistence after refresh.
    */
   getCredentials?(): Promise<ProviderCredentials | null> | ProviderCredentials | null;
+
+  /**
+   * Optional: Subscribe to provider-owned credential changes.
+   */
+  onCredentialsChanged?(
+    listener: (credentials: ProviderCredentials) => void | Promise<void>
+  ): () => void;
 
   /**
    * Optional: Start OAuth authentication flow.
