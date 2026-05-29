@@ -9,7 +9,6 @@ export type {
   ProviderCredentials,
   ProviderId,
   ProviderInfo,
-  ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,

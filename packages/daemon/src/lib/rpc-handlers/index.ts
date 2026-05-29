@@ -15,7 +15,6 @@ import type { ExternalEventStore } from '../external-events/external-event-store
 import type { ExternalEventService } from '../external-events/external-event-service';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import type { SettingsManager } from '../settings-manager';
 import type { Config } from '../../config';
 import type { Database } from '../../storage/database';
@@ -30,6 +29,8 @@ import { setupCommandHandlers } from './command-handlers';
 import { registerMcpHandlers } from './mcp-handlers';
 import { registerSettingsHandlers } from './settings-handlers';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers';
+import { setupProviderHandlers } from './provider-handlers';
+import { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
@@ -422,7 +423,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     deps.mcpImportService
   );
-  registerCustomEndpointHandlers(deps.messageHub, deps.settingsManager, deps.internalEventBus);
+  registerCustomEndpointHandlers(
+    deps.messageHub,
+    deps.settingsManager,
+    deps.internalEventBus,
+    deps.db
+  );
+
+  // Provider registry handlers (unified CRUD over providers table)
+  const providerCredentialManager = ProviderCredentialManager.create(deps.db.getDatabase());
+  setupProviderHandlers({
+    messageHub: deps.messageHub,
+    providerRepo: deps.db.providers,
+    credentialManager: providerCredentialManager,
+  });
+
   setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
   // Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
   setupTestHandlers(deps.messageHub, deps.reactiveDb.db);

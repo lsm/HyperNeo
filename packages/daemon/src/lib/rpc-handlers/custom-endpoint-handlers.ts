@@ -11,12 +11,16 @@ import type { MessageHub } from '@neokai/shared';
 import type { CustomEndpointConfig, CustomEndpointType } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { Database } from '../../storage/database';
+import { Logger } from '../logger.js';
 
 const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
   'openai-chat',
   'anthropic-messages',
   'ollama-native',
 ]);
+
+const log = new Logger('rpc-handlers:custom-endpoints');
 
 /**
  * Validate a single endpoint. Exported for callers (e.g. the generic
@@ -91,10 +95,65 @@ export function validateCustomEndpoints(configs: CustomEndpointConfig[] | undefi
   }
 }
 
+function customProviderIdForEndpoint(endpointId: string): string {
+  return `custom:${endpointId}`;
+}
+
+function endpointToProviderRecord(endpoint: CustomEndpointConfig): {
+  providerId: string;
+  displayName: string;
+  kind: 'custom_endpoint';
+  authType: 'api_key' | 'none';
+  baseUrl: string;
+  customEndpointConfigJson: string;
+} {
+  return {
+    providerId: customProviderIdForEndpoint(endpoint.id),
+    displayName: endpoint.name,
+    kind: 'custom_endpoint' as const,
+    authType: 'none' as const,
+    baseUrl: endpoint.baseUrl,
+    customEndpointConfigJson: JSON.stringify(endpoint),
+  };
+}
+
+function syncEndpointToProviderTable(
+  db: Database | undefined,
+  endpoint: CustomEndpointConfig
+): void {
+  if (!db) return;
+  const existing = db.providers.getProviderByProviderId(customProviderIdForEndpoint(endpoint.id));
+  if (existing) {
+    db.providers.updateProvider(existing.id, {
+      displayName: endpoint.name,
+      baseUrl: endpoint.baseUrl,
+      customEndpointConfigJson: JSON.stringify(endpoint),
+    });
+  } else {
+    try {
+      db.providers.createProvider({
+        ...endpointToProviderRecord(endpoint),
+        authType: 'none',
+      });
+    } catch (err) {
+      log.warn('Failed to create provider record for custom endpoint:', err);
+    }
+  }
+}
+
+function removeEndpointFromProviderTable(db: Database | undefined, endpointId: string): void {
+  if (!db) return;
+  const existing = db.providers.getProviderByProviderId(customProviderIdForEndpoint(endpointId));
+  if (existing) {
+    db.providers.deleteProvider(existing.id);
+  }
+}
+
 async function persistAndSync(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  endpoints: CustomEndpointConfig[]
+  endpoints: CustomEndpointConfig[],
+  db?: Database
 ): Promise<void> {
   const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
   const { syncCustomEndpointProviders } = await import('../providers/factory.js');
@@ -109,6 +168,21 @@ async function persistAndSync(
     namespaceId: 'global',
     settings: updated,
   });
+
+  // Compat: sync the full list to the providers table so the unified registry
+  // stays in sync with the legacy customEndpoints JSON blob.
+  if (db) {
+    const allProviderIds = new Set(endpoints.map((e) => customProviderIdForEndpoint(e.id)));
+    for (const endpoint of endpoints) {
+      syncEndpointToProviderTable(db, endpoint);
+    }
+    // Remove any provider records for endpoints that no longer exist.
+    for (const record of db.providers.listProviders()) {
+      if (record.kind === 'custom_endpoint' && !allProviderIds.has(record.providerId)) {
+        db.providers.deleteProvider(record.id);
+      }
+    }
+  }
 }
 
 /**
@@ -136,7 +210,8 @@ export function withCustomEndpointsLock<T>(fn: () => Promise<T>): Promise<T> {
 export function registerCustomEndpointHandlers(
   messageHub: MessageHub,
   settingsManager: SettingsManager,
-  internalEventBus: InternalEventBus<DaemonInternalEventMap>
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>,
+  db?: Database
 ): void {
   /** List all configured custom endpoints. */
   messageHub.onRequest('customEndpoints.list', async () => {
@@ -152,7 +227,7 @@ export function registerCustomEndpointHandlers(
         throw new Error(`Custom endpoint '${data.endpoint.id}' already exists`);
       }
       const next = [...current, data.endpoint];
-      await persistAndSync(settingsManager, internalEventBus, next);
+      await persistAndSync(settingsManager, internalEventBus, next, db);
       return { success: true, endpoint: data.endpoint };
     });
   });
@@ -167,7 +242,7 @@ export function registerCustomEndpointHandlers(
         const index = current.findIndex((e) => e.id === data.endpoint.id);
         if (index === -1) throw new Error(`Custom endpoint '${data.endpoint.id}' not found`);
         const next = [...current.slice(0, index), data.endpoint, ...current.slice(index + 1)];
-        await persistAndSync(settingsManager, internalEventBus, next);
+        await persistAndSync(settingsManager, internalEventBus, next, db);
         return { success: true, endpoint: data.endpoint };
       });
     }
@@ -181,7 +256,8 @@ export function registerCustomEndpointHandlers(
       if (next.length === current.length) {
         throw new Error(`Custom endpoint '${data.id}' not found`);
       }
-      await persistAndSync(settingsManager, internalEventBus, next);
+      removeEndpointFromProviderTable(db, data.id);
+      await persistAndSync(settingsManager, internalEventBus, next, db);
       return { success: true };
     });
   });

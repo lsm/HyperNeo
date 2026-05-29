@@ -269,18 +269,6 @@ export interface Provider {
 }
 
 /**
- * Credentials passed to a provider via `setCredentials()`.
- * Not all fields are used by every provider.
- */
-export interface ProviderCredentials {
-  apiKey?: string;
-  baseUrl?: string;
-  oauthAccessToken?: string;
-  oauthRefreshToken?: string;
-  oauthExpiresAt?: number;
-}
-
-/**
  * Provider context created for a session
  * Encapsulates provider-specific configuration for query building
  */

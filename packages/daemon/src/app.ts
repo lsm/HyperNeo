@@ -41,6 +41,8 @@ import {
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
+import { syncAllProviders } from './lib/providers/provider-sync.js';
+import { migrateProvidersIfNeeded } from './lib/credential-discovery';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
@@ -314,12 +316,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       registry: providerRegistry,
     });
 
+    // One-time migration: env vars / auth files / customEndpoints → providers table.
+    try {
+      await migrateProvidersIfNeeded(db, credentialManager);
+    } catch (err) {
+      logError('[Daemon] Provider migration failed (non-fatal):', err);
+    }
+
     // Register user-defined OpenAI-compatible endpoints (LM Studio, vLLM, LiteLLM, etc.)
     // stored under `settings.customEndpoints`. Synchronous failure is non-fatal — bad
     // endpoint configs are logged and skipped rather than blocking daemon startup.
     {
       const { syncCustomEndpointProviders } = await import('./lib/providers/factory.js');
       await syncCustomEndpointProviders(settingsManager.getGlobalSettings().customEndpoints);
+    }
+
+    // Sync all enabled providers from the providers table into the registry.
+    try {
+      await syncAllProviders(() => db.providers.listEnabledProviders(), credentialManager);
+    } catch (err) {
+      logError('[Daemon] Provider sync failed (non-fatal):', err);
     }
 
     // Check authentication status.
