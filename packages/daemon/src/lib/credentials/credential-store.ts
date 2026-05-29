@@ -3,10 +3,13 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { homedir, platform } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'NEOKAI_PROVIDER_CREDENTIAL_KEY';
+const KEY_FILE_NAME = '.provider-credential-key';
 
 export interface CredentialStore {
   get(service: string, account: string): Promise<string | null>;
@@ -77,7 +80,7 @@ export class DatabaseCredentialStore implements CredentialStore {
     private readonly db: Database,
     secret?: string
   ) {
-    secret ??= process.env[ENCRYPTION_KEY_ENV] || defaultEncryptionSecret(db);
+    secret ??= process.env[ENCRYPTION_KEY_ENV] || loadOrGenerateCredentialKey();
     this.key = createHash('sha256').update(secret).digest();
     ensureProviderCredentialsTable(db);
   }
@@ -159,14 +162,30 @@ function providerIdFrom(service: string, account: string): string {
   return `${service}:${account}`;
 }
 
-function defaultEncryptionSecret(db: Database): string {
-  const filename = databaseFilename(db);
-  return `${homedir()}:neokai-provider-credentials:${filename}`;
-}
+function loadOrGenerateCredentialKey(): string {
+  const envKey = process.env[ENCRYPTION_KEY_ENV];
+  if (envKey) return envKey;
 
-function databaseFilename(db: Database): string {
-  const filename = (db as Database & { filename?: string }).filename;
-  return filename && filename !== ':memory:' ? filename : 'memory';
+  const keyPath = path.join(homedir(), '.neokai', KEY_FILE_NAME);
+  try {
+    const existing = fs.readFileSync(keyPath, 'utf-8').trim();
+    if (existing) return existing;
+  } catch {
+    // File does not exist — generate a new key below.
+  }
+
+  const key = randomBytes(32).toString('hex');
+  try {
+    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+    fs.writeFileSync(keyPath, key, { mode: 0o600 });
+  } catch (err) {
+    throw new Error(
+      `Failed to persist provider credential key to ${keyPath}. ` +
+        'Set NEOKAI_PROVIDER_CREDENTIAL_KEY to provide a stable encryption key.',
+      { cause: err }
+    );
+  }
+  return key;
 }
 
 function escapeLike(value: string): string {
