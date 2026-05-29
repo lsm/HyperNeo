@@ -325,9 +325,21 @@ export function validateGate(gate: unknown): string[] {
   // for message injection only. A gate still needs fields, features, or a script.
   const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
   const hasScript = g.script !== undefined && g.script !== null;
+  const hasPoll = g.poll !== undefined && g.poll !== null;
   const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
   if (!hasFields && !hasScript && !hasFeatures) {
     errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
+  }
+
+  // Reject feature + custom script/poll combinations to prevent silent override.
+  // Features compile into script/poll at runtime; mixing them with custom
+  // script/poll would silently drop the custom checks. Remove the custom
+  // script/poll or disable the feature, not both.
+  if (hasFeatures && (hasScript || hasPoll)) {
+    errors.push(
+      'gate: cannot combine registered features with a custom "script" or "poll". ' +
+        'Either remove the custom script/poll or disable the feature.'
+    );
   }
 
   return errors;

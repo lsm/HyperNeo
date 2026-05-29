@@ -25,7 +25,7 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
-import { evaluateFields } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
+import { evaluateFields, validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
 import { getEffectiveGate } from '../../../../src/lib/space/runtime/gate-features.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
@@ -3074,6 +3074,19 @@ describe('getBuiltInGateScript()', () => {
     // The review-posted-gate script must use NEOKAI_WORKFLOW_START_ISO to filter
     // reviews that were posted after the workflow started
     expect(script?.source).toContain('NEOKAI_WORKFLOW_START_ISO');
+  });
+});
+
+describe('all built-in workflow gates pass creation-time validation', () => {
+  const workflows = getBuiltInWorkflows();
+
+  test('every built-in gate is structurally valid', () => {
+    for (const wf of workflows) {
+      for (const gate of wf.gates ?? []) {
+        const errors = validateGate(gate);
+        expect(errors).toHaveLength(0);
+      }
+    }
   });
 });
 

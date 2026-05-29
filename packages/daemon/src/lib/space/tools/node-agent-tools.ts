@@ -135,8 +135,10 @@ async function evaluateTerminalGateFeatures(
 ): Promise<ToolResult | null> {
   if (!workflow || !scriptExecutor || !scriptContext) return null;
 
-  // Scope terminal checks to gates on channels that leave the current node.
-  // This prevents unrelated feature-backed gates from blocking terminal
+  // Scope terminal checks to gates on channels connected to the current node.
+  // Includes both outgoing (from) and incoming (to) gated channels so terminal
+  // actions from an end node are still guarded by the incoming gate that led
+  // to it. This prevents unrelated feature-backed gates from blocking terminal
   // actions when the current node is on a different path.
   let relevantGateIds: Set<string> | undefined;
   if (currentNodeId && workflow.channels) {
@@ -144,7 +146,11 @@ async function evaluateTerminalGateFeatures(
     if (currentNodeName) {
       relevantGateIds = new Set(
         workflow.channels
-          .filter((ch) => ch.from === currentNodeName || ch.from === '*')
+          .filter((ch) => {
+            if (ch.from === currentNodeName || ch.from === '*') return true;
+            const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+            return toList.includes(currentNodeName) || toList.includes('*');
+          })
           .map((ch) => ch.gateId)
           .filter((id): id is string => !!id)
       );

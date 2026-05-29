@@ -1224,6 +1224,29 @@ describe('validateGate', () => {
     expect(errors.some((e) => e.includes('at least one'))).toBe(true);
   });
 
+  test('gate with registered feature and custom script returns error', () => {
+    const errors = validateGate({
+      id: 'g1',
+      features: { codex_review_bot: true },
+      script: { interpreter: 'bash', source: 'echo hi' },
+      resetOnCycle: false,
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.includes('cannot combine'))).toBe(true);
+  });
+
+  test('gate with registered feature and custom poll returns error', () => {
+    const errors = validateGate({
+      id: 'g1',
+      features: { codex_review_bot: true },
+      fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+      poll: { intervalMs: 30_000, target: 'to', script: 'echo poll' },
+      resetOnCycle: false,
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.includes('cannot combine'))).toBe(true);
+  });
+
   test('gate with invalid color produces error', () => {
     const errors = validateGate({
       id: 'g1',
