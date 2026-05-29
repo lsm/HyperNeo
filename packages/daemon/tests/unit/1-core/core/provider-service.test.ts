@@ -230,7 +230,10 @@ class AnthropicMockProvider extends MockProvider {
   readonly id = 'anthropic' as const;
   readonly displayName = 'Anthropic';
 
-  constructor(available: boolean = true) {
+  constructor(
+    available: boolean = true,
+    private readonly envVars: Record<string, string> = {}
+  ) {
     super('anthropic', 'Anthropic', available, 'claude-');
   }
 
@@ -243,9 +246,8 @@ class AnthropicMockProvider extends MockProvider {
   }
 
   buildSdkConfig(): ProviderSdkConfig {
-    // Anthropic returns empty env vars (uses default)
     return {
-      envVars: {},
+      envVars: this.envVars,
       isAnthropicCompatible: true,
     };
   }
@@ -594,6 +596,26 @@ describe('ProviderService', () => {
       expect(envVars.API_TIMEOUT_MS).toBe('120000');
     });
 
+    it('returns stored Anthropic API key env for Anthropic models', async () => {
+      registry.clear();
+      registry.register(new AnthropicMockProvider(true, { ANTHROPIC_API_KEY: 'stored-key' }));
+
+      const envVars = await service.getEnvVarsForModel('claude-3-opus', 'anthropic');
+
+      expect(envVars.ANTHROPIC_API_KEY).toBe('stored-key');
+    });
+
+    it('returns stored Anthropic OAuth env for Anthropic models', async () => {
+      registry.clear();
+      registry.register(
+        new AnthropicMockProvider(true, { CLAUDE_CODE_OAUTH_TOKEN: 'stored-oauth-token' })
+      );
+
+      const envVars = await service.getEnvVarsForModel('claude-3-opus', 'anthropic');
+
+      expect(envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('stored-oauth-token');
+    });
+
     it('should return empty object for unknown provider', async () => {
       const envVars = await service.getEnvVarsForModel('unknown-model', 'anthropic');
       expect(envVars).toEqual({});
@@ -651,6 +673,70 @@ describe('ProviderService', () => {
 
       const envVars = service.getProviderEnvVars(session);
       expect(envVars).toEqual({});
+    });
+
+    it('returns stored Anthropic API key env for Anthropic session', async () => {
+      registry.clear();
+      registry.register(new AnthropicMockProvider(true, { ANTHROPIC_API_KEY: 'stored-key' }));
+      const session: Session = {
+        id: 'test-session',
+        title: 'Test',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'claude-3-opus',
+          maxTokens: 8192,
+          temperature: 1.0,
+          provider: 'anthropic',
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      };
+
+      const envVars = service.getProviderEnvVars(session);
+
+      expect(envVars.ANTHROPIC_API_KEY).toBe('stored-key');
+    });
+
+    it('returns stored Anthropic OAuth env for Anthropic session', async () => {
+      registry.clear();
+      registry.register(
+        new AnthropicMockProvider(true, { CLAUDE_CODE_OAUTH_TOKEN: 'stored-oauth-token' })
+      );
+      const session: Session = {
+        id: 'test-session',
+        title: 'Test',
+        workspacePath: '/test',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'claude-3-opus',
+          maxTokens: 8192,
+          temperature: 1.0,
+          provider: 'anthropic',
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      };
+
+      const envVars = service.getProviderEnvVars(session);
+
+      expect(envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('stored-oauth-token');
     });
 
     it('should return env vars for GLM session', async () => {
@@ -889,6 +975,35 @@ describe('ProviderService', () => {
       // After restore the key is back.
       service.restoreEnvVars(original);
       expect(process.env.ANTHROPIC_API_KEY).toBe('real-key');
+    });
+
+    it('applies stored Anthropic API key as ANTHROPIC_API_KEY', async () => {
+      registry.clear();
+      registry.register(new AnthropicMockProvider(true, { ANTHROPIC_API_KEY: 'stored-key' }));
+
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+      expect(process.env.ANTHROPIC_API_KEY).toBe('stored-key');
+      expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(original.ANTHROPIC_API_KEY).toBeUndefined();
+
+      service.restoreEnvVars(original);
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+    });
+
+    it('applies stored Anthropic OAuth token as CLAUDE_CODE_OAUTH_TOKEN', async () => {
+      registry.clear();
+      registry.register(
+        new AnthropicMockProvider(true, { CLAUDE_CODE_OAUTH_TOKEN: 'stored-oauth-token' })
+      );
+
+      const original = await service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
+
+      expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('stored-oauth-token');
+      expect(original.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+
+      service.restoreEnvVars(original);
+      expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     });
 
     it('should clear provider-leaked GLM base URL after GLM query', async () => {

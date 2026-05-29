@@ -290,7 +290,7 @@ describe('Auth RPC Handlers', () => {
       };
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('does not support logout');
+      expect(result.error).toContain('managed by environment variables');
     });
 
     it('returns success on logout', async () => {
@@ -310,6 +310,7 @@ describe('Auth RPC Handlers', () => {
 
     it('removes provider credential store row on logout', async () => {
       const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
         removeCredentials: mock(async () => {}),
       };
       setupAuthHandlers(
@@ -333,6 +334,7 @@ describe('Auth RPC Handlers', () => {
 
     it('removes provider credential store row when provider has no logout method', async () => {
       const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
         removeCredentials: mock(async () => {}),
       };
       setupAuthHandlers(
@@ -352,6 +354,32 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('returns managed-by-environment error when no provider logout or stored row exists', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('managed by environment variables');
+      expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
     });
 
     it('handles logout errors', async () => {

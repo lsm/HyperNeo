@@ -9,6 +9,7 @@ import { SettingsManager } from './lib/settings-manager';
 import { StateProjectionService } from './lib/state-projection-service';
 import { createClientEventBridge } from './lib/client-event-bridge';
 import { MessageHub, MessageHubRouter } from '@neokai/shared';
+import type { Provider } from '@neokai/shared/provider';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -33,7 +34,10 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager';
 import { GitHubEventExtension } from './lib/external-events/github';
-import { initializeProviders } from './lib/providers/factory.js';
+import {
+  initializeProviders,
+  waitForOptionalProviderRegistration,
+} from './lib/providers/factory.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
@@ -74,6 +78,24 @@ import {
   ProcessWatchdog,
   type ProcessSnapshot,
 } from './lib/process-watchdog';
+
+async function applyStoredProviderCredentials(
+  providers: Provider[],
+  credentialManager: ProviderCredentialManager,
+  logError: (...args: unknown[]) => void
+): Promise<void> {
+  for (const provider of providers) {
+    try {
+      const credentials = await credentialManager.getCredentials(provider.id);
+      if (credentials && provider.setCredentials) {
+        provider.setCredentials(credentials);
+      }
+    } catch (error) {
+      credentialManager.markProviderHealth(provider.id, 'unhealthy');
+      logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
+    }
+  }
+}
 
 export interface CreateDaemonAppOptions {
   config: Config;
@@ -275,18 +297,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
     const providerRegistry = initializeProviders();
+    await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
-    for (const provider of providerRegistry.getAll()) {
-      try {
-        const credentials = await credentialManager.getCredentials(provider.id);
-        if (credentials && provider.setCredentials) {
-          provider.setCredentials(credentials);
-        }
-      } catch (error) {
-        credentialManager.markProviderHealth(provider.id, 'unhealthy');
-        logError(`[Daemon] Failed to load stored credentials for ${provider.id}:`, error);
-      }
-    }
+    await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
       registry: providerRegistry,
     });

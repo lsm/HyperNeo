@@ -147,20 +147,23 @@ export function setupAuthHandlers(
         };
       }
 
-      if (!provider.logout && !credentialManager) {
-        return {
-          success: false,
-          error: `Provider ${providerId} does not support logout`,
-        };
-      }
-
       try {
+        const storedCredentials = await credentialManager?.getCredentials(providerId);
+        if (!provider.logout && !storedCredentials) {
+          return {
+            success: false,
+            error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
+          };
+        }
+
         if (provider.logout) {
           await provider.logout();
         }
-        await credentialManager?.removeCredentials(providerId);
-        if (!provider.logout && provider.setCredentials) {
-          provider.setCredentials({ type: 'api_key', apiKey: '' });
+        if (storedCredentials) {
+          await credentialManager?.removeCredentials(providerId);
+          if (!provider.logout && provider.setCredentials) {
+            provider.setCredentials({ type: 'api_key', apiKey: '' });
+          }
         }
         return { success: true };
       } catch (error) {
