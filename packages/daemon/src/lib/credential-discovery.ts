@@ -256,11 +256,15 @@ export async function migrateProvidersIfNeeded(
           sortOrder: sortOrder++,
         });
       }
-      await credentialManager.storeOAuthTokens('anthropic-codex', {
-        accessToken: openaiCreds.access,
-        refreshToken: openaiCreds.refresh,
-        expiresAt: openaiCreds.expires,
-      });
+      try {
+        await credentialManager.storeOAuthTokens('anthropic-codex', {
+          accessToken: openaiCreds.access,
+          refreshToken: openaiCreds.refresh,
+          expiresAt: openaiCreds.expires,
+        });
+      } catch {
+        // Non-fatal: the provider record exists; credentials can be re-entered.
+      }
     }
   }
 
@@ -279,9 +283,13 @@ export async function migrateProvidersIfNeeded(
           sortOrder: sortOrder++,
         });
       }
-      await credentialManager.storeOAuthTokens('anthropic-copilot', {
-        accessToken: copilotCreds.refresh,
-      });
+      try {
+        await credentialManager.storeOAuthTokens('anthropic-copilot', {
+          accessToken: copilotCreds.refresh,
+        });
+      } catch {
+        // Non-fatal: the provider record exists; credentials can be re-entered.
+      }
     }
   }
 

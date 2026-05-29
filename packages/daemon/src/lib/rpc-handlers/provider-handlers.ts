@@ -11,22 +11,41 @@ import type { ProviderRepository } from '../../storage/repositories/provider-rep
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
+import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 
 const VALID_PROVIDER_KINDS = new Set(['built_in', 'custom_endpoint']);
 const VALID_AUTH_TYPES = new Set(['api_key', 'oauth', 'none']);
+
+const MAX_PROVIDER_ID_LEN = 128;
+const MAX_DISPLAY_NAME_LEN = 256;
+const MAX_BASE_URL_LEN = 2048;
+const MAX_JSON_FIELD_LEN = 64 * 1024;
 
 function validateCreateParams(params: unknown): asserts params is CreateProviderParams {
   if (!params || typeof params !== 'object') throw new Error('Invalid provider params');
   const p = params as Record<string, unknown>;
   if (!p.providerId || typeof p.providerId !== 'string') throw new Error('providerId is required');
+  if (p.providerId.length > MAX_PROVIDER_ID_LEN)
+    throw new Error(`providerId must be ≤ ${MAX_PROVIDER_ID_LEN} chars`);
   if (!p.displayName || typeof p.displayName !== 'string')
     throw new Error('displayName is required');
+  if (p.displayName.length > MAX_DISPLAY_NAME_LEN)
+    throw new Error(`displayName must be ≤ ${MAX_DISPLAY_NAME_LEN} chars`);
   const kind = typeof p.kind === 'string' ? p.kind : '';
   if (!VALID_PROVIDER_KINDS.has(kind))
     throw new Error(`kind must be one of: ${[...VALID_PROVIDER_KINDS].join(', ')}`);
   const authType = typeof p.authType === 'string' ? p.authType : '';
   if (!VALID_AUTH_TYPES.has(authType))
     throw new Error(`authType must be one of: ${[...VALID_AUTH_TYPES].join(', ')}`);
+  if (typeof p.baseUrl === 'string' && p.baseUrl.length > MAX_BASE_URL_LEN)
+    throw new Error(`baseUrl must be ≤ ${MAX_BASE_URL_LEN} chars`);
+  if (typeof p.configJson === 'string' && p.configJson.length > MAX_JSON_FIELD_LEN)
+    throw new Error(`configJson must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+  if (
+    typeof p.customEndpointConfigJson === 'string' &&
+    p.customEndpointConfigJson.length > MAX_JSON_FIELD_LEN
+  )
+    throw new Error(`customEndpointConfigJson must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
 }
 
 function validateUpdateParams(params: unknown): Partial<UpdateProviderParams> {
@@ -35,6 +54,8 @@ function validateUpdateParams(params: unknown): Partial<UpdateProviderParams> {
   const out: Partial<UpdateProviderParams> = {};
   if (p.displayName !== undefined) {
     if (typeof p.displayName !== 'string') throw new Error('displayName must be a string');
+    if (p.displayName.length > MAX_DISPLAY_NAME_LEN)
+      throw new Error(`displayName must be ≤ ${MAX_DISPLAY_NAME_LEN} chars`);
     out.displayName = p.displayName;
   }
   if (p.authType !== undefined) {
@@ -45,12 +66,25 @@ function validateUpdateParams(params: unknown): Partial<UpdateProviderParams> {
   if (p.isEnabled !== undefined) out.isEnabled = Boolean(p.isEnabled);
   if (p.isDefault !== undefined) out.isDefault = Boolean(p.isDefault);
   if (p.sortOrder !== undefined) out.sortOrder = Number(p.sortOrder);
-  if ('baseUrl' in p) out.baseUrl = p.baseUrl === undefined ? undefined : String(p.baseUrl);
-  if ('configJson' in p)
-    out.configJson = p.configJson === undefined ? undefined : String(p.configJson);
-  if ('customEndpointConfigJson' in p)
-    out.customEndpointConfigJson =
+  if ('baseUrl' in p) {
+    const val = p.baseUrl === undefined ? undefined : String(p.baseUrl);
+    if (val !== undefined && val.length > MAX_BASE_URL_LEN)
+      throw new Error(`baseUrl must be ≤ ${MAX_BASE_URL_LEN} chars`);
+    out.baseUrl = val;
+  }
+  if ('configJson' in p) {
+    const val = p.configJson === undefined ? undefined : String(p.configJson);
+    if (val !== undefined && val.length > MAX_JSON_FIELD_LEN)
+      throw new Error(`configJson must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+    out.configJson = val;
+  }
+  if ('customEndpointConfigJson' in p) {
+    const val =
       p.customEndpointConfigJson === undefined ? undefined : String(p.customEndpointConfigJson);
+    if (val !== undefined && val.length > MAX_JSON_FIELD_LEN)
+      throw new Error(`customEndpointConfigJson must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+    out.customEndpointConfigJson = val;
+  }
   return out;
 }
 
@@ -118,24 +152,33 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         oauthExpiresAt?: number;
       };
     }) => {
-      return withProviderLock(async () => {
+      const lock =
+        data.params.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
+      return lock(async () => {
         validateCreateParams(data.params);
         const record = providerRepo.createProvider(data.params);
 
-        // Store credentials if provided.
-        if (data.credentials?.apiKey) {
-          await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
-        } else if (data.credentials?.oauthAccessToken) {
-          await credentialManager.storeOAuthTokens(record.providerId, {
-            accessToken: data.credentials.oauthAccessToken,
-            refreshToken: data.credentials.oauthRefreshToken,
-            expiresAt: data.credentials.oauthExpiresAt,
-          });
-        }
+        try {
+          // Store credentials if provided.
+          if (data.credentials?.apiKey) {
+            await credentialManager.storeApiKey(record.providerId, data.credentials.apiKey);
+          } else if (data.credentials?.oauthAccessToken) {
+            await credentialManager.storeOAuthTokens(record.providerId, {
+              accessToken: data.credentials.oauthAccessToken,
+              refreshToken: data.credentials.oauthRefreshToken,
+              expiresAt: data.credentials.oauthExpiresAt,
+            });
+          }
 
-        // Sync to registry.
-        const creds = await credentialManager.getCredentials(record.providerId);
-        await syncProviderToRegistry(record, creds);
+          // Sync to registry.
+          const creds = await credentialManager.getCredentials(record.providerId);
+          await syncProviderToRegistry(record, creds);
+        } catch (err) {
+          // Compensating delete: remove the orphan DB record so retries don't fail
+          // with 'already exists'.
+          providerRepo.deleteProvider(record.id);
+          throw err;
+        }
 
         return { success: true, provider: record };
       });
@@ -160,51 +203,58 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         const updates = validateUpdateParams(data.params);
         const existing = providerRepo.getProvider(data.id);
         if (!existing) throw new Error(`Provider ${data.id} not found`);
-
-        // Handle credential updates.
-        if (data.credentials) {
-          if (data.credentials.apiKey) {
-            await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
-            updates.authType = 'api_key';
-          } else if (data.credentials.oauthAccessToken) {
-            await credentialManager.storeOAuthTokens(existing.providerId, {
-              accessToken: data.credentials.oauthAccessToken,
-              refreshToken: data.credentials.oauthRefreshToken,
-              expiresAt: data.credentials.oauthExpiresAt,
-            });
-            updates.authType = 'oauth';
+        const lock =
+          existing.kind === 'custom_endpoint'
+            ? withCustomEndpointsLock
+            : (fn: () => Promise<unknown>) => fn();
+        return lock(async () => {
+          // Handle credential updates.
+          if (data.credentials) {
+            if (data.credentials.apiKey) {
+              await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
+              updates.authType = 'api_key';
+            } else if (data.credentials.oauthAccessToken) {
+              await credentialManager.storeOAuthTokens(existing.providerId, {
+                accessToken: data.credentials.oauthAccessToken,
+                refreshToken: data.credentials.oauthRefreshToken,
+                expiresAt: data.credentials.oauthExpiresAt,
+              });
+              updates.authType = 'oauth';
+            }
           }
-        }
 
-        const record = providerRepo.updateProvider(data.id, updates);
-        if (!record) throw new Error(`Provider ${data.id} not found`);
+          const record = providerRepo.updateProvider(data.id, updates);
+          if (!record) throw new Error(`Provider ${data.id} not found`);
 
-        // Re-sync to registry if config or credentials changed.
-        const shouldResync =
-          data.credentials !== undefined ||
-          updates.baseUrl !== undefined ||
-          updates.customEndpointConfigJson !== undefined ||
-          updates.configJson !== undefined;
+          // Re-sync to registry if config or credentials changed.
+          const shouldResync =
+            data.credentials !== undefined ||
+            updates.baseUrl !== undefined ||
+            updates.customEndpointConfigJson !== undefined ||
+            updates.configJson !== undefined;
 
-        if (shouldResync) {
-          const creds = await credentialManager.getCredentials(record.providerId);
-          await syncProviderToRegistry(record, creds);
-        }
+          if (shouldResync) {
+            const creds = await credentialManager.getCredentials(record.providerId);
+            await syncProviderToRegistry(record, creds);
+          }
 
-        return { success: true, provider: record };
+          return { success: true, provider: record };
+        });
       });
     }
   );
 
   /** Delete a provider, remove credentials, and unregister. */
   messageHub.onRequest('providers.delete', async (data: { id: string }) => {
-    return withProviderLock(async () => {
-      const record = providerRepo.getProvider(data.id);
-      if (!record) throw new Error(`Provider ${data.id} not found`);
-
+    const record = providerRepo.getProvider(data.id);
+    if (!record) throw new Error(`Provider ${data.id} not found`);
+    const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
+    return lock(async () => {
+      // DB-first: delete the row before touching the registry so a failure in
+      // credential removal doesn't leave a ghost record that resurrects on restart.
+      providerRepo.deleteProvider(data.id);
       await removeProviderFromRegistry(record.providerId);
       await credentialManager.removeCredentials(record.providerId);
-      providerRepo.deleteProvider(data.id);
 
       return { success: true };
     });
