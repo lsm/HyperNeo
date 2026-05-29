@@ -836,11 +836,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                         mapFields
                       )
                     : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
+                const updatedRecord = gateDataRepo.get(workflowRunId, gateId);
                 const evalResult = await evaluateGate(
                   getEffectiveGate(gateDef),
                   updated.data,
                   scriptExecutor,
-                  scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
+                  scriptContext
+                    ? {
+                        ...scriptContext,
+                        gateId,
+                        gateData: updated.data,
+                        gateDataUpdatedIso: updatedRecord
+                          ? new Date(updatedRecord.updatedAt).toISOString()
+                          : undefined,
+                      }
+                    : undefined
                 );
                 gateWriteResult = { gateId, gateOpen: evalResult.open };
 
@@ -1203,7 +1213,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         getEffectiveGate(gateDef),
         currentData,
         scriptExecutor,
-        scriptContext ? { ...scriptContext, gateId, gateData: currentData } : undefined
+        scriptContext
+          ? {
+              ...scriptContext,
+              gateId,
+              gateData: currentData,
+              gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
+            }
+          : undefined
       );
 
       return jsonResult({

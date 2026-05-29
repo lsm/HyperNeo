@@ -439,7 +439,7 @@ export function GateEditorPanel({
             type="checkbox"
             data-testid="gate-editor-feature-codex-review-bot"
             checked={codexReviewBotEnabled}
-            disabled={!!featureDisabledReason}
+            disabled={!!featureDisabledReason && !codexReviewBotEnabled}
             onChange={(e) => toggleCodexReviewBot((e.currentTarget as HTMLInputElement).checked)}
             class="mt-0.5 rounded border-dark-600 text-blue-500 focus:ring-blue-500 disabled:opacity-50"
           />
