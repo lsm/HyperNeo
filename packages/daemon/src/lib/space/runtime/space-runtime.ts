@@ -2734,6 +2734,18 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
+    // Initialize gate data defaults so per-cycle anchors (e.g. cycle_start_at)
+    // are present from the start of the run.
+    if (this.config.gateDataRepo && workflow.gates) {
+      this.config.gateDataRepo.initializeForRun(
+        run.id,
+        workflow.gates.map((gate) => ({
+          id: gate.id,
+          data: computeGateDefaults(gate.fields ?? []),
+        }))
+      );
+    }
+
     // Register executor and meta. If a later step fails, we must clean these up.
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
     this.executorMeta.set(run.id, meta);

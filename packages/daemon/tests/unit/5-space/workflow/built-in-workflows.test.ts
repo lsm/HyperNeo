@@ -3881,7 +3881,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           runId: 'run-1',
           gateData: { pr_url: prUrl, approved: true },
         },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        { PATH: `${binDir}:${process.env.PATH ?? ''}`, GH_HOST: 'github.enterprise.example.com' }
       );
 
       expect(result.success).toBe(true);
