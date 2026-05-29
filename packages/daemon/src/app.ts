@@ -318,11 +318,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       await syncCustomEndpointProviders(settingsManager.getGlobalSettings().customEndpoints);
     }
 
-    // Check authentication status
+    // Check authentication status.
+    // AuthManager only checks env vars; also consider stored provider credentials
+    // so that startup gates work when the sole auth source is the credential store.
     const authStatus = await authManager.getAuthStatus();
+    const anthropicProvider = providerRegistry.get('anthropic');
+    const hasAnthropicAuth =
+      authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
 
     // Initialize dynamic models on app startup (global cache fallback)
-    if (authStatus.isAuthenticated) {
+    if (hasAnthropicAuth) {
       const { initializeModels } = await import('./lib/model-service');
       await initializeModels();
     } /* v8 ignore next 3 */ else {
@@ -461,7 +466,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       config.githubWebhookSecret ||
       (config.githubPollingInterval && config.githubPollingInterval > 0);
 
-    if (shouldEnableGitHub && authStatus.isAuthenticated) {
+    if (shouldEnableGitHub && hasAnthropicAuth) {
       // Get API key for AI agents (security + routing)
       const apiKey =
         config.anthropicApiKey || config.claudeCodeOAuthToken || config.anthropicAuthToken;

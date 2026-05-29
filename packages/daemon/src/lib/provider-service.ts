@@ -529,10 +529,11 @@ export class ProviderService {
     }
     if (providerId === 'anthropic') {
       const envVars = sdkConfigToEnvVars(provider.buildSdkConfig(modelId || 'default'));
+      const cleared = this.clearProviderRoutingEnvVars();
       if (Object.keys(envVars).length === 0) {
-        return this.clearProviderRoutingEnvVars();
+        return cleared;
       }
-      return this.applyEnvVars(envVars, { preserveApiKey: true });
+      return { ...cleared, ...this.applyEnvVars(envVars, { preserveApiKey: true }) };
     }
 
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;

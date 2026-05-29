@@ -1083,6 +1083,21 @@ describe('ProviderService', () => {
       expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
     });
 
+    it('should clear leaked routing vars even when stored Anthropic credentials are present', async () => {
+      registry.unregister('anthropic');
+      registry.register(new AnthropicMockProvider(true, { ANTHROPIC_API_KEY: 'stored-key' }));
+      process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
+      process.env.ANTHROPIC_AUTH_TOKEN = 'stale-glm-token';
+
+      const original = await service.applyEnvVarsToProcessForProvider('anthropic');
+
+      expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+      expect(original.ANTHROPIC_AUTH_TOKEN).toBe('stale-glm-token');
+      expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(process.env.ANTHROPIC_API_KEY).toBe('stored-key');
+    });
+
     it('should apply GLM env vars for GLM provider', async () => {
       const original = await service.applyEnvVarsToProcessForProvider('glm', 'glm-4');
 
