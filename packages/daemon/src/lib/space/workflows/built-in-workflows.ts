@@ -416,12 +416,27 @@ const PD_PLANNING_PROMPT =
   '`data: { pr_url }` on every send to Plan Review — `plan-pr-gate` resets each cycle, so the ' +
   'URL must be reasserted after every revision.';
 
+const CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify codex[bot] reaction status before ' +
+  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
+  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
+  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
+  'reaction means it has not started or has not reported yet. Poll every 60 seconds ' +
+  'for up to 10 minutes before proceeding. If codex[bot] still has not posted `+1` ' +
+  'after the timeout, proceed only with a warning recorded in your result artifact. ' +
+  'If codex[bot] has not reacted at all, comment `@codex review` on the PR to trigger ' +
+  'its review, then wait for an `eyes` or `+1` reaction. ' +
+  'Do not close the task or write the approval gate before codex[bot] has `+1` unless ' +
+  'that timeout has elapsed.';
+
 const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
   'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
   'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
   'action is your `approvals` vote on `plan-approval-gate`. Vote approved only for zero P0-P3 ' +
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
+  CODEX_REACTION_APPROVAL_GUIDANCE +
+  '\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
   'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
@@ -503,19 +518,6 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'thread has `isResolved: true`; if unresolved conversations remain, request the ' +
   'author to resolve them instead of approving. Never set a PR to auto-merge — ' +
   'auto-merge is not allowed.';
-
-const CODEX_REACTION_APPROVAL_GUIDANCE =
-  'After posting your approval review, verify codex[bot] reaction status before ' +
-  'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
-  'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
-  'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
-  'reaction means it has not started or has not reported yet. Poll every 60 seconds ' +
-  'for up to 10 minutes before proceeding. If codex[bot] still has not posted `+1` ' +
-  'after the timeout, proceed only with a warning recorded in your result artifact. ' +
-  'If codex[bot] has not reacted at all, comment `@codex review` on the PR to trigger ' +
-  'its review, then wait for an `eyes` or `+1` reaction. ' +
-  'Do not close the task or write the approval gate before codex[bot] has `+1` unless ' +
-  'that timeout has elapsed.';
 
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +

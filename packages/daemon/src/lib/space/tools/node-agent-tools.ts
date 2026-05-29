@@ -130,12 +130,30 @@ async function evaluateTerminalGateFeatures(
   gateDataRepo: GateDataRepository,
   workflowRunId: string,
   scriptExecutor?: GateScriptExecutorFn,
-  scriptContext?: GateScriptExecutorContext
+  scriptContext?: GateScriptExecutorContext,
+  currentNodeId?: string
 ): Promise<ToolResult | null> {
   if (!workflow || !scriptExecutor || !scriptContext) return null;
 
+  // Scope terminal checks to gates on channels that leave the current node.
+  // This prevents unrelated feature-backed gates from blocking terminal
+  // actions when the current node is on a different path.
+  let relevantGateIds: Set<string> | undefined;
+  if (currentNodeId && workflow.channels) {
+    const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
+    if (currentNodeName) {
+      relevantGateIds = new Set(
+        workflow.channels
+          .filter((ch) => ch.from === currentNodeName || ch.from === '*')
+          .map((ch) => ch.gateId)
+          .filter((id): id is string => !!id)
+      );
+    }
+  }
+
   for (const gate of workflow.gates ?? []) {
     if (!hasGateFeatures(gate)) continue;
+    if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
     const effectiveGate = getEffectiveGate(gate);
     if (!effectiveGate.script) continue;
 
@@ -1399,7 +1417,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         gateDataRepo,
         workflowRunId,
         scriptExecutor,
-        scriptContext
+        scriptContext,
+        workflowNodeId
       );
       if (gateBlock) return gateBlock;
 
@@ -1598,7 +1617,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       config.gateDataRepo,
       config.workflowRunId,
       config.scriptExecutor,
-      config.scriptContext
+      config.scriptContext,
+      config.workflowNodeId
     );
     if (gateBlock) return gateBlock;
     return config.onSubmitForApproval!(args);

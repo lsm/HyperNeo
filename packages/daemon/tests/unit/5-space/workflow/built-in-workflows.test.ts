@@ -3221,6 +3221,15 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     expect(seenLenses.sort()).toEqual([...lenses].sort());
   });
 
+  test('Plan Review prompt instructs waiting for codex reaction before voting', () => {
+    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+    const prompt = node.agents[0].customPrompt!.value;
+    expect(prompt).toContain('codex[bot]');
+    expect(prompt).toContain('issues/{number}/reactions');
+    expect(prompt).toContain('Poll every 60 seconds');
+    expect(prompt).toContain('10 minutes');
+  });
+
   test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Task Dispatcher')!;
     expect(node.agents).toHaveLength(1);
