@@ -1618,7 +1618,11 @@ function mergeGateStructuralFieldsFromTemplate(
         return { ...field, writers: templateField.writers };
       });
 
-      return { ...gate, fields };
+      return {
+        ...gate,
+        fields,
+        features: templateGate.features ? { ...templateGate.features } : gate.features,
+      };
     })
     .concat(missingTemplateGates);
 }
@@ -1639,8 +1643,9 @@ function mergeGateStructuralFieldsFromTemplate(
  *   land without replacing existing node IDs.
  * - Gate field `writers` are merged onto matching gate fields (by gate id +
  *   field name) so structural authorization changes land on pre-existing spaces.
- *   Missing template gates are appended. Existing checks, scripts, and gate
- *   topology remain untouched.
+ *   Gate `features` are copied from matching template gates so data-driven runtime
+ *   checks land on pre-existing spaces. Missing template gates are appended.
+ *   Existing checks, scripts, and gate topology remain untouched.
  * - Missing template channels are appended so newly-added built-in branches become
  *   reachable on pre-existing spaces. Existing channels, layout, and node rows
  *   are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
@@ -1653,7 +1658,7 @@ const RESTAMP_FIELDS = [
   'completionAutonomyLevel',
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
-  'gates(field writers in-place + missing template gates)',
+  'gates(field writers + features in-place + missing template gates)',
   'channels(missing template channels)',
 ] as const;
 

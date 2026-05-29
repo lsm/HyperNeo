@@ -1198,6 +1198,16 @@ describe('validateGate', () => {
     expect(errors.some((e) => e.includes('at least one'))).toBe(true);
   });
 
+  test('gate with only unregistered features returns error', () => {
+    const errors = validateGate({
+      id: 'g1',
+      features: { codex_review_bto: true },
+      resetOnCycle: false,
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.includes('at least one'))).toBe(true);
+  });
+
   test('gate with both fields and script is valid', () => {
     const errors = validateGate({
       id: 'g1',

@@ -48,6 +48,12 @@ export interface GateScriptContext {
    * (e.g. in unit tests); the env var is only injected when set.
    */
   workflowStartIso?: string;
+  /**
+   * ISO8601 timestamp marking when the current gate data was last updated.
+   * Exposed as NEOKAI_GATE_DATA_UPDATED_ISO for checks whose timeout window
+   * starts when approval data is written, not when the workflow run starts.
+   */
+  gateDataUpdatedIso?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +139,9 @@ export function buildRestrictedEnv(
   if (context.workflowStartIso) {
     env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
   }
+  if (context.gateDataUpdatedIso) {
+    env['NEOKAI_GATE_DATA_UPDATED_ISO'] = context.gateDataUpdatedIso;
+  }
 
   const gateData = context.gateData ?? {};
   try {
@@ -150,7 +159,8 @@ export function buildRestrictedEnv(
         key === 'NEOKAI_WORKFLOW_RUN_ID' ||
         key === 'NEOKAI_WORKSPACE_PATH' ||
         key === 'NEOKAI_GATE_DATA_JSON' ||
-        key === 'NEOKAI_WORKFLOW_START_ISO'
+        key === 'NEOKAI_WORKFLOW_START_ISO' ||
+        key === 'NEOKAI_GATE_DATA_UPDATED_ISO'
       ) {
         continue;
       }

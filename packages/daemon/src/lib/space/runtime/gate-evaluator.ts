@@ -21,8 +21,8 @@
  * point. `isChannelOpen()` remains synchronous (no script execution).
  */
 
-import { hasGateFeatures } from '@neokai/shared';
 import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
+import { hasRegisteredGateFeatures } from './gate-features';
 import {
   deepMergeWithDepthLimit,
   type GateScriptContext,
@@ -325,7 +325,7 @@ export function validateGate(gate: unknown): string[] {
   // for message injection only. A gate still needs fields, features, or a script.
   const hasFields = Array.isArray(g.fields) && g.fields.length > 0;
   const hasScript = g.script !== undefined && g.script !== null;
-  const hasFeatures = hasGateFeatures(g as { features?: Gate['features'] });
+  const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
   if (!hasFields && !hasScript && !hasFeatures) {
     errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
   }

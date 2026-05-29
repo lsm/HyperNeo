@@ -1187,6 +1187,7 @@ export class ChannelRouter {
       runId,
       gateData: runtimeData,
       workflowStartIso,
+      gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
     };
 
     return this.withScriptSemaphore(async () => {

@@ -64,6 +64,8 @@ export interface PollScriptContext {
   REPO_NAME: string;
   /** Workflow run UUID */
   WORKFLOW_RUN_ID: string;
+  /** Workflow run start timestamp, if known. */
+  WORKFLOW_START_ISO?: string;
 }
 
 /**
@@ -789,10 +791,16 @@ export class GatePollManager {
       workspacePath,
       gateId: '__poll__',
       runId: context.WORKFLOW_RUN_ID,
+      gateData: context.PR_URL ? { pr_url: context.PR_URL } : undefined,
+      workflowStartIso: context.WORKFLOW_START_ISO,
     };
 
     // Build restricted env from process environment (strips credentials)
     const env = buildRestrictedEnv(gateContext);
+
+    if (context.PR_URL) {
+      env.NEOKAI_GATE_DATA_JSON = JSON.stringify({ pr_url: context.PR_URL });
+    }
 
     // Inject poll-specific context variables
     env.TASK_ID = context.TASK_ID;
@@ -803,6 +811,9 @@ export class GatePollManager {
     env.REPO_OWNER = context.REPO_OWNER;
     env.REPO_NAME = context.REPO_NAME;
     env.WORKFLOW_RUN_ID = context.WORKFLOW_RUN_ID;
+    if (context.WORKFLOW_START_ISO) {
+      env.WORKFLOW_START_ISO = context.WORKFLOW_START_ISO;
+    }
 
     let proc: Bun.Subprocess<'pipe', 'pipe', 'pipe'>;
     try {

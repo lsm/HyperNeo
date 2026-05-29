@@ -65,7 +65,7 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
-import { getEffectiveGatePoll } from './gate-features';
+import { getEffectiveGate, getEffectiveGatePoll } from './gate-features';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -3866,9 +3866,10 @@ export class SpaceRuntime {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
       if (liveScript) gate = { ...storedGate, script: liveScript };
     }
+    gate = getEffectiveGate(gate);
     const gateDataRepo = new GateDataRepository(this.config.db);
-    const runtimeData =
-      gateDataRepo.get(runId, gate.id)?.data ?? computeGateDefaults(gate.fields ?? []);
+    const gateDataRecord = gateDataRepo.get(runId, gate.id);
+    const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);
     const run = this.config.workflowRunRepo.getRun(runId);
     const space = await this.config.spaceManager.getSpace(workflow.spaceId);
     const result = await evaluateGate(gate, runtimeData, executeGateScript, {
@@ -3877,6 +3878,9 @@ export class SpaceRuntime {
       runId,
       gateData: runtimeData,
       workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
+      gateDataUpdatedIso: gateDataRecord
+        ? new Date(gateDataRecord.updatedAt).toISOString()
+        : undefined,
     });
     return { open: result.open, reason: result.reason };
   }
@@ -5611,6 +5615,7 @@ export class SpaceRuntime {
       REPO_OWNER: prCtx.REPO_OWNER,
       REPO_NAME: prCtx.REPO_NAME,
       WORKFLOW_RUN_ID: run.id,
+      WORKFLOW_START_ISO: new Date(run.createdAt).toISOString(),
     };
   }
 

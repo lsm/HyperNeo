@@ -139,11 +139,15 @@ async function evaluateTerminalGateFeatures(
     const effectiveGate = getEffectiveGate(gate);
     if (!effectiveGate.script) continue;
 
-    const data = gateDataRepo.get(workflowRunId, gate.id)?.data ?? computeGateDefaults(gate.fields);
+    const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
+    const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
     const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
       ...scriptContext,
       gateId: gate.id,
       gateData: data,
+      gateDataUpdatedIso: gateDataRecord
+        ? new Date(gateDataRecord.updatedAt).toISOString()
+        : undefined,
     });
     if (!result.open) {
       return jsonResult({

@@ -12,6 +12,18 @@ export function registerGateFeature(name: string, definition: GateFeatureDefinit
   gateFeatureRegistry.set(name, definition);
 }
 
+export function isRegisteredGateFeature(name: string): boolean {
+  return gateFeatureRegistry.has(name);
+}
+
+export function hasRegisteredGateFeatures(
+  gate: { features?: Gate['features'] } | undefined
+): boolean {
+  return Object.keys(gate?.features ?? {}).some(
+    (name) => hasEnabledGateFeature(gate, name) && isRegisteredGateFeature(name)
+  );
+}
+
 function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
   return Object.keys(gate.features ?? {})
     .filter((name) => hasEnabledGateFeature(gate, name))
@@ -25,6 +37,9 @@ export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 60_000;
 
 const CODEX_REVIEW_BOT_SCRIPT = [
   'PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+  'if [ -z "$PR_URL" ]; then',
+  '  PR_URL="${PR_URL:-}"',
+  'fi',
   'if [ -z "$PR_URL" ]; then',
   '  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
   'fi',
@@ -49,7 +64,7 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   '  exit 0',
   'fi',
   'CODEX_EYES_COUNT=$(jq \'[.[] | select(.user.login == "codex[bot]" and .content == "eyes")] | length\' <<< "$REACTIONS_JSON")',
-  'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+  'START_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
   'if [ -n "$START_ISO" ]; then',
   `  START_EPOCH=$(bun -e 'const t=Date.parse(process.argv[1]); if (Number.isNaN(t)) process.exit(1); console.log(Math.floor(t / 1000));' "$START_ISO" 2>/dev/null || true)`,
   '  NOW_EPOCH=$(date +%s)',
@@ -61,7 +76,7 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   'if [ "$CODEX_EYES_COUNT" != "0" ] && [ -n "$CODEX_EYES_COUNT" ]; then',
   '  echo "codex[bot] review still in progress (eyes reaction present); wait for +1 on ${PR_URL}" >&2',
   'else',
-  '  echo "codex[bot] has not started or has not reported on ${PR_URL}; comment `@codex review` on the PR, then wait for an eyes or +1 reaction" >&2',
+  '  echo "codex[bot] has not started or has not reported on ${PR_URL}; comment \'@codex review\' on the PR, then wait for an eyes or +1 reaction" >&2',
   'fi',
   'exit 1',
 ].join('\n');

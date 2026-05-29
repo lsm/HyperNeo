@@ -2049,7 +2049,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
   });
 
-  test('re-stamp updates gate field writers in place', () => {
+  test('re-stamp updates gate field writers and features in place', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
       .listWorkflows(SPACE_ID)
@@ -2059,6 +2059,7 @@ describe('seedBuiltInWorkflows()', () => {
         ? gate
         : {
             ...gate,
+            features: undefined,
             fields: gate.fields!.map((field) =>
               field.name === 'approved' ? { ...field, writers: [] } : field
             ),
@@ -2079,6 +2080,7 @@ describe('seedBuiltInWorkflows()', () => {
     const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
     expect(approvedField.writers).toEqual(['Review', 'reviewer']);
     expect(approvedField.check).toEqual({ op: '==', value: true });
+    expect(gate.features?.codex_review_bot).toBe(true);
   });
 
   test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {
@@ -3372,6 +3374,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
     expect(effectiveGate.script?.source).toContain('.content == "+1"');
     expect(effectiveGate.script?.source).toContain('bun -e');
+    expect(effectiveGate.script?.source).toContain('NEOKAI_GATE_DATA_UPDATED_ISO');
+    expect(effectiveGate.script?.source).toContain('PR_URL="${PR_URL:-}"');
+    expect(effectiveGate.script?.source).toContain("comment '@codex review'");
     expect(effectiveGate.script?.source).not.toContain('node -e');
     expect(effectiveGate.poll?.intervalMs).toBe(60_000);
   });
@@ -3479,6 +3484,52 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
+  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate still blocks before gate-data timeout even when workflow is old', async () => {
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-fresh-approval-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          `  printf '%s\n' '[]'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+          workflowStartIso: '2026-05-01T00:00:00Z',
+          gateDataUpdatedIso: new Date().toISOString(),
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('@codex review');
+      expect(result.error).not.toContain('command not found');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes after codex timeout', async () => {
     const gate = getEffectiveGate(
       FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
@@ -3512,6 +3563,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           runId: 'run-1',
           gateData: { pr_url: prUrl, approved: true },
           workflowStartIso: '2026-05-01T00:00:00Z',
+          gateDataUpdatedIso: '2026-05-01T00:00:00Z',
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );

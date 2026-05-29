@@ -329,6 +329,22 @@ describe('buildRestrictedEnv', () => {
     expect(env['NEOKAI_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
   });
 
+  test('injects NEOKAI_GATE_DATA_UPDATED_ISO when context provides it', () => {
+    const env = buildRestrictedEnv({
+      ...CTX,
+      gateDataUpdatedIso: '2026-04-19T10:05:00.000Z',
+    });
+    expect(env['NEOKAI_GATE_DATA_UPDATED_ISO']).toBe('2026-04-19T10:05:00.000Z');
+  });
+
+  test('user env cannot override NEOKAI_GATE_DATA_UPDATED_ISO', () => {
+    const env = buildRestrictedEnv(
+      { ...CTX, gateDataUpdatedIso: '2026-04-19T10:05:00.000Z' },
+      { NEOKAI_GATE_DATA_UPDATED_ISO: '1970-01-01T00:00:00.000Z' }
+    );
+    expect(env['NEOKAI_GATE_DATA_UPDATED_ISO']).toBe('2026-04-19T10:05:00.000Z');
+  });
+
   test('user env cannot spoof NEOKAI_WORKFLOW_START_ISO when context omits it', () => {
     // Even with no context-provided value, agents must not be able to set the
     // var themselves — that would let them backdate reviews and bypass the gate.

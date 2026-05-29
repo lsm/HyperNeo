@@ -1607,6 +1607,56 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
     });
 
+    test('coder idle with feature-backed gate whose script blocks → run blocked', async () => {
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'feature-ready' },
+          ],
+          gates: [
+            {
+              id: 'feature-ready',
+              resetOnCycle: false,
+              fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+              features: { codex_review_bot: true },
+            },
+          ],
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Feature gate blocked handoff',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Feature gate blocked handoff',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+      db.prepare(
+        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
+      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      expect(findExec(run.id, STEP_B)).toBeUndefined();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+    });
+
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
