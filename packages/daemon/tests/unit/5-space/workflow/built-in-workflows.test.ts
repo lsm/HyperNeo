@@ -3347,12 +3347,12 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     );
   });
 
-  test('RESEARCH_WORKFLOW Review node prompt waits for codex before approval close', () => {
+  test('RESEARCH_WORKFLOW Review node prompt does not promise Codex enforcement', () => {
     const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;
-    expect(prompt).toContain('verify codex[bot] reaction status');
-    expect(prompt).toContain('@codex review');
-    expect(prompt).toContain('wait for an `eyes` or `+1` reaction');
+    expect(prompt).not.toContain('verify codex[bot] reaction status');
+    expect(prompt).not.toContain('@codex review');
+    expect(prompt).not.toContain('wait for an `eyes` or `+1` reaction');
   });
 
   test('REVIEW_ONLY_WORKFLOW prompt forbids terminal calls when verdict is REQUEST_CHANGES', () => {
@@ -3394,12 +3394,18 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     const effectiveGate = getEffectiveGate(gate);
     expect(effectiveGate.script?.source).toContain('codex[bot]');
     expect(effectiveGate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
+    expect(effectiveGate.script?.source).toContain('--paginate');
+    expect(effectiveGate.script?.source).toContain("jq -s 'add // []'");
     expect(effectiveGate.script?.source).toContain('.content == "+1"');
     expect(effectiveGate.script?.source).toContain('bun -e');
     expect(effectiveGate.script?.source).toContain('NEOKAI_GATE_DATA_UPDATED_ISO');
     expect(effectiveGate.script?.source).toContain('PR_URL="${GATE_PR_URL:-${PR_URL:-}}"');
     expect(effectiveGate.script?.source).toContain("comment '@codex review'");
     expect(effectiveGate.script?.source).not.toContain('node -e');
+    expect(effectiveGate.script?.source).toContain('.head.sha');
+    expect(effectiveGate.script?.source).toContain('commits/${HEAD_SHA}');
+    expect(effectiveGate.script?.source).toContain('^https://[^/]+/');
+    expect(effectiveGate.script?.source).not.toContain('github\\.com');
     expect(effectiveGate.poll?.intervalMs).toBe(60_000);
   });
 
@@ -3433,7 +3439,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
@@ -3476,7 +3482,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
@@ -3519,7 +3525,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\n' '[]'`,
           '  exit 0',
           'fi',
@@ -3565,7 +3571,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\n' '[]'`,
           '  exit 0',
           'fi',
@@ -3614,7 +3620,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
@@ -3643,7 +3649,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     }
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate uses PR head push time as freshness anchor', async () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate uses PR head commit date as freshness anchor', async () => {
     const gate = getEffectiveGate(
       FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
     );
@@ -3658,11 +3664,15 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-02T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/pulls/42" ]; then',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'abc123'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/commits/abc123 ]]; then',
           `  printf '%s\\n' '2026-05-01T00:00:00Z'`,
           '  exit 0',
           'fi',
@@ -3709,11 +3719,15 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         ghPath,
         [
           '#!/usr/bin/env bash',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
           `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
-          'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/pulls/42" ]; then',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'def456'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/commits/def456 ]]; then',
           `  printf '%s\\n' '2026-05-02T00:00:00Z'`,
           '  exit 0',
           'fi',
@@ -3738,6 +3752,57 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('@codex review');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('codex script accepts GitHub Enterprise PR URLs', async () => {
+    const gate = getEffectiveGate(
+      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
+    );
+    const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-gh-enterprise-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prUrl = 'https://github.enterprise.example.com/test/repo/pull/42';
+
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
+          `  printf '%s\\n' 'ent123'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" =~ repos/test/repo/commits/ent123 ]]; then',
+          `  printf '%s\\n' '2026-05-01T00:00:00Z'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+
+      const result = await executeGateScript(
+        gate.script!,
+        {
+          workspacePath: workspace,
+          gateId: 'review-approval-gate',
+          runId: 'run-1',
+          gateData: { pr_url: prUrl, approved: true },
+        },
+        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1' });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

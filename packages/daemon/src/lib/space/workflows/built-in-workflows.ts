@@ -862,8 +862,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'accuracy, and clarity. If more research is needed, message Research with specific ' +
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' ' +
-              CODEX_REACTION_APPROVAL_GUIDANCE +
               ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },

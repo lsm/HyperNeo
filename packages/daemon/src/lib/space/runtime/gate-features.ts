@@ -45,24 +45,27 @@ const CODEX_REVIEW_BOT_SCRIPT = [
   '  echo "No PR URL available to verify codex[bot] reaction. Provide pr_url gate data or run from a PR branch." >&2',
   '  exit 1',
   'fi',
-  'if [[ ! "$PR_URL" =~ github\\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
+  'if [[ ! "$PR_URL" =~ ^https://[^/]+/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then',
   '  echo "Unsupported PR URL for codex[bot] reaction check: ${PR_URL}" >&2',
   '  exit 1',
   'fi',
   'OWNER="${BASH_REMATCH[1]}"',
   'REPO="${BASH_REMATCH[2]}"',
   'NUMBER="${BASH_REMATCH[3]}"',
-  'if ! REACTIONS_JSON=$(gh api "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions?per_page=100" -H "Accept: application/vnd.github+json"); then',
+  'if ! REACTIONS_JSON=$(gh api --paginate "repos/${OWNER}/${REPO}/issues/${NUMBER}/reactions?per_page=100" -H "Accept: application/vnd.github+json" | jq -s \'add // []\'); then',
   '  echo "Failed to fetch PR reactions for ${PR_URL}" >&2',
   '  exit 1',
   'fi',
   'START_ISO="${NEOKAI_GATE_DATA_UPDATED_ISO:-${NEOKAI_WORKFLOW_START_ISO:-}}"',
-  // Use PR head push time as the freshness anchor so multi-writer gates
-  // (e.g. plan-approval-gate) do not treat a codex +1 as stale when the
+  // Use the PR head commit timestamp as the freshness anchor so multi-writer
+  // gates (e.g. plan-approval-gate) do not treat a codex +1 as stale when the
   // last vote updates the gate data row. Falls back to START_ISO when the
   // PR API is unavailable (e.g. deleted fork).
-  'PR_HEAD_PUSHED_AT=$(gh api "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.repo.pushed_at\' 2>/dev/null || true)',
-  'FRESHNESS_ISO="${PR_HEAD_PUSHED_AT:-${START_ISO}}"',
+  'HEAD_SHA=$(gh api "repos/${OWNER}/${REPO}/pulls/${NUMBER}" -q \'.head.sha\' 2>/dev/null || true)',
+  'if [ -n "$HEAD_SHA" ]; then',
+  '  HEAD_COMMIT_DATE=$(gh api "repos/${OWNER}/${REPO}/commits/${HEAD_SHA}" -q \'.commit.committer.date\' 2>/dev/null || true)',
+  'fi',
+  'FRESHNESS_ISO="${HEAD_COMMIT_DATE:-${START_ISO}}"',
   'if [ -n "$FRESHNESS_ISO" ]; then',
   '  FRESH_REACTIONS=$(jq --arg start "$FRESHNESS_ISO" \'[.[] | select(.created_at >= $start)]\' <<< "$REACTIONS_JSON")',
   'else',
