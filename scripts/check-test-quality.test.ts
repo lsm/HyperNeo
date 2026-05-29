@@ -181,4 +181,120 @@ describe('open', () => {
     const result = runAudit(cwd);
     expect(result.status).toBe(0);
   });
+
+  it('flags nested describe-scope mismatches inside non-checkable parents', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'test-quality-'));
+    dirs.push(cwd);
+
+    writeTestFile(
+      cwd,
+      'packages/daemon/tests/unit/my-module.test.ts',
+      `import { describe, it, expect } from 'bun:test';
+import { functionA, functionB } from '../src/my-module';
+
+describe('workflow hashing', () => {
+  describe('functionA', () => {
+    it('should do something', () => {
+      expect(functionB()).toBe(42);
+    });
+  });
+});
+`
+    );
+
+    const result = runAudit(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("describe('functionA')");
+    expect(result.stderr).toContain('functionB');
+  });
+
+  it('flags dead mock assertions for extensionless component mocks', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'test-quality-'));
+    dirs.push(cwd);
+
+    writeTestFile(
+      cwd,
+      'packages/web/src/components/MyComponent.test.tsx',
+      `import { describe, it, expect, vi } from 'vitest';
+import { render } from '@testing-library/preact';
+import { MyComponent } from './MyComponent';
+
+vi.mock('../../components/space/SpaceTaskPane', () => ({
+  default: ({ content }: { content: string }) => <div data-testid="stp">{content}</div>,
+}));
+
+describe('MyComponent', () => {
+  it('should delegate to SpaceTaskPane', () => {
+    const { container } = render(<MyComponent content="Hello" />);
+    expect(container.textContent).toContain('Hello');
+  });
+});
+`
+    );
+
+    const result = runAudit(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('dead');
+    expect(result.stderr).toContain('SpaceTaskPane');
+  });
+
+  it('does not suppress dead mock when query is for unrelated mocked component', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'test-quality-'));
+    dirs.push(cwd);
+
+    writeTestFile(
+      cwd,
+      'packages/web/src/components/MyComponent.test.tsx',
+      `import { describe, it, expect, vi } from 'vitest';
+import { render } from '@testing-library/preact';
+import { MyComponent } from './MyComponent';
+
+vi.mock('./MarkdownRenderer.tsx', () => ({
+  default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
+}));
+
+vi.mock('./Icon.tsx', () => ({
+  default: ({ name }: { name: string }) => <span data-testid="icon">{name}</span>,
+}));
+
+describe('MyComponent', () => {
+  it('should render markdown via MarkdownRenderer', () => {
+    const { container } = render(<MyComponent content="# Hello" />);
+    const icon = container.querySelector('[data-testid="icon"]');
+    expect(icon).toBeTruthy();
+    expect(container.textContent).toContain('Hello');
+  });
+});
+`
+    );
+
+    const result = runAudit(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('dead');
+    expect(result.stderr).toContain('MarkdownRenderer');
+  });
+
+  it('flags describe-scope mismatches inside it.each blocks', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'test-quality-'));
+    dirs.push(cwd);
+
+    writeTestFile(
+      cwd,
+      'packages/daemon/tests/unit/my-module.test.ts',
+      `import { describe, it, expect } from 'bun:test';
+import { functionA, functionB } from '../src/my-module';
+
+describe('functionA', () => {
+  it.each([1, 2, 3])('should handle %i', (n) => {
+    expect(functionB(n)).toBe(n * 2);
+  });
+});
+`
+    );
+
+    const result = runAudit(cwd);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("describe('functionA')");
+    expect(result.stderr).toContain('functionB');
+  });
 });

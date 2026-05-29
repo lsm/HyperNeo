@@ -30,8 +30,7 @@ function findTestFiles(dir: string, files: string[] = []): string[] {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git')
-        continue;
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue;
       findTestFiles(path, files);
     } else if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) {
       files.push(path);
@@ -81,6 +80,7 @@ function nodeText(sf: ts.SourceFile, node: ts.Node): string {
 interface MockInfo {
   modulePath: string;
   componentName: string | null;
+  selectors: Set<string>;
   pos: { line: number; column: number };
 }
 
@@ -99,7 +99,7 @@ function isMockCall(node: ts.Node): node is ts.CallExpression {
 }
 
 function extractComponentNameFromPath(modulePath: string): string | null {
-  const match = modulePath.match(/\/([^/]+)\.tsx$/);
+  const match = modulePath.match(/\/([^/]+?)(?:\.[jt]sx?)?$/);
   if (match) return match[1];
   return null;
 }
@@ -113,6 +113,7 @@ function collectTopLevelMocks(sf: ts.SourceFile): MockInfo[] {
         mocks.push({
           modulePath,
           componentName: extractComponentNameFromPath(modulePath),
+          selectors: new Set(),
           pos: getPos(sf, node),
         });
       }
@@ -170,6 +171,32 @@ function isDescribeOrItCall(
       if (ts.isIdentifier(obj)) {
         if (obj.text === 'describe') return { kind: 'describe', call: node };
         if (obj.text === 'it' || obj.text === 'test') return { kind: 'it', call: node };
+      }
+    }
+  }
+  // Handle it.each(...)(...) and describe.each(...)(...)
+  if (ts.isCallExpression(expr)) {
+    const callee = expr.expression;
+    if (ts.isPropertyAccessExpression(callee)) {
+      const name = callee.name.text;
+      if (name === 'each') {
+        const obj = callee.expression;
+        if (ts.isIdentifier(obj)) {
+          if (obj.text === 'describe') return { kind: 'describe', call: node };
+          if (obj.text === 'it' || obj.text === 'test') return { kind: 'it', call: node };
+        }
+        if (ts.isPropertyAccessExpression(obj)) {
+          // handles it.only.each, describe.skip.each
+          const innerName = obj.name.text;
+          if (innerName === 'only' || innerName === 'skip') {
+            const innerObj = obj.expression;
+            if (ts.isIdentifier(innerObj)) {
+              if (innerObj.text === 'describe') return { kind: 'describe', call: node };
+              if (innerObj.text === 'it' || innerObj.text === 'test')
+                return { kind: 'it', call: node };
+            }
+          }
+        }
       }
     }
   }
@@ -234,8 +261,7 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
 
   const describes = collectDescribeBlocks(sf, sf);
 
-  // Build a set of selectors/testids that the mocks produce
-  const mockSelectors = new Set<string>();
+  // Build selectors per mock
   for (const mock of mocks) {
     function visitForMock(node: ts.Node) {
       if (isMockCall(node)) {
@@ -246,14 +272,14 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
           // Extract data-testid values
           const testIdMatches = text.matchAll(/data-testid=(?:"|')([^"']+)/g);
           for (const m of testIdMatches) {
-            mockSelectors.add(m[1]);
+            mock.selectors.add(m[1]);
           }
           // Extract class names that look like mock-specific markers
           const classMatches = text.matchAll(/class=(?:"|')([^"']+)/g);
           for (const m of classMatches) {
             for (const cls of m[1].split(/\s+/)) {
               if (cls.startsWith('prose') || cls.startsWith('bg-') || cls.startsWith('text-')) {
-                mockSelectors.add(`.${cls}`);
+                mock.selectors.add(`.${cls}`);
               }
             }
           }
@@ -293,10 +319,10 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
     return found;
   }
 
-  function hasMockSpecificQuery(node: ts.Node): boolean {
+  function hasMockSpecificQuery(node: ts.Node, selectors: Set<string>): boolean {
     if (ts.isCallExpression(node)) {
       const text = nodeText(sf, node);
-      for (const sel of mockSelectors) {
+      for (const sel of selectors) {
         if (text.includes(`"${sel}"`) || text.includes(`'${sel}'`)) {
           return true;
         }
@@ -304,7 +330,7 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
     }
     let found = false;
     ts.forEachChild(node, (child) => {
-      if (!found) found = hasMockSpecificQuery(child);
+      if (!found) found = hasMockSpecificQuery(child, selectors);
     });
     return found;
   }
@@ -314,8 +340,7 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
     if (!renderCall) return;
 
     const hasContainerAssert = hasContainerTextContentAssertion(itBlock.body);
-    const hasMockQuery = hasMockSpecificQuery(itBlock.body);
-    if (!hasContainerAssert || hasMockQuery) return;
+    if (!hasContainerAssert) return;
 
     // Check if test title mentions a mocked component
     if (!itBlock.title) return;
@@ -340,6 +365,8 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
         lowerTitle.includes('delegate');
 
       if (mentionsComponent && impliesComponentInvolved) {
+        const hasMockQuery = hasMockSpecificQuery(itBlock.body, mock.selectors);
+        if (hasMockQuery) continue;
         findings.push({
           file: filePath,
           ...itBlock.pos,
@@ -383,7 +410,30 @@ function extractIdentifiers(node: ts.Node): Set<string> {
             ids.add(methodName);
           }
         } else if (ts.isIdentifier(obj)) {
-          if (!['expect', 'vi', 'jest', 'console', 'Array', 'Object', 'JSON', 'Math', 'Date', 'Map', 'Set', 'Promise', 'Error', 'RegExp', 'Buffer', 'process', 'window', 'document', 'localStorage', 'sessionStorage'].includes(obj.text)) {
+          if (
+            ![
+              'expect',
+              'vi',
+              'jest',
+              'console',
+              'Array',
+              'Object',
+              'JSON',
+              'Math',
+              'Date',
+              'Map',
+              'Set',
+              'Promise',
+              'Error',
+              'RegExp',
+              'Buffer',
+              'process',
+              'window',
+              'document',
+              'localStorage',
+              'sessionStorage',
+            ].includes(obj.text)
+          ) {
             ids.add(methodName);
             // Also track the object name — it might match a describe title (e.g. toastsSignal.subscribe)
             ids.add(obj.text);
@@ -392,12 +442,48 @@ function extractIdentifiers(node: ts.Node): Set<string> {
           ids.add(methodName);
         }
         // Track callback arguments to array methods like .map(fn), .filter(fn)
-        if (['map', 'filter', 'forEach', 'reduce', 'find', 'some', 'every', 'flatMap'].includes(methodName)) {
+        if (
+          ['map', 'filter', 'forEach', 'reduce', 'find', 'some', 'every', 'flatMap'].includes(
+            methodName
+          )
+        ) {
           for (const arg of n.arguments) {
             if (ts.isIdentifier(arg)) {
               ids.add(arg.text);
             }
           }
+        }
+      }
+    }
+    // Track object names from property access like sessionsSignal.value
+    if (ts.isPropertyAccessExpression(n)) {
+      const obj = n.expression;
+      if (ts.isIdentifier(obj)) {
+        if (
+          ![
+            'expect',
+            'vi',
+            'jest',
+            'console',
+            'Array',
+            'Object',
+            'JSON',
+            'Math',
+            'Date',
+            'Map',
+            'Set',
+            'Promise',
+            'Error',
+            'RegExp',
+            'Buffer',
+            'process',
+            'window',
+            'document',
+            'localStorage',
+            'sessionStorage',
+          ].includes(obj.text)
+        ) {
+          ids.add(obj.text);
         }
       }
     }
@@ -682,6 +768,16 @@ const TEST_UTILITIES = new Set([
 
 // Common English/concept words used as describe labels that are not function names
 const CONCEPT_WORDS = new Set([
+  'constructor',
+  'integration',
+  'signals',
+  'timestamps',
+  'invariants',
+  'diagnostics',
+  'lifecycle',
+  'resilience',
+  'enqueue',
+  'deduplication',
   'initialization',
   'setup',
   'teardown',
@@ -1050,19 +1146,6 @@ const CONCEPT_WORDS = new Set([
   'ship',
   'mail',
   'broadcast',
-  'narrowcast',
-  'podcast',
-  'webcast',
-  'telecast',
-  'simulcast',
-  'multicast',
-  'unicast',
-  'anycast',
-  'geocast',
-  'mobcast',
-  'chromecast',
-  'airplay',
-  'mirror',
   'cast',
   'throw',
   'toss',
@@ -1102,20 +1185,6 @@ const CONCEPT_WORDS = new Set([
   'resupply',
   'recharge',
   'reload',
-  'rearm',
-  'refuel',
-  'recoal',
-  'rewater',
-  'reprovision',
-  'reoutfit',
-  'reequip',
-  'regear',
-  'retool',
-  'reconfigure',
-  'reconstitute',
-  'recompose',
-  'reconstruct',
-  'reassemble',
   'rebuild',
   'remake',
   'recreate',
@@ -1142,9 +1211,7 @@ const CONCEPT_WORDS = new Set([
   'reaffirm',
   'reassert',
   'reassure',
-  'reencourage',
   'reinspire',
-  'remotivate',
   'reenergize',
   'revitalize',
   'reinvigorate',
@@ -1157,12 +1224,7 @@ const CONCEPT_WORDS = new Set([
   'rectify',
   'correct',
   'amend',
-  'emend',
   'revise',
-  'redact',
-  'censor',
-  'expurgate',
-  'bowdlerize',
   'sanitize',
   'clean',
   'purify',
@@ -1171,326 +1233,6 @@ const CONCEPT_WORDS = new Set([
   'decontaminate',
   'sterilize',
   'disinfect',
-  'pasteurize',
-  'irradiate',
-  'autoclave',
-  'fumigate',
-  'degas',
-  'deodorize',
-  'deodorise',
-  'perfume',
-  'scent',
-  'fragrance',
-  'aromatize',
-  'flavor',
-  'flavour',
-  'season',
-  'spice',
-  'sweeten',
-  'sour',
-  'bitter',
-  'salt',
-  'pepper',
-  'sugar',
-  'honey',
-  'vanilla',
-  'chocolate',
-  'caramel',
-  'butter',
-  'cream',
-  'milk',
-  'cheese',
-  'egg',
-  'flour',
-  'bread',
-  'batter',
-  'coat',
-  'crust',
-  'dredge',
-  'dust',
-  'powder',
-  'sprinkle',
-  'shake',
-  'stir',
-  'mix',
-  'blend',
-  'beat',
-  'whip',
-  'fold',
-  'knead',
-  'roll',
-  'slice',
-  'dice',
-  'chop',
-  'mince',
-  'grate',
-  'shred',
-  'grind',
-  'crush',
-  'mash',
-  'pound',
-  'hammer',
-  'bash',
-  'crash',
-  'shatter',
-  'fragment',
-  'splinter',
-  'shiver',
-  'crumble',
-  'disintegrate',
-  'pulverize',
-  'atomize',
-  'vaporize',
-  'evaporate',
-  'condense',
-  'liquefy',
-  'solidify',
-  'freeze',
-  'melt',
-  'boil',
-  'simmer',
-  'poach',
-  'steam',
-  'braise',
-  'stew',
-  'roast',
-  'bake',
-  'broil',
-  'grill',
-  'fry',
-  'saute',
-  'sear',
-  'scorch',
-  'char',
-  'burn',
-  'combust',
-  'ignite',
-  'inflame',
-  'kindle',
-  'spark',
-  'flare',
-  'blaze',
-  'glow',
-  'smolder',
-  'smoulder',
-  'fume',
-  'smoke',
-  'mist',
-  'fog',
-  'cloud',
-  'haze',
-  'smog',
-  'vapor',
-  'gas',
-  'aerosol',
-  'spray',
-  'foam',
-  'froth',
-  'lather',
-  'suds',
-  'bubble',
-  'spume',
-  'scum',
-  'slag',
-  'dross',
-  'scoria',
-  'clinker',
-  'cinder',
-  'ash',
-  'ember',
-  'coal',
-  'charcoal',
-  'coke',
-  'peat',
-  'lignite',
-  'bitumen',
-  'tar',
-  'pitch',
-  'resin',
-  'rosin',
-  'shellac',
-  'lacquer',
-  'varnish',
-  'sealer',
-  'primer',
-  'undercoat',
-  'topcoat',
-  'finish',
-  'glaze',
-  'enamel',
-  'paint',
-  'stain',
-  'dye',
-  'pigment',
-  'colorant',
-  'tint',
-  'shade',
-  'tone',
-  'hue',
-  'value',
-  'chroma',
-  'saturation',
-  'brightness',
-  'lightness',
-  'darkness',
-  'whiteness',
-  'blackness',
-  'grayness',
-  'redness',
-  'greenness',
-  'blueness',
-  'yellowness',
-  'orangeness',
-  'purpleness',
-  'pinkness',
-  'brownness',
-  'beigeness',
-  'creaminess',
-  'ivoriness',
-  'pearliness',
-  'silveyness',
-  'goldness',
-  'bronziness',
-  'copperness',
-  'ironness',
-  'steelness',
-  'tinness',
-  'leadness',
-  'zincness',
-  'nickelness',
-  'chromeness',
-  'platiness',
-  'pallness',
-  'titaness',
-  'vanadess',
-  'tungstness',
-  'molybdeness',
-  'manganesess',
-  'cobaltness',
-  'aluminess',
-  'siliconess',
-  'carboness',
-  'nitrogeness',
-  'oxygeness',
-  'hydrogeness',
-  'heliumess',
-  'lithiumess',
-  'sodiumess',
-  'potassiumess',
-  'rubidiumess',
-  'cesiumess',
-  'franciumess',
-  'beryliumess',
-  'magnesiumess',
-  'calciumess',
-  'strontiumess',
-  'bariumess',
-  'radiumess',
-  'scandiumess',
-  'yttriumess',
-  'lanthanumess',
-  'actiniumess',
-  'titaniumess',
-  'zirconiumess',
-  'hafniumess',
-  'rutherfordiumess',
-  'vanadiumess',
-  'niobiumess',
-  'tantalumess',
-  'dubniumess',
-  'chromiumess',
-  'molybdenumess',
-  'tungsteness',
-  'seaborgiumess',
-  'manganeseess',
-  'technetiumess',
-  'rheniumess',
-  'bohriumess',
-  'ironess',
-  'rutheniumess',
-  'osmiumess',
-  'hassiumess',
-  'cobaltess',
-  'rhodiumess',
-  'iridiumess',
-  'meitneriumess',
-  'nickeless',
-  'palladiumess',
-  'platinumess',
-  'darmstadtiumess',
-  'copperess',
-  'silveress',
-  'goldess',
-  'roentgeniumess',
-  'zincness',
-  'cadmiumess',
-  'mercuryess',
-  'coperniciumess',
-  'boroness',
-  'aluminumess',
-  'galliumess',
-  'indiumess',
-  'thalliumess',
-  'nihoniumess',
-  'carboness',
-  'siliconess',
-  'germaniumess',
-  'tinness',
-  'leadness',
-  'fleroviumess',
-  'nitrogeness',
-  'phosphorusess',
-  'arsenicness',
-  'antimonyess',
-  'bismuthess',
-  'moscoviumess',
-  'oxygeness',
-  'sulfuress',
-  'seleniumess',
-  'telluriumess',
-  'poloniumess',
-  'livermoriumess',
-  'fluoriness',
-  'chloriness',
-  'brominess',
-  'iodiness',
-  'astatiness',
-  'tennessiness',
-  'heliumess',
-  'neoness',
-  'argoness',
-  'kryptoness',
-  'xenoness',
-  'radoness',
-  'oganessoness',
-  'ceriumess',
-  'praseodymiumess',
-  'neodymiumess',
-  'promethiumess',
-  'samariumess',
-  'europiumess',
-  'gadoliniumess',
-  'terbiumess',
-  'dysprosiumess',
-  'holmiumess',
-  'erbiumess',
-  'thuliumess',
-  'ytterbiumess',
-  'lutetiumess',
-  'thoriumess',
-  'protactiniumess',
-  'uraniumess',
-  'neptuniumess',
-  'plutoniumess',
-  'americiumess',
-  'curiumess',
-  'berkeliumess',
-  'californiumess',
-  'einsteiniumess',
-  'fermiumess',
-  'mendeleviumess',
-  'nobeliumess',
-  'lawrenciumess',
 ]);
 
 function isCamelCaseFunctionName(word: string): boolean {
@@ -1532,6 +1274,35 @@ function fileImportsRenderHook(sf: ts.SourceFile): boolean {
   return found;
 }
 
+function fileImportsName(sf: ts.SourceFile, name: string): boolean {
+  let found = false;
+  function visit(n: ts.Node) {
+    if (found) return;
+    if (ts.isImportDeclaration(n)) {
+      const clause = n.importClause;
+      if (clause) {
+        if (clause.name && clause.name.text === name) {
+          found = true;
+          return;
+        }
+        if (clause.namedBindings) {
+          if (ts.isNamedImports(clause.namedBindings)) {
+            for (const elem of clause.namedBindings.elements) {
+              if (elem.name.text === name) {
+                found = true;
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  }
+  visit(sf);
+  return found;
+}
+
 // Files with known valid describe-scope patterns that would be false positives
 const DESCRIBE_SCOPE_IGNORE_LIST = new Set([
   'packages/web/src/lib/__tests__/aaa-toast.test.ts',
@@ -1542,6 +1313,7 @@ const DESCRIBE_SCOPE_IGNORE_LIST = new Set([
   'packages/daemon/tests/unit/2-handlers/rpc-handlers/live-query-subscribe.test.ts',
   'packages/daemon/tests/unit/2-handlers/job-handlers/skill-validate.handler.test.ts',
   'packages/daemon/tests/unit/2-handlers/job-handlers/memory-consolidation.handler.test.ts',
+  'packages/shared/tests/logger.test.ts',
 ]);
 
 function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Finding[] {
@@ -1558,6 +1330,14 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
   const describes = collectDescribeBlocks(sf, sf);
 
   function visitDescribe(desc: DescribeBlock) {
+    // Always recurse into nested describe blocks
+    for (const child of desc.children) {
+      if (!isItBlock(child)) {
+        visitDescribe(child);
+      }
+    }
+
+    // Only check this describe block if it meets criteria
     if (!desc.title) return;
 
     // Only flag single-word titles that look like function/component names
@@ -1574,6 +1354,10 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
     // Skip if describe title matches the filename (module-level grouping)
     if (titleMatchesFilename(describeName, filePath)) return;
 
+    // Skip if the describe title is not imported — it's likely a property/method
+    // name rather than a standalone function under test
+    if (!fileImportsName(sf, describeName)) return;
+
     for (const child of desc.children) {
       if (isItBlock(child)) {
         const ids = extractIdentifiers(child.body);
@@ -1582,10 +1366,7 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
 
         // Check if test calls a different function/component name
         const otherFunctions = Array.from(ids).filter(
-          (id) =>
-            isCamelCaseFunctionName(id) &&
-            id !== describeName &&
-            !TEST_UTILITIES.has(id)
+          (id) => isCamelCaseFunctionName(id) && id !== describeName && !TEST_UTILITIES.has(id)
         );
         if (otherFunctions.length > 0) {
           findings.push({
@@ -1594,8 +1375,6 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
             message: `Test in describe('${describeName}') calls ${otherFunctions.join(', ')} but never calls ${describeName}. Consider moving to a describe block matching the function under test.`,
           });
         }
-      } else {
-        visitDescribe(child);
       }
     }
   }
