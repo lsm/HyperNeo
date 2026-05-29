@@ -264,7 +264,7 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
       if (currentLevel < required) {
         return jsonResult({
           success: false,
-          error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${required}. Use submit_for_approval to request human review.`,
+          error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${required}. If work is approved/QA-passed and all findings are resolved, use submit_for_approval as the terminal human sign-off path. Do not use either terminal tool while findings, QA failures, or dispatch work remain open.`,
         });
       }
 

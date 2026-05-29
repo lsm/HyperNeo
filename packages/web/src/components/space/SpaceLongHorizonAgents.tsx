@@ -1,4 +1,5 @@
 import type {
+  SpaceAgent,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
@@ -30,6 +31,34 @@ const AUTONOMY_LABELS: Record<number, string> = {
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
+}
+
+type SelectedAgentDetail =
+  | { source: 'long-horizon'; agent: SpaceLongHorizonAgent }
+  | { source: 'space-agent'; agent: SpaceAgent };
+
+function selectedAgentName(detail: SelectedAgentDetail): string {
+  return detail.source === 'long-horizon' ? detail.agent.displayName : detail.agent.name;
+}
+
+function selectedAgentStatus(detail: SelectedAgentDetail): string {
+  return detail.agent.status ?? 'active';
+}
+
+function selectedAgentInstructions(detail: SelectedAgentDetail): string | null {
+  return detail.source === 'long-horizon' ? detail.agent.instructions : detail.agent.customPrompt;
+}
+
+function selectedAgentAutonomyLevel(detail: SelectedAgentDetail): number | null {
+  return detail.source === 'long-horizon' ? detail.agent.autonomyLevel : null;
+}
+
+function selectedAgentModel(detail: SelectedAgentDetail): string | null | undefined {
+  return detail.agent.model;
+}
+
+function selectedAgentThinkingLevel(detail: SelectedAgentDetail): ThinkingLevel | null | undefined {
+  return detail.agent.thinkingLevel;
 }
 
 // ── Agent editor ─────────────────────────────────────────────────────────────
@@ -242,12 +271,20 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
 interface AgentCardProps {
   agent: SpaceLongHorizonAgent;
   spaceId: string;
+  navigationSpaceId: string;
   reminderCount: number;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCardProps) {
+function AgentCard({
+  agent,
+  spaceId,
+  navigationSpaceId,
+  reminderCount,
+  onEdit,
+  onDelete,
+}: AgentCardProps) {
   const coordinator = isCoordinator(agent);
   const statusColors: Record<string, string> = {
     active: 'bg-green-500',
@@ -262,11 +299,12 @@ function AgentCard({ agent, spaceId, reminderCount, onEdit, onDelete }: AgentCar
     <div
       role={sessionId ? 'button' : undefined}
       tabIndex={sessionId ? 0 : undefined}
-      onClick={sessionId ? () => navigateToSpaceSession(spaceId, sessionId) : undefined}
+      onClick={sessionId ? () => navigateToSpaceSession(navigationSpaceId, sessionId) : undefined}
       onKeyDown={
         sessionId
           ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') navigateToSpaceSession(spaceId, sessionId);
+              if (e.key === 'Enter' || e.key === ' ')
+                navigateToSpaceSession(navigationSpaceId, sessionId);
             }
           : undefined
       }
@@ -407,8 +445,18 @@ function TemplateCard({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
+export function SpaceLongHorizonAgents({
+  spaceId,
+  navigationSpaceId,
+  selectedHandle,
+}: {
+  spaceId: string;
+  navigationSpaceId?: string;
+  selectedHandle?: string | null;
+}) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const agents = spaceStore.longHorizonAgents.value;
+  const spaceAgents = spaceStore.agents.value;
   const templates = spaceStore.longHorizonAgentTemplates.value;
   const loading = !spaceStore.configDataLoaded.value;
 
@@ -476,6 +524,17 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   const coordinator = agents.find(isCoordinator);
   const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
+  const selectedLongHorizonAgent = selectedHandle
+    ? sortedAgents.find((agent) => agent.handle === selectedHandle)
+    : null;
+  const selectedSpaceAgent = selectedHandle
+    ? spaceAgents.find((agent) => agent.handle === selectedHandle && agent.status !== 'archived')
+    : null;
+  const selectedAgent: SelectedAgentDetail | null = selectedSpaceAgent
+    ? { source: 'space-agent', agent: selectedSpaceAgent }
+    : selectedLongHorizonAgent
+      ? { source: 'long-horizon', agent: selectedLongHorizonAgent }
+      : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
   // Count how many active instances exist per template handle
@@ -495,6 +554,57 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
   return (
     <div class="h-full overflow-y-auto scrollbar-dark">
       <div class="max-w-3xl mx-auto px-4 py-4 space-y-6">
+        {selectedHandle && (
+          <section
+            class="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4"
+            data-testid="space-agent-detail"
+          >
+            {selectedAgent ? (
+              <>
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-blue-300/70">
+                      Selected agent
+                    </p>
+                    <h2 class="mt-1 text-base font-semibold text-gray-100">
+                      {selectedAgentName(selectedAgent)}
+                    </h2>
+                    <p class="mt-0.5 text-xs text-gray-400">@{selectedAgent.agent.handle}</p>
+                  </div>
+                  <span class="flex-shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-gray-300">
+                    {selectedAgentStatus(selectedAgent)}
+                  </span>
+                </div>
+                {selectedAgentInstructions(selectedAgent) && (
+                  <p class="mt-3 text-sm text-gray-300 whitespace-pre-wrap">
+                    {selectedAgentInstructions(selectedAgent)}
+                  </p>
+                )}
+                <div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-400">
+                  {selectedAgent.source === 'space-agent' && <span>Configured Space Agent</span>}
+                  {selectedAgentAutonomyLevel(selectedAgent) && (
+                    <span>
+                      L{selectedAgentAutonomyLevel(selectedAgent)}{' '}
+                      {AUTONOMY_LABELS[selectedAgentAutonomyLevel(selectedAgent)!]}
+                    </span>
+                  )}
+                  {selectedAgentModel(selectedAgent) && (
+                    <span>Model: {selectedAgentModel(selectedAgent)}</span>
+                  )}
+                  {selectedAgentThinkingLevel(selectedAgent) && (
+                    <span>Thinking: {selectedAgentThinkingLevel(selectedAgent)}</span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div data-testid="space-agent-detail-missing">
+                <p class="text-sm font-medium text-gray-100">Agent not found</p>
+                <p class="mt-1 text-xs text-gray-400">No agent found for @{selectedHandle}.</p>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Configured agents */}
         <section class="rounded-xl border border-white/8 bg-white/[0.03] p-4">
           <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
@@ -511,6 +621,7 @@ export function SpaceLongHorizonAgents({ spaceId }: { spaceId: string }) {
                   key={agent.id}
                   agent={agent}
                   spaceId={spaceId}
+                  navigationSpaceId={routeSpaceId}
                   reminderCount={reminderCounts[agent.id] ?? 0}
                   onEdit={() => {
                     setEditingAgent(agent);

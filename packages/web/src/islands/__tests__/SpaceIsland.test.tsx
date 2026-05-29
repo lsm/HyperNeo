@@ -43,8 +43,9 @@ const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
   }),
 }));
 
-const { mockNavigateToSpaceSession } = vi.hoisted(() => ({
+const { mockNavigateToSpaceSession, mockNavigateToSpaceTask } = vi.hoisted(() => ({
   mockNavigateToSpaceSession: vi.fn(),
+  mockNavigateToSpaceTask: vi.fn(),
 }));
 
 const { mockCreateSession } = vi.hoisted(() => ({
@@ -58,6 +59,8 @@ const { mockToastError } = vi.hoisted(() => ({
 // Real Preact signal for the configure tab (read during render — needs reactivity)
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
+const mockCurrentSpaceCanonicalIdSignal = signal<string | null>(null);
+const mockCurrentSpaceAgentHandleSignal = signal<string | null>(null);
 const mockCurrentSpaceViewModeSignal = signal<string>('overview');
 
 // Wire bridge so mockNavigateToSpaceConfigure can update the real signal
@@ -73,6 +76,12 @@ vi.mock('../../lib/signals', async (importOriginal) => {
     },
     get currentSpaceIdSignal() {
       return mockCurrentSpaceIdSignal;
+    },
+    get currentSpaceCanonicalIdSignal() {
+      return mockCurrentSpaceCanonicalIdSignal;
+    },
+    get currentSpaceAgentHandleSignal() {
+      return mockCurrentSpaceAgentHandleSignal;
     },
     get currentSpaceViewModeSignal() {
       return mockCurrentSpaceViewModeSignal;
@@ -116,21 +125,100 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
 }));
 
 vi.mock('../../components/space/SpaceOverview', () => ({
-  SpaceOverview: () => <div data-testid="space-dashboard" />,
+  SpaceOverview: (props: {
+    spaceId: string;
+    navigationSpaceId?: string;
+    onSelectTask?: (taskId: string) => void;
+  }) => (
+    <div
+      data-testid="space-dashboard"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+    >
+      <button
+        data-testid="overview-select-task"
+        onClick={() => props.onSelectTask?.('task-from-overview')}
+      >
+        Select Task
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('../../components/space/SpaceTaskPane', () => ({
-  SpaceTaskPane: (props: { taskId: string | null; spaceId?: string }) => (
+  SpaceTaskPane: (props: {
+    taskId: string | null;
+    spaceId?: string;
+    navigationSpaceId?: string;
+  }) => (
     <div
       data-testid="space-task-pane-inner"
       data-task-id={props.taskId ?? ''}
       data-space-id={props.spaceId ?? ''}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+    />
+  ),
+}));
+
+vi.mock('../../components/space/SpaceCreateTaskDialog', () => ({
+  SpaceCreateTaskDialog: (props: {
+    isOpen: boolean;
+    onCreated?: (task: { id: string; title: string }) => void;
+  }) =>
+    props.isOpen ? (
+      <div>
+        <h2>Create Task</h2>
+        <button
+          type="button"
+          onClick={() => props.onCreated?.({ id: 'new-task-123', title: 'New Task' })}
+        >
+          Create Test Task
+        </button>
+      </div>
+    ) : null,
+}));
+
+vi.mock('../../components/space/SpaceGoals', () => ({
+  SpaceGoals: (props: { spaceId: string; navigationSpaceId?: string }) => (
+    <div
+      data-testid="space-goals"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+    />
+  ),
+}));
+
+vi.mock('../../components/space/SpaceSessionsPage', () => ({
+  SpaceSessionsPage: (props: { spaceId: string; navigationSpaceId?: string }) => (
+    <div
+      data-testid="space-sessions-page"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
     />
   ),
 }));
 
 vi.mock('../../components/space/SpaceAgentList', () => ({
   SpaceAgentList: () => <div data-testid="space-agent-list" />,
+}));
+
+vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
+  SpaceLongHorizonAgents: (props: {
+    spaceId: string;
+    navigationSpaceId?: string;
+    selectedHandle?: string | null;
+  }) => {
+    const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
+    return (
+      <div
+        data-testid="space-long-horizon-agents"
+        data-space-id={props.spaceId}
+        data-navigation-space-id={props.navigationSpaceId ?? ''}
+        data-selected-handle={props.selectedHandle ?? ''}
+        data-space-agent={spaceAgent?.handle ?? ''}
+      />
+    );
+  },
 }));
 
 vi.mock('../../components/space/SpaceSettings', () => ({
@@ -169,7 +257,7 @@ vi.mock('../../lib/space-store', () => ({
 
 vi.mock('../../lib/router', () => ({
   navigateToSpace: vi.fn(),
-  navigateToSpaceTask: vi.fn(),
+  navigateToSpaceTask: mockNavigateToSpaceTask,
   navigateToSpaceSession: mockNavigateToSpaceSession,
   navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
   pushOverlayHistory: vi.fn(),
@@ -199,6 +287,7 @@ beforeAll(async () => {
     import('../../components/space/SpaceTaskPane'),
     import('../../components/space/SpaceTasks'),
     import('../../components/space/SpaceSessionsPage'),
+    import('../../components/space/SpaceLongHorizonAgents'),
   ]);
 });
 
@@ -240,8 +329,11 @@ beforeEach(() => {
   capturedVisualEditorProps = {};
   configureTabBridge.signal.value = 'agents';
   idBridge.signal.value = null;
+  mockCurrentSpaceAgentHandleSignal.value = null;
+  mockCurrentSpaceCanonicalIdSignal.value = null;
   mockNavigateToSpaceConfigure.mockClear();
   mockNavigateToSpaceSession.mockClear();
+  mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
 });
@@ -264,6 +356,7 @@ describe('SpaceIsland — route-driven views', () => {
     );
     // Outer wrapper
     expect(getByTestId('space-overview-view')).toBeTruthy();
+    expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
     // Legacy tab bar is removed from overview
     expect(queryByTestId('space-tab-bar')).toBeNull();
   });
@@ -290,6 +383,20 @@ describe('SpaceIsland — overview content', () => {
     expect(queryByTestId('canvas-panel')).toBeNull();
     expect(queryByTestId('workflow-canvas')).toBeNull();
     expect(queryByTestId('dashboard-fallback')).toBeNull();
+  });
+
+  it('passes the route space id to overview self-managed navigation', async () => {
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="overview" />
+    );
+
+    const overview = await findByTestId('space-dashboard');
+    expect(overview.getAttribute('data-space-id')).toBe('space-1');
+    expect(overview.getAttribute('data-navigation-space-id')).toBe('space-slug');
+
+    fireEvent.click(await findByTestId('overview-select-task'));
+
+    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'task-from-overview');
   });
 });
 
@@ -378,6 +485,23 @@ describe('SpaceIsland — content priority chain', () => {
     await findByTestId('space-task-pane-inner');
     expect(getByTestId('space-task-pane')).toBeTruthy();
     expect(getByTestId('space-task-pane-inner').getAttribute('data-task-id')).toBe('task-xyz');
+    expect(getByTestId('space-task-pane-inner').getAttribute('data-space-id')).toBe('space-1');
+  });
+
+  it('passes the route space id to task detail navigation', async () => {
+    const { getByTestId, findByTestId } = render(
+      <SpaceIsland
+        spaceId="space-1"
+        routeSpaceId="space-slug"
+        viewMode="overview"
+        taskViewId="task-xyz"
+      />
+    );
+    await findByTestId('space-task-pane-inner');
+    expect(getByTestId('space-task-pane-inner').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByTestId('space-task-pane-inner').getAttribute('data-navigation-space-id')).toBe(
+      'space-slug'
+    );
   });
 
   it('sessionViewId takes priority over taskViewId', async () => {
@@ -394,6 +518,23 @@ describe('SpaceIsland — content priority chain', () => {
   });
 });
 
+describe('SpaceIsland — goals view', () => {
+  it('passes the route space id to goals page navigation', async () => {
+    const { getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="goals" />
+    );
+
+    await waitFor(
+      () => {
+        expect(getByTestId('space-goals')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    expect(getByTestId('space-goals').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByTestId('space-goals').getAttribute('data-navigation-space-id')).toBe('space-slug');
+  });
+});
+
 describe('SpaceIsland — sessions view', () => {
   it('renders Create Session button in the header', async () => {
     const { getByLabelText, getByTestId } = render(
@@ -406,6 +547,23 @@ describe('SpaceIsland — sessions view', () => {
       { timeout: LAZY_LOAD_TIMEOUT }
     );
     expect(getByLabelText('Create session')).toBeTruthy();
+  });
+
+  it('passes the route space id to sessions page navigation', async () => {
+    const { getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
+    );
+
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-page')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    expect(getByTestId('space-sessions-page').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByTestId('space-sessions-page').getAttribute('data-navigation-space-id')).toBe(
+      'space-slug'
+    );
   });
 
   it('calls createSession and navigates on success', async () => {
@@ -437,6 +595,61 @@ describe('SpaceIsland — sessions view', () => {
     // so the guard should pass when values match.
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
+    });
+  });
+
+  it('navigates after slug-routed session creation when canonical space still matches', async () => {
+    mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-123' });
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+
+    const { getByLabelText, getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create session'));
+
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-slug', 'new-session-123');
+    });
+  });
+
+  it('skips slug-routed session navigation when canonical route state changed', async () => {
+    mockCreateSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ sessionId: 'new-session-123' }), 50);
+        })
+    );
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+
+    const { getByLabelText, getByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="sessions" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create session'));
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-2';
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
     });
   });
 
@@ -523,6 +736,42 @@ describe('SpaceIsland — sessions view', () => {
   });
 });
 
+describe('SpaceIsland — agents view', () => {
+  it('passes the selected agent handle to the agents page', async () => {
+    mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
+    mockAgents.value = [
+      {
+        id: 'agent-1',
+        spaceId: 'space-1',
+        name: 'Reviewer',
+        handle: 'reviewer',
+        status: 'active',
+        customPrompt: 'Review code.',
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+
+    const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
+
+    const agentsPage = await findByTestId('space-long-horizon-agents');
+    expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
+    expect(agentsPage.getAttribute('data-navigation-space-id')).toBe('space-1');
+    expect(agentsPage.getAttribute('data-selected-handle')).toBe('reviewer');
+    expect(agentsPage.getAttribute('data-space-agent')).toBe('reviewer');
+  });
+
+  it('passes the route space id to agent session navigation', async () => {
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="agents" />
+    );
+
+    const agentsPage = await findByTestId('space-long-horizon-agents');
+    expect(agentsPage.getAttribute('data-space-id')).toBe('space-1');
+    expect(agentsPage.getAttribute('data-navigation-space-id')).toBe('space-slug');
+  });
+});
+
 describe('SpaceIsland — tasks view', () => {
   it('renders Create Task button in the header', async () => {
     const { getByLabelText, getByTestId } = render(
@@ -553,5 +802,56 @@ describe('SpaceIsland — tasks view', () => {
     await waitFor(() => {
       expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
     });
+  });
+
+  it('navigates after slug-routed task creation when canonical space still matches', async () => {
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'tasks';
+
+    const { getByLabelText, getByTestId, getByRole } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="tasks" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-tasks-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create task'));
+    await waitFor(() => {
+      expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
+    });
+
+    fireEvent.click(getByRole('button', { name: 'Create Test Task' }));
+
+    expect(mockNavigateToSpaceTask).toHaveBeenCalledWith('space-slug', 'new-task-123');
+  });
+
+  it('skips slug-routed task navigation when canonical route state changed', async () => {
+    mockCurrentSpaceIdSignal.value = 'space-slug';
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'tasks';
+
+    const { getByLabelText, getByTestId, getByRole } = render(
+      <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="tasks" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-tasks-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+
+    fireEvent.click(getByLabelText('Create task'));
+    await waitFor(() => {
+      expect(getByRole('heading', { name: 'Create Task' })).toBeTruthy();
+    });
+
+    mockCurrentSpaceCanonicalIdSignal.value = 'space-2';
+    fireEvent.click(getByRole('button', { name: 'Create Test Task' }));
+
+    expect(mockNavigateToSpaceTask).not.toHaveBeenCalled();
   });
 });

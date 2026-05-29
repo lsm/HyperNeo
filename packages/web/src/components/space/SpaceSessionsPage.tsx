@@ -224,9 +224,11 @@ function SessionItem({
 
 interface SpaceSessionsPageProps {
   spaceId: string;
+  navigationSpaceId?: string;
 }
 
-export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
+export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsPageProps) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const storeSessions = spaceStore.sessions.value;
   const agents = spaceStore.agents.value;
   const [promotionDraft, setPromotionDraft] = useState<SpaceAgentPromotionDraft | null>(null);
@@ -296,7 +298,7 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
                   count={groupSessions.length}
                   variant={group.variant}
                   sessions={groupSessions}
-                  spaceId={spaceId}
+                  spaceId={routeSpaceId}
                   onPromote={handlePromote}
                 />
               );
@@ -308,7 +310,7 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
                 count={groupSessions.length}
                 variant={group.variant}
                 sessions={groupSessions}
-                spaceId={spaceId}
+                spaceId={routeSpaceId}
                 hardLimit={group.hardLimit}
                 onPromote={handlePromote}
               />

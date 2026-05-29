@@ -13,7 +13,7 @@
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@neokai/shared';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
-import { currentSpaceIdSignal, currentSpaceTasksFilterTabSignal } from '../../lib/signals';
+import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { Dropdown } from '../ui/Dropdown';
@@ -236,11 +236,11 @@ function TabButton({
 function MoreTabsDropdown({
   tabs,
   activeTab,
-  spaceId,
+  navigationSpaceId,
 }: {
   tabs: TabConfig[];
   activeTab: TaskFilterTab;
-  spaceId: string;
+  navigationSpaceId: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const moreIsActive = tabs.some((tab) => tab.key === activeTab);
@@ -260,7 +260,7 @@ function MoreTabsDropdown({
               role="menuitem"
               class="w-full px-4 py-2 text-left text-sm flex items-center justify-between gap-3 text-gray-300 hover:bg-dark-800 hover:text-gray-100 transition-colors"
               onClick={() => {
-                navigateToSpaceTasks(spaceId, tab.key);
+                navigateToSpaceTasks(navigationSpaceId, tab.key);
                 setIsOpen(false);
               }}
             >
@@ -654,15 +654,16 @@ function TaskItem({
 
 interface SpaceTasksProps {
   spaceId: string;
+  navigationSpaceId?: string;
   onSelectTask?: (taskId: string) => void;
 }
 
-export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps) {
+export function SpaceTasks({ spaceId, navigationSpaceId, onSelectTask }: SpaceTasksProps) {
   const tasks = spaceStore.tasks.value;
   const schedules = spaceStore.schedules.value;
   const rawActiveTab = currentSpaceTasksFilterTabSignal.value as LegacyTaskFilterTab;
   const activeTab: TaskFilterTab = rawActiveTab === 'archived' ? 'completed' : rawActiveTab;
-  const spaceId = currentSpaceIdSignal.value ?? '';
+  const routeSpaceId = navigationSpaceId ?? spaceId;
 
   // Load schedules when the tab is switched to 'scheduled' or the active space changes.
   // Including spaceId in deps prevents stale schedules from a previous space lingering
@@ -770,12 +771,16 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
                 label={tab.label}
                 count={tab.count}
                 isActive={activeTab === tab.key}
-                onClick={() => navigateToSpaceTasks(spaceId, tab.key)}
+                onClick={() => navigateToSpaceTasks(routeSpaceId, tab.key)}
                 variant={tab.variant}
               />
             ))}
             {mobileOverflowTabs.length > 0 && (
-              <MoreTabsDropdown tabs={mobileOverflowTabs} activeTab={activeTab} spaceId={spaceId} />
+              <MoreTabsDropdown
+                tabs={mobileOverflowTabs}
+                activeTab={activeTab}
+                navigationSpaceId={routeSpaceId}
+              />
             )}
           </div>
           {/* Desktop (640px+): all tabs inline */}
@@ -786,7 +791,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
                 label={tab.label}
                 count={tab.count}
                 isActive={activeTab === tab.key}
-                onClick={() => navigateToSpaceTasks(spaceId, tab.key)}
+                onClick={() => navigateToSpaceTasks(routeSpaceId, tab.key)}
                 variant={tab.variant}
               />
             ))}

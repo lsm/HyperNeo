@@ -3,6 +3,7 @@ import {
   navSectionSignal,
   contextPanelOpenSignal,
   currentSpaceIdSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceTasksFilterTabSignal,
   currentSpaceViewModeSignal,
@@ -187,6 +188,8 @@ export function ContextPanel() {
   }, [navSection]);
   const activeSettingsSection = settingsSectionSignal.value;
   const currentSpaceId = currentSpaceIdSignal.value;
+  const currentSpaceCanonicalId = currentSpaceCanonicalIdSignal.value;
+  const detailPanelSpaceId = currentSpaceCanonicalId ?? currentSpaceId;
   const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
@@ -270,7 +273,7 @@ export function ContextPanel() {
               <button
                 key={space.id}
                 type="button"
-                onClick={() => handleSpaceSwitch(space.id)}
+                onClick={() => handleSpaceSwitch(space.slug)}
                 aria-current={isCurrent ? 'page' : undefined}
                 class={cn(
                   'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
@@ -465,7 +468,8 @@ export function ContextPanel() {
                 </button>
               </div>
               <SpaceDetailPanel
-                spaceId={currentSpaceId!}
+                spaceId={detailPanelSpaceId!}
+                navigationSpaceId={currentSpaceId!}
                 onNavigate={() => (contextPanelOpenSignal.value = false)}
               />
             </div>

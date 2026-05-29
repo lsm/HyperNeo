@@ -22,6 +22,7 @@ function makeAgent(id: string, name: string): SpaceAgent {
     id,
     spaceId: 'space-1',
     name,
+    handle: id,
     customPrompt: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),

@@ -11,7 +11,36 @@ vi.mock('../../lib/session-store', () => ({
   },
 }));
 
+vi.mock('../../components/space/TaskAuxiliaryPanel', () => ({
+  TaskAuxiliaryPanel: (props: {
+    spaceId: string;
+    navigationSpaceId?: string;
+    taskId: string;
+    tab?: string;
+  }) => (
+    <div
+      data-testid="task-auxiliary-panel"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+      data-task-id={props.taskId}
+      data-tab={props.tab ?? ''}
+    />
+  ),
+}));
+
+vi.mock('../../components/space/GoalDetailPanel', () => ({
+  GoalDetailPanel: (props: { spaceId: string; navigationSpaceId?: string; goalId: string }) => (
+    <div
+      data-testid="goal-detail-panel"
+      data-space-id={props.spaceId}
+      data-navigation-space-id={props.navigationSpaceId ?? ''}
+      data-goal-id={props.goalId}
+    />
+  ),
+}));
+
 import {
+  currentSpaceCanonicalIdSignal,
   currentSpaceGoalIdSignal,
   currentSpaceIdSignal,
   currentSpaceScopeIdSignal,
@@ -20,12 +49,13 @@ import {
   navSectionSignal,
   rightPanelTargetSignal,
 } from '../../lib/signals';
-import { RightPanelToggle } from '../RightPanel';
+import { RightPanel, RightPanelToggle } from '../RightPanel';
 
 describe('RightPanelToggle', () => {
   beforeEach(() => {
     navSectionSignal.value = 'spaces';
     currentSpaceIdSignal.value = 'space-1';
+    currentSpaceCanonicalIdSignal.value = null;
     currentSpaceViewModeSignal.value = 'goals';
     currentSpaceGoalIdSignal.value = null;
     currentSpaceScopeIdSignal.value = null;
@@ -36,6 +66,7 @@ describe('RightPanelToggle', () => {
   afterEach(() => {
     cleanup();
     rightPanelTargetSignal.value = null;
+    currentSpaceCanonicalIdSignal.value = null;
     currentSpaceGoalIdSignal.value = null;
     currentSpaceScopeIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
@@ -59,6 +90,20 @@ describe('RightPanelToggle', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(rightPanelTargetSignal.value).toBeNull();
+  });
+
+  it('uses the canonical space id for slug-routed panel targets', () => {
+    currentSpaceIdSignal.value = 'space-slug';
+    currentSpaceCanonicalIdSignal.value = 'space-1';
+    currentSpaceGoalIdSignal.value = 'goal-1';
+    render(<RightPanelToggle />);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(rightPanelTargetSignal.value).toEqual({
+      type: 'goal',
+      spaceId: 'space-1',
+      goalId: 'goal-1',
+    });
   });
 
   it('toggles the scope panel on the Forge view', () => {
@@ -86,6 +131,35 @@ describe('RightPanelToggle', () => {
       taskId: 'task-1',
       tab: 'details',
     });
+  });
+
+  it('passes the route space id to task panel navigation while keeping canonical targets', () => {
+    currentSpaceIdSignal.value = 'space-slug';
+    currentSpaceCanonicalIdSignal.value = 'space-1';
+    rightPanelTargetSignal.value = {
+      type: 'task',
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      tab: 'details',
+    };
+
+    render(<RightPanel />);
+
+    const panel = screen.getByTestId('task-auxiliary-panel');
+    expect(panel.getAttribute('data-space-id')).toBe('space-1');
+    expect(panel.getAttribute('data-navigation-space-id')).toBe('space-slug');
+  });
+
+  it('passes the route space id to goal panel navigation while keeping canonical targets', () => {
+    currentSpaceIdSignal.value = 'space-slug';
+    currentSpaceCanonicalIdSignal.value = 'space-1';
+    rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-1' };
+
+    render(<RightPanel />);
+
+    const panel = screen.getByTestId('goal-detail-panel');
+    expect(panel.getAttribute('data-space-id')).toBe('space-1');
+    expect(panel.getAttribute('data-navigation-space-id')).toBe('space-slug');
   });
 
   it('retargets an open goal panel when the selected goal changes', async () => {

@@ -66,6 +66,7 @@ import type {
 import { isUUID, Logger } from '@neokai/shared';
 import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('kai:web:spacestore');
 
@@ -593,9 +594,12 @@ class SpaceStore {
         // Resolve slug to UUID via overview fetch, then subscribe with the real UUID
         const resolvedId = await this.fetchAndResolveSpace(spaceIdOrSlug);
         if (resolvedId) {
-          // Update spaceId to the canonical UUID if it was a slug
+          // Keep store/API state canonical while preserving the URL-facing route identifier.
           if (resolvedId !== spaceIdOrSlug) {
             this.spaceId.value = resolvedId;
+            if (currentSpaceIdSignal.value === spaceIdOrSlug) {
+              currentSpaceCanonicalIdSignal.value = resolvedId;
+            }
           }
           this.listGoals({ includeArchived: false }).catch((err) => {
             logger.warn('Failed to fetch space goals:', err);

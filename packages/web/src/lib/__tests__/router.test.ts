@@ -36,6 +36,8 @@ import {
 } from '../router';
 import {
   currentSessionIdSignal,
+  currentSpaceAgentHandleSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceConfigureTabSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
@@ -55,6 +57,8 @@ const IN_APP_HISTORY_DEPTH_KEY = '__neokaiInAppHistoryDepth';
 function resetSignals() {
   currentSessionIdSignal.value = null;
   currentSpaceIdSignal.value = null;
+  currentSpaceCanonicalIdSignal.value = null;
+  currentSpaceAgentHandleSignal.value = null;
   currentSpaceSessionIdSignal.value = null;
   currentSpaceTaskIdSignal.value = null;
   currentSpaceViewModeSignal.value = 'overview';
@@ -110,6 +114,7 @@ describe('router', () => {
     expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
     expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
     expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agents`);
+    expect(createSpaceAgentPath(SPACE_ID, 'reviewer')).toBe(`/space/${SPACE_ID}/agent/reviewer`);
     expect(createSpaceSessionPath(SPACE_ID, SESSION_ID)).toBe(
       `/space/${SPACE_ID}/session/${SESSION_ID}`
     );
@@ -281,6 +286,28 @@ describe('router', () => {
     );
   });
 
+  it('preserves the canonical space id during same-route-space navigation', () => {
+    navigateToSpace('demo-slug');
+    currentSpaceCanonicalIdSignal.value = 'space-uuid';
+    finishNavigation();
+
+    navigateToSpaceTasks('demo-slug', 'action');
+
+    expect(currentSpaceIdSignal.value).toBe('demo-slug');
+    expect(currentSpaceCanonicalIdSignal.value).toBe('space-uuid');
+  });
+
+  it('clears the canonical space id when the route space changes', () => {
+    navigateToSpace('demo-slug');
+    currentSpaceCanonicalIdSignal.value = 'space-uuid';
+    finishNavigation();
+
+    navigateToSpaceTasks('other-space', 'action');
+
+    expect(currentSpaceIdSignal.value).toBe('other-space');
+    expect(currentSpaceCanonicalIdSignal.value).toBeNull();
+  });
+
   it('navigates space routes and clears regular session selection', () => {
     currentSessionIdSignal.value = SESSION_ID;
 
@@ -331,6 +358,22 @@ describe('router', () => {
     navigateToSpaceAgent(SPACE_ID);
     expect(currentSpaceSessionIdSignal.value).toBeNull();
     expect(currentSpaceViewModeSignal.value).toBe('agents');
+    expect(currentSpaceAgentHandleSignal.value).toBeNull();
+    finishNavigation();
+
+    navigateToSpaceAgent(SPACE_ID, 'reviewer');
+    expect(currentSpaceViewModeSignal.value).toBe('agents');
+    expect(currentSpaceAgentHandleSignal.value).toBe('reviewer');
+    expect(window.history.pushState).toHaveBeenLastCalledWith(
+      {
+        spaceId: SPACE_ID,
+        handle: 'reviewer',
+        path: `/space/${SPACE_ID}/agent/reviewer`,
+        [IN_APP_HISTORY_DEPTH_KEY]: 9,
+      },
+      '',
+      `/space/${SPACE_ID}/agent/reviewer`
+    );
     finishNavigation();
 
     navigateToSpacesPage();

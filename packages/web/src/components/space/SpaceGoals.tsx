@@ -15,6 +15,7 @@ import {
 
 interface SpaceGoalsProps {
   spaceId: string;
+  navigationSpaceId?: string;
 }
 
 const STATUS_STYLES: Record<SpaceGoalStatus, string> = {
@@ -180,6 +181,7 @@ export function GoalDetail({
   onRunAction,
   actionLoading,
   spaceId,
+  navigationSpaceId,
 }: {
   goal: SpaceGoal;
   tasks: SpaceTask[];
@@ -188,7 +190,9 @@ export function GoalDetail({
   onRunAction: (action: 'pause' | 'resume' | 'archive' | 'trigger') => void;
   actionLoading: boolean;
   spaceId: string;
+  navigationSpaceId?: string;
 }) {
+  const routeSpaceId = navigationSpaceId ?? spaceId;
   const linkedTasks = tasks
     .filter(
       (task) =>
@@ -375,7 +379,7 @@ export function GoalDetail({
                 <button
                   key={task.id}
                   type="button"
-                  onClick={() => navigateToSpaceTask(spaceId, task.id)}
+                  onClick={() => navigateToSpaceTask(routeSpaceId, task.id)}
                   class="w-full rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2 text-left hover:border-dark-600"
                 >
                   <div class="flex items-center justify-between gap-2">
@@ -420,7 +424,7 @@ export function GoalDetail({
   );
 }
 
-export function SpaceGoals({ spaceId }: SpaceGoalsProps) {
+export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: SpaceGoalsProps) {
   const goals = spaceStore.goals.value;
   const tasks = spaceStore.tasks.value;
   const selectedGoalId = currentSpaceGoalIdSignal.value;

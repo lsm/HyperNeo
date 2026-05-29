@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'preact/compat';
 import { useState, useEffect } from 'preact/hooks';
 import {
   currentSessionIdSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
@@ -179,7 +180,7 @@ function SpacesHome() {
                   <button
                     key={space.id}
                     type="button"
-                    onClick={() => navigateToSpace(space.id)}
+                    onClick={() => navigateToSpace(space.slug)}
                     class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
                   >
                     <svg
@@ -233,7 +234,7 @@ function SpacesHome() {
                       <button
                         key={task.id}
                         type="button"
-                        onClick={() => navigateToSpaceTask(space.id, task.id)}
+                        onClick={() => navigateToSpaceTask(space.slug, task.id)}
                         class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
                       >
                         <div
@@ -270,7 +271,7 @@ function SpacesHome() {
                       <button
                         key={session.id}
                         type="button"
-                        onClick={() => navigateToSpaceSession(space.id, session.id)}
+                        onClick={() => navigateToSpaceSession(space.slug, session.id)}
                         class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
                       >
                         <div class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
@@ -300,7 +301,7 @@ function SpacesHome() {
                       <button
                         key={task.id}
                         type="button"
-                        onClick={() => navigateToSpaceTask(space.id, task.id)}
+                        onClick={() => navigateToSpaceTask(space.slug, task.id)}
                         class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
                       >
                         <div class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
@@ -329,7 +330,8 @@ export default function MainContent() {
   // IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
   // The @preact/preset-vite plugin will transform this to create proper subscriptions
   const sessionId = currentSessionIdSignal.value;
-  const spaceId = currentSpaceIdSignal.value;
+  const spaceRouteId = currentSpaceIdSignal.value;
+  const spaceId = currentSpaceCanonicalIdSignal.value ?? spaceRouteId;
   const spaceSessionViewId = currentSpaceSessionIdSignal.value;
   const spaceTaskViewId = currentSpaceTaskIdSignal.value;
   const spaceViewMode = currentSpaceViewModeSignal.value;
@@ -366,6 +368,7 @@ export default function MainContent() {
         <Suspense fallback={lazyFallback}>
           <SpaceIsland
             spaceId={spaceId}
+            routeSpaceId={spaceRouteId}
             viewMode={spaceViewMode}
             sessionViewId={spaceSessionViewId}
             taskViewId={spaceTaskViewId}

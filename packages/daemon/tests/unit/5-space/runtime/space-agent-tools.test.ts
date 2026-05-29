@@ -477,6 +477,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(templated.success).toBe(true);
     expect(templated.agent.templateName).toBe('Reviewer');
+    expect(templated.agent.handle).toBe('reviewer-copy');
 
     const blankTemplateName = JSON.parse(
       (

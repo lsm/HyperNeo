@@ -438,6 +438,14 @@ describe('SpaceOverview', () => {
       expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'active');
     });
 
+    it('uses the route space id for stat card navigation', () => {
+      const { getByText } = render(
+        <SpaceOverview spaceId="space-1" navigationSpaceId="space-slug" />
+      );
+      fireEvent.click(getByText('Active').closest('button')!);
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug', 'active');
+    });
+
     it('clicking Review stat card navigates to tasks with action tab', () => {
       const { getByText } = render(<SpaceOverview spaceId="space-1" />);
       fireEvent.click(getByText('Review').closest('button')!);
@@ -521,6 +529,20 @@ describe('SpaceOverview', () => {
       const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
       fireEvent.click(getByTestId('awaiting-approval-summary'));
       expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
+    });
+
+    it('uses the route space id for awaiting-approval navigation', () => {
+      mockSpace.value = makeSpace();
+      mockTasks.value = [
+        makeTask('t1', 'review', {
+          pendingCheckpointType: 'task_completion',
+        }),
+      ];
+      const { getByTestId } = render(
+        <SpaceOverview spaceId="space-1" navigationSpaceId="space-slug" />
+      );
+      fireEvent.click(getByTestId('awaiting-approval-summary'));
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug', 'action');
     });
   });
 
