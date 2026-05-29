@@ -100,6 +100,22 @@ describe('ProviderCredentialManager', () => {
     }
   });
 
+  it('detects provider environment credentials', () => {
+    const db = createDb();
+    const store = new MemoryCredentialStore();
+    const manager = new ProviderCredentialManager(store, db, {
+      GLM_API_KEY: 'from-env',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+    });
+    try {
+      expect(manager.hasEnvironmentCredentials('glm')).toBe(true);
+      expect(manager.hasEnvironmentCredentials('anthropic')).toBe(true);
+      expect(manager.hasEnvironmentCredentials('kimi')).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   it('normalizes OAuth expires_in to absolute expiresAt', async () => {
     const db = createDb();
     const store = new MemoryCredentialStore();

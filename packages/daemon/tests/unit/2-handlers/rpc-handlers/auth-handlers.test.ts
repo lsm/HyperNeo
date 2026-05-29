@@ -312,6 +312,7 @@ describe('Auth RPC Handlers', () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
         removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
       };
       setupAuthHandlers(
         messageHubData.hub,
@@ -336,6 +337,7 @@ describe('Auth RPC Handlers', () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
         removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
       };
       setupAuthHandlers(
         messageHubData.hub,
@@ -360,6 +362,7 @@ describe('Auth RPC Handlers', () => {
       const credentialManager = {
         getCredentials: mock(async () => null),
         removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
       };
       setupAuthHandlers(
         messageHubData.hub,
@@ -380,6 +383,61 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('managed by environment variables');
       expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
+    });
+
+    it('returns managed-by-environment error and removes stale row when env overrides storage', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => true),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('managed by environment variables');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.getCredentials).not.toHaveBeenCalled();
+    });
+
+    it('removes unreadable provider credential store row on logout', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => {
+          throw new Error('decrypt failed');
+        }),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
     it('handles logout errors', async () => {

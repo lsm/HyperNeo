@@ -148,6 +148,16 @@ export function setupAuthHandlers(
       }
 
       try {
+        const hasEnvironmentCredentials =
+          credentialManager?.hasEnvironmentCredentials(providerId) ?? false;
+        if (!provider.logout && hasEnvironmentCredentials) {
+          await credentialManager?.removeCredentials(providerId);
+          return {
+            success: false,
+            error: `Provider ${providerId} credentials are managed by environment variables. Remove the environment variable to log out.`,
+          };
+        }
+
         const storedCredentials = await credentialManager?.getCredentials(providerId);
         if (!provider.logout && !storedCredentials) {
           return {
@@ -167,6 +177,10 @@ export function setupAuthHandlers(
         }
         return { success: true };
       } catch (error) {
+        if (!provider.logout && credentialManager) {
+          await credentialManager.removeCredentials(providerId);
+          return { success: true };
+        }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,

@@ -214,31 +214,37 @@ export class AnthropicProvider implements Provider {
    */
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-
-    // Create a temporary query to fetch models
-    const tmpQuery = query({
-      prompt: '',
-      options: {
-        model: 'default',
-        cwd: process.cwd(),
-        maxTurns: 0,
-        pathToClaudeCodeExecutable: resolveSDKCliPath(),
-        executable: isRunningUnderBun() ? 'bun' : undefined,
-      },
-    });
+    const env = this.buildSdkConfig().envVars;
+    const restoreEnv = this.applyEnvVarsForSdk(env);
 
     try {
-      // Add timeout to prevent hanging in CI/slow environments
-      const sdkModels = await Promise.race([
-        tmpQuery.supportedModels(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
-        ),
-      ]);
-      return this.convertSdkModels(sdkModels);
+      // Create a temporary query to fetch models
+      const tmpQuery = query({
+        prompt: '',
+        options: {
+          model: 'default',
+          cwd: process.cwd(),
+          maxTurns: 0,
+          pathToClaudeCodeExecutable: resolveSDKCliPath(),
+          executable: isRunningUnderBun() ? 'bun' : undefined,
+        },
+      });
+
+      try {
+        // Add timeout to prevent hanging in CI/slow environments
+        const sdkModels = await Promise.race([
+          tmpQuery.supportedModels(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
+          ),
+        ]);
+        return this.convertSdkModels(sdkModels);
+      } finally {
+        // Fire-and-forget interrupt
+        tmpQuery.interrupt().catch(() => {});
+      }
     } finally {
-      // Fire-and-forget interrupt
-      tmpQuery.interrupt().catch(() => {});
+      restoreEnv();
     }
   }
 
@@ -426,6 +432,24 @@ export class AnthropicProvider implements Provider {
       envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
+    };
+  }
+
+  private applyEnvVarsForSdk(envVars: Record<string, string>): () => void {
+    const originals = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(envVars)) {
+      originals.set(key, process.env[key]);
+      process.env[key] = value;
+    }
+
+    return () => {
+      for (const [key, value] of originals) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
     };
   }
 

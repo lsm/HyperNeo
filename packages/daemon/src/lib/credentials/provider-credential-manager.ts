@@ -69,6 +69,13 @@ export class ProviderCredentialManager {
     this.updateProviderAuth(providerId, 'none', 'unknown');
   }
 
+  hasEnvironmentCredentials(providerId: string): boolean {
+    return !!(
+      this.getEnvValue(PROVIDER_ENV_KEYS[providerId]) ||
+      this.getEnvValue(PROVIDER_ENV_OAUTH_KEYS[providerId])
+    );
+  }
+
   async migrateFromEnv(providerId: string): Promise<boolean> {
     const apiKey = this.getEnvValue(PROVIDER_ENV_KEYS[providerId]);
     if (apiKey) {
