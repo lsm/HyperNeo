@@ -265,6 +265,40 @@ describe('MessageInput submit race condition', () => {
       // Void return = success; should NOT restore
       expect(mockSetContent).not.toHaveBeenCalledWith('hello world');
     });
+
+    it('resets submittingRef so textarea stays functional when onSend throws', async () => {
+      mockDraftContent = 'hello world';
+      const onSend = vi.fn(async () => {
+        throw new Error('network failure');
+      });
+
+      // Swallow unhandled rejection from fire-and-forget async submit
+      const unhandledHandler = (reason: unknown) => {
+        if (reason instanceof Error && reason.message === 'network failure') {
+          // swallowed
+        } else {
+          process.removeListener('unhandledRejection', unhandledHandler);
+          throw reason;
+        }
+      };
+      process.on('unhandledRejection', unhandledHandler);
+
+      const { container } = renderInput(onSend);
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+      await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+
+      // Give the unhandled rejection a tick to surface
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Textarea must remain functional — submittingRef should have reset
+      mockSetContent.mockClear();
+      fireEvent.input(textarea, { target: { value: 'typed after error' } });
+      expect(mockSetContent).toHaveBeenCalledWith('typed after error');
+
+      process.removeListener('unhandledRejection', unhandledHandler);
+    });
   });
 
   describe('send called with correct arguments', () => {

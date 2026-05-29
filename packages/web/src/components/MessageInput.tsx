@@ -447,27 +447,29 @@ export default function MessageInput({
         textareaInputRef.current.value = '';
       }
 
-      // Send message with images; a boolean false return signals failure
-      const result = await onSend(savedContent, outgoing.images, deliveryMode);
+      try {
+        // Send message with images; a boolean false return signals failure
+        const result = await onSend(savedContent, outgoing.images, deliveryMode);
 
-      submittingRef.current = false;
-
-      if (result === false) {
-        // Restore the draft and attachments so the user doesn't lose their work
-        setContent(savedContent);
-        if (savedAttachments.length > 0) {
-          restoreAttachments(savedAttachments);
+        if (result === false) {
+          // Restore the draft and attachments so the user doesn't lose their work
+          setContent(savedContent);
+          if (savedAttachments.length > 0) {
+            restoreAttachments(savedAttachments);
+          }
+          return;
         }
-        return;
-      }
 
-      if (
-        agentWorking ||
-        deliveryMode === 'defer' ||
-        queuedForCurrentTurn.length > 0 ||
-        queuedForNextTurn.length > 0
-      ) {
-        await refreshQueuedMessages();
+        if (
+          agentWorking ||
+          deliveryMode === 'defer' ||
+          queuedForCurrentTurn.length > 0 ||
+          queuedForNextTurn.length > 0
+        ) {
+          await refreshQueuedMessages();
+        }
+      } finally {
+        submittingRef.current = false;
       }
     },
     [
