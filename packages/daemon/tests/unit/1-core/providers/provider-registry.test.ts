@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 import type { ModelInfo } from '@neokai/shared';
 import { Logger } from '@neokai/shared/logger';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
-import { initializeProviders, resetProviderFactory } from '../../../../src/lib/providers/factory';
+import {
+  initializeProviders,
+  resetProviderFactory,
+  waitForOptionalProviderRegistration,
+} from '../../../../src/lib/providers/factory';
 import {
   ProviderRegistry,
   getProviderRegistry,
@@ -320,8 +324,9 @@ describe('ProviderRegistry', () => {
   describe('initializeProviders — all built-in providers registered', () => {
     // Outer beforeEach already resets registry+factory; no per-test resets needed.
 
-    it('should register exactly nine built-in providers', () => {
+    it('should register exactly nine built-in providers', async () => {
       const reg = initializeProviders();
+      await waitForOptionalProviderRegistration();
 
       const ids = reg
         .getAll()
@@ -378,23 +383,54 @@ describe('ProviderRegistry', () => {
       expect(reg.has('anthropic-codex')).toBe(true);
     });
 
-    it('should include anthropic-copilot provider', () => {
+    it('should include anthropic-copilot provider', async () => {
       const reg = initializeProviders();
+      await waitForOptionalProviderRegistration();
       expect(reg.has('anthropic-copilot')).toBe(true);
     });
 
-    it('should return the same singleton registry on repeated calls without reset', () => {
+    it('should return the same singleton registry on repeated calls without reset', async () => {
       const reg1 = initializeProviders();
+      await waitForOptionalProviderRegistration();
       const reg2 = initializeProviders();
       // The global singleton must be the same reference — not a new instance
       expect(reg1).toBe(reg2);
       expect(reg2.size).toBe(9);
     });
 
-    it('should use the global registry singleton', () => {
+    it('should use the global registry singleton', async () => {
       initializeProviders();
+      await waitForOptionalProviderRegistration();
       const globalReg = getProviderRegistry();
       expect(globalReg.size).toBe(9);
+    });
+
+    it('should restore all providers after the registry is reset without factory reset', async () => {
+      const reg = initializeProviders();
+      await waitForOptionalProviderRegistration();
+      expect(reg.has('anthropic-copilot')).toBe(true);
+
+      resetProviderRegistry();
+      const resetReg = initializeProviders();
+      await waitForOptionalProviderRegistration();
+
+      const ids = resetReg
+        .getAll()
+        .map((p) => p.id)
+        .sort();
+      expect(ids).toEqual(
+        [
+          'anthropic',
+          'anthropic-codex',
+          'anthropic-copilot',
+          'glm',
+          'kimi',
+          'minimax',
+          'ollama',
+          'ollama-cloud',
+          'openrouter',
+        ].sort()
+      );
     });
   });
 

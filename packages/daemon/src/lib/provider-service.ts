@@ -47,7 +47,7 @@
 
 import type { Provider, ProviderInfo, Session } from '@neokai/shared';
 import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
-import { initializeProviders } from './providers/factory.js';
+import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { Logger } from './logger.js';
 
 /**
@@ -138,13 +138,19 @@ export class ProviderService {
     return initializeProviders();
   }
 
+  private async getReadyRegistry() {
+    const registry = this.getRegistry();
+    await waitForOptionalProviderRegistration(registry);
+    return registry;
+  }
+
   /**
    * Get the default provider based on environment configuration
    *
    * Delegates to registry.getDefaultProvider()
    */
   async getDefaultProvider(): Promise<Provider> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = await registry.getDefaultProvider();
     return provider.id as Provider;
   }
@@ -199,7 +205,7 @@ export class ProviderService {
    * Delegates to provider.isAvailable()
    */
   async isProviderAvailable(providerId: string): Promise<boolean> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
 
     if (!provider) {
@@ -215,7 +221,7 @@ export class ProviderService {
    * Delegates to registry.getProviderInfo()
    */
   async getProviderInfo(providerId: Provider): Promise<ProviderInfo> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
 
     if (!provider) {
@@ -260,7 +266,7 @@ export class ProviderService {
    * Delegates to registry.getProviderInfo()
    */
   async getAvailableProviders(): Promise<ProviderInfo[]> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const newProviderInfos = await registry.getProviderInfo();
     return newProviderInfos.map(toLegacyProviderInfo);
   }
@@ -274,7 +280,7 @@ export class ProviderService {
     providerId: Provider,
     apiKey?: string
   ): Promise<{ valid: boolean; error?: string }> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     return await registry.validateProviderSwitch(providerId, apiKey);
   }
 
@@ -282,7 +288,7 @@ export class ProviderService {
    * Get the default model for a provider
    */
   async getDefaultModelForProvider(providerId: Provider): Promise<string> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
 
     if (!provider) {
@@ -302,7 +308,7 @@ export class ProviderService {
     providerId: string,
     sessionModelId: string
   ): Promise<{ providerModelId: string; sdkModelId: string }> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
     return {
@@ -325,7 +331,7 @@ export class ProviderService {
     baseUrl: string;
     apiVersion: string;
   }> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
 
     if (!provider) {
@@ -371,7 +377,7 @@ export class ProviderService {
    * Check if a model is valid for a provider
    */
   async isModelValidForProvider(providerId: Provider, model: string): Promise<boolean> {
-    const registry = this.getRegistry();
+    const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
 
     if (!provider) {
@@ -390,7 +396,8 @@ export class ProviderService {
    * @param modelId - The model ID (used for SDK config building)
    * @param providerId - The provider ID — must be explicit; routing is deterministic
    */
-  getEnvVarsForModel(modelId: string, providerId: string): ProviderEnvVars {
+  async getEnvVarsForModel(modelId: string, providerId: string): Promise<ProviderEnvVars> {
+    await this.getReadyRegistry();
     const registry = this.getRegistry();
     const provider = registry.detectProviderForModel(modelId, providerId);
 
@@ -483,8 +490,8 @@ export class ProviderService {
    * @param providerId - The provider ID — must be explicit; routing is deterministic
    * @returns Original env vars that should be restored after SDK query
    */
-  applyEnvVarsToProcess(modelId: string, providerId: string): OriginalEnvVars {
-    const envVars = this.getEnvVarsForModel(modelId, providerId);
+  async applyEnvVarsToProcess(modelId: string, providerId: string): Promise<OriginalEnvVars> {
+    const envVars = await this.getEnvVarsForModel(modelId, providerId);
 
     // For Anthropic (or any non-overriding provider), explicitly clear routing
     // overrides that may have leaked from a previous GLM query.
@@ -505,7 +512,11 @@ export class ProviderService {
    * @param modelId - The model ID for setting tier mappings
    * @returns Original env vars that should be restored after SDK query
    */
-  applyEnvVarsToProcessForProvider(providerId: string, modelId?: string): OriginalEnvVars {
+  async applyEnvVarsToProcessForProvider(
+    providerId: string,
+    modelId?: string
+  ): Promise<OriginalEnvVars> {
+    await this.getReadyRegistry();
     const registry = this.getRegistry();
     const provider = registry.get(providerId);
 

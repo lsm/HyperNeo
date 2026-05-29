@@ -21,6 +21,7 @@ import {
 import {
   initializeProviders,
   resetProviderFactory,
+  waitForOptionalProviderRegistration,
 } from '../../../../../src/lib/providers/factory';
 import {
   getProviderRegistry,
@@ -1261,8 +1262,9 @@ describe('factory registration', () => {
     resetProviderFactory();
   });
 
-  it('registers AnthropicToCopilotBridgeProvider with id anthropic-copilot', () => {
+  it('registers AnthropicToCopilotBridgeProvider with id anthropic-copilot', async () => {
     initializeProviders();
+    await waitForOptionalProviderRegistration();
     const registry = getProviderRegistry();
     const p = registry.get('anthropic-copilot');
     expect(p).toBeDefined();

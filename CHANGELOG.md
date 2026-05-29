@@ -2,6 +2,32 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.34.0] - 2026-05-28
+
+Forge proposal evidence, validation-only workflow completion, flaky test retry policy, long-horizon agent lifecycle coverage, task result capture fallback fixes, prompt builder token-cost audit, provider compatibility fixes, Copilot SDK binary bundling fix, workflow agent session titles, DB schema parity CI check, daemon unit test shard rebalance, and gate space task RPC handler test coverage. 13 commits since v0.33.0.
+
+### Added
+
+- **Forge proposal evidence**: Cross-post completed task evidence back to the originating Forge scope when proposal-created tasks run under a different scope
+- **Validation-only workflow completion**: Added validation-only mode for workflow completion, allowing tasks to complete without running full execution
+- **Long-horizon agent lifecycle coverage**: Added tests for long-horizon Space agent lifecycle behavior
+- **Prompt builder token-cost audit**: Audited prompt builder token costs for workflow/runtime prompts
+- **DB schema parity CI check**: Added CI check to ensure DB schema files stay in sync with migrations
+- **Gate space task RPC handler test coverage**: Added test coverage for gate space task RPC handlers
+
+### Changed
+
+- **Flaky test retry policy**: Added retry policy for flaky tests
+- **Stabilized SpaceGoals component test**: Reduced flakiness in the SpaceGoals UI component test
+- **Rebalanced daemon unit test shards**: Rebalanced daemon unit test shards for better CI parallelism
+- Workflow agent sessions now get clearer session titles
+
+### Fixed
+
+- Task result capture now has a fallback for missing or malformed result data
+- Provider compatibility gaps were fixed
+- Copilot SDK binary bundling issue was fixed
+
 ## [0.33.0] - 2026-05-26
 
 Spaces home command center, recurring goal progress visibility, Forge trace diagnostics coverage, and graph tooling evaluation. 4 commits since v0.32.0.

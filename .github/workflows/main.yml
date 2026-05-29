@@ -107,6 +107,11 @@ jobs:
         run: bun run typecheck
         continue-on-error: true
 
+      - name: Check DB schema parity
+        id: db-schema-parity
+        run: bun run check:db-schema-parity
+        continue-on-error: true
+
       - name: Verify exact version pins
         id: exact-pins
         run: |
@@ -117,13 +122,14 @@ jobs:
         continue-on-error: true
 
       - name: Check for failures
-        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.exact-pins.outcome == 'failure'
+        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.db-schema-parity.outcome == 'failure' || steps.exact-pins.outcome == 'failure'
         run: |
           echo "One or more checks failed:"
           echo "  Lint: ${{ steps.lint.outcome }}"
           echo "  Format: ${{ steps.format.outcome }}"
           echo "  Knip: ${{ steps.knip.outcome }}"
           echo "  Typecheck: ${{ steps.typecheck.outcome }}"
+          echo "  DB schema parity: ${{ steps.db-schema-parity.outcome }}"
           echo "  Exact pins: ${{ steps.exact-pins.outcome }}"
           exit 1
 
@@ -416,7 +422,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0-shared, 1-core, 2-handlers, 4-space-storage, 5-space-agent, 5-space-runtime, 5-space-workflow, 5-space-other]
+        shard: [0-shared-handlers-workflow, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
 
     steps:
       - uses: actions/checkout@v6

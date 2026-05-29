@@ -46,6 +46,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agents (
@@ -60,6 +61,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			tools TEXT NOT NULL DEFAULT '[]',
 			thinking_level TEXT DEFAULT NULL,
 			system_prompt TEXT NOT NULL DEFAULT '',
+			custom_prompt TEXT,
 			instructions TEXT,
 			provider TEXT,
 			template_name TEXT DEFAULT NULL,
@@ -70,6 +72,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
 
   db.exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
@@ -101,6 +104,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`);
   db.exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workflows_handle
 		ON space_workflows(space_id, handle)
@@ -119,23 +123,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
 		)
 	`);
-
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
-			id TEXT PRIMARY KEY,
-			workflow_id TEXT NOT NULL,
-			from_node_id TEXT NOT NULL,
-			to_node_id TEXT NOT NULL,
-			condition TEXT,
-			order_index INTEGER NOT NULL DEFAULT 0,
-			is_cyclic INTEGER,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
-		)
-	`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_workflow_nodes_workflow_id ON space_workflow_nodes(workflow_id)`
+  );
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_runs (
@@ -151,8 +141,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			started_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -213,6 +202,10 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
   );
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_slot ` +
+      `ON node_executions(workflow_run_id, workflow_node_id, agent_name)`
+  );
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (
@@ -222,7 +215,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'open'
-				CHECK(status IN ('draft', 'open', 'in_progress', 'review', 'approved', 'done', 'blocked', 'cancelled', 'archived')),
+				CHECK(status IN ('draft', 'open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived', 'approved')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			labels TEXT NOT NULL DEFAULT '[]',
@@ -232,6 +225,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			goal_id TEXT DEFAULT NULL,
 			evolution_scope_id TEXT DEFAULT NULL,
 			result TEXT,
+			workflow_model_overrides TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
@@ -248,7 +242,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			post_approval_session_id TEXT DEFAULT NULL,
 			post_approval_started_at INTEGER DEFAULT NULL,
 			post_approval_blocked_reason TEXT DEFAULT NULL,
-			reported_status TEXT DEFAULT NULL,
+			reported_status TEXT DEFAULT NULL
+				CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
 			reported_summary TEXT DEFAULT NULL,
 			created_by TEXT DEFAULT NULL,
 			created_by_session TEXT DEFAULT NULL,
@@ -309,6 +304,121 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_schedule ON space_goals(task_schedule_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_active_task ON space_goals(active_task_id)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_goals_next_check_in ON space_goals(status, next_check_in_at)`
+  );
+
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_worktrees (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			path TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			UNIQUE(space_id, task_id),
+			UNIQUE(space_id, slug),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
+
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_memory (
+			id INTEGER PRIMARY KEY,
+			key TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '',
+			created_by_session TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at INTEGER,
+			embedding_status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(embedding_status IN ('pending', 'ready', 'failed')),
+			embedding_model TEXT,
+			embedding_updated_at INTEGER,
+			embedding_error TEXT,
+			embedding_revision INTEGER NOT NULL DEFAULT 0,
+			embedding_token TEXT NOT NULL DEFAULT '',
+			UNIQUE(space_id, key),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS space_agent_memory_fts USING fts5(
+			key,
+			content,
+			tags,
+			content='space_agent_memory',
+			content_rowid='id',
+			tokenize='trigram'
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS memory_vectors (
+			memory_id INTEGER PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			dimensions INTEGER NOT NULL,
+			model TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agent_core_memory (
+			space_id TEXT NOT NULL,
+			memory_id INTEGER NOT NULL,
+			score REAL NOT NULL,
+			rank INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (space_id, memory_id),
+			UNIQUE(space_id, rank),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (memory_id) REFERENCES space_agent_memory(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ai
+		AFTER INSERT ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.id, new.key, new.content, new.tags);
+		END
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_ad
+		AFTER DELETE ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
+		END
+	`);
+  db.exec(`
+		CREATE TRIGGER IF NOT EXISTS space_agent_memory_au
+		AFTER UPDATE OF key, content, tags ON space_agent_memory BEGIN
+			INSERT INTO space_agent_memory_fts(space_agent_memory_fts, rowid, key, content, tags)
+			VALUES ('delete', old.id, old.key, old.content, old.tags);
+			INSERT INTO space_agent_memory_fts(rowid, key, content, tags)
+			VALUES (new.id, new.key, new.content, new.tags);
+		END
+	`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_space ON space_agent_memory(space_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_updated ON space_agent_memory(space_id, updated_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_access ON space_agent_memory(space_id, last_accessed_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_memory_embedding_status ON space_agent_memory(space_id, embedding_status)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
+  );
 
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
@@ -319,10 +429,30 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
-			type TEXT,
+			title TEXT NOT NULL,
+			workspace_path TEXT,
+			created_at TEXT NOT NULL,
+			last_active_at TEXT NOT NULL,
+			status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+			config TEXT NOT NULL,
+			metadata TEXT NOT NULL,
+			is_worktree INTEGER DEFAULT 0,
+			worktree_path TEXT,
+			main_repo_path TEXT,
+			worktree_branch TEXT,
+			git_branch TEXT,
+			sdk_session_id TEXT,
+			sdk_origin_path TEXT,
+			available_commands TEXT,
+			processing_state TEXT,
+			archived_at TEXT,
+			parent_id TEXT,
+			type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
 			session_context TEXT
 		)
 	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance
+		ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`);
 
   // `sdk_messages` is the canonical message store. Tests that exercise
   // task-scoped feeds rely on the `task_id` column being present and
@@ -335,15 +465,33 @@ export function createSpaceTables(db: BunDatabase): void {
 			message_subtype TEXT,
 			sdk_message TEXT NOT NULL,
 			timestamp TEXT NOT NULL,
-			send_status TEXT DEFAULT 'consumed',
-			origin TEXT,
+			send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+			origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
 			is_renderable INTEGER NOT NULL DEFAULT 1,
 			is_terminal INTEGER NOT NULL DEFAULT 0,
 			parent_tool_use_id TEXT,
-			task_id TEXT
+			task_id TEXT,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)
 	`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
+		ON sdk_messages(session_id, timestamp)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
+		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
+		ON sdk_messages(session_id, parent_tool_use_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_renderable_terminal
+		ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_uuid_status
+		ON sdk_messages(session_id, send_status, json_extract(sdk_message, '$.uuid'))`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
+		ON sdk_messages(message_type, message_subtype)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
+		ON sdk_messages(session_id, send_status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
+		ON sdk_messages(task_id, timestamp)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
+		ON sdk_messages(task_id, session_id)`);
 
   // Workflow run artifacts
   db.exec(`
@@ -361,6 +509,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_node ON workflow_run_artifacts(run_id, node_id)`);
 
   // Workflow run artifact cache (migration 98). Stores JSON-serialised results
   // of the expensive git subprocess calls backing the TaskArtifactsPanel so the
@@ -429,9 +578,9 @@ export function createSpaceTables(db: BunDatabase): void {
       `ON pending_agent_messages(workflow_run_id, target_agent_name, status, created_at)`
   );
   db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem ` +
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem_pending ` +
       `ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
-      `WHERE idempotency_key IS NOT NULL`
+      `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
   );
 
   // Durable inbox for long-term Space agents. See migration 137.
@@ -470,17 +619,6 @@ export function createSpaceTables(db: BunDatabase): void {
   );
 
   // External Event Bus extension configuration tables.
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS external_event_source_configs (
-			source TEXT PRIMARY KEY,
-			globally_enabled INTEGER NOT NULL DEFAULT 0,
-			capabilities_json TEXT NOT NULL,
-			secrets_ref TEXT,
-			settings_json TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
 			space_id TEXT NOT NULL,

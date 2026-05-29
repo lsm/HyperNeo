@@ -50,7 +50,12 @@ import type { McpEnablementRepository } from '../../storage/repositories/mcp-ena
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { getSessionModelInfo } from '../model-service.js';
 import { requireModelContextWindow } from '../providers/codex-models';
-import { getProviderContextManager, getProviderRegistry } from '../providers/factory.js';
+import {
+  getProviderContextManager,
+  getProviderRegistry,
+  initializeProviders,
+  waitForOptionalProviderRegistration,
+} from '../providers/factory.js';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import {
@@ -315,6 +320,9 @@ export class QueryOptionsBuilder {
     // settingSources is configurable per session/space/agent and defaults to
     // ['user', 'project', 'local'] so CLAUDE.md and on-disk settings are loaded.
     await this.ctx.settingsManager.prepareSDKOptions();
+
+    initializeProviders();
+    await waitForOptionalProviderRegistration();
 
     // Translate model ID for SDK compatibility using provider context
     // FIX: Recreate context each time to pick up model changes from model switching

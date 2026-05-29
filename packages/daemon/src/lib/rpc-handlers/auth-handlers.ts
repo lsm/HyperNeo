@@ -20,8 +20,15 @@ import type {
 import type { AuthManager } from '../auth-manager';
 import { getProviderRegistry } from '../providers/registry';
 import { Logger } from '../logger';
+import { initializeProviders, waitForOptionalProviderRegistration } from '../providers/factory';
 
 const log = new Logger('auth-handlers');
+
+async function getReadyProviderRegistry() {
+  initializeProviders();
+  await waitForOptionalProviderRegistration();
+  return getProviderRegistry();
+}
 
 /**
  * Setup authentication-related RPC handlers
@@ -35,7 +42,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 
   // List all providers with their auth status
   messageHub.onRequest('auth.providers', async (): Promise<ListProviderAuthStatusResponse> => {
-    const registry = getProviderRegistry();
+    const registry = await getReadyProviderRegistry();
     const providers = registry.getAll();
 
     const providerStatuses: ProviderAuthStatus[] = await Promise.all(
@@ -91,7 +98,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
     'auth.login',
     async (req: ProviderAuthRequest): Promise<ProviderAuthResponse> => {
       const { providerId } = req;
-      const registry = getProviderRegistry();
+      const registry = await getReadyProviderRegistry();
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -133,7 +140,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
     'auth.logout',
     async (req: ProviderLogoutRequest): Promise<{ success: boolean; error?: string }> => {
       const { providerId } = req;
-      const registry = getProviderRegistry();
+      const registry = await getReadyProviderRegistry();
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -168,7 +175,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
     'auth.refresh',
     async (req: ProviderRefreshRequest): Promise<ProviderRefreshResponse> => {
       const { providerId } = req;
-      const registry = getProviderRegistry();
+      const registry = await getReadyProviderRegistry();
 
       const provider = registry.get(providerId);
       if (!provider) {

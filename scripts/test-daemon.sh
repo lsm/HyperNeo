@@ -6,7 +6,7 @@
 # Usage:
 #   ./scripts/test-daemon.sh                # All shards in parallel (fast, no coverage)
 #   ./scripts/test-daemon.sh --coverage     # All shards with coverage
-#   ./scripts/test-daemon.sh 2-handlers     # Run a single shard
+#   ./scripts/test-daemon.sh 5-space-runtime-a # Run a single shard
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
 
@@ -17,17 +17,110 @@ cd "$REPO_ROOT"
 
 export NEOKAI_ALLOW_ROOT_TEST=1
 
-SHARDS=(0-shared 1-core 2-handlers 4-space-storage 5-space-agent 5-space-runtime 5-space-workflow 5-space-other)
+SHARDS=(
+	0-shared-handlers-workflow
+	1-core
+	4-space-storage
+	4-space-migrations-a
+	4-space-migrations-b
+	5-space-agent-other
+	5-space-runtime-a
+	5-space-runtime-b
+)
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
 PRELOAD="$REPO_ROOT/packages/daemon/tests/unit/setup.ts"
 TEST_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
 
-# Map shard name to directory path under TEST_ROOT
-shard_path() {
+# Split storage migration tests dynamically so new files are picked up without
+# editing this script. Bash glob order is deterministic.
+migration_shard_paths() {
+	local parity="$1"
+	local files=(
+		"$TEST_ROOT/4-space-storage/storage"/migration*.test.ts
+		"$TEST_ROOT/4-space-storage/storage/migrations"/*.test.ts
+		"$TEST_ROOT/4-space-storage/storage/migrations"/*_test.ts
+	)
+	local index=0
+	local file
+
+	for file in "${files[@]}"; do
+		[ -e "$file" ] || continue
+		if [ $((index % 2)) -eq "$parity" ]; then
+			printf '%s\n' "$file"
+		fi
+		index=$((index + 1))
+	done
+}
+
+# Map shard name to one or more test paths. Shards are balanced by CI wall time.
+shard_paths() {
 	case "$1" in
-	5-space-*) echo "5-space/${1#5-space-}" ;;
-	*)         echo "$1" ;;
+	0-shared-handlers-workflow)
+		# Keep shared first so daemon mock.module() calls cannot leak into shared tests.
+		printf '%s\n' \
+			"$REPO_ROOT/packages/shared/tests" \
+			"$TEST_ROOT/2-handlers" \
+			"$TEST_ROOT/5-space/workflow"
+		;;
+	1-core)
+		printf '%s\n' "$TEST_ROOT/1-core"
+		;;
+	4-space-storage)
+		printf '%s\n' "$TEST_ROOT/4-space-storage"/*.test.ts "$TEST_ROOT/4-space-storage/app"
+		for file in "$TEST_ROOT/4-space-storage/storage"/*.test.ts; do
+			case "$(basename "$file")" in
+			migration-*) ;;
+			*) printf '%s\n' "$file" ;;
+			esac
+		done
+		;;
+	4-space-migrations-a)
+		migration_shard_paths 0
+		;;
+	4-space-migrations-b)
+		migration_shard_paths 1
+		;;
+	5-space-agent-other)
+		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other"
+		;;
+	5-space-runtime-a)
+		printf '%s\n' \
+			"$TEST_ROOT/5-space/runtime/space-worktree-manager.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-tick-loop.test.ts" \
+			"$TEST_ROOT/5-space/runtime/task-dependency-enforcement.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-stalled-recovery.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-edge-cases.test.ts" \
+			"$TEST_ROOT/5-space/runtime/task-draft-status.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-agent-task-creation-flow.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-agent-autonomy.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-llm-workflow-selection.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-disabled-workflow.test.ts" \
+			"$TEST_ROOT/5-space/runtime/reply-routing-registry.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-orphan-question.test.ts"
+		;;
+	5-space-runtime-b)
+		printf '%s\n' \
+			"$TEST_ROOT/5-space/runtime/space-agent-tools.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-external-events.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-workflow.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-notifications.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-completion.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-rehydration.test.ts" \
+			"$TEST_ROOT/5-space/runtime/post-approval-router.test.ts" \
+			"$TEST_ROOT/5-space/runtime/post-approval-routing-integration.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-dispatch-post-approval.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-runtime-service.test.ts" \
+			"$TEST_ROOT/5-space/runtime/task-status-transitions.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-slug.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-chat-agent.test.ts" \
+			"$TEST_ROOT/5-space/runtime/space-mcp-session-policy.test.ts" \
+			"$TEST_ROOT/5-space/runtime/topic-trie.test.ts"
+		;;
+	*)
+		return 1
+		;;
 	esac
 }
 
@@ -121,33 +214,23 @@ echo ""
 for shard in "${RUN_SHARDS[@]}"; do
 	JUNIT_FILE="$RESULTS_DIR/junit-${shard}.xml"
 	LOG_FILE="$RESULTS_DIR/output-${shard}.log"
-
-	# 0-shared runs packages/shared/tests (separate process to avoid mock pollution)
-	if [ "$shard" = "0-shared" ]; then
-		# shellcheck disable=SC2086
-		NODE_ENV=test bun test \
-			--preload="$PRELOAD" \
-			--jobs=1 \
-			--dots \
-			--reporter=junit \
-			--reporter-outfile="$JUNIT_FILE" \
-			$COV_FLAGS \
-			"$REPO_ROOT/packages/shared/tests" \
-			>"$LOG_FILE" 2>&1 &
-	else
-		SHARD_PATH=$(shard_path "$shard")
-
-		# shellcheck disable=SC2086
-		NODE_ENV=test bun test \
-			--preload="$PRELOAD" \
-			--jobs=1 \
-			--dots \
-			--reporter=junit \
-			--reporter-outfile="$JUNIT_FILE" \
-			$COV_FLAGS \
-			"$TEST_ROOT/$SHARD_PATH" \
-			>"$LOG_FILE" 2>&1 &
+	rm -f "$JUNIT_FILE" "$LOG_FILE"
+	TEST_PATHS=($(shard_paths "$shard"))
+	if [ "${#TEST_PATHS[@]}" -eq 0 ]; then
+		echo "Unknown daemon test shard: $shard" >&2
+		exit 1
 	fi
+
+	# shellcheck disable=SC2086
+	NODE_ENV=test bun test \
+		--preload="$PRELOAD" \
+		--jobs=1 \
+		--dots \
+		--reporter=junit \
+		--reporter-outfile="$JUNIT_FILE" \
+		$COV_FLAGS \
+		"${TEST_PATHS[@]}" \
+		>"$LOG_FILE" 2>&1 &
 
 	PIDS+=($!)
 done

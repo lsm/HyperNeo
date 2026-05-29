@@ -275,7 +275,7 @@ async function analyzeConversationWithModel(
 ): Promise<ConversationFrictionAnalysis> {
   const providerService = getProviderService();
   const { provider, modelId } = await resolveConversationFrictionModel(input, spaceRepo);
-  const originalEnv = providerService.applyEnvVarsToProcessForProvider(provider, modelId);
+  const originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@neokai/shared/sdk/type-guards');
@@ -292,7 +292,7 @@ async function analyzeConversationWithModel(
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         env: mergeProviderEnvVars(
-          providerService.getEnvVarsForModel(modelId, provider) as Record<
+          (await providerService.getEnvVarsForModel(modelId, provider)) as Record<
             string,
             string | undefined
           >
