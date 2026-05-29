@@ -91,6 +91,10 @@ async function applyStoredProviderCredentials(
         await credentialManager.storeOAuthTokens(provider.id, providerCredentials);
         continue;
       }
+      if (providerCredentials?.type === 'api_key') {
+        await credentialManager.storeApiKey(provider.id, providerCredentials.apiKey);
+        continue;
+      }
 
       const credentials = await credentialManager.getCredentials(provider.id);
       if (credentials && provider.setCredentials) {
@@ -477,6 +481,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         config.anthropicAuthToken ||
         (storedCredentials?.type === 'api_key' ? storedCredentials.apiKey : undefined) ||
         (storedCredentials?.type === 'oauth' ? storedCredentials.accessToken : undefined);
+      const apiKeyType: 'api_key' | 'oauth' | undefined =
+        storedCredentials?.type === 'api_key'
+          ? 'api_key'
+          : storedCredentials?.type === 'oauth'
+            ? 'oauth'
+            : undefined;
 
       if (apiKey) {
         gitHubService = createGitHubService({
@@ -484,6 +494,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           internalEventBus,
           config,
           apiKey,
+          apiKeyType,
           githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
           jobQueue,
           jobProcessor,

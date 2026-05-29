@@ -423,7 +423,8 @@ export class AnthropicProvider implements Provider {
     const hasEnvAuth =
       !!this.env.ANTHROPIC_API_KEY ||
       !!this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      !!this.env.ANTHROPIC_AUTH_TOKEN;
+      (!!this.env.ANTHROPIC_AUTH_TOKEN &&
+        !this.env.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:'));
     if (!hasEnvAuth && this.credentials?.type === 'api_key') {
       envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
     } else if (!hasEnvAuth && this.credentials?.type === 'oauth' && this.credentials.accessToken) {

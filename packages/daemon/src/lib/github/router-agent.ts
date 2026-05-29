@@ -24,6 +24,8 @@ const logger = new Logger('router-agent');
 export interface RouterAgentOptions {
   /** API key for the AI model */
   apiKey: string;
+  /** Credential type so the correct SDK env var is set */
+  apiKeyType?: 'api_key' | 'oauth';
   /** Model to use (default: claude-3-5-haiku-latest for speed/cost) */
   model?: string;
   /** Timeout for AI routing in milliseconds (default: 15000) */
@@ -260,10 +262,14 @@ Analyze the event and determine which room should handle it. Respond with valid 
     const userPrompt = this.buildRoutingPrompt(event, candidates);
 
     // Inject the API key into process.env so the SDK subprocess can find it.
+    // Use apiKeyType to set only the matching env var.
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
     const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    process.env.ANTHROPIC_API_KEY = this.options.apiKey;
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
+    if (this.options.apiKeyType === 'oauth') {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
+    } else {
+      process.env.ANTHROPIC_API_KEY = this.options.apiKey;
+    }
 
     // Create sandboxed query with NO tools
     let queryObj: ReturnType<typeof query>;

@@ -24,6 +24,8 @@ const logger = new Logger('security-agent');
 export interface SecurityCheckOptions {
   /** API key for the AI model */
   apiKey: string;
+  /** Credential type so the correct SDK env var is set */
+  apiKeyType?: 'api_key' | 'oauth';
   /** Model to use (default: claude-3-5-haiku-latest for speed/cost) */
   model?: string;
   /** Timeout for AI check in milliseconds (default: 10000) */
@@ -221,10 +223,15 @@ export class SecurityAgent {
     // Inject the API key into process.env so the SDK subprocess can find it.
     // The SDK inherits the parent environment; without this, stored credentials
     // that never reached process.env are invisible to the CLI.
+    // Use apiKeyType to set only the matching env var (OAuth →
+    // CLAUDE_CODE_OAUTH_TOKEN, API key → ANTHROPIC_API_KEY).
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
     const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    process.env.ANTHROPIC_API_KEY = this.options.apiKey;
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
+    if (this.options.apiKeyType === 'oauth') {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
+    } else {
+      process.env.ANTHROPIC_API_KEY = this.options.apiKey;
+    }
 
     // Create sandboxed query with NO tools
     let queryObj: ReturnType<typeof query>;
