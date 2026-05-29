@@ -439,9 +439,17 @@ export class AnthropicProvider implements Provider {
 
     // Clear stale routing vars from other providers (e.g. Copilot) so the SDK
     // talks to the real Anthropic API, not an embedded proxy.
-    for (const key of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']) {
-      originals.set(key, process.env[key]);
-      delete process.env[key];
+    // ANTHROPIC_BASE_URL redirects to a different backend; always clear it.
+    if (process.env.ANTHROPIC_BASE_URL !== undefined) {
+      originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
+      delete process.env.ANTHROPIC_BASE_URL;
+    }
+    // Only clear ANTHROPIC_AUTH_TOKEN when it is a known provider-routing token
+    // (Copilot sets it to 'anthropic-copilot-proxy:<workspace>'). Preserve real
+    // user auth tokens so model loading succeeds for ANTHROPIC_AUTH_TOKEN users.
+    if (process.env.ANTHROPIC_AUTH_TOKEN?.startsWith('anthropic-copilot-proxy:')) {
+      originals.set('ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN);
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
     }
 
     for (const [key, value] of Object.entries(envVars)) {

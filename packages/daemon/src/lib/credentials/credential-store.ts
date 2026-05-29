@@ -41,13 +41,7 @@ export class KeychainCredentialStore implements CredentialStore {
     // avoiding argv exposure that occurs with the -w flag. The password is
     // passed via an environment variable; while env vars are still visible to
     // same-UID processes, they are not exposed in argv to tools like ps.
-    const expectScript = `set password $env(NEOKAI_KEYCHAIN_SECRET)
-spawn security add-generic-password -U -s "${service.replace(/"/g, '\\"')}" -a "${account.replace(/"/g, '\\"')}""
-expect "password for new item:"
-send "$password\r"
-expect "retype password for new item:"
-send "$password\r"
-expect eof`;
+    const expectScript = buildKeychainExpectScript(service, account);
     const scriptPath = `/tmp/neokai-keychain-${Date.now()}.exp`;
     try {
       fs.writeFileSync(scriptPath, expectScript, { mode: 0o600 });
@@ -196,6 +190,16 @@ function loadOrGenerateCredentialKey(): string {
     );
   }
   return key;
+}
+
+export function buildKeychainExpectScript(service: string, account: string): string {
+  return `set password $env(NEOKAI_KEYCHAIN_SECRET)
+spawn security add-generic-password -w -U -s "${service.replace(/"/g, '\\"')}" -a "${account.replace(/"/g, '\\"')}"
+expect "password data for new item:"
+send "$password\\r"
+expect "retype password for new item:"
+send "$password\\r"
+expect eof`;
 }
 
 function escapeLike(value: string): string {
