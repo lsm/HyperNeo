@@ -22,7 +22,8 @@
  */
 
 import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
-import { hasRegisteredGateFeatures } from './gate-features';
+import { hasEnabledGateFeature } from '@neokai/shared';
+import { hasRegisteredGateFeatures, isRegisteredGateFeature } from './gate-features';
 import {
   deepMergeWithDepthLimit,
   type GateScriptContext,
@@ -329,6 +330,17 @@ export function validateGate(gate: unknown): string[] {
   const hasFeatures = hasRegisteredGateFeatures(g as { features?: Gate['features'] });
   if (!hasFields && !hasScript && !hasFeatures) {
     errors.push('gate: must have at least one non-empty "fields" array, "features", or a "script"');
+  }
+
+  // Reject unknown/unregistered feature names so misspelled features do not
+  // silently pass validation when the gate also has fields or a script.
+  const enabledFeatures = Object.keys(
+    (g.features as Record<string, unknown> | undefined) ?? {}
+  ).filter((name) => hasEnabledGateFeature(g as { features?: Gate['features'] }, name));
+  for (const name of enabledFeatures) {
+    if (!isRegisteredGateFeature(name)) {
+      errors.push(`gate: unknown feature "${name}" — must be a registered gate feature`);
+    }
   }
 
   // Reject feature + custom script/poll combinations to prevent silent override.

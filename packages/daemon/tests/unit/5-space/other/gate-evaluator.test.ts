@@ -1403,6 +1403,19 @@ describe('validateGate', () => {
     // No "at least one" error because script is present
     expect(errors.some((e) => e.includes('at least one'))).toBe(false);
   });
+
+  test('rejects unknown feature names even when gate has fields', () => {
+    const errors = validateGate({
+      id: 'g1',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+      ],
+      features: { codex_review_bto: true },
+      resetOnCycle: false,
+    });
+    expect(errors.some((e) => e.includes('unknown feature'))).toBe(true);
+    expect(errors.some((e) => e.includes('codex_review_bto'))).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
