@@ -325,10 +325,16 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     this.tokenCache = { token, expiresAt: Number.POSITIVE_INFINITY };
   }
 
-  getCredentials(): ProviderCredentials | null {
+  async getCredentials(): Promise<ProviderCredentials | null> {
     const token = this.storedCredentialToken ?? this.tokenCache?.token;
-    if (!token) return null;
-    return { type: 'oauth', accessToken: token };
+    if (token) return { type: 'oauth', accessToken: token };
+
+    // Read from auth file so startup reconciliation sees fresh provider-owned
+    // credentials before applying stale credential-manager rows.
+    const fileToken = await this.loadStoredGitHubToken();
+    if (fileToken) return { type: 'oauth', accessToken: fileToken };
+
+    return null;
   }
 
   onCredentialsChanged(

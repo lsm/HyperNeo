@@ -322,7 +322,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       provider.setCredentials({ type: 'oauth', accessToken: 'gho_access_token' });
 
       expect(await provider.isAvailable()).toBe(true);
-      expect(provider.getCredentials()).toEqual({
+      expect(await provider.getCredentials()).toEqual({
         type: 'oauth',
         accessToken: 'gho_access_token',
       });
@@ -362,6 +362,18 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       unsubscribe();
 
       expect(seen).toEqual([{ type: 'oauth', accessToken: 'new-copilot-token' }]);
+    });
+
+    it('reads auth file when no in-memory token exists', async () => {
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue('file-auth-token' as never);
+
+      expect(await provider.getCredentials()).toEqual({
+        type: 'oauth',
+        accessToken: 'file-auth-token',
+      });
     });
   });
 
