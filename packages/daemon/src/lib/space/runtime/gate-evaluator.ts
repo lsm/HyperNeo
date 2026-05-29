@@ -40,6 +40,13 @@ export interface GateEvalResult {
   open: boolean;
   /** Human-readable explanation when the gate is closed. */
   reason?: string;
+  /**
+   * Gate data after script pre-check, including any deep-merged script
+   * output. Present only when a script was executed; consumers can persist
+   * selected keys (e.g. `head_sha`) back to storage without re-running the
+   * script.
+   */
+  data?: Record<string, unknown>;
 }
 
 // Re-export executor types from gate-script-executor for consumer convenience.
@@ -484,7 +491,8 @@ export async function evaluateGate(
   }
 
   // ── Field evaluation ──────────────────────────────────────────────────
-  return evaluateFields(gate, gateData);
+  const fieldResult = evaluateFields(gate, gateData);
+  return { ...fieldResult, data: gateData };
 }
 
 /**

@@ -794,7 +794,11 @@ export class TaskAgentManager {
         // message. Safe to call even on fresh runs — returns [] when empty.
         const gateDataSnapshot = this.config.gateDataRepo
           .listByRun(workflowRun.id)
-          .map((record) => ({ gateId: record.gateId, data: record.data }));
+          .map((record) => ({
+            gateId: record.gateId,
+            data: record.data,
+            updatedAt: record.updatedAt,
+          }));
         const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
         const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 

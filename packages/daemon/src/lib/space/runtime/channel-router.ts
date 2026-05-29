@@ -1202,7 +1202,16 @@ export class ChannelRouter {
     };
 
     return this.withScriptSemaphore(async () => {
-      return evaluateGate(gateDef, runtimeData, scriptExecutor, scriptContext);
+      const result = await evaluateGate(gateDef, runtimeData, scriptExecutor, scriptContext);
+      // Persist head_sha from script output so the head-change guard has a stored
+      // SHA to compare against on retries (e.g. after a force-push).
+      if (result.data?.head_sha !== undefined && this.config.gateDataRepo) {
+        this.config.gateDataRepo.merge(runId, gateId, { head_sha: result.data.head_sha });
+      }
+      if (result.data?.pr_url !== undefined && this.config.gateDataRepo) {
+        this.config.gateDataRepo.merge(runId, gateId, { pr_url: result.data.pr_url });
+      }
+      return result;
     });
   }
 
