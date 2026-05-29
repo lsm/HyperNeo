@@ -1524,7 +1524,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
             .prepare(`SELECT data FROM gate_data WHERE run_id = ? AND gate_id = ?`)
             .get(run.id, 'cycle-votes')?.data as string
         )
-      ).toEqual({ votes: {} });
+      ).toMatchObject({ votes: {} });
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
 

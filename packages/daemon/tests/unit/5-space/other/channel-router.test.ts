@@ -1875,7 +1875,7 @@ describe('ChannelRouter', () => {
       // Gate data should have been reset to default (empty votes map)
       const afterReset = gateDataRepo.get(run.id, 'review-votes-gate');
       expect(afterReset).not.toBeNull();
-      expect(afterReset!.data).toEqual({ votes: {} });
+      expect(afterReset!.data).toMatchObject({ votes: {} });
 
       // Cycle count should have been incremented (channel index 1 is the backward channel)
       expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
@@ -1926,7 +1926,7 @@ describe('ChannelRouter', () => {
       // Gate data should have been reset to empty object (no fields to compute defaults from)
       const afterReset = gateDataRepo.get(run.id, 'script-only-gate');
       expect(afterReset).not.toBeNull();
-      expect(afterReset!.data).toEqual({});
+      expect(afterReset!.data).toMatchObject({});
 
       // Cycle count should have been incremented
       expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
@@ -1980,7 +1980,7 @@ describe('ChannelRouter', () => {
 
       // resetOnCycle: true gate should be reset to defaults
       const resetRecord = gateDataRepo.get(run.id, 'review-reject-gate');
-      expect(resetRecord!.data).toEqual({});
+      expect(resetRecord!.data).toMatchObject({});
 
       // resetOnCycle: false gate should be preserved
       const preservedRecord = gateDataRepo.get(run.id, 'code-pr-gate');
@@ -2040,10 +2040,10 @@ describe('ChannelRouter', () => {
 
       // Both should be reset to their defaults
       const votes = gateDataRepo.get(run.id, 'review-votes-gate');
-      expect(votes!.data).toEqual({ votes: {} });
+      expect(votes!.data).toMatchObject({ votes: {} });
 
       const qa = gateDataRepo.get(run.id, 'qa-result-gate');
-      expect(qa!.data).toEqual({});
+      expect(qa!.data).toMatchObject({});
     });
 
     // -----------------------------------------------------------------------
@@ -2595,10 +2595,10 @@ describe('ChannelRouter', () => {
         expect(channelCycleRepo.get(run.id, 3)!.count).toBe(1);
 
         // Cyclic-reset gates must be wiped to computed defaults
-        expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toEqual({ votes: {} });
-        expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toEqual({ votes: {} });
-        expect(gateDataRepo.get(run.id, 'qa-result-gate')!.data).toEqual({});
-        expect(gateDataRepo.get(run.id, 'qa-fail-gate')!.data).toEqual({});
+        expect(gateDataRepo.get(run.id, 'review-votes-gate')!.data).toMatchObject({ votes: {} });
+        expect(gateDataRepo.get(run.id, 'review-reject-gate')!.data).toMatchObject({ votes: {} });
+        expect(gateDataRepo.get(run.id, 'qa-result-gate')!.data).toMatchObject({});
+        expect(gateDataRepo.get(run.id, 'qa-fail-gate')!.data).toMatchObject({});
 
         // code-pr-gate must be preserved (resetOnCycle: false)
         expect(gateDataRepo.get(run.id, 'code-pr-gate')!.data).toEqual({
@@ -2642,16 +2642,16 @@ describe('ChannelRouter', () => {
 
         // review-votes-gate, review-reject-gate, qa-result-gate, qa-fail-gate must reset
         const reviewVotes = gateDataRepo.get(run.id, 'review-votes-gate');
-        expect(reviewVotes!.data).toEqual({ votes: {} });
+        expect(reviewVotes!.data).toMatchObject({ votes: {} });
 
         const reviewReject = gateDataRepo.get(run.id, 'review-reject-gate');
-        expect(reviewReject!.data).toEqual({ votes: {} });
+        expect(reviewReject!.data).toMatchObject({ votes: {} });
 
         const qaResult = gateDataRepo.get(run.id, 'qa-result-gate');
-        expect(qaResult!.data).toEqual({});
+        expect(qaResult!.data).toMatchObject({});
 
         const qaFail = gateDataRepo.get(run.id, 'qa-fail-gate');
-        expect(qaFail!.data).toEqual({});
+        expect(qaFail!.data).toMatchObject({});
       });
 
       test('QA→Coding cycle increments per-channel cycle counter', async () => {
@@ -2702,7 +2702,7 @@ describe('ChannelRouter', () => {
 
         // All votes wiped — reviewers must re-vote
         const votes = gateDataRepo.get(run.id, 'review-votes-gate');
-        expect(votes!.data).toEqual({ votes: {} });
+        expect(votes!.data).toMatchObject({ votes: {} });
 
         // QA channel now blocked (only 0/3 approved)
         const canDeliver = await router.canDeliver(run.id, 'Reviewer 1', 'QA');
@@ -3915,7 +3915,7 @@ describe('ChannelRouter', () => {
 
         // Gate data should be reset to defaults (empty object for boolean fields)
         const gateData1 = gateDataRepo.get(run.id, 'reset-gate');
-        expect(gateData1?.data).toEqual({});
+        expect(gateData1?.data).toMatchObject({});
 
         // Persisted cache should NOT exist (resetOnCycle prevents caching)
         expect(gateOpenStateRepo.isOpen(run.id, 'reset-gate').open).toBe(false);

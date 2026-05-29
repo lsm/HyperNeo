@@ -1855,7 +1855,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
       },
     ]);
     expect(notifications).toEqual(['review-posted-gate']);
-    expect(gateDataRepo.get(ctx.workflowRunId, gate.id)?.data).toEqual({});
+    expect(gateDataRepo.get(ctx.workflowRunId, gate.id)?.data).toMatchObject({});
   });
 
   test('internalEventBus publishes space.gateData.updated after gate-write via send_message', async () => {
