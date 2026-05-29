@@ -423,7 +423,7 @@ const PD_PLAN_REVIEW_PROMPT =
   'action is your `approvals` vote on `plan-approval-gate`. Vote approved only for zero P0-P3 ' +
   'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
   'Procedure: read `gh pr diff`/`gh pr view`, post a visible PR review comment, then ' +
-  'send_message(target="Task Dispatcher", data: { approvals: { "<your lens>": "approved" }, ' +
+  'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
   'pr_url: "<plan PR url>" }). First three approvals normally get a gate-blocked response; ' +
   'the vote is still recorded. On rejection, write `{ "<your lens>": "rejected" }` and also ' +
   'message Planning with required changes.';
@@ -649,8 +649,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'post visible GitHub review before gate write. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Save result artifact with data.pr_url, then call approve_task or submit_for_approval. ' +
-              'Do not merge or set auto-merge.',
+              ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
         },
       ],
@@ -844,8 +844,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'accuracy, and clarity. If more research is needed, message Research with specific ' +
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Save result artifact with data.pr_url, then call approve_task or submit_for_approval. ' +
-              'Do not merge or set auto-merge.',
+              ' Call save_artifact({ type: "result", data: { pr_url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
         },
       ],
@@ -931,9 +931,9 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
             value:
               'You are the sole Reviewer in a single-node Review-Only workflow. Review an existing ' +
               'PR or codebase directly. Follow the Reviewer System Contract and terminal-action tool ' +
-              'contract: post a visible GitHub review before terminal actions; save a result artifact ' +
-              'with data.pr_url; approve_task/submit_for_approval only on APPROVE, otherwise stop. ' +
-              'Never set a PR to auto-merge.',
+              'contract: post a visible GitHub review (`gh pr review`) before terminal actions; ' +
+              'call save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
+              'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
         },
       ],

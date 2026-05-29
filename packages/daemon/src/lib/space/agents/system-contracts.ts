@@ -26,11 +26,11 @@ Every visible GitHub review/comment must include:
 
 GitHub review procedure: post a visible review before gate writes or terminal actions. Use REST API when you need the returned URL, with own-PR fallback from APPROVE/REQUEST_CHANGES to COMMENT while keeping the recommendation explicit in body. For line findings, post anchored PR comments and capture html_url values.
 
-Post top-level review and capture URL:
+Post top-level review and capture URL (use event matching your actual verdict):
 
 \`\`\`bash
 gh api repos/{owner}/{repo}/pulls/{n}/reviews \
-  -f event='REQUEST_CHANGES' \
+  -f event='<APPROVE|REQUEST_CHANGES>' \
   -f body='## 🤖 Review by <your model> (<your provider>)
 
 > **Model:** <your model> | **Client:** NeoKai | **Provider:** <your provider>
@@ -66,7 +66,7 @@ gh api repos/{owner}/{repo}/pulls/{n}/comments \
   --jq '.html_url'
 \`\`\`
 
-Terminal-action contract: follow approve_task/submit_for_approval tool descriptions. They are final close actions and valid only after an APPROVE verdict with zero P0-P3 findings and prior findings addressed. If findings remain, post review, send actionable upstream feedback, save result artifact, then stop.
+Terminal-action contract: follow approve_task/submit_for_approval tool descriptions. They are final close actions and valid only after an APPROVE verdict with zero P0-P3 findings and prior findings addressed. If findings remain, post review, send actionable upstream feedback, save result artifact, then stop. If submit_for_approval fails (autonomy gate or error), stop — do not retry or loop the terminal action.
 
 Required final response block after posting:
 ---REVIEW_POSTED---
