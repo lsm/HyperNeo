@@ -23,7 +23,11 @@
 
 import type { Channel, Gate, GateField, GateFieldCheck, GateScript } from '@neokai/shared';
 import { hasEnabledGateFeature } from '@neokai/shared';
-import { hasRegisteredGateFeatures, isRegisteredGateFeature } from './gate-features';
+import {
+  hasRegisteredGateFeatures,
+  isRegisteredGateFeature,
+  validateGateFeatures,
+} from './gate-features';
 import {
   deepMergeWithDepthLimit,
   type GateScriptContext,
@@ -359,6 +363,12 @@ export function validateGate(gate: unknown): string[] {
       'gate: cannot combine registered features with a custom "script" or "poll". ' +
         'Either remove the custom script/poll or disable the feature.'
     );
+  }
+
+  // Reject gates that enable multiple features defining the same runtime
+  // artifact (script or poll) so nothing is silently dropped.
+  if (hasFeatures) {
+    errors.push(...validateGateFeatures(gate as Gate));
   }
 
   return errors;

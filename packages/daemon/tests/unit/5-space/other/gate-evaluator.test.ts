@@ -28,6 +28,7 @@ import {
   validateGatePoll,
   validateGateScript,
 } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
+import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 
 // ---------------------------------------------------------------------------
 // Scalar field — op: '==' (default comparison)
@@ -474,6 +475,27 @@ describe('GateEvaluator — evaluateGate (script pre-check)', () => {
     const result = await evaluateGate(gate, {}, executor, mockContext);
     expect(result.open).toBe(false);
     expect(result.reason).toBe('Script check failed: unknown error');
+  });
+
+  test('script failure leaves result.data undefined', async () => {
+    const gate: Gate = {
+      id: 'g1',
+      fields: [{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+      script: { interpreter: 'bash', source: 'exit 1' },
+      resetOnCycle: false,
+    };
+
+    const executor: GateScriptExecutorFn = async () => ({
+      success: false,
+      data: {},
+      error: 'tests failed',
+    });
+
+    const result = await evaluateGate(gate, { approved: true }, executor, mockContext);
+    expect(result.open).toBe(false);
+    // data must be absent on script failure so downstream code knows not to
+    // persist merged gate data back to storage.
+    expect(result.data).toBeUndefined();
   });
 
   test('script success deep-merges data with existing data', async () => {
@@ -1245,6 +1267,21 @@ describe('validateGate', () => {
     });
     expect(errors.length).toBeGreaterThan(0);
     expect(errors.some((e) => e.includes('cannot combine'))).toBe(true);
+  });
+
+  test('gate with multiple features defining scripts returns error', () => {
+    // Register a second dummy feature so validation can detect the conflict.
+    registerGateFeature('second_script_feature', {
+      script: () => ({ interpreter: 'bash', source: 'echo second', timeoutMs: 30000 }),
+    });
+    const errors = validateGate({
+      id: 'g1',
+      features: { codex_review_bot: true, second_script_feature: true },
+      fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.includes('multiple features define a script'))).toBe(true);
   });
 
   test('gate with invalid color produces error', () => {

@@ -220,6 +220,30 @@ registerGateFeature(CODEX_REVIEW_BOT_FEATURE, {
   poll: getCodexReviewBotGatePoll,
 });
 
+/**
+ * Validates that a gate does not enable multiple features that define the same
+ * runtime artifact (script or poll). Returns an array of error strings.
+ */
+export function validateGateFeatures(gate: Gate): string[] {
+  const errors: string[] = [];
+  const enabledNames = Object.keys(gate.features ?? {}).filter((name) =>
+    hasEnabledGateFeature(gate, name)
+  );
+  const scriptFeatures = enabledNames.filter((name) => gateFeatureRegistry.get(name)?.script);
+  const pollFeatures = enabledNames.filter((name) => gateFeatureRegistry.get(name)?.poll);
+  if (scriptFeatures.length > 1) {
+    errors.push(
+      `gate: multiple features define a script (${scriptFeatures.join(', ')}); only one script feature is allowed per gate`
+    );
+  }
+  if (pollFeatures.length > 1) {
+    errors.push(
+      `gate: multiple features define a poll (${pollFeatures.join(', ')}); only one poll feature is allowed per gate`
+    );
+  }
+  return errors;
+}
+
 export function getEffectiveGate(gate: Gate): Gate {
   const definitions = getEnabledGateFeatureDefinitions(gate);
   const scriptDefinition = definitions.find((definition) => definition.script);
