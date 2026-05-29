@@ -201,6 +201,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
           {
             id: 'gate-polled',
             resetOnCycle: false,
+            fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
             poll: {
               intervalMs: 60_000,
               script: 'printf poll',
@@ -263,6 +264,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
           {
             id: 'gate-review',
             resetOnCycle: false,
+            fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
             poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
           },
         ],
@@ -368,6 +370,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
           {
             id: 'gate-missing',
             resetOnCycle: false,
+            fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
             poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
           },
         ],
@@ -434,6 +437,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
             id: 'gate-cancelled',
             resetOnCycle: false,
             poll: { intervalMs: 60_000, script: 'printf poll', target: 'from' },
+            fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
           },
         ],
         startNodeId: STEP_A,
@@ -562,6 +566,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
             id: 'gate-blocked',
             resetOnCycle: false,
             poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
+            fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
           },
         ],
         startNodeId: STEP_A,
