@@ -421,13 +421,14 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
   'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
   'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
-  'reaction means it has not started or has not reported yet. Poll every 60 seconds ' +
-  'for up to 10 minutes before proceeding. If codex[bot] still has not posted `+1` ' +
-  'after the timeout, proceed only with a warning recorded in your result artifact. ' +
-  'If codex[bot] has not reacted at all, comment `@codex review` on the PR to trigger ' +
-  'its review, then wait for an `eyes` or `+1` reaction. ' +
-  'Do not close the task or write the approval gate before codex[bot] has `+1` unless ' +
-  'that timeout has elapsed.';
+  'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
+  'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
+  'for an `eyes` or `+1` reaction. ' +
+  'Write the approval gate to start the Codex timeout (10 minutes). If the gate ' +
+  'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
+  'gate write. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
+  'only with a warning recorded in your result artifact. Do not close the task ' +
+  'before codex[bot] has `+1` unless that timeout has elapsed.';
 
 const PD_PLAN_REVIEW_PROMPT =
   'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +

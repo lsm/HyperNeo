@@ -54,6 +54,13 @@ export interface GateScriptContext {
    * starts when approval data is written, not when the workflow run starts.
    */
   gateDataUpdatedIso?: string;
+  /**
+   * Resolved PR URL for the current workflow run, if known.
+   * Injected into the script environment as `PR_URL` so feature scripts
+   * (e.g. codex reaction checks) can access the PR even when the gate's
+   * own data does not contain `pr_url`.
+   */
+  prUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +148,10 @@ export function buildRestrictedEnv(
   }
   if (context.gateDataUpdatedIso) {
     env['NEOKAI_GATE_DATA_UPDATED_ISO'] = context.gateDataUpdatedIso;
+  }
+
+  if (context.prUrl) {
+    env['PR_URL'] = context.prUrl;
   }
 
   const gateData = context.gateData ?? {};

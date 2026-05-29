@@ -281,6 +281,13 @@ export interface ChannelRouterConfig {
    * by a script failure, or when it has no external-approval field.
    */
   onGatePendingApproval?: (runId: string, gateId: string) => Promise<void>;
+  /**
+   * Optional callback that resolves the current PR URL for a workflow run.
+   * Injected into gate script environments as `PR_URL` so feature scripts
+   * (e.g. codex reaction checks) can access the PR even when the gate's
+   * own data does not contain `pr_url`.
+   */
+  getPrUrlForRun?: (runId: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,6 +1195,7 @@ export class ChannelRouter {
       gateData: runtimeData,
       workflowStartIso,
       gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
+      prUrl: this.config.getPrUrlForRun?.(runId),
     };
 
     return this.withScriptSemaphore(async () => {

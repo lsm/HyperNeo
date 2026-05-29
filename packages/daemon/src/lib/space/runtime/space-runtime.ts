@@ -3881,6 +3881,7 @@ export class SpaceRuntime {
       gateDataUpdatedIso: gateDataRecord
         ? new Date(gateDataRecord.updatedAt).toISOString()
         : undefined,
+      prUrl: this.resolvePrUrlForRun(runId) || undefined,
     });
     return { open: result.open, reason: result.reason };
   }

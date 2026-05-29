@@ -3239,7 +3239,7 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     const prompt = node.agents[0].customPrompt!.value;
     expect(prompt).toContain('codex[bot]');
     expect(prompt).toContain('issues/{number}/reactions');
-    expect(prompt).toContain('Poll every 60 seconds');
+    expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('10 minutes');
   });
 
@@ -3397,7 +3397,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain('.content == "+1"');
     expect(effectiveGate.script?.source).toContain('bun -e');
     expect(effectiveGate.script?.source).toContain('NEOKAI_GATE_DATA_UPDATED_ISO');
-    expect(effectiveGate.script?.source).toContain('PR_URL="${PR_URL:-}"');
+    expect(effectiveGate.script?.source).toContain('PR_URL="${GATE_PR_URL:-${PR_URL:-}}"');
     expect(effectiveGate.script?.source).toContain("comment '@codex review'");
     expect(effectiveGate.script?.source).not.toContain('node -e');
     expect(effectiveGate.poll?.intervalMs).toBe(60_000);
@@ -3434,7 +3434,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"eyes"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'printf "unexpected gh args: %s\n" "$*" >&2',
@@ -3450,7 +3450,6 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           gateId: 'review-approval-gate',
           runId: 'run-1',
           gateData: { pr_url: prUrl, approved: true },
-          workflowStartIso: new Date().toISOString(),
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );
@@ -3478,7 +3477,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [ "$1" = "api" ] && [ "$2" = "repos/test/repo/issues/42/reactions?per_page=100" ]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'printf "unexpected gh args: %s\n" "$*" >&2',
@@ -3494,7 +3493,6 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
           gateId: 'review-approval-gate',
           runId: 'run-1',
           gateData: { pr_url: prUrl, approved: true },
-          workflowStartIso: new Date().toISOString(),
         },
         { PATH: `${binDir}:${process.env.PATH ?? ''}` }
       );
@@ -3607,7 +3605,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
     expect(prompt).toContain('codex[bot]');
     expect(prompt).toContain('issues/{number}/reactions');
-    expect(prompt).toContain('Poll every 60 seconds');
+    expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('10 minutes');
   });
 
@@ -3617,7 +3615,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
     expect(prompt).toContain('codex[bot]');
     expect(prompt).toContain('issues/{number}/reactions');
-    expect(prompt).toContain('Poll every 60 seconds');
+    expect(prompt).toContain('poll every 60 seconds');
     expect(prompt).toContain('10 minutes');
   });
 
