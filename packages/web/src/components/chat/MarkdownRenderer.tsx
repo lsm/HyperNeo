@@ -114,7 +114,7 @@ function escapeHtml(content: string) {
     .replace(/'/g, '&#39;');
 }
 
-function renderPlainText(content: string) {
+export function renderPlainText(content: string) {
   return `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
 }
 
@@ -446,8 +446,14 @@ function isMultilineHtmlCommentStart(line: string) {
   return trimmed.startsWith('<!--') && !trimmed.includes('-->');
 }
 
+const safeUriSchemes = new Set(['http', 'https', 'ftp', 'ftps', 'mailto', 'irc', 'ircs', 'urn']);
+
 function isAutolink(html: string) {
-  return /^<([a-z][a-z0-9+.-]+:[^<>\s]+|[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>$/i.test(html);
+  const match = /^<([a-z][a-z0-9+.-]+):([^<>\s]+)>$/i.exec(html);
+  if (match) {
+    return safeUriSchemes.has(match[1].toLowerCase());
+  }
+  return /^<([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)>$/i.test(html);
 }
 
 function isEscaped(content: string, index: number) {
@@ -648,8 +654,9 @@ function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false):
     const fenceMatch = getFenceMarker(line, inList);
     const isBlockquoteLine = stripBlockquotePrefix(line) !== line;
 
-    if (isBlockquoteLine && !inBlockquote) {
+    if (isBlockquoteLine !== inBlockquote) {
       codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
     }
     inBlockquote = isBlockquoteLine;
 
@@ -657,17 +664,22 @@ function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false):
       inList = true;
       inIndentedCode = false;
       codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
     } else if (/^#{1,6}\s/.test(stripBlockquotePrefix(line))) {
       codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
     } else if (/^(?:[ \t]{0,3}>[ \t]?)*[ \t]{0,3}(={3,}|-{3,})\s*$/.test(line)) {
       codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
     } else if (line.trim() === '') {
       inList = false;
       codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
     } else {
       const strippedLine = stripBlockquotePrefix(line);
       if (strippedLine.trim() === '' && line !== strippedLine) {
         codeDelimiter = null;
+        unmatchedDelimiterIndex = -1;
       }
     }
 
@@ -688,6 +700,7 @@ function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false):
       };
       inIndentedCode = false;
       codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
       escapedLines.push(line);
       continue;
     }
@@ -809,13 +822,16 @@ function getMermaid() {
   return mermaidModulePromise;
 }
 
-async function renderMermaidBlocks(container: HTMLElement) {
+async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => boolean) {
   const blocks = Array.from(container.querySelectorAll('pre code.language-mermaid'));
   if (blocks.length === 0) return;
 
   const mermaid = await getMermaid();
+  if (isCancelled?.()) return;
+
   await Promise.all(
     blocks.map(async (block) => {
+      if (isCancelled?.()) return;
       const pre = block.parentElement;
       if (!pre) return;
 
@@ -824,12 +840,25 @@ async function renderMermaidBlocks(container: HTMLElement) {
       wrapper.className = 'mermaid';
       wrapper.textContent = source;
 
-      await mermaid.parse(source);
-      pre.replaceWith(wrapper);
       try {
+        await mermaid.parse(source);
+      } catch {
+        return;
+      }
+
+      if (!pre.isConnected || isCancelled?.()) return;
+      pre.replaceWith(wrapper);
+
+      try {
+        if (!wrapper.isConnected || isCancelled?.()) {
+          if (wrapper.isConnected) wrapper.replaceWith(pre);
+          return;
+        }
         await mermaid.run({ nodes: [wrapper] });
       } catch (error) {
-        wrapper.replaceWith(pre);
+        if (wrapper.isConnected) {
+          wrapper.replaceWith(pre);
+        }
         throw error;
       }
     })
@@ -876,19 +905,22 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
   // Parse markdown asynchronously
   useEffect(() => {
     let cancelled = false;
-    renderMarkdown(content)
-      .then((renderedHtml) => {
-        if (!cancelled) {
-          setHtml(renderedHtml);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setHtml(renderPlainText(content));
-        }
-      });
+    const rafId = requestAnimationFrame(() => {
+      renderMarkdown(content)
+        .then((renderedHtml) => {
+          if (!cancelled) {
+            setHtml(renderedHtml);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHtml(renderPlainText(content));
+          }
+        });
+    });
     return () => {
       cancelled = true;
+      cancelAnimationFrame(rafId);
     };
   }, [content]);
 
@@ -897,7 +929,8 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     if (html == null || !containerRef.current) return;
     containerRef.current.innerHTML = html;
 
-    renderMermaidBlocks(containerRef.current).catch(() => undefined);
+    let mermaidCancelled = false;
+    renderMermaidBlocks(containerRef.current, () => mermaidCancelled).catch(() => undefined);
 
     // Wrap tables in scrollable container to prevent horizontal overflow
     const tables = containerRef.current.querySelectorAll('table');
@@ -918,6 +951,10 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       firstP.style.marginTop = '0';
       lastP.style.marginBottom = '0';
     }
+
+    return () => {
+      mermaidCancelled = true;
+    };
   }, [html]);
 
   return <div ref={containerRef} class={`prose ${className || ''}`} />;

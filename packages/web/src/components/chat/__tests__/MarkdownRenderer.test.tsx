@@ -11,7 +11,7 @@
 
 import { render, waitFor } from '@testing-library/preact';
 import { beforeEach, expect, vi } from 'vitest';
-import MarkdownRenderer from '../MarkdownRenderer';
+import MarkdownRenderer, { renderPlainText } from '../MarkdownRenderer';
 
 const { mermaidParseMock, mermaidRunMock } = vi.hoisted(() => ({
   mermaidParseMock: vi.fn(),
@@ -1594,6 +1594,46 @@ describe('MarkdownRenderer', () => {
         expect(container.textContent).toContain('Line 1');
         expect(container.textContent).toContain('Line 2');
       });
+    });
+
+    it('should escape script tags', async () => {
+      const { container } = render(<MarkdownRenderer content={'<script>alert(1)</script>'} />);
+      await waitFor(() => {
+        expect(container.querySelector('script')).toBeFalsy();
+        expect(container.textContent).toContain('alert(1)');
+      });
+    });
+
+    it('should escape iframe tags', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'<iframe src="evil.com"></iframe>'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('iframe')).toBeFalsy();
+        expect(container.textContent).toContain('evil.com');
+      });
+    });
+
+    it('should escape event handler attributes', async () => {
+      const { container } = render(
+        <MarkdownRenderer content={'<div onclick="alert(1)">click</div>'} />
+      );
+      await waitFor(() => {
+        expect(container.querySelector('.prose > div')).toBeFalsy();
+        expect(container.textContent).toContain('click');
+      });
+    });
+
+    it('should preserve --> sequences in rendered text', async () => {
+      const { container } = render(<MarkdownRenderer content={'Note: --> end'} />);
+      await waitFor(() => {
+        expect(container.textContent).toContain('Note: --> end');
+      });
+    });
+
+    it('renderPlainText escapes HTML and preserves line breaks', () => {
+      const result = renderPlainText('a < b\nline 2');
+      expect(result).toBe('<p>a &lt; b<br>line 2</p>');
     });
   });
 });
