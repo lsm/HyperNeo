@@ -319,6 +319,9 @@ function getListMarkerHtmlLine(line: string): ListMarkerHtmlLine | null {
     .match(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)(\S.*)$/);
   if (!listMatch) return null;
 
+  const spacesAfterMarker = listMatch[1].length - listMatch[1].trimEnd().length;
+  if (spacesAfterMarker >= 5) return null;
+
   return {
     markerPrefix: `${blockquotePrefix}${listMatch[1]}`,
     blockquotePrefix,
@@ -639,6 +642,12 @@ function collectHtmlBlock(
   return { blockLines, endIndex: startIndex, foundClose: false };
 }
 
+function retryLines(escapedLines: string[], lines: string[], fromIndex: number, toIndex: number) {
+  for (let i = fromIndex; i < toIndex; i += 1) {
+    escapedLines[i] = escapeInlineHtmlSegment(lines[i]);
+  }
+}
+
 function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false): string {
   const lines = content.split('\n');
   const escapedLines: string[] = [];
@@ -655,29 +664,59 @@ function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false):
     const isBlockquoteLine = stripBlockquotePrefix(line) !== line;
 
     if (isBlockquoteLine !== inBlockquote) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       codeDelimiter = null;
       unmatchedDelimiterIndex = -1;
     }
     inBlockquote = isBlockquoteLine;
 
     if (isListItem(stripBlockquotePrefix(line))) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       inList = true;
       inIndentedCode = false;
       codeDelimiter = null;
       unmatchedDelimiterIndex = -1;
     } else if (/^#{1,6}\s/.test(stripBlockquotePrefix(line))) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       codeDelimiter = null;
       unmatchedDelimiterIndex = -1;
     } else if (/^(?:[ \t]{0,3}>[ \t]?)*[ \t]{0,3}(={3,}|-{3,})\s*$/.test(line)) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       codeDelimiter = null;
       unmatchedDelimiterIndex = -1;
     } else if (line.trim() === '') {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       inList = false;
+      codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
+    } else if (/^(?:[ \t]{0,3}>[ \t]?)*[ \t]{0,3}(?:[-*_][ \t]*){3,}\s*$/.test(line)) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
+      codeDelimiter = null;
+      unmatchedDelimiterIndex = -1;
+    } else if (/^(?:[ \t]{0,3}>[ \t]?)*[ \t]*\|/.test(line)) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       codeDelimiter = null;
       unmatchedDelimiterIndex = -1;
     } else {
       const strippedLine = stripBlockquotePrefix(line);
       if (strippedLine.trim() === '' && line !== strippedLine) {
+        if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+          retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+        }
         codeDelimiter = null;
         unmatchedDelimiterIndex = -1;
       }
@@ -692,6 +731,9 @@ function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false):
     }
 
     if (fenceMatch) {
+      if (codeDelimiter && unmatchedDelimiterIndex !== -1) {
+        retryLines(escapedLines, lines, unmatchedDelimiterIndex, index);
+      }
       fence = {
         char: fenceMatch.marker[0] as '`' | '~',
         length: fenceMatch.marker.length,
@@ -716,7 +758,7 @@ function escapeRawHtmlBlocks(content: string, escapeMultilineCodeSpans = false):
     inIndentedCode = false;
 
     let listLine = getListMarkerHtmlLine(line);
-    if (listLine && !inList && !isBlockquoteLine && /^( {4}|\t)/.test(line)) {
+    if (listLine && !inList && /^( {4}|\t)/.test(stripBlockquotePrefix(line))) {
       listLine = null;
     }
     const lineForHtml = stripBlockquotePrefix(listLine?.content ?? line);
