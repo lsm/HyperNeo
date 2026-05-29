@@ -1092,7 +1092,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
             {
               id: 'ready',
               resetOnCycle: false,
-              fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' as const } }],
+              fields: [
+                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
+              ],
             },
           ],
         }
@@ -1136,7 +1138,9 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
             {
               id: 'ready',
               resetOnCycle: false,
-              fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' as const } }],
+              fields: [
+                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
+              ],
             },
           ],
         }
@@ -1476,7 +1480,14 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
             {
               id: 'cycle-votes',
               resetOnCycle: true,
-              fields: [{ name: 'votes', type: 'map' }],
+              fields: [
+                {
+                  name: 'votes',
+                  type: 'map',
+                  writers: [],
+                  check: { op: 'count', match: 'approved', min: 1 },
+                },
+              ],
             },
           ],
           endNodeId: STEP_B,
@@ -1623,7 +1634,14 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
             {
               id: 'feature-ready',
               resetOnCycle: false,
-              fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
               features: { codex_review_bot: true },
             },
           ],

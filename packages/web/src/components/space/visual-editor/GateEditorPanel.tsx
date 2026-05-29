@@ -140,6 +140,12 @@ export function GateEditorPanel({
     ? Math.round(gate.script.timeoutMs / 1000)
     : SCRIPT_TIMEOUT_DEFAULT;
   const codexReviewBotEnabled = hasEnabledGateFeature(gate, 'codex_review_bot');
+  const pollEnabled = !!gate.poll;
+  const featureDisabledReason = scriptEnabled
+    ? 'Disable the custom script check to enable this feature.'
+    : pollEnabled
+      ? 'Disable the custom poll check to enable this feature.'
+      : '';
 
   // Gate-level validation: must have at least one of fields, features, or script
   const hasFields = (gate.fields ?? []).length > 0;
@@ -426,13 +432,16 @@ export function GateEditorPanel({
       {/* Gate Features */}
       <div class="space-y-2">
         <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Features</label>
-        <label class="flex items-start gap-2 cursor-pointer rounded border border-dark-700 bg-dark-800 px-2 py-2">
+        <label
+          class={`flex items-start gap-2 rounded border border-dark-700 bg-dark-800 px-2 py-2 ${featureDisabledReason ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+        >
           <input
             type="checkbox"
             data-testid="gate-editor-feature-codex-review-bot"
             checked={codexReviewBotEnabled}
+            disabled={!!featureDisabledReason}
             onChange={(e) => toggleCodexReviewBot((e.currentTarget as HTMLInputElement).checked)}
-            class="mt-0.5 rounded border-dark-600 text-blue-500 focus:ring-blue-500"
+            class="mt-0.5 rounded border-dark-600 text-blue-500 focus:ring-blue-500 disabled:opacity-50"
           />
           <span class="space-y-0.5">
             <span class="block text-xs text-gray-200">Codex Review Bot</span>
@@ -440,6 +449,11 @@ export function GateEditorPanel({
               Require codex[bot] +1 before this gate opens. If Codex has not reacted, reviewers
               should wait or comment @codex review on the PR.
             </span>
+            {featureDisabledReason && (
+              <span class="block text-[11px] text-yellow-500 leading-snug">
+                {featureDisabledReason}
+              </span>
+            )}
           </span>
         </label>
       </div>
