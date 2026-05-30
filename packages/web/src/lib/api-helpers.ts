@@ -175,9 +175,13 @@ export async function refreshProvider(providerId: string): Promise<ProviderRefre
 
 // ==================== Unified Provider Registry ====================
 
-export async function listProviders(): Promise<{ providers: Array<ProviderRecord & { available: boolean }> }> {
+export async function listProviders(): Promise<{
+  providers: Array<ProviderRecord & { available: boolean }>;
+}> {
   const hub = getHubOrThrow();
-  return await hub.request<{ providers: Array<ProviderRecord & { available: boolean }> }>('providers.list');
+  return await hub.request<{ providers: Array<ProviderRecord & { available: boolean }> }>(
+    'providers.list'
+  );
 }
 
 export async function createProvider(

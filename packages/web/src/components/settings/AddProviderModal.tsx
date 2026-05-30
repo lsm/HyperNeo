@@ -8,19 +8,17 @@
  */
 
 import { useState } from 'preact/hooks';
-import {
-  createProvider,
-  loginProvider,
-} from '../../lib/api-helpers.ts';
+import { createProvider, loginProvider } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { Button } from '../ui/Button.tsx';
-import { OAuthModal } from './OAuthModal.tsx';
+import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
 import {
   EditorModal,
   PresetPicker,
   presetToEditor,
   editorToConfig,
   validateEditor,
+  parseHeaders,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import type { ProviderAuthResponse } from '@neokai/shared/provider';
@@ -92,14 +90,6 @@ const MORE_PROVIDERS: BuiltInProviderPreset[] = [
   },
 ];
 
-interface OAuthFlowState {
-  providerId: string;
-  providerName: string;
-  authUrl?: string;
-  userCode?: string;
-  verificationUri?: string;
-}
-
 interface AddProviderModalProps {
   existingProviderIds: string[];
   onClose: () => void;
@@ -120,8 +110,7 @@ export function AddProviderModal({
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
 
-  const isAdded = (providerId: string) =>
-    existingProviderIds.includes(providerId);
+  const isAdded = (providerId: string) => existingProviderIds.includes(providerId);
 
   const handleApiKeyChange = (providerId: string, value: string) => {
     setApiKeys((prev) => ({ ...prev, [providerId]: value }));
@@ -143,9 +132,7 @@ export function AddProviderModal({
           authType: preset.authType,
           isEnabled: true,
         },
-        preset.authType === 'api_key' && key
-          ? { apiKey: key }
-          : undefined
+        preset.authType === 'api_key' && key ? { apiKey: key } : undefined
       );
       toast.success(`${preset.displayName} added`);
       onProviderAdded();
@@ -160,7 +147,14 @@ export function AddProviderModal({
   const handleOAuthLogin = async (preset: BuiltInProviderPreset) => {
     setAddingId(preset.providerId);
     try {
-      // Create the provider record first so it appears in the list.
+      // Initiate OAuth first so we don't orphan a DB record on failure.
+      const response: ProviderAuthResponse = await loginProvider(preset.providerId);
+      if (!response.success) {
+        toast.error(response.error || 'Failed to start OAuth flow');
+        return;
+      }
+
+      // Create the provider record only after login initiation succeeds.
       await createProvider(
         {
           providerId: preset.providerId,
@@ -173,11 +167,6 @@ export function AddProviderModal({
       );
       onProviderAdded();
 
-      const response: ProviderAuthResponse = await loginProvider(preset.providerId);
-      if (!response.success) {
-        toast.error(response.error || 'Failed to start OAuth flow');
-        return;
-      }
       if (response.authUrl) {
         window.open(response.authUrl, '_blank');
       }
@@ -267,9 +256,9 @@ export function AddProviderModal({
             ? `${url}/v1/models`
             : `${url}/models`;
       const headers: Record<string, string> = {};
-      if (customEditor.apiKey.trim()) headers.Authorization = `Bearer ${customEditor.apiKey.trim()}`;
+      if (customEditor.apiKey.trim())
+        headers.Authorization = `Bearer ${customEditor.apiKey.trim()}`;
       try {
-        const { parseHeaders } = await import('./CustomEndpointEditor.tsx');
         const parsed = parseHeaders(customEditor.headersText);
         if (parsed) Object.assign(headers, parsed);
       } catch {

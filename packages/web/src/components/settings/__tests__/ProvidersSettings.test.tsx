@@ -38,7 +38,8 @@ const {
 vi.mock('../../../lib/api-helpers.ts', () => ({
   listProviders: () => mockListProviders(),
   listProviderAuthStatus: () => mockListProviderAuthStatus(),
-  updateProvider: (id: string, params: unknown, creds?: unknown) => mockUpdateProvider(id, params, creds),
+  updateProvider: (id: string, params: unknown, creds?: unknown) =>
+    mockUpdateProvider(id, params, creds),
   deleteProvider: (id: string) => mockDeleteProvider(id),
   setDefaultProvider: (id: string) => mockSetDefaultProvider(id),
   testProvider: (id: string) => mockTestProvider(id),
@@ -58,33 +59,60 @@ vi.mock('../../../lib/toast.ts', () => ({
 }));
 
 vi.mock('../OAuthModal.tsx', () => ({
-  OAuthModal: ({ providerName, onCancel, onComplete }: {
+  OAuthModal: ({
+    providerName,
+    onCancel,
+    onComplete,
+  }: {
     providerName: string;
     onCancel: () => void;
     onComplete: () => void;
   }) => (
     <div data-testid="oauth-modal">
       <span data-testid="oauth-provider-name">{providerName}</span>
-      <button data-testid="oauth-cancel-btn" onClick={onCancel}>Cancel</button>
-      <button data-testid="oauth-complete-btn" onClick={onComplete}>Complete</button>
+      <button data-testid="oauth-cancel-btn" onClick={onCancel}>
+        Cancel
+      </button>
+      <button data-testid="oauth-complete-btn" onClick={onComplete}>
+        Complete
+      </button>
     </div>
   ),
 }));
 
 vi.mock('../AddProviderModal.tsx', () => ({
-  AddProviderModal: ({ onClose, onProviderAdded }: {
+  AddProviderModal: ({
+    onClose,
+    onProviderAdded,
+  }: {
     onClose: () => void;
     onProviderAdded: () => void;
   }) => (
     <div data-testid="add-provider-modal">
-      <button data-testid="add-modal-close" onClick={onClose}>Close</button>
-      <button data-testid="add-modal-done" onClick={() => { onProviderAdded(); onClose(); }}>Done</button>
+      <button data-testid="add-modal-close" onClick={onClose}>
+        Close
+      </button>
+      <button
+        data-testid="add-modal-done"
+        onClick={() => {
+          onProviderAdded();
+          onClose();
+        }}
+      >
+        Done
+      </button>
     </div>
   ),
 }));
 
 vi.mock('../SettingsSection.tsx', () => ({
-  SettingsSection: ({ title, children }: { title: string; children: import('preact').ComponentChildren }) => (
+  SettingsSection: ({
+    title,
+    children,
+  }: {
+    title: string;
+    children: import('preact').ComponentChildren;
+  }) => (
     <div data-testid="settings-section">
       <h3>{title}</h3>
       <div>{children}</div>
@@ -93,7 +121,15 @@ vi.mock('../SettingsSection.tsx', () => ({
 }));
 
 vi.mock('../../ui/Button.tsx', () => ({
-  Button: ({ children, variant, size, onClick, disabled, loading, fullWidth }: {
+  Button: ({
+    children,
+    variant,
+    size,
+    onClick,
+    disabled,
+    loading,
+    fullWidth,
+  }: {
     children: import('preact').ComponentChildren;
     variant?: string;
     size?: string;
@@ -163,7 +199,12 @@ describe('ProvidersSettings', () => {
 
   it('shows loading state initially', async () => {
     let resolvePromise: (value: { providers: (ProviderRecord & { available: boolean })[] }) => void;
-    mockListProviders.mockImplementation(() => new Promise((resolve) => { resolvePromise = resolve; }));
+    mockListProviders.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePromise = resolve;
+        })
+    );
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
 
     const { container } = render(<ProvidersSettings />);
@@ -187,8 +228,16 @@ describe('ProvidersSettings', () => {
 
   it('renders provider list with badges', async () => {
     const providers = [
-      createMockProvider('1', 'anthropic', { displayName: 'Anthropic', healthStatus: 'healthy', available: true }),
-      createMockProvider('2', 'custom:lm', { displayName: 'LM Studio', kind: 'custom_endpoint', healthStatus: 'unhealthy' }),
+      createMockProvider('1', 'anthropic', {
+        displayName: 'Anthropic',
+        healthStatus: 'healthy',
+        available: true,
+      }),
+      createMockProvider('2', 'custom:lm', {
+        displayName: 'LM Studio',
+        kind: 'custom_endpoint',
+        healthStatus: 'unhealthy',
+      }),
     ];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
@@ -267,9 +316,7 @@ describe('ProvidersSettings', () => {
   });
 
   it('deletes provider after confirm', async () => {
-    const providers = [
-      createMockProvider('1', 'anthropic', { displayName: 'Anthropic' }),
-    ];
+    const providers = [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
     mockDeleteProvider.mockResolvedValue({ success: true });
@@ -296,9 +343,7 @@ describe('ProvidersSettings', () => {
   });
 
   it('tests provider connection', async () => {
-    const providers = [
-      createMockProvider('1', 'anthropic', { displayName: 'Anthropic' }),
-    ];
+    const providers = [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
     mockTestProvider.mockResolvedValue({ healthy: true });
@@ -353,12 +398,21 @@ describe('ProvidersSettings', () => {
 
   it('shows OAuth login button for unauthenticated OAuth provider', async () => {
     const providers = [
-      createMockProvider('1', 'anthropic-copilot', { displayName: 'Copilot', authType: 'oauth', available: false }),
+      createMockProvider('1', 'anthropic-copilot', {
+        displayName: 'Copilot',
+        authType: 'oauth',
+        available: false,
+      }),
     ];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({
       providers: [
-        { id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: false, method: 'oauth' },
+        {
+          id: 'anthropic-copilot',
+          displayName: 'Copilot',
+          isAuthenticated: false,
+          method: 'oauth',
+        },
       ],
     });
     mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
@@ -383,7 +437,11 @@ describe('ProvidersSettings', () => {
 
   it('shows OAuth logout button for authenticated OAuth provider', async () => {
     const providers = [
-      createMockProvider('1', 'anthropic-copilot', { displayName: 'Copilot', authType: 'oauth', available: true }),
+      createMockProvider('1', 'anthropic-copilot', {
+        displayName: 'Copilot',
+        authType: 'oauth',
+        available: true,
+      }),
     ];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({
@@ -430,12 +488,22 @@ describe('ProvidersSettings', () => {
 
   it('shows refresh needed badge when auth status indicates it', async () => {
     const providers = [
-      createMockProvider('1', 'openai', { displayName: 'OpenAI', authType: 'oauth', available: true }),
+      createMockProvider('1', 'openai', {
+        displayName: 'OpenAI',
+        authType: 'oauth',
+        available: true,
+      }),
     ];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({
       providers: [
-        { id: 'openai', displayName: 'OpenAI', isAuthenticated: true, method: 'oauth', needsRefresh: true },
+        {
+          id: 'openai',
+          displayName: 'OpenAI',
+          isAuthenticated: true,
+          method: 'oauth',
+          needsRefresh: true,
+        },
       ],
     });
 

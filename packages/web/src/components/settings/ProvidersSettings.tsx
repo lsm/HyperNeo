@@ -24,26 +24,19 @@ import { toast } from '../../lib/toast.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
-import { OAuthModal } from './OAuthModal.tsx';
+import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
 import {
   EditorModal,
   existingToEditor,
   editorToConfig,
   validateEditor,
+  parseHeaders,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 
 interface EnrichedProvider extends ProviderRecord {
   available: boolean;
   authStatus?: ProviderAuthStatus;
-}
-
-interface OAuthFlowState {
-  providerId: string;
-  providerName: string;
-  authUrl?: string;
-  userCode?: string;
-  verificationUri?: string;
 }
 
 export function ProvidersSettings() {
@@ -55,6 +48,7 @@ export function ProvidersSettings() {
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
 
@@ -240,15 +234,18 @@ export function ProvidersSettings() {
   const handleEditCustom = (provider: EnrichedProvider) => {
     if (!provider.customEndpointConfigJson) return;
     try {
-      const config = JSON.parse(provider.customEndpointConfigJson) as import('@neokai/shared').CustomEndpointConfig;
+      const config = JSON.parse(
+        provider.customEndpointConfigJson
+      ) as import('@neokai/shared').CustomEndpointConfig;
       setCustomEditor(existingToEditor(config));
+      setEditingCustomId(provider.id);
     } catch {
       toast.error('Failed to parse custom endpoint config');
     }
   };
 
   const handleSaveCustom = async () => {
-    if (!customEditor || !expandedId) return;
+    if (!customEditor || !editingCustomId) return;
     const err = validateEditor(customEditor);
     if (err) {
       toast.error(err);
@@ -258,7 +255,7 @@ export function ProvidersSettings() {
       setSavingCustom(true);
       const config = editorToConfig(customEditor);
       await updateProvider(
-        expandedId,
+        editingCustomId,
         {
           displayName: config.name,
           baseUrl: config.baseUrl,
@@ -268,6 +265,7 @@ export function ProvidersSettings() {
       );
       toast.success(`Updated '${config.name}'`);
       setCustomEditor(null);
+      setEditingCustomId(null);
       await loadProviders();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
@@ -293,9 +291,9 @@ export function ProvidersSettings() {
             ? `${url}/v1/models`
             : `${url}/models`;
       const headers: Record<string, string> = {};
-      if (customEditor.apiKey.trim()) headers.Authorization = `Bearer ${customEditor.apiKey.trim()}`;
+      if (customEditor.apiKey.trim())
+        headers.Authorization = `Bearer ${customEditor.apiKey.trim()}`;
       try {
-        const { parseHeaders } = await import('./CustomEndpointEditor.tsx');
         const parsed = parseHeaders(customEditor.headersText);
         if (parsed) Object.assign(headers, parsed);
       } catch {
@@ -354,9 +352,7 @@ export function ProvidersSettings() {
           {providers.length === 0 && (
             <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
               <p class="text-sm text-gray-400">No providers configured.</p>
-              <p class="text-xs text-gray-500 mt-1">
-                Add a provider to start using AI models.
-              </p>
+              <p class="text-xs text-gray-500 mt-1">Add a provider to start using AI models.</p>
             </div>
           )}
 
@@ -438,7 +434,12 @@ export function ProvidersSettings() {
                           }`}
                           title={provider.isDefault ? 'Default provider' : 'Set as default'}
                         >
-                          <svg class="w-4 h-4" fill={provider.isDefault ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor">
+                          <svg
+                            class="w-4 h-4"
+                            fill={provider.isDefault ? 'currentColor' : 'none'}
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
                             <path
                               stroke-linecap="round"
                               stroke-linejoin="round"
@@ -476,7 +477,12 @@ export function ProvidersSettings() {
                           viewBox="0 0 24 24"
                           stroke="currentColor"
                         >
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width={2}
+                            d="M19 9l-7 7-7-7"
+                          />
                         </svg>
                       </div>
                     </div>
@@ -572,8 +578,12 @@ export function ProvidersSettings() {
                           </h5>
                           <div class="flex items-center gap-3">
                             <div class="flex items-center gap-1.5">
-                              <div class={`w-2 h-2 rounded-full ${healthDotClass(provider.healthStatus)}`} />
-                              <span class="text-xs text-gray-300 capitalize">{provider.healthStatus}</span>
+                              <div
+                                class={`w-2 h-2 rounded-full ${healthDotClass(provider.healthStatus)}`}
+                              />
+                              <span class="text-xs text-gray-300 capitalize">
+                                {provider.healthStatus}
+                              </span>
                             </div>
                             <span class="text-xs text-gray-500">
                               Last checked: {formatHealthTime(provider.lastHealthCheckAt)}
@@ -647,13 +657,16 @@ export function ProvidersSettings() {
         />
       )}
 
-      {customEditor && expandedId && (
+      {customEditor && editingCustomId && (
         <EditorModal
           state={customEditor}
           existingIds={[]}
           onChange={setCustomEditor}
           onSave={handleSaveCustom}
-          onClose={() => setCustomEditor(null)}
+          onClose={() => {
+            setCustomEditor(null);
+            setEditingCustomId(null);
+          }}
           saving={savingCustom}
           onTest={handleTestCustom}
           testing={testingCustom}
