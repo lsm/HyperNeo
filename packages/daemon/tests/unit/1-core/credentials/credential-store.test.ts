@@ -3,7 +3,10 @@ import { Database } from 'bun:sqlite';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store';
+import {
+  createCredentialStore,
+  DatabaseCredentialStore,
+} from '../../../../src/lib/credentials/credential-store';
 
 function createStore(secret?: string): { db: Database; store: DatabaseCredentialStore } {
   const db = new Database(':memory:');
@@ -107,6 +110,72 @@ describe('DatabaseCredentialStore', () => {
         process.env.NEOKAI_PROVIDER_CREDENTIAL_KEY = prevEnv;
       }
       fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('createCredentialStore', () => {
+  it('returns DatabaseCredentialStore on non-darwin platforms', () => {
+    const platformSpy = spyOn(os, 'platform').mockReturnValue('linux');
+    const db = new Database(':memory:');
+    try {
+      const store = createCredentialStore(db);
+      expect(store).toBeInstanceOf(DatabaseCredentialStore);
+    } finally {
+      db.close();
+      platformSpy.mockRestore();
+    }
+  });
+
+  it('returns DatabaseCredentialStore on darwin when stdout is not a TTY', () => {
+    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    const originalIsTTY = process.stdout.isTTY;
+    // @ts-expect-error - mocking read-only property
+    process.stdout.isTTY = false;
+    const db = new Database(':memory:');
+    try {
+      const store = createCredentialStore(db);
+      expect(store).toBeInstanceOf(DatabaseCredentialStore);
+    } finally {
+      db.close();
+      // @ts-expect-error - restoring read-only property
+      process.stdout.isTTY = originalIsTTY;
+      platformSpy.mockRestore();
+    }
+  });
+
+  it('returns KeychainCredentialStore on darwin when stdout is a TTY', () => {
+    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    const originalIsTTY = process.stdout.isTTY;
+    // @ts-expect-error - mocking read-only property
+    process.stdout.isTTY = true;
+    const db = new Database(':memory:');
+    try {
+      const store = createCredentialStore(db);
+      // KeychainCredentialStore is not exported, so we verify it's NOT a DatabaseCredentialStore
+      expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
+    } finally {
+      db.close();
+      // @ts-expect-error - restoring read-only property
+      process.stdout.isTTY = originalIsTTY;
+      platformSpy.mockRestore();
+    }
+  });
+
+  it('returns KeychainCredentialStore on darwin when isTTY is undefined', () => {
+    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
+    const originalIsTTY = process.stdout.isTTY;
+    // @ts-expect-error - mocking read-only property
+    process.stdout.isTTY = undefined;
+    const db = new Database(':memory:');
+    try {
+      const store = createCredentialStore(db);
+      expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
+    } finally {
+      db.close();
+      // @ts-expect-error - restoring read-only property
+      process.stdout.isTTY = originalIsTTY;
+      platformSpy.mockRestore();
     }
   });
 });
