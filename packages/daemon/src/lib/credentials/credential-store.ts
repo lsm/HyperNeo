@@ -37,9 +37,8 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   async set(service: string, account: string, data: string): Promise<void> {
-    // Write the password to stdin so it never appears in argv (visible to ps).
-    // security with -w as the last flag reads the password from stdin, then
-    // reads the retype confirmation on the next line.
+    // Pass the secret via -p to avoid the interactive retype prompt that
+    // security opens on /dev/tty when using -w with no existing item.
     return new Promise((resolve, reject) => {
       const child = spawn('security', [
         'add-generic-password',
@@ -48,7 +47,8 @@ export class KeychainCredentialStore implements CredentialStore {
         service,
         '-a',
         account,
-        '-w',
+        '-p',
+        data,
       ]);
 
       let stderr = '';
@@ -66,9 +66,6 @@ export class KeychainCredentialStore implements CredentialStore {
           );
         }
       });
-
-      child.stdin.write(`${data}\n${data}\n`);
-      child.stdin.end();
     });
   }
 
