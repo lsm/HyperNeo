@@ -42,6 +42,9 @@ import type {
   WorkspaceRemoveResponse,
   GitBranchesResponse,
   GitSessionStatusResponse,
+  ProviderRecord,
+  CreateProviderParams,
+  UpdateProviderParams,
 } from '@neokai/shared';
 import type {
   ProviderAuthResponse,
@@ -168,6 +171,68 @@ export async function logoutProvider(
 export async function refreshProvider(providerId: string): Promise<ProviderRefreshResponse> {
   const hub = getHubOrThrow();
   return await hub.request<ProviderRefreshResponse>('auth.refresh', { providerId });
+}
+
+// ==================== Unified Provider Registry ====================
+
+export async function listProviders(): Promise<{
+  providers: Array<ProviderRecord & { available: boolean }>;
+}> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ providers: Array<ProviderRecord & { available: boolean }> }>(
+    'providers.list'
+  );
+}
+
+export async function createProvider(
+  params: CreateProviderParams,
+  credentials?: {
+    apiKey?: string;
+    baseUrl?: string;
+    oauthAccessToken?: string;
+    oauthRefreshToken?: string;
+    oauthExpiresAt?: number;
+  }
+): Promise<{ success: boolean; provider: ProviderRecord }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ success: boolean; provider: ProviderRecord }>('providers.create', {
+    params,
+    credentials,
+  });
+}
+
+export async function updateProvider(
+  id: string,
+  params: Partial<UpdateProviderParams>,
+  credentials?: {
+    apiKey?: string;
+    baseUrl?: string;
+    oauthAccessToken?: string;
+    oauthRefreshToken?: string;
+    oauthExpiresAt?: number;
+  }
+): Promise<{ success: boolean; provider: ProviderRecord }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ success: boolean; provider: ProviderRecord }>('providers.update', {
+    id,
+    params,
+    credentials,
+  });
+}
+
+export async function deleteProvider(id: string): Promise<{ success: boolean }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ success: boolean }>('providers.delete', { id });
+}
+
+export async function setDefaultProvider(id: string): Promise<{ success: boolean }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ success: boolean }>('providers.setDefault', { id });
+}
+
+export async function testProvider(id: string): Promise<{ healthy: boolean; error?: string }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ healthy: boolean; error?: string }>('providers.test', { id });
 }
 
 // ==================== Settings Operations ====================

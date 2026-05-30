@@ -1,39 +1,79 @@
+/**
+ * ProvidersSettings — Unified provider registry view
+ *
+ * Replaces both the old ProvidersSettings (auth-only) and CustomEndpointsSettings.
+ * Shows all providers from the unified `providers.list` RPC with health, enablement,
+ * default-star, and inline detail panels for auth/config/health.
+ */
+
 import { useEffect, useState } from 'preact/hooks';
-import { toast } from '../../lib/toast.ts';
-import type { ProviderAuthStatus, ProviderAuthResponse } from '@neokai/shared/provider';
+import type { ProviderRecord } from '@neokai/shared';
+import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import {
+  listProviders,
+  deleteProvider,
+  updateProvider,
+  setDefaultProvider,
+  testProvider,
   listProviderAuthStatus,
   loginProvider,
   logoutProvider,
   refreshProvider,
 } from '../../lib/api-helpers.ts';
+import { toast } from '../../lib/toast.ts';
 import { SettingsSection } from './SettingsSection.tsx';
-import { OAuthModal } from './OAuthModal.tsx';
 import { Button } from '../ui/Button.tsx';
+import { AddProviderModal } from './AddProviderModal.tsx';
+import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
+import {
+  EditorModal,
+  existingToEditor,
+  editorToConfig,
+  validateEditor,
+  testCustomEndpoint,
+  type EditorState,
+} from './CustomEndpointEditor.tsx';
 
-interface OAuthFlowState {
-  providerId: string;
-  providerName: string;
-  authUrl?: string;
-  userCode?: string;
-  verificationUri?: string;
+interface EnrichedProvider extends ProviderRecord {
+  available: boolean;
+  authStatus?: ProviderAuthStatus;
 }
 
 export function ProvidersSettings() {
-  const [providers, setProviders] = useState<ProviderAuthStatus[]>([]);
+  const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
-  const [pendingProvider, setPendingProvider] = useState<string | null>(null);
-  const [refreshFailed, setRefreshFailed] = useState<Set<string>>(new Set());
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
+  const [savingCustom, setSavingCustom] = useState(false);
+  const [testingCustom, setTestingCustom] = useState(false);
 
-  // Load provider auth statuses
   const loadProviders = async () => {
     try {
-      const response = await listProviderAuthStatus();
-      setProviders(response.providers);
+      setLoading(true);
+      const [{ providers: records }, authResponse] = await Promise.all([
+        listProviders(),
+        listProviderAuthStatus().catch((_err) => {
+          toast.warning('Auth status unavailable — showing cached state');
+          return { providers: [] as ProviderAuthStatus[] };
+        }),
+      ]);
+      const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
+      const enriched = records.map((r) => ({
+        ...r,
+        authStatus: authById.get(r.providerId),
+      }));
+      setProviders(enriched);
+      // If an OAuth flow is active and the provider was deleted, stop polling.
+      if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
+        setOauthFlow(null);
+      }
     } catch {
-      toast.error('Failed to load provider statuses');
-      // Failed to load providers
+      toast.error('Failed to load providers');
     } finally {
       setLoading(false);
     }
@@ -46,114 +86,232 @@ export function ProvidersSettings() {
   // Poll for auth completion when OAuth flow is active
   useEffect(() => {
     if (!oauthFlow) return;
-
     const pollInterval = setInterval(async () => {
       try {
         const response = await listProviderAuthStatus();
         const provider = response.providers.find((p) => p.id === oauthFlow.providerId);
-
         if (provider?.isAuthenticated) {
-          // Auth completed successfully
           setOauthFlow(null);
-          setProviders(response.providers);
           toast.success(`${oauthFlow.providerName} authenticated successfully`);
+          await loadProviders();
         }
       } catch {
         // Polling error - will retry
       }
     }, 2000);
-
     return () => clearInterval(pollInterval);
   }, [oauthFlow]);
 
-  const handleLogin = async (providerId: string, providerName: string) => {
-    setPendingProvider(providerId);
-
+  const handleToggleEnabled = async (provider: EnrichedProvider) => {
+    setPendingId(provider.id);
     try {
-      const response: ProviderAuthResponse = await loginProvider(providerId);
+      await updateProvider(provider.id, { isEnabled: !provider.isEnabled });
+      toast.success(`${provider.displayName} ${provider.isEnabled ? 'disabled' : 'enabled'}`);
+      await loadProviders();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
 
+  const handleSetDefault = async (provider: EnrichedProvider) => {
+    if (provider.isDefault) return;
+    setPendingId(provider.id);
+    try {
+      await setDefaultProvider(provider.id);
+      toast.success(`${provider.displayName} set as default`);
+      await loadProviders();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const handleDelete = async (provider: EnrichedProvider) => {
+    if (!confirm(`Delete provider "${provider.displayName}"?`)) return;
+    setPendingId(provider.id);
+    try {
+      await deleteProvider(provider.id);
+      toast.success(`${provider.displayName} deleted`);
+      await loadProviders();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const handleTest = async (provider: EnrichedProvider) => {
+    setPendingId(provider.id);
+    try {
+      const result = await testProvider(provider.id);
+      if (result.healthy) {
+        toast.success(`${provider.displayName} is healthy`);
+      } else {
+        toast.error(`${provider.displayName} unhealthy: ${result.error || 'unknown'}`);
+      }
+      await loadProviders();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const handleUpdateApiKey = async (provider: EnrichedProvider) => {
+    const key = apiKeys[provider.id]?.trim();
+    if (!key) {
+      toast.error('API key is required');
+      return;
+    }
+    setPendingId(provider.id);
+    try {
+      await updateProvider(provider.id, {}, { apiKey: key });
+      toast.success(`API key updated for ${provider.displayName}`);
+      setApiKeys((prev) => ({ ...prev, [provider.id]: '' }));
+      await loadProviders();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const handleOAuthLogin = async (provider: EnrichedProvider) => {
+    setPendingId(provider.id);
+    try {
+      const response = await loginProvider(provider.providerId);
       if (!response.success) {
         toast.error(response.error || 'Failed to start OAuth flow');
         return;
       }
-
-      // Open auth URL in new tab if provided
       if (response.authUrl) {
         window.open(response.authUrl, '_blank');
       }
-
-      // Show OAuth modal with instructions
       setOauthFlow({
-        providerId,
-        providerName,
+        providerId: provider.providerId,
+        providerName: provider.displayName,
         authUrl: response.authUrl,
         userCode: response.userCode,
         verificationUri: response.verificationUri,
       });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to start login');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Login failed');
     } finally {
-      setPendingProvider(null);
+      setPendingId(null);
     }
   };
 
-  const handleLogout = async (providerId: string, providerName: string) => {
-    setPendingProvider(providerId);
+  const handleOAuthLogout = async (provider: EnrichedProvider) => {
+    setPendingId(provider.id);
     try {
-      const response = await logoutProvider(providerId);
+      const response = await logoutProvider(provider.providerId);
       if (!response.success) {
-        toast.error(response.error || `Failed to logout from ${providerName}`);
+        toast.error(response.error || 'Logout failed');
         return;
       }
-      toast.success(`Logged out from ${providerName}`);
-      // Clear refresh failure state for this provider
-      setRefreshFailed((prev) => {
-        const next = new Set(prev);
-        next.delete(providerId);
-        return next;
-      });
-      // Refresh provider list
+      toast.success(`Logged out from ${provider.displayName}`);
       await loadProviders();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to logout');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Logout failed');
     } finally {
-      setPendingProvider(null);
+      setPendingId(null);
     }
   };
 
-  const handleRefresh = async (providerId: string, providerName: string) => {
-    setPendingProvider(providerId);
+  const handleOAuthRefresh = async (provider: EnrichedProvider) => {
+    setPendingId(provider.id);
     try {
-      const response = await refreshProvider(providerId);
+      const response = await refreshProvider(provider.providerId);
       if (response.success) {
-        toast.success(`Token refreshed for ${providerName}`);
-        setRefreshFailed((prev) => {
-          const next = new Set(prev);
-          next.delete(providerId);
-          return next;
-        });
+        toast.success(`Token refreshed for ${provider.displayName}`);
         await loadProviders();
       } else {
-        toast.error(response.error || 'Failed to refresh token');
-        setRefreshFailed((prev) => new Set(prev).add(providerId));
+        toast.error(response.error || 'Refresh failed');
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to refresh token');
-      setRefreshFailed((prev) => new Set(prev).add(providerId));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Refresh failed');
     } finally {
-      setPendingProvider(null);
+      setPendingId(null);
     }
   };
 
-  const handleOAuthCancel = () => {
-    setOauthFlow(null);
-    // Refresh to get current state
-    loadProviders();
+  const handleEditCustom = (provider: EnrichedProvider) => {
+    if (!provider.customEndpointConfigJson) return;
+    try {
+      const config = JSON.parse(
+        provider.customEndpointConfigJson
+      ) as import('@neokai/shared').CustomEndpointConfig;
+      setCustomEditor(existingToEditor(config));
+      setEditingCustomId(provider.id);
+    } catch {
+      toast.error('Failed to parse custom endpoint config');
+    }
   };
 
-  const handleOAuthComplete = () => {
-    setOauthFlow(null);
-    loadProviders();
+  const handleSaveCustom = async () => {
+    if (!customEditor || !editingCustomId) return;
+    const err = validateEditor(customEditor);
+    if (err) {
+      toast.error(err);
+      return;
+    }
+    try {
+      setSavingCustom(true);
+      const config = editorToConfig(customEditor);
+      await updateProvider(
+        editingCustomId,
+        {
+          displayName: config.name,
+          baseUrl: config.baseUrl,
+          customEndpointConfigJson: JSON.stringify(config),
+        },
+        config.apiKey ? { apiKey: config.apiKey } : undefined
+      );
+      toast.success(`Updated '${config.name}'`);
+      setCustomEditor(null);
+      setEditingCustomId(null);
+      await loadProviders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setSavingCustom(false);
+    }
+  };
+
+  const handleTestCustom = async () => {
+    if (!customEditor) return;
+    try {
+      setTestingCustom(true);
+      const result = await testCustomEndpoint(customEditor);
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Test failed');
+    } finally {
+      setTestingCustom(false);
+    }
+  };
+
+  const healthDotClass = (status: string) => {
+    switch (status) {
+      case 'healthy':
+        return 'bg-green-500';
+      case 'unhealthy':
+        return 'bg-red-500';
+      default:
+        return 'bg-gray-500';
+    }
+  };
+
+  const formatHealthTime = (ts?: number) => {
+    if (!ts) return 'Never';
+    return new Date(ts).toLocaleString();
   };
 
   if (loading) {
@@ -167,96 +325,337 @@ export function ProvidersSettings() {
   return (
     <>
       <SettingsSection title="Providers">
-        <div class="space-y-4">
-          <p class="text-sm text-gray-400 mb-4">
-            Configure authentication for AI providers. Each provider may use OAuth or API keys.
-          </p>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <p class="text-sm text-gray-400">
+              Manage AI providers. Enable, disable, and configure authentication.
+            </p>
+            <Button size="sm" variant="primary" onClick={() => setShowAddModal(true)}>
+              Add Provider
+            </Button>
+          </div>
 
           {providers.length === 0 && (
-            <div class="text-gray-500 text-sm">No providers available</div>
+            <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
+              <p class="text-sm text-gray-400">No providers configured.</p>
+              <p class="text-xs text-gray-500 mt-1">Add a provider to start using AI models.</p>
+            </div>
           )}
+
           {providers.length > 0 && (
-            <div class="space-y-3">
-              {providers.map((provider) => (
-                <div
-                  key={provider.id}
-                  class="flex items-center justify-between p-3 bg-dark-800 rounded-lg border border-dark-700"
-                >
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span class="text-sm font-medium text-gray-200">{provider.displayName}</span>
-                      {provider.isAuthenticated && (
-                        <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-green-900/50 text-green-400">
-                          {provider.method === 'api_key' ? 'API Key' : 'OAuth'}
-                        </span>
-                      )}
-                      {provider.needsRefresh && (
-                        <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-900/50 text-yellow-400">
-                          Refresh Needed
-                        </span>
-                      )}
+            <div class="space-y-2">
+              {providers.map((provider) => {
+                const isExpanded = expandedId === provider.id;
+                const isPending = pendingId === provider.id;
+                const isCustom = provider.kind === 'custom_endpoint';
+                const auth = provider.authStatus;
+                const isAuthenticated = provider.available || auth?.isAuthenticated;
+                const needsRefresh = auth?.needsRefresh;
+
+                return (
+                  <div
+                    key={provider.id}
+                    class="rounded-lg border border-white/[0.08] bg-white/[0.025] overflow-hidden"
+                  >
+                    {/* Row header */}
+                    <div
+                      class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      onClick={() => setExpandedId(isExpanded ? null : provider.id)}
+                    >
+                      {/* Health dot */}
+                      <div
+                        class={`w-2 h-2 rounded-full flex-shrink-0 ${healthDotClass(provider.healthStatus)}`}
+                        title={`Health: ${provider.healthStatus}`}
+                      />
+
+                      {/* Name */}
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <span class="text-sm font-medium text-gray-100">
+                            {provider.displayName}
+                          </span>
+                          <span class="text-[10px] uppercase tracking-wide text-gray-500 px-1.5 py-0.5 rounded bg-dark-800">
+                            {isCustom ? 'Custom' : 'Built-in'}
+                          </span>
+                          <span
+                            class={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                              provider.authType === 'api_key'
+                                ? 'bg-blue-900/40 text-blue-300'
+                                : provider.authType === 'oauth'
+                                  ? 'bg-purple-900/40 text-purple-300'
+                                  : 'bg-gray-800 text-gray-400'
+                            }`}
+                          >
+                            {provider.authType === 'api_key'
+                              ? 'API Key'
+                              : provider.authType === 'oauth'
+                                ? 'OAuth'
+                                : 'None'}
+                          </span>
+                          {needsRefresh && (
+                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-900/40 text-yellow-300">
+                              Refresh Needed
+                            </span>
+                          )}
+                        </div>
+                        <div class="text-xs text-gray-500 font-mono mt-0.5">
+                          {provider.providerId}
+                        </div>
+                      </div>
+
+                      {/* Controls */}
+                      <div class="flex items-center gap-2 flex-shrink-0">
+                        {/* Default star */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetDefault(provider);
+                          }}
+                          disabled={isPending || provider.isDefault}
+                          class={`p-1 rounded transition-colors ${
+                            provider.isDefault
+                              ? 'text-yellow-400'
+                              : 'text-gray-600 hover:text-yellow-400'
+                          }`}
+                          title={provider.isDefault ? 'Default provider' : 'Set as default'}
+                        >
+                          <svg
+                            class="w-4 h-4"
+                            fill={provider.isDefault ? 'currentColor' : 'none'}
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width={2}
+                              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
+                            />
+                          </svg>
+                        </button>
+
+                        {/* Enabled toggle */}
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={provider.isEnabled}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleEnabled(provider);
+                          }}
+                          disabled={isPending}
+                          class={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full transition-colors ${
+                            provider.isEnabled ? 'bg-blue-600' : 'bg-dark-700'
+                          }`}
+                        >
+                          <span
+                            class={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out mt-0.5 ml-0.5 ${
+                              provider.isEnabled ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+
+                        {/* Expand chevron */}
+                        <svg
+                          class={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width={2}
+                            d="M19 9l-7 7-7-7"
+                          />
+                        </svg>
+                      </div>
                     </div>
-                    {provider.error && <p class="text-xs text-red-400 mt-1">{provider.error}</p>}
-                    {provider.expiresAt && provider.isAuthenticated && (
-                      <p class="text-xs text-gray-500 mt-1">
-                        Expires: {new Date(provider.expiresAt).toLocaleString()}
-                      </p>
+
+                    {/* Expanded detail panel */}
+                    {isExpanded && (
+                      <div class="px-4 pb-4 border-t border-white/[0.06] space-y-4">
+                        {/* Auth section */}
+                        <div class="pt-3">
+                          <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                            Authentication
+                          </h5>
+                          {provider.authType === 'api_key' && (
+                            <div class="flex gap-2">
+                              <input
+                                type="password"
+                                placeholder={isAuthenticated ? 'Update API key' : 'Enter API key'}
+                                value={apiKeys[provider.id] ?? ''}
+                                onInput={(e) =>
+                                  setApiKeys((prev) => ({
+                                    ...prev,
+                                    [provider.id]: e.currentTarget.value,
+                                  }))
+                                }
+                                class="flex-1 min-w-0 bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+                              />
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={() => handleUpdateApiKey(provider)}
+                                loading={isPending}
+                                disabled={isPending}
+                              >
+                                {isAuthenticated ? 'Update key' : 'Set key'}
+                              </Button>
+                            </div>
+                          )}
+                          {provider.authType === 'oauth' && (
+                            <div class="flex gap-2">
+                              {needsRefresh && (
+                                <Button
+                                  size="sm"
+                                  variant="warning"
+                                  onClick={() => handleOAuthRefresh(provider)}
+                                  loading={isPending}
+                                  disabled={isPending}
+                                >
+                                  Refresh Login
+                                </Button>
+                              )}
+                              {isAuthenticated || needsRefresh ? (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => handleOAuthLogout(provider)}
+                                  loading={isPending}
+                                  disabled={isPending}
+                                >
+                                  Logout
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  onClick={() => handleOAuthLogin(provider)}
+                                  loading={isPending}
+                                  disabled={isPending}
+                                >
+                                  Login
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          {provider.authType === 'none' && (
+                            <p class="text-xs text-gray-500">No authentication required.</p>
+                          )}
+                        </div>
+
+                        {/* Config section */}
+                        {isCustom && provider.baseUrl && (
+                          <div>
+                            <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                              Configuration
+                            </h5>
+                            <div class="text-xs text-gray-500 font-mono">{provider.baseUrl}</div>
+                          </div>
+                        )}
+
+                        {/* Health section */}
+                        <div>
+                          <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                            Health
+                          </h5>
+                          <div class="flex items-center gap-3">
+                            <div class="flex items-center gap-1.5">
+                              <div
+                                class={`w-2 h-2 rounded-full ${healthDotClass(provider.healthStatus)}`}
+                              />
+                              <span class="text-xs text-gray-300 capitalize">
+                                {provider.healthStatus}
+                              </span>
+                            </div>
+                            <span class="text-xs text-gray-500">
+                              Last checked: {formatHealthTime(provider.lastHealthCheckAt)}
+                            </span>
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => handleTest(provider)}
+                              loading={isPending}
+                              disabled={isPending}
+                            >
+                              Test connection
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div class="flex gap-2 pt-1">
+                          {isCustom && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => handleEditCustom(provider)}
+                              disabled={isPending}
+                            >
+                              Edit
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => handleDelete(provider)}
+                            loading={isPending}
+                            disabled={isPending}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <div class="flex-shrink-0 ml-4 flex items-center gap-2">
-                    {provider.needsRefresh && (
-                      <Button
-                        variant="warning"
-                        size="sm"
-                        onClick={() => handleRefresh(provider.id, provider.displayName)}
-                        loading={pendingProvider === provider.id}
-                        disabled={!!pendingProvider}
-                      >
-                        Refresh Login
-                      </Button>
-                    )}
-                    {/* Show Logout for authenticated providers */}
-                    {(provider.isAuthenticated ||
-                      (provider.needsRefresh && refreshFailed.has(provider.id))) && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => handleLogout(provider.id, provider.displayName)}
-                        loading={pendingProvider === provider.id}
-                        disabled={!!pendingProvider}
-                      >
-                        Logout
-                      </Button>
-                    )}
-                    {/* Show Login for unauthenticated providers */}
-                    {!provider.isAuthenticated && !provider.needsRefresh && (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleLogin(provider.id, provider.displayName)}
-                        loading={pendingProvider === provider.id}
-                        disabled={!!pendingProvider}
-                      >
-                        Login
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       </SettingsSection>
 
-      {/* OAuth Modal */}
+      {showAddModal && (
+        <AddProviderModal
+          existingProviderIds={providers.map((p) => p.providerId)}
+          onClose={() => setShowAddModal(false)}
+          onProviderAdded={loadProviders}
+        />
+      )}
+
       {oauthFlow && (
         <OAuthModal
           providerName={oauthFlow.providerName}
           authUrl={oauthFlow.authUrl}
           userCode={oauthFlow.userCode}
           verificationUri={oauthFlow.verificationUri}
-          onCancel={handleOAuthCancel}
-          onComplete={handleOAuthComplete}
+          onCancel={() => {
+            setOauthFlow(null);
+            loadProviders();
+          }}
+          onComplete={() => {
+            setOauthFlow(null);
+            loadProviders();
+          }}
+        />
+      )}
+
+      {customEditor && editingCustomId && (
+        <EditorModal
+          state={customEditor}
+          existingIds={[]}
+          onChange={setCustomEditor}
+          onSave={handleSaveCustom}
+          onClose={() => {
+            setCustomEditor(null);
+            setEditingCustomId(null);
+          }}
+          saving={savingCustom}
+          onTest={handleTestCustom}
+          testing={testingCustom}
         />
       )}
     </>

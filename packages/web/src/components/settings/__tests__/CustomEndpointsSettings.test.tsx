@@ -47,7 +47,8 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-import { CustomEndpointsSettings, __test__ } from '../CustomEndpointsSettings.tsx';
+import { CustomEndpointsSettings } from '../CustomEndpointsSettings.tsx';
+import { __test__ } from '../CustomEndpointEditor.tsx';
 import { CUSTOM_ENDPOINT_PRESETS, findPreset } from '../customEndpointPresets.ts';
 
 describe('CustomEndpointsSettings — helpers', () => {
@@ -193,59 +194,5 @@ describe('CustomEndpointsSettings — presets', () => {
     const p = findPreset('openrouter')!;
     expect(p.apiKeyRequired).toBe(true);
     expect(p.defaultModelCapabilities?.streamUsage).toBe(true);
-  });
-});
-
-describe('CustomEndpointsSettings — render', () => {
-  beforeEach(() => {
-    mockListCustomEndpoints.mockReset();
-    mockAddCustomEndpoint.mockReset();
-    mockUpdateCustomEndpoint.mockReset();
-    mockRemoveCustomEndpoint.mockReset();
-    mockToastError.mockReset();
-    mockToastSuccess.mockReset();
-  });
-
-  afterEach(() => cleanup());
-
-  it('shows empty state when no endpoints exist', async () => {
-    mockListCustomEndpoints.mockResolvedValue({ endpoints: [] });
-    render(<CustomEndpointsSettings />);
-    await waitFor(() => {
-      expect(screen.getByText(/No custom endpoints configured/i)).toBeTruthy();
-    });
-  });
-
-  it('renders the list with capability badges for each endpoint model', async () => {
-    mockListCustomEndpoints.mockResolvedValue({
-      endpoints: [
-        {
-          id: 'lm',
-          name: 'LM Studio',
-          type: 'openai-chat',
-          baseUrl: 'http://localhost:1234/v1',
-          models: [{ id: 'qwen', capabilities: { vision: true, thinking: false, toolUse: true } }],
-        },
-      ],
-    });
-    render(<CustomEndpointsSettings />);
-    await waitFor(() => {
-      expect(screen.getByText('LM Studio')).toBeTruthy();
-      expect(screen.getByText('qwen')).toBeTruthy();
-      // vision + tools badges should be rendered
-      expect(screen.getAllByText('vision').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('tools').length).toBeGreaterThan(0);
-    });
-  });
-
-  it('opens the preset picker when "Add provider" is clicked', async () => {
-    mockListCustomEndpoints.mockResolvedValue({ endpoints: [] });
-    render(<CustomEndpointsSettings />);
-    await waitFor(() => screen.getByText(/Add provider/i));
-    fireEvent.click(screen.getByText(/Add provider/i));
-    expect(screen.getByText(/Choose a preset/i)).toBeTruthy();
-    // Presets visible
-    expect(screen.getByText(/Ollama \(local\)/i)).toBeTruthy();
-    expect(screen.getByText(/OpenRouter/i)).toBeTruthy();
   });
 });
