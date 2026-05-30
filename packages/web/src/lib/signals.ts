@@ -132,7 +132,6 @@ export const currentSpaceScopeIdSignal = signal<string | null>(null);
 export type SettingsSection =
   | 'general'
   | 'providers'
-  | 'custom-endpoints'
   | 'app-mcp-servers'
   | 'skills'
   | 'models'

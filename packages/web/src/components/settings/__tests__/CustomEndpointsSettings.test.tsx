@@ -47,7 +47,8 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-import { CustomEndpointsSettings, __test__ } from '../CustomEndpointsSettings.tsx';
+import { CustomEndpointsSettings } from '../CustomEndpointsSettings.tsx';
+import { __test__ } from '../CustomEndpointEditor.tsx';
 import { CUSTOM_ENDPOINT_PRESETS, findPreset } from '../customEndpointPresets.ts';
 
 describe('CustomEndpointsSettings — helpers', () => {

@@ -55,7 +55,6 @@ const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'general',
   'providers',
-  'custom-endpoints',
   'app-mcp-servers',
   'skills',
   'models',
@@ -230,6 +229,7 @@ function getCurrentPathWithSearch(): string {
 
 export function getSettingsSectionFromSearch(search: string): SettingsSection {
   const section = new URLSearchParams(search).get('tab');
+  if (section === 'custom-endpoints') return 'providers';
   return section && SETTINGS_SECTIONS.has(section as SettingsSection)
     ? (section as SettingsSection)
     : 'general';
