@@ -127,28 +127,8 @@ describe('createCredentialStore', () => {
     }
   });
 
-  it('returns DatabaseCredentialStore on darwin when stdout is not a TTY', () => {
+  it('returns KeychainCredentialStore on darwin', () => {
     const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
-    const originalIsTTY = process.stdout.isTTY;
-    // @ts-expect-error - mocking read-only property
-    process.stdout.isTTY = false;
-    const db = new Database(':memory:');
-    try {
-      const store = createCredentialStore(db);
-      expect(store).toBeInstanceOf(DatabaseCredentialStore);
-    } finally {
-      db.close();
-      // @ts-expect-error - restoring read-only property
-      process.stdout.isTTY = originalIsTTY;
-      platformSpy.mockRestore();
-    }
-  });
-
-  it('returns KeychainCredentialStore on darwin when stdout is a TTY', () => {
-    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
-    const originalIsTTY = process.stdout.isTTY;
-    // @ts-expect-error - mocking read-only property
-    process.stdout.isTTY = true;
     const db = new Database(':memory:');
     try {
       const store = createCredentialStore(db);
@@ -156,25 +136,6 @@ describe('createCredentialStore', () => {
       expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
     } finally {
       db.close();
-      // @ts-expect-error - restoring read-only property
-      process.stdout.isTTY = originalIsTTY;
-      platformSpy.mockRestore();
-    }
-  });
-
-  it('returns DatabaseCredentialStore on darwin when isTTY is undefined', () => {
-    const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
-    const originalIsTTY = process.stdout.isTTY;
-    // @ts-expect-error - mocking read-only property
-    process.stdout.isTTY = undefined;
-    const db = new Database(':memory:');
-    try {
-      const store = createCredentialStore(db);
-      expect(store).toBeInstanceOf(DatabaseCredentialStore);
-    } finally {
-      db.close();
-      // @ts-expect-error - restoring read-only property
-      process.stdout.isTTY = originalIsTTY;
       platformSpy.mockRestore();
     }
   });
