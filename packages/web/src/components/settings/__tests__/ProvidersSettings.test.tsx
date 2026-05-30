@@ -20,6 +20,7 @@ const {
   mockCreateProvider,
   mockToastError,
   mockToastSuccess,
+  mockToastWarning,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -33,6 +34,7 @@ const {
   mockCreateProvider: vi.fn(),
   mockToastError: vi.fn(),
   mockToastSuccess: vi.fn(),
+  mockToastWarning: vi.fn(),
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
@@ -54,7 +56,7 @@ vi.mock('../../../lib/toast.ts', () => ({
     error: (msg: string) => mockToastError(msg),
     success: (msg: string) => mockToastSuccess(msg),
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: (msg: string) => mockToastWarning(msg),
   },
 }));
 
@@ -158,7 +160,18 @@ vi.mock('../CustomEndpointEditor.tsx', () => ({
   presetToEditor: vi.fn(),
   editorToConfig: vi.fn(),
   validateEditor: vi.fn(() => null),
-  existingToEditor: vi.fn(),
+  existingToEditor: vi.fn(() => ({
+    mode: 'edit',
+    id: 'lm',
+    type: 'openai-chat',
+    name: 'LM Studio',
+    baseUrl: 'http://localhost:1234/v1',
+    apiKey: '',
+    headersText: '',
+    defaultModelId: '',
+    models: [],
+  })),
+  testCustomEndpoint: vi.fn(),
 }));
 
 import { ProvidersSettings } from '../ProvidersSettings.tsx';
@@ -281,7 +294,7 @@ describe('ProvidersSettings', () => {
     ];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
-    mockUpdateProvider.mockResolvedValue({ success: true });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: providers[0] });
 
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
@@ -372,7 +385,7 @@ describe('ProvidersSettings', () => {
     ];
     mockListProviders.mockResolvedValue({ providers });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
-    mockUpdateProvider.mockResolvedValue({ success: true });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: providers[0] });
 
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
@@ -521,5 +534,110 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
     });
+  });
+
+  it('shows warning toast when auth status fails', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    mockListProviderAuthStatus.mockRejectedValue(new Error('Auth timeout'));
+
+    render(<ProvidersSettings />);
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledWith(
+        'Auth status unavailable — showing cached state'
+      );
+    });
+  });
+
+  it('opens EditorModal when custom endpoint edit is clicked', async () => {
+    const providers = [
+      createMockProvider('1', 'custom:lm', {
+        displayName: 'LM Studio',
+        kind: 'custom_endpoint',
+        baseUrl: 'http://localhost:1234/v1',
+        customEndpointConfigJson: JSON.stringify({
+          id: 'lm',
+          type: 'openai-chat',
+          name: 'LM Studio',
+          baseUrl: 'http://localhost:1234/v1',
+          models: [{ id: 'qwen' }],
+        }),
+      }),
+    ];
+    mockListProviders.mockResolvedValue({ providers });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('LM Studio'));
+
+    // Expand row
+    const row = container.querySelector('[class*="cursor-pointer"]');
+    if (row) fireEvent.click(row);
+    await waitFor(() => expect(container.textContent).toContain('Edit'));
+
+    const editButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Edit')
+    );
+    if (editButton) fireEvent.click(editButton);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('editor-modal')).toBeTruthy();
+    });
+  });
+
+  it('polls auth status and closes OAuth modal on authentication', async () => {
+    vi.useFakeTimers();
+    const providers = [
+      createMockProvider('1', 'anthropic-copilot', {
+        displayName: 'Copilot',
+        authType: 'oauth',
+        available: false,
+      }),
+    ];
+    mockListProviders.mockResolvedValue({ providers });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic-copilot',
+          displayName: 'Copilot',
+          isAuthenticated: false,
+          method: 'oauth',
+        },
+      ],
+    });
+    mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+
+    // Expand row
+    const row = container.querySelector('[class*="cursor-pointer"]');
+    if (row) fireEvent.click(row);
+    await waitFor(() => expect(container.textContent).toContain('Login'));
+
+    const loginButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Login')
+    );
+    if (loginButton) fireEvent.click(loginButton);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('oauth-modal')).toBeTruthy();
+    });
+
+    // Simulate auth completion on next poll
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        { id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: true, method: 'oauth' },
+      ],
+    });
+
+    vi.advanceTimersByTime(2500);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('oauth-modal')).toBeNull();
+    });
+
+    vi.useRealTimers();
   });
 });

@@ -183,6 +183,40 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
   return config;
 }
 
+/**
+ * Probe a custom endpoint and return whether it responds.
+ * Throws on network errors; returns `{ success, message }` for HTTP outcomes.
+ */
+export async function testCustomEndpoint(
+  state: EditorState
+): Promise<{ success: boolean; message: string }> {
+  const err = validateEditor(state);
+  if (err) return { success: false, message: err };
+
+  const url = state.baseUrl.trim().replace(/\/+$/, '');
+  const probe =
+    state.type === 'ollama-native'
+      ? `${url}/api/tags`
+      : state.type === 'anthropic-messages'
+        ? `${url}/v1/models`
+        : `${url}/models`;
+
+  const headers: Record<string, string> = {};
+  if (state.apiKey.trim()) headers.Authorization = `Bearer ${state.apiKey.trim()}`;
+  try {
+    const parsed = parseHeaders(state.headersText);
+    if (parsed) Object.assign(headers, parsed);
+  } catch {
+    // Validated above
+  }
+
+  const resp = await fetch(probe, { method: 'GET', headers });
+  if (!resp.ok) {
+    return { success: false, message: `Probe ${probe} → HTTP ${resp.status}` };
+  }
+  return { success: true, message: `Reached ${probe}` };
+}
+
 export function validateEditor(state: EditorState): string | null {
   if (!state.id.trim()) return 'Endpoint id is required';
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(state.id.trim()))

@@ -72,7 +72,7 @@ vi.mock('../CustomEndpointEditor.tsx', () => ({
   presetToEditor: vi.fn(),
   editorToConfig: vi.fn(),
   validateEditor: vi.fn(() => null),
-  parseHeaders: vi.fn(() => undefined),
+  testCustomEndpoint: vi.fn(),
 }));
 
 import { AddProviderModal } from '../AddProviderModal.tsx';
@@ -113,7 +113,10 @@ describe('AddProviderModal', () => {
   });
 
   it('creates API key provider on add', async () => {
-    mockCreateProvider.mockResolvedValue({ success: true });
+    mockCreateProvider.mockResolvedValue({
+      success: true,
+      provider: { id: '1', providerId: 'anthropic' },
+    });
     const onProviderAdded = vi.fn();
     const onClose = vi.fn();
 
@@ -160,7 +163,10 @@ describe('AddProviderModal', () => {
 
   it('initiates OAuth login before creating provider record', async () => {
     mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
-    mockCreateProvider.mockResolvedValue({ success: true });
+    mockCreateProvider.mockResolvedValue({
+      success: true,
+      provider: { id: '1', providerId: 'anthropic' },
+    });
     const onProviderAdded = vi.fn();
 
     render(

@@ -30,7 +30,7 @@ import {
   existingToEditor,
   editorToConfig,
   validateEditor,
-  parseHeaders,
+  testCustomEndpoint,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 
@@ -57,7 +57,10 @@ export function ProvidersSettings() {
       setLoading(true);
       const [{ providers: records }, authResponse] = await Promise.all([
         listProviders(),
-        listProviderAuthStatus().catch(() => ({ providers: [] as ProviderAuthStatus[] })),
+        listProviderAuthStatus().catch((_err) => {
+          toast.warning('Auth status unavailable — showing cached state');
+          return { providers: [] as ProviderAuthStatus[] };
+        }),
       ]);
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
@@ -65,6 +68,10 @@ export function ProvidersSettings() {
         authStatus: authById.get(r.providerId),
       }));
       setProviders(enriched);
+      // If an OAuth flow is active and the provider was deleted, stop polling.
+      if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
+        setOauthFlow(null);
+      }
     } catch {
       toast.error('Failed to load providers');
     } finally {
@@ -276,35 +283,14 @@ export function ProvidersSettings() {
 
   const handleTestCustom = async () => {
     if (!customEditor) return;
-    const err = validateEditor(customEditor);
-    if (err) {
-      toast.error(err);
-      return;
-    }
     try {
       setTestingCustom(true);
-      const url = customEditor.baseUrl.replace(/\/+$/, '');
-      const probe =
-        customEditor.type === 'ollama-native'
-          ? `${url}/api/tags`
-          : customEditor.type === 'anthropic-messages'
-            ? `${url}/v1/models`
-            : `${url}/models`;
-      const headers: Record<string, string> = {};
-      if (customEditor.apiKey.trim())
-        headers.Authorization = `Bearer ${customEditor.apiKey.trim()}`;
-      try {
-        const parsed = parseHeaders(customEditor.headersText);
-        if (parsed) Object.assign(headers, parsed);
-      } catch {
-        // Validated above
+      const result = await testCustomEndpoint(customEditor);
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
       }
-      const resp = await fetch(probe, { method: 'GET', headers });
-      if (!resp.ok) {
-        toast.error(`Probe ${probe} → HTTP ${resp.status}`);
-        return;
-      }
-      toast.success(`Reached ${probe}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Test failed');
     } finally {

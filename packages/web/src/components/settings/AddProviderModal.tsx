@@ -18,7 +18,7 @@ import {
   presetToEditor,
   editorToConfig,
   validateEditor,
-  parseHeaders,
+  testCustomEndpoint,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import type { ProviderAuthResponse } from '@neokai/shared/provider';
@@ -241,35 +241,14 @@ export function AddProviderModal({
 
   const handleTestCustom = async () => {
     if (!customEditor) return;
-    const err = validateEditor(customEditor);
-    if (err) {
-      toast.error(err);
-      return;
-    }
     try {
       setTestingCustom(true);
-      const url = customEditor.baseUrl.replace(/\/+$/, '');
-      const probe =
-        customEditor.type === 'ollama-native'
-          ? `${url}/api/tags`
-          : customEditor.type === 'anthropic-messages'
-            ? `${url}/v1/models`
-            : `${url}/models`;
-      const headers: Record<string, string> = {};
-      if (customEditor.apiKey.trim())
-        headers.Authorization = `Bearer ${customEditor.apiKey.trim()}`;
-      try {
-        const parsed = parseHeaders(customEditor.headersText);
-        if (parsed) Object.assign(headers, parsed);
-      } catch {
-        // Validated above
+      const result = await testCustomEndpoint(customEditor);
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
       }
-      const resp = await fetch(probe, { method: 'GET', headers });
-      if (!resp.ok) {
-        toast.error(`Probe ${probe} → HTTP ${resp.status}`);
-        return;
-      }
-      toast.success(`Reached ${probe}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Test failed');
     } finally {
