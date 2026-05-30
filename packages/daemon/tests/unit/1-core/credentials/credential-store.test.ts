@@ -162,7 +162,7 @@ describe('createCredentialStore', () => {
     }
   });
 
-  it('returns KeychainCredentialStore on darwin when isTTY is undefined', () => {
+  it('returns DatabaseCredentialStore on darwin when isTTY is undefined', () => {
     const platformSpy = spyOn(os, 'platform').mockReturnValue('darwin');
     const originalIsTTY = process.stdout.isTTY;
     // @ts-expect-error - mocking read-only property
@@ -170,7 +170,7 @@ describe('createCredentialStore', () => {
     const db = new Database(':memory:');
     try {
       const store = createCredentialStore(db);
-      expect(store).not.toBeInstanceOf(DatabaseCredentialStore);
+      expect(store).toBeInstanceOf(DatabaseCredentialStore);
     } finally {
       db.close();
       // @ts-expect-error - restoring read-only property

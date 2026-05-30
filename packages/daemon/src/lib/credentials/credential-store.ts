@@ -38,8 +38,8 @@ export class KeychainCredentialStore implements CredentialStore {
 
   async set(service: string, account: string, data: string): Promise<void> {
     // Write the password to stdin so it never appears in argv (visible to ps).
-    // security with -w as the last flag reads the password from stdin, then
-    // reads the retype confirmation on the next line.
+    // security with -w reads the initial password from stdin, but the retype
+    // confirmation is read from /dev/tty, which blocks non-interactive use.
     return new Promise((resolve, reject) => {
       const child = spawn('security', [
         'add-generic-password',
@@ -168,7 +168,7 @@ export class DatabaseCredentialStore implements CredentialStore {
 }
 
 export function createCredentialStore(db: Database): CredentialStore {
-  if (platform() === 'darwin' && process.stdout?.isTTY !== false) {
+  if (platform() === 'darwin' && process.stdout?.isTTY === true) {
     return new KeychainCredentialStore();
   }
   return new DatabaseCredentialStore(db);
