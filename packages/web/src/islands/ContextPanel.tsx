@@ -40,12 +40,6 @@ const SETTINGS_SECTIONS: Array<{
   { id: 'general', label: 'General', icon: 'settings', accent: 'text-blue-300 bg-blue-500/15' },
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-sky-300 bg-sky-500/15' },
   {
-    id: 'custom-endpoints',
-    label: 'Custom Endpoints',
-    icon: 'plug',
-    accent: 'text-fuchsia-300 bg-fuchsia-500/15',
-  },
-  {
     id: 'app-mcp-servers',
     label: 'MCP Servers',
     icon: 'server',

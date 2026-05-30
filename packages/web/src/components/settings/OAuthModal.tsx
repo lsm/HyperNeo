@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Button } from '../ui/Button.tsx';
 
+export interface OAuthFlowState {
+  providerId: string;
+  providerName: string;
+  authUrl?: string;
+  userCode?: string;
+  verificationUri?: string;
+}
+
 interface OAuthModalProps {
   providerName: string;
   authUrl?: string;
