@@ -31,7 +31,7 @@ This is not a redesign mandate. The first design-system migration should preserv
 
 ### 2.1 `packages/ui`
 
-`packages/ui` currently exports reusable primitives and base components through `@neokai/ui`.
+`packages/ui` currently exports reusable primitives and base components through `@neokai/ui`. Many of these exports are headless or slot-oriented primitives plus demo coverage, not yet NeoKai's visual product component authority.
 
 Examples:
 
@@ -102,6 +102,23 @@ Current token ownership is split:
 - TypeScript tokens live in `packages/web/src/lib/design-tokens.ts`.
 - `packages/ui` components generally expose behavior and styling hooks, but do not yet own the NeoKai product tokens.
 - Feature components still use many direct Tailwind class strings.
+
+### 2.5 SDK Tool Renderer Island
+
+The SDK tool renderers are intentionally not generic UI primitives.
+
+Protected web-owned components:
+
+- `packages/web/src/components/sdk/tools/ToolResultCard.tsx`
+- `packages/web/src/components/sdk/tools/ToolProgressCard.tsx`
+- `packages/web/src/components/sdk/tools/tool-registry.ts`
+- `packages/web/src/components/sdk/tools/ToolIcon.tsx`
+- `packages/web/src/components/sdk/tools/ToolSummary.tsx`
+- `packages/web/src/components/sdk/tools/DiffViewer.tsx`
+- `packages/web/src/components/sdk/tools/CodeViewer.tsx`
+- `packages/web/src/components/sdk/tools/TodoViewer.tsx`
+
+These components own SDK-specific behavior: tool input/result summaries, custom tool renderers, diff/code output display, nested subagent tool rendering, output deletion, running-state borders, and compatibility with current SDK message shapes. They may consume shared tokens or small primitives when that preserves output exactly, but they should not be rebuilt from `@neokai/ui` during the broad UI migration.
 
 This makes it easy for new UI work to drift.
 
@@ -426,6 +443,7 @@ The UI design system cleanup is complete when:
 - PRs that migrate UI components list any intentional visual or interaction differences.
 - Public `@neokai/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
+- `ToolResultCard`, `ToolProgressCard`, SDK tool registry, custom renderers, output deletion, and subagent nested tool rendering remain visually and behaviorally unchanged unless a dedicated tool-renderer redesign PR is approved.
 - The design system package can be evolved without editing Space, Forge, or chat feature code except where product composition changes are intentional.
 
 ---

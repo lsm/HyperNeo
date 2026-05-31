@@ -817,6 +817,8 @@ Rules:
 
 The agent runtime abstraction must be designed from actual SDK surfaces. Before adapter implementation starts beyond a boundary skeleton, the team should inspect each supported runtime's source code, public type files, and protocol documentation, then produce a concrete compatibility matrix and superset type model.
 
+This audit is a hard blocker for stable adapter contracts. A thin wrapper around today's `AgentSession` is allowed only as a compatibility skeleton; it must not freeze Claude-specific assumptions as the generic Agent Runtime API.
+
 Initial runtime audit targets:
 
 - Claude Agent SDK, including the installed package types and the current local SDK declarations.
@@ -946,6 +948,7 @@ The architecture can still start with Claude Agent SDK as the first runtime, but
 - New UI code reads runtime/provider capabilities from read models.
 - New provider work declares model/bridge capabilities.
 - New runtime work implements `AgentRuntimeAdapter`.
+- New direct imports of `@anthropic-ai/claude-agent-sdk` are allowed only inside the Claude adapter or explicitly named compatibility internals.
 
 ---
 
@@ -973,6 +976,7 @@ Success criteria:
 - a runtime profile can represent today's session config
 - UI/API can ask whether `Claude Agent SDK + OpenAI/Codex/OpenRouter/Ollama/custom` is native, bridged, degraded, or unsupported
 - Space runtime can depend on the gateway interface for new code
+- provider credential routing no longer relies on hidden global environment mutation for new runtime paths
 
 ---
 

@@ -551,10 +551,13 @@ Compatibility aliases let old MessageHub methods call new fabric names:
 
 ```typescript
 compat.alias('space.task.create', {
-  fromMessageHubMethod: 'space.task.create',
+  fromMessageHubMethod: 'spaceTask.create',
   toFabricName: 'space.task.create',
+  preserveLegacyResultShape: true,
 });
 ```
+
+The alias inventory must use the actual legacy RPC names from current code. The first Space slice maps `spaceTask.create` to `space.task.create`; it does not assume legacy MessageHub methods already follow fabric dot naming.
 
 ---
 
@@ -721,6 +724,7 @@ Handlers store and mutate `prompt_policy_records`; the Agent Runtime prompt poli
 - Bridge fabric events/query deltas back to current MessageHub event delivery.
 - Keep existing WebSocket client payloads working through aliases.
 - Treat new MessageHub APIs as migration debt: new semantic contracts are added to MessageFabric first, and the bridge only maps old client shapes.
+- Generate and review a legacy RPC-to-fabric alias inventory before switching any handler. Each alias records old name, fabric name, legacy request shape, legacy response shape, and deprecation/removal status.
 
 ### Phase 4: First Vertical Slice
 

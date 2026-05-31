@@ -660,6 +660,20 @@ New write code should follow these rules:
 5. Repositories may still enforce local constraints, allocate IDs, and use small internal transactions only for legacy paths.
 6. Service-level methods produce durable events based on domain decisions, not repository side effects.
 
+### UoW-Safe Repository Mode
+
+Migrated repositories need an explicit UoW-safe binding before they are reused inside `StorageUnitOfWork`.
+
+Rules:
+
+1. A UoW-bound repository must not call `reactiveDb.notifyChange(...)`; it records table and scope changes through `ChangeRecorder`.
+2. A UoW-bound repository must not publish `InternalEventBus`, `MessageHub`, `ClientEventGateway`, or fabric events directly.
+3. A UoW-bound repository must not open an independent write transaction unless it is proven savepoint-safe and coordinated by the runner.
+4. Legacy repository methods may keep existing notify/publish/transaction behavior until migrated.
+5. Public services should expose either a legacy method or a UoW-scoped method, not one method whose side effects depend on hidden ambient state.
+
+The first migrated slice should bind only the repositories it needs, such as `SpaceTaskRepository` and `JobQueueRepository`, and prove rollback suppresses domain rows, outbox rows, receipt completion, and live-query invalidation together.
+
 ### Legacy Code
 
 Existing repositories can keep their current behavior while migration proceeds.

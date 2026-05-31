@@ -625,6 +625,7 @@ Forge is a good first slice because it is new, comparatively contained, and alre
 - Move command/query/event envelope types there.
 - Move MessageHub runtime implementation to `compat/message-hub`.
 - Update daemon and web code to import protocol/client types from `messaging/*`.
+- Add package export-map parity before caller migration: every currently used public subpath is either exported, marked internal, or covered by an explicit compatibility alias.
 
 ### Phase 4: Prompt Policy Boundaries
 
@@ -654,9 +655,12 @@ Forge is a good first slice because it is new, comparatively contained, and alre
 
 ### Phase 8: Root Barrel Reduction
 
+- Create `compat/root.ts` as the named compatibility root barrel and make the public root delegate to it while migration proceeds.
+- Track root import count and subpath import count in the migration evidence.
 - Replace direct root imports package by package.
 - Prefer daemon first for implementation clarity, then web stores/components, then tests.
 - Stop exporting MessageHub internals, prompts, and daemon-only params from the root barrel.
+- Classify `ClientEventGateway` ownership before moving imports: either `messaging/client` if it survives as transport-neutral client delivery, or `compat/message-hub` if it only exists for legacy MessageHub delivery.
 
 ### Phase 9: Enforce Boundaries
 
@@ -677,9 +681,10 @@ Start with Forge and contracts because it aligns with the newest work.
 2. Create `contracts/forge.ts` with Forge command/query/event payload names.
 3. Create `read-models/forge.ts` with `ForgeScopeReadModel`, `ForgeScopeDetailReadModel`, and timeline types from the client-state spec.
 4. Update `package.json` exports for those subpaths.
-5. Update `SpaceForge.tsx`, `evolution-handlers.ts`, `evolution-scope-service.ts`, and `evolution-episode-service.ts` imports where low-risk.
-6. Keep `@neokai/shared` root exports in place.
-7. Add a check preventing new root imports in newly touched Forge files.
+5. Verify package export-map parity so no exported path points to a missing file.
+6. Update `SpaceForge.tsx`, `evolution-handlers.ts`, `evolution-scope-service.ts`, and `evolution-episode-service.ts` imports where low-risk.
+7. Keep `@neokai/shared` root exports in place through `compat/root.ts`.
+8. Add a check preventing new root imports in newly touched Forge files.
 
 This gives immediate value without forcing a full Space type split.
 
@@ -697,7 +702,8 @@ This gives immediate value without forcing a full Space type split.
 8. Config/extension shared exports contain serializable keys, scopes, source chains, packages, contributions, and previews only; SDK plugin loading, hook callbacks, MCP process lifecycle, and prompt rendering stay daemon/runtime-side.
 9. Daemon-only params and service dependency types do not belong in shared.
 10. New shared source files target 300 lines or less including comments and must stay below 500 lines; large existing shared files should split by domain, contract, read-model, messaging, or compatibility ownership as they migrate.
-11. Pure utilities are shared only when both daemon and web actually use them.
+11. Package exports must match allowed public and compatibility surfaces; exported paths must not point to missing files.
+12. Pure utilities are shared only when both daemon and web actually use them.
 
 ---
 

@@ -596,6 +596,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Migrated contracts declare name, kind, subject/addressing, payload schema, result schema when applicable, auth policy, and durability/replay policy.
 - The first core vertical slices are fabric-backed: `space.task.create`, `space.task.update`, task archive/cancel, schedule fire, Forge proposal task creation, Forge rollup application, and runtime run/task/node transition events.
 - `MessageHub` request/event handlers for migrated slices are compatibility adapters only; they delegate into fabric or fabric-backed services.
+- Legacy RPC names, such as `spaceTask.create`, are mapped through an explicit alias inventory before switching to fabric names such as `space.task.create`.
 - No new semantic API is added to `MessageHub`; new command/query/event behavior is registered in MessageFabric first.
 - Final cleanup removes `MessageHub` as a public API and shared export. Any reusable WebSocket/session code is renamed as a fabric transport adapter.
 - `InternalEventBus`, `InternalCommandBus`, and `InternalQueryBus` are not expanded as new architectural centers. New migrated events flow through MessageFabric/outbox first, with legacy bridges where needed.
@@ -609,6 +610,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Rollback tests prove no domain row, command receipt, reactive invalidation, or outbox row survives a failed UoW.
 - Idempotency tests prove duplicate commands with the same key/hash return the original completed result or accepted operation, and conflicting duplicate keys are rejected.
 - New repository code does not publish events. Services/domain coordinators decide events and append them through the UoW outbox writer.
+- UoW-bound repository paths do not directly notify reactive state, publish events, or open independent write transactions.
 - New direct `db.transaction(...)` calls are limited to storage infrastructure, migrations, or explicitly marked legacy paths with a migration issue.
 
 ### 11.3 Space Runtime Ownership Gate
@@ -637,6 +639,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Providers, models, and bridges declare capabilities that affect runtime behavior: streaming, tool use, tool choice, vision, structured output, reasoning/thinking, context window, prompt caching, resumability, and sandbox/tool limitations.
 - Adapters preserve SDK-specific lifecycle, stream, tool, approval, sandbox, reasoning, trace, and persistence features where available instead of flattening everything to the common denominator.
 - New imports from `@anthropic-ai/claude-agent-sdk` are isolated to the Claude runtime adapter and explicit compatibility internals.
+- New runtime/provider paths avoid hidden global environment mutation for credential and endpoint routing.
 - At least one non-Claude runtime adapter can be added without changing Space runtime orchestration or client store contracts.
 
 ### 11.5 Client Read Model Gate
@@ -657,6 +660,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Root `@neokai/shared` imports are compatibility-only and are not added in migrated code.
 - Forge has the same domain/contract/read-model split as Space.
 - MessageHub runtime classes are under compatibility exports, not the public messaging API used by new code.
+- `@neokai/shared` package exports match the allowed public and compatibility surfaces; exported paths do not point at missing files.
 - Boundary enforcement exists as either lint, dependency checks, or a documented import allowlist with CI coverage.
 
 ### 11.7 Observability And Recovery Gate
@@ -675,6 +679,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - `packages/web/src/lib/design-tokens.ts` is either a compatibility facade over `@neokai/ui` tokens or contains only product-specific tokens.
 - Public `@neokai/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
+- SDK tool renderers, including `ToolResultCard`, `ToolProgressCard`, the tool registry, output deletion, and nested subagent tool rendering, remain protected web-owned renderers unless a dedicated redesign PR changes them.
 
 ### 11.9 Source File Size And Modularity Gate
 
@@ -691,6 +696,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Skills, plugins, MCP servers, hooks, and prompt policy are separate semantic concepts; plugin remains a packaging/render target, not the generic user-facing capability.
 - Native SDK user/project/local settings are imported, projected, or deliberately rendered by Agent Runtime; they are not hidden ambient sources of behavior.
 - MCP availability resolves through the MCP registry and scoped enablement; no new path relies on SDK auto-loading project MCP files.
+- Imported `.mcp.json` servers are disabled until accepted on every import path, including legacy refresh/scanner paths.
 - Hook policies are built-in or declarative until executable third-party hooks have trust, signing, sandboxing, and review UI.
 - Prompt-affecting extensions route through PromptPolicyRegistry or explicit slash-command skill invocation; no plugin silently appends always-on behavior outside prompt policy provenance.
 

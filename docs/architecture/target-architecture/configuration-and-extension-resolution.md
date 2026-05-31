@@ -263,6 +263,8 @@ For Claude Agent SDK specifically:
 - Project `.mcp.json` should be imported into the MCP registry and accepted/enabled explicitly.
 - Prompt-affecting SDK settings such as `outputStyle` should not become the semantic source for NeoKai prompt behavior. Use PromptPolicyRegistry for behavior; render SDK-native settings only when they are a faithful adapter target.
 
+`settingSources` policy must be consistent across the codebase. If NeoKai allows non-MCP native settings to load from SDK files, the effective preview must show the source chain and runtime adapter target. If a slice disables native SDK file loading with `settingSources: []`, it must explain how equivalent settings such as project instructions, output style, hooks, and local private values enter NeoKai's resolver instead.
+
 ---
 
 ## 9. Skills, Plugins, MCP, Hooks, And Prompt Policy
@@ -303,6 +305,7 @@ Target rules:
 - Skills can reference MCP servers, but they do not duplicate MCP config.
 - Runtime-attached coordination servers, such as Space agent tools, are internal runtime contributions and may be non-overridable.
 - The effective preview should distinguish user-enabled MCP tools from runtime-required MCP tools.
+- All import paths must preserve the same trust rule. A legacy scanner that imports `.mcp.json` servers as enabled violates this boundary and must be removed or aligned before broad config migration.
 
 ### Hooks
 
