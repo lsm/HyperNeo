@@ -22,7 +22,7 @@
 This document is the capstone map for the architecture cleanup. It does not introduce a new subsystem. It shows how the accepted target pieces fit together:
 
 - `MessageFabric` as the canonical command, query, and event interface.
-- `MessageHub` as a compatibility transport during migration.
+- `MessageHub` as a compatibility transport during migration, not a long-term semantic API.
 - `StorageUnitOfWork` plus outbox/inbox as the durable write boundary.
 - Space runtime decomposition as the workflow orchestration boundary.
 - Prompt Policy Registry as the scoped prompt-behavior composition boundary.
@@ -134,7 +134,7 @@ flowchart LR
 - `PromptPolicyRegistry` resolves scoped prompt-behavior records and renders them for Agent Runtime. Space, Forge, Workflow, and Task code may create scoped records, but they do not render prompt policy themselves.
 - `StorageUnitOfWork` is the write center. Durable state, jobs, command receipts, and outbox messages commit together.
 - `LiveQuery` is not the event bus. It is an ephemeral subscribed-query mechanism backed by committed DB state.
-- `MessageHub` remains behind the WebSocket compatibility adapter until client and daemon call sites migrate.
+- `MessageHub` remains behind the WebSocket compatibility adapter until client and daemon call sites migrate. After migration, remaining WebSocket/session plumbing should be renamed under fabric transport ownership rather than continue as `MessageHub`.
 
 ---
 
@@ -596,6 +596,8 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Migrated contracts declare name, kind, subject/addressing, payload schema, result schema when applicable, auth policy, and durability/replay policy.
 - The first core vertical slices are fabric-backed: `space.task.create`, `space.task.update`, task archive/cancel, schedule fire, Forge proposal task creation, Forge rollup application, and runtime run/task/node transition events.
 - `MessageHub` request/event handlers for migrated slices are compatibility adapters only; they delegate into fabric or fabric-backed services.
+- No new semantic API is added to `MessageHub`; new command/query/event behavior is registered in MessageFabric first.
+- Final cleanup removes `MessageHub` as a public API and shared export. Any reusable WebSocket/session code is renamed as a fabric transport adapter.
 - `InternalEventBus`, `InternalCommandBus`, and `InternalQueryBus` are not expanded as new architectural centers. New migrated events flow through MessageFabric/outbox first, with legacy bridges where needed.
 - Transport adapters do not invent command/query/event semantics absent from the fabric envelope.
 

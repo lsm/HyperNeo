@@ -167,6 +167,7 @@ Purpose: add the canonical command/query/event machinery without forcing existin
 | 2.2 | Add in-process transport and fabric router. | Not connected to WebSocket yet. | In-process commands/queries/events work in tests. |
 | 2.3 | Add module registration lifecycle for fabric modules. | Existing `setupRPCHandlers` remains source of truth. | A no-op or health module can register and run in-process. |
 | 2.4 | Add MessageHub compatibility bridge for fabric calls. | Existing RPCs remain unchanged. | One low-risk query can be routed through bridge with old API shape preserved. |
+| 2.5 | Add MessageHub exit tracker. | Documentation and static checks only. | New semantic APIs are blocked from MessageHub; remaining hub call sites are classified as bridge, transport plumbing, or deletion candidates. |
 
 ### M3: UoW And Outbox Foundation
 
@@ -318,4 +319,5 @@ The parent Goal is complete when:
 - focused client read-model stores own migrated UI state;
 - migrated source files are below 500 lines including comments, with new and actively refactored files targeting 300 lines or less;
 - legacy MessageHub/RPC surfaces are compatibility adapters, not the architecture center;
+- `MessageHub` is removed as a public semantic API; any still-useful WebSocket/session plumbing is renamed and owned as a MessageFabric transport adapter;
 - Forge contains evidence and episodes for the completed milestones.

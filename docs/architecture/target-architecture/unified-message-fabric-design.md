@@ -21,6 +21,8 @@ The interface is based on three semantic message kinds:
 
 This document defines a new `MessageFabric` architecture. `MessageHub` remains as a compatibility and client transport layer during migration. Existing `InternalEventBus`, `InternalCommandBus`, `InternalQueryBus`, `LiveQuery`, and `JobQueue` concepts are progressively folded behind the fabric rather than removed in one rewrite.
 
+After migration, `MessageHub` is not a semantic API. Durable message contracts, routing, auth, addressing, and replay semantics belong to `MessageFabric`. Any remaining WebSocket/session plumbing should be renamed and owned as a fabric transport adapter, such as `WebSocketFabricTransport` or `LegacyWebSocketBridge`, instead of continuing as a parallel hub.
+
 The goal is not to turn every private method call into a message. The goal is to make every cross-boundary interaction use one consistent semantic contract.
 
 ---
@@ -506,7 +508,7 @@ Inbox can be deferred until the first cross-process durable transport, but the e
 
 | Existing system | Target role |
 | --- | --- |
-| `MessageHub` | Compatibility/client transport bridge. It should eventually speak fabric envelopes over WebSocket instead of owning daemon semantics. |
+| `MessageHub` | Temporary compatibility/client transport bridge. It should speak fabric envelopes over WebSocket while old clients migrate, then disappear as a public API. Remaining reusable socket/session code should be renamed under fabric transport ownership. |
 | `InternalEventBus` | Facade over fabric event publish/subscribe for migrated internal code. Existing call sites can migrate gradually. |
 | `InternalCommandBus` | Facade over fabric command dispatch. |
 | `InternalQueryBus` | Facade over fabric one-shot queries. |
@@ -718,6 +720,7 @@ Handlers store and mutate `prompt_policy_records`; the Agent Runtime prompt poli
 - Bridge MessageHub RPC calls to fabric command/query dispatch.
 - Bridge fabric events/query deltas back to current MessageHub event delivery.
 - Keep existing WebSocket client payloads working through aliases.
+- Treat new MessageHub APIs as migration debt: new semantic contracts are added to MessageFabric first, and the bridge only maps old client shapes.
 
 ### Phase 4: First Vertical Slice
 
@@ -755,6 +758,13 @@ Migrate one bounded slice, preferably `space.task.*`:
 - Add Kafka for durable event streams and async commands.
 - Add inbox/dedup when redelivery from external transports is introduced.
 - Generate AsyncAPI documentation from the registry.
+
+### Phase 9: MessageHub Exit
+
+- Move all migrated WebSocket traffic to fabric envelopes.
+- Remove `MessageHub` from public shared exports and daemon domain dependencies.
+- Rename any still-useful WebSocket/session plumbing under fabric transport ownership.
+- Delete compatibility aliases after supported clients no longer call the old method names.
 
 ---
 
