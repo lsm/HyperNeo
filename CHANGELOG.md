@@ -2,6 +2,31 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.35.0] - 2026-05-29
+
+Unified provider registry with CRUD RPCs and credential store, rich markdown rendering with KaTeX and Mermaid, persisted Space agent handles, compacted Space workflow prompts, unified Providers settings UI, Codex thumbs-up review gate, test-quality audit, and composer draft race fix. 10 commits since v0.34.0.
+
+### Added
+
+- **Unified provider registry**: Full CRUD RPCs for providers (`providers.list`, `.get`, `.create`, `.update`, `.delete`, `.setDefault`, `.test`, `.healthCheck`), reactive DB repository, and startup migration from env vars and auth files
+- **Provider credential store**: Keychain-backed storage on macOS with AES-256-GCM SQLite fallback, OAuth refresh scheduler, and `ProviderCredentialManager` for high-level credential operations
+- **Unified Providers settings UI**: Replaces split Providers + Custom Endpoints with single view — provider rows with badges, health checks, OAuth flows, and `AddProviderModal` for quick-add of 9 built-in providers
+- **Rich markdown rendering**: Migrated from marked to unified/remark/rehype with lazy KaTeX math, lazy Mermaid diagram rendering, GFM, line breaks, and syntax highlighting
+- **Persisted Space agent handles**: Space agents now have persistent, user-configurable handles with reserved-name protection, DB-backed actor routing, and slug-based URL navigation
+- **Codex thumbs-up review gate**: Review workflow now requires `codex[bot]` +1 reaction before QA review gate opens, with 10-minute timeout warning path
+- **Test-quality audit**: Added `scripts/check-test-quality.ts` to CI which flags dead mock assertions and describe-scope mismatches via TypeScript AST analysis
+
+### Changed
+
+- **Compacted Space workflow prompts**: Centralized reviewer and QA contracts, trimmed coordinator and task prompts, and reduced dynamic activation context bloat without changing workflow semantics
+- Old `?tab=custom-endpoints` settings URL redirects to `?tab=providers`
+
+### Fixed
+
+- Composer no longer restores draft content after send due to stale `onInput` race against `clearDraft()`
+- Daemon startup no longer hangs on macOS when no Keychain entry exists and no TTY is available — falls back to encrypted SQLite credential store
+- Slug-based Space navigation preserves canonical state and resolves agent detail routes correctly
+
 ## [0.34.0] - 2026-05-28
 
 Forge proposal evidence, validation-only workflow completion, flaky test retry policy, long-horizon agent lifecycle coverage, task result capture fallback fixes, prompt builder token-cost audit, provider compatibility fixes, Copilot SDK binary bundling fix, workflow agent session titles, DB schema parity CI check, daemon unit test shard rebalance, and gate space task RPC handler test coverage. 13 commits since v0.33.0.
