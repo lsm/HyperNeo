@@ -52,6 +52,8 @@ These rules apply to every PR.
 8. Dual-write or dual-read phases must have readback tests or explicit diagnostics.
 9. PRs target `dev`, are rebased on current `dev`, and pass the repository checks.
 10. Each PR includes a short release note: user-visible change, migration risk, rollback note, and validation run.
+11. New source files should stay under 300 lines including comments; temporary exceptions must stay under 500 lines and explain the planned split.
+12. Touched oversized source files should not grow unless the PR is an explicit compatibility bridge; each architecture migration should move code toward smaller modules.
 
 ## Definition Of Done For Each PR
 
@@ -63,6 +65,7 @@ Every implementation task should include:
 - targeted tests for changed behavior;
 - unchanged existing tests for preserved behavior;
 - updated docs when contracts, boundaries, or migration status change;
+- source file size check: new files under 300 lines where practical, no new file over 500 lines, and touched oversized files either shrink or have a named follow-up split;
 - Forge evidence attached before selecting the next task.
 
 Suggested verification baseline:
@@ -300,6 +303,7 @@ Before cutting a release from `dev`, verify:
 | Client store migration causes stale or missing updates. | Move stores behind compatibility facade and test stale-response policy. |
 | Prompt policy changes model behavior unexpectedly. | Preserve default no-record behavior; preview and tests before rendering activation. |
 | Agent runtime abstraction hides SDK-specific capabilities. | Audit SDK source/type files before stable adapter contracts. |
+| Large files keep accumulating hidden responsibilities. | Apply a file-size ratchet: 500-line hard ceiling for new source files, 300-line target, and split touched oversized files by ownership boundary. |
 | Cleanup removes a path still used by release code. | Cleanup PRs require search evidence, tests, and Forge episode approval. |
 
 ## Exit Criteria
@@ -312,5 +316,6 @@ The parent Goal is complete when:
 - Prompt Policy Registry is the source of scoped prompt behavior;
 - Agent Runtime Gateway owns runtime/provider execution boundaries;
 - focused client read-model stores own migrated UI state;
+- migrated source files are below 500 lines including comments, with new and actively refactored files targeting 300 lines or less;
 - legacy MessageHub/RPC surfaces are compatibility adapters, not the architecture center;
 - Forge contains evidence and episodes for the completed milestones.

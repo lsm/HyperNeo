@@ -696,7 +696,8 @@ This gives immediate value without forcing a full Space type split.
 7. Prompt policy shared exports contain serializable records, contracts, and read models only; resolver/composer/renderer stay daemon-side.
 8. Config/extension shared exports contain serializable keys, scopes, source chains, packages, contributions, and previews only; SDK plugin loading, hook callbacks, MCP process lifecycle, and prompt rendering stay daemon/runtime-side.
 9. Daemon-only params and service dependency types do not belong in shared.
-10. Pure utilities are shared only when both daemon and web actually use them.
+10. New shared source files target 300 lines or less including comments and must stay below 500 lines; large existing shared files should split by domain, contract, read-model, messaging, or compatibility ownership as they migrate.
+11. Pure utilities are shared only when both daemon and web actually use them.
 
 ---
 

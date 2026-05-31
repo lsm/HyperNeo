@@ -674,7 +674,16 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Public `@neokai/ui` components have tests and demo/reference coverage.
 - Accessibility-sensitive primitives have keyboard, focus, escape, outside-click, and ARIA coverage.
 
-### 11.9 Configuration And Extension Gate
+### 11.9 Source File Size And Modularity Gate
+
+- New source files are 300 lines or less including comments unless there is a documented reason; no new source file exceeds 500 lines.
+- Existing source files over 500 lines are treated as migration targets. Architecture refactor PRs that touch them either shrink them, split out a cohesive responsibility, or record a named follow-up split.
+- Migrated architecture modules use ownership boundaries, such as contract, repository, resolver, adapter, projector, store, component, and test-helper files, rather than broad catch-all files.
+- Compatibility bridge files may temporarily exceed the 300-line target, but they still stay under 500 lines and include an exit path.
+- Generated files, vendored upstream SDK declarations, lockfiles, snapshots, and intentionally bundled data files are excluded from the limit but should remain under explicit generated/vendor paths.
+- The final architecture cleanup is not complete while migrated hand-written source files remain above 500 lines; the long-term target is 300 lines or less.
+
+### 11.10 Configuration And Extension Gate
 
 - Effective settings and extension contributions can be previewed with source chains, inherited values, explicit overrides, suppressions, and runtime render targets.
 - Skills, plugins, MCP servers, hooks, and prompt policy are separate semantic concepts; plugin remains a packaging/render target, not the generic user-facing capability.
@@ -683,7 +692,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Hook policies are built-in or declarative until executable third-party hooks have trust, signing, sandboxing, and review UI.
 - Prompt-affecting extensions route through PromptPolicyRegistry or explicit slash-command skill invocation; no plugin silently appends always-on behavior outside prompt policy provenance.
 
-### 11.10 Prompt Policy Registry Gate
+### 11.11 Prompt Policy Registry Gate
 
 - Prompt behavior that can vary by global, session, Space, SpaceAgent, workflow, workflow-node, or task scope is represented as `prompt_policy_records`, not feature-specific fields copied across settings, Space, agent, workflow, and session objects.
 - `PromptPolicyResolver`, `PromptPolicyComposer`, and `PromptPolicyRenderer` live in the Agent Runtime boundary and are invoked before runtime adapter option construction.
@@ -692,7 +701,7 @@ The architecture cleanup is complete when the following gates pass. These are in
 - Built-in policies such as `neokai.output-mode.compressed` are versioned in code and activated by scoped records; arbitrary user-authored content remains internal until provenance, validation, and preview are stable.
 - Worktree isolation and workflow runtime contracts are either explicitly retained on existing code paths or migrated into Prompt Policy Registry with tests that prove ordering, suppression, and subagent rendering behavior.
 
-### 11.11 Legacy Exit Gate
+### 11.12 Legacy Exit Gate
 
 - A compatibility surface is allowed only when it has a named target replacement and no new feature depends on its internals.
 - Migrated slices have no direct RPC -> service -> repository shortcut that bypasses fabric/UoW for durable cross-boundary behavior.
