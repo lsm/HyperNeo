@@ -37,6 +37,7 @@ import { GitHubEventExtension } from './lib/external-events/github';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
+  markBuiltInProviderDisabled,
 } from './lib/providers/factory.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
@@ -336,6 +337,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       await syncAllProviders(() => db.providers.listEnabledProviders(), credentialManager);
     } catch (err) {
       logError('[Daemon] Provider sync failed (non-fatal):', err);
+    }
+
+    // Seed disabled built-in state so initializeProviders() won't resurrect
+    // providers that were explicitly disabled or deleted in a prior run.
+    for (const record of db.providers.listProviders()) {
+      if (record.kind === 'built_in' && record.isEnabled === false) {
+        markBuiltInProviderDisabled(record.providerId);
+      }
     }
 
     // Check authentication status.

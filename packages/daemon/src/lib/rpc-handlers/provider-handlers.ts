@@ -182,6 +182,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           }
 
           // Sync to registry.
+          if (record.kind === 'built_in') {
+            const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+            await ensureBuiltInProviderRegistered(record.providerId);
+          }
           const creds = await credentialManager.getCredentials(record.providerId);
           await syncProviderToRegistry(record, creds);
         } catch (err) {

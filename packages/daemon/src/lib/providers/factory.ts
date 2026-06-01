@@ -298,6 +298,7 @@ export async function ensureBuiltInProviderRegistered(providerId: string): Promi
 
 async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promise<void> {
   if (registry.has('anthropic-copilot')) return;
+  if (disabledBuiltInProviderIds.has('anthropic-copilot')) return;
 
   // This dynamic import must remain a literal string: bun build --compile
   // discovers and embeds @github/copilot-sdk and vscode-jsonrpc through it.
