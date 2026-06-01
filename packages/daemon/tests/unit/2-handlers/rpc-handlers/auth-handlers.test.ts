@@ -14,7 +14,7 @@ import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handler
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@neokai/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory, initializeProviders } from '../../../../src/lib/providers/factory';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -407,6 +407,33 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
+    it('always removes credential store row even when stored row is absent', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider();
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.logout).toHaveBeenCalled();
+      // Should still call removeCredentials to ensure no stale ghost rows remain
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
     it('removes provider credential store row when provider has no logout method', async () => {
       const credentialManager = {
         getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
@@ -696,6 +723,32 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Please try logging out');
+    });
+
+    it('removes stale credentials from store when token refresh fails', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
     it('handles refresh token errors', async () => {

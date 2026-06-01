@@ -10,7 +10,7 @@
 import type { ProviderRecord, CustomEndpointConfig } from '@neokai/shared';
 import type { ProviderCredentials } from '@neokai/shared/provider';
 import { getProviderRegistry } from './registry.js';
-import { initializeProviders } from './factory.js';
+import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -29,11 +29,22 @@ export async function syncProviderToRegistry(
 
   // Built-in providers are already registered by initializeProviders().
   // If one was unregistered (e.g., user deleted and is re-adding it),
-  // re-run initialization to restore missing core providers.
+  // restore only that provider instead of re-creating every core provider.
   if (record.kind === 'built_in') {
-    initializeProviders();
+    registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
     if (provider?.setCredentials && credentials) {
+      // For providers that manage their own auth state (e.g. Codex), skip
+      // applying stale credential-store rows when the provider's own state
+      // says it has been logged out. This prevents resurrecting credentials
+      // that were cleared by a failed runtime refresh.
+      if (provider.logout && provider.getCredentials) {
+        const own = await provider.getCredentials();
+        if (!own) {
+          logger.info(`Skipping stale stored credentials for ${record.providerId}`);
+          return;
+        }
+      }
       provider.setCredentials(credentials);
       logger.info(`Applied credentials to built-in provider ${record.providerId}`);
     }

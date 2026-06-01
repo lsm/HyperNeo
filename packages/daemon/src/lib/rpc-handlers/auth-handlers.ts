@@ -21,7 +21,7 @@ import type {
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { getProviderRegistry } from '../providers/registry';
-import { initializeProviders } from '../providers/factory.js';
+import { registerBuiltInProvider } from '../providers/factory.js';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
 
@@ -99,8 +99,8 @@ export function setupAuthHandlers(
       const { providerId } = req;
       // Re-register built-in providers that may have been unregistered (e.g.,
       // after the user deleted and is now re-adding the provider).
-      initializeProviders();
       const registry = getProviderRegistry();
+      registerBuiltInProvider(registry, providerId);
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -209,11 +209,11 @@ export function setupAuthHandlers(
         if (provider.logout) {
           await provider.logout();
         }
-        if (storedCredentials) {
-          await credentialManager?.removeCredentials(providerId);
-          if (!provider.logout && provider.setCredentials) {
-            provider.setCredentials({ type: 'api_key', apiKey: '' });
-          }
+        // Always clear the credential store row so stale rows don't resurrect
+        // on the next daemon startup.
+        await credentialManager?.removeCredentials(providerId);
+        if (!provider.logout && provider.setCredentials) {
+          provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
         return { success: true };
       } catch (error) {
@@ -254,6 +254,9 @@ export function setupAuthHandlers(
       try {
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
+          // Definitive refresh failure — clear the stale credential store row so
+          // syncAllProviders() doesn't resurrect it on the next startup.
+          await credentialManager?.removeCredentials(providerId);
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',

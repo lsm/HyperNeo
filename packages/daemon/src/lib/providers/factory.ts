@@ -94,6 +94,44 @@ export function initializeProviders(): ProviderRegistry {
 }
 
 /**
+ * Register a single built-in provider by ID if it is not already in the registry.
+ *
+ * Use this when a built-in provider was unregistered (e.g., user deleted it)
+ * and needs to be restored without re-creating every other built-in provider.
+ */
+export function registerBuiltInProvider(registry: ProviderRegistry, providerId: string): void {
+  if (registry.has(providerId)) return;
+  switch (providerId) {
+    case 'anthropic':
+      registry.register(new AnthropicProvider());
+      break;
+    case 'glm':
+      registry.register(new GlmProvider());
+      break;
+    case 'kimi':
+      registry.register(new KimiProvider());
+      break;
+    case 'minimax':
+      registry.register(new MinimaxProvider());
+      break;
+    case 'openrouter':
+      registry.register(new OpenRouterProvider());
+      break;
+    case 'ollama':
+      registry.register(new OllamaProvider({ kind: 'local' }));
+      break;
+    case 'ollama-cloud':
+      registry.register(new OllamaProvider({ kind: 'cloud' }));
+      break;
+    case 'anthropic-codex':
+      registry.register(new AnthropicToCodexBridgeProvider());
+      break;
+    default:
+      logger.warn(`Unknown built-in provider ID: ${providerId}`);
+  }
+}
+
+/**
  * Synchronise registered custom-endpoint providers with the given config list.
  *
  * Re-entrant: safe to call after `initializeProviders()` whenever the user

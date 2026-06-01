@@ -1016,5 +1016,77 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(authStatus.isAuthenticated).toBe(false);
       p.stopAllBridgeServers();
     });
+
+    it('preserves credentials on transient refresh failures (network error)', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'valid-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      // Credentials should NOT be cleared on transient failures
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(true);
+      expect(await p.getApiKey()).toBe('valid-access-token');
+      p.stopAllBridgeServers();
+    });
+
+    it('preserves credentials on transient refresh failures (5xx)', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'valid-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"internal_error"}', {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(true);
+      p.stopAllBridgeServers();
+    });
+
+    it('preserves credentials on rate-limit refresh failures (429)', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'valid-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"rate_limit"}', {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(true);
+      p.stopAllBridgeServers();
+    });
   });
 });
