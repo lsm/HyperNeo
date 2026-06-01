@@ -527,6 +527,7 @@ export function setupSpaceTaskHandlers(
 
             task = await taskManager.setTaskStatus(taskId, updateParams.status, {
               result: updateParams.result ?? undefined,
+              reportedSummary: updateParams.reportedSummary ?? undefined,
               // Human-initiated approval when transitioning from review → done
               approvalSource:
                 currentTask.status === 'review' && updateParams.status === 'done'

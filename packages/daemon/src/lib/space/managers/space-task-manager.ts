@@ -247,6 +247,7 @@ export class SpaceTaskManager {
       (task.status === 'in_progress' && newStatus === 'open')
     ) {
       updates.result = null;
+      updates.reportedSummary = null;
       // Clear block reason and approval metadata on reactivation
       updates.blockReason = null;
       updates.approvalSource = null;
