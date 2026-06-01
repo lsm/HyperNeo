@@ -754,9 +754,10 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
-    it('preserves credential store row on transient refresh failure', async () => {
+    it('restores credential store row on transient refresh failure', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {}),
+        storeOAuthTokens: mock(async () => {}),
       };
       setupAuthHandlers(
         messageHubData.hub,
@@ -782,7 +783,12 @@ describe('Auth RPC Handlers', () => {
       };
 
       expect(result.success).toBe(false);
-      expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
+      // Row is removed first, then restored because provider still holds credentials
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
+        type: 'oauth',
+        accessToken: 'still-valid',
+      });
     });
 
     it('handles refresh token errors', async () => {

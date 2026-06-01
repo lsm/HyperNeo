@@ -254,13 +254,15 @@ export function setupAuthHandlers(
       try {
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
-          // Only clear the credential store row when the provider itself also
-          // cleared its credentials (definitive invalid-grant failure). If the
-          // provider still has credentials, the failure was transient (network,
-          // 5xx, 429) and the row should be preserved for retry.
+          // Remove the credential store row first. For providers like Codex,
+          // getCredentials() can re-import stale credentials from an external
+          // auth file after a definitive failure, making a post-logout probe
+          // falsely truthy and leaving a stale row in place.
+          await credentialManager?.removeCredentials(providerId);
           const remaining = await provider.getCredentials?.();
-          if (!remaining) {
-            await credentialManager?.removeCredentials(providerId);
+          if (remaining?.type === 'oauth') {
+            // Transient failure — provider still holds credentials. Restore row.
+            await credentialManager?.storeOAuthTokens(providerId, remaining);
           }
           return {
             success: false,

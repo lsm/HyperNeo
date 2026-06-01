@@ -129,6 +129,14 @@ export async function removeProviderFromRegistry(providerId: string): Promise<vo
   const provider = registry.get(providerId);
   if (!provider) return;
 
+  if (provider.logout) {
+    try {
+      await provider.logout();
+    } catch (err) {
+      logger.warn(`Failed to log out provider ${providerId}:`, err);
+    }
+  }
+
   if (provider.shutdown) {
     try {
       await provider.shutdown();
