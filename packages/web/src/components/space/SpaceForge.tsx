@@ -1561,6 +1561,7 @@ export function ScopeDetail({
   const [savingJudgeModel, setSavingJudgeModel] = useState(false);
   const [savingCompletedTaskAutomation, setSavingCompletedTaskAutomation] = useState(false);
   const judgeModelRequestVersion = useRef(0);
+  const completedTaskAutomationRequestVersion = useRef(0);
   const judgeModelScopeId = useRef(scope.id);
   const goal = getGoal(scope, goals);
 
@@ -1568,6 +1569,7 @@ export function ScopeDetail({
     if (judgeModelScopeId.current === scope.id) return;
     judgeModelScopeId.current = scope.id;
     judgeModelRequestVersion.current += 1;
+    completedTaskAutomationRequestVersion.current += 1;
     setSavingJudgeModel(false);
     setSavingCompletedTaskAutomation(false);
     setSettingsError(null);
@@ -1619,6 +1621,7 @@ export function ScopeDetail({
     enabled?: boolean;
     threshold?: number;
   }) => {
+    const version = ++completedTaskAutomationRequestVersion.current;
     const currentAutomation = scope.policy.automation ?? {};
     const nextAutomation = { ...currentAutomation };
     if (updates.enabled !== undefined) {
@@ -1639,16 +1642,21 @@ export function ScopeDetail({
         id: scope.id,
         params: { policy: { ...scope.policy, automation: nextAutomation } },
       });
+      if (completedTaskAutomationRequestVersion.current !== version) return;
       if (response.scope) {
         onScopeUpdated(response.scope);
         toast.success('Completed-task automation updated');
       }
     } catch (err) {
-      setSettingsError(
-        err instanceof Error ? err.message : 'Failed to update completed-task automation'
-      );
+      if (completedTaskAutomationRequestVersion.current === version) {
+        setSettingsError(
+          err instanceof Error ? err.message : 'Failed to update completed-task automation'
+        );
+      }
     } finally {
-      setSavingCompletedTaskAutomation(false);
+      if (completedTaskAutomationRequestVersion.current === version) {
+        setSavingCompletedTaskAutomation(false);
+      }
     }
   };
 

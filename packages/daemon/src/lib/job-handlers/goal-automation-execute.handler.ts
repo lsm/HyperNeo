@@ -63,7 +63,8 @@ export interface GoalAutomationExecuteResult extends Record<string, unknown> {
     | 'inactive_goal'
     | 'missing_scope'
     | 'no_evidence'
-    | 'below_threshold';
+    | 'below_threshold'
+    | 'active_review';
 }
 
 export async function handleGoalAutomationExecute(
@@ -104,6 +105,9 @@ export async function handleGoalAutomationExecute(
     );
     if (!threshold || completedTaskIds.size < threshold) {
       return skipped(payload, 'below_threshold', dueEvidence.length);
+    }
+    if (findActiveCompletedTaskReviewTask(deps, scope.id, payload)) {
+      return skipped(payload, 'active_review', dueEvidence.length);
     }
   }
 
@@ -239,6 +243,29 @@ function createReviewTask(
     priority: 'normal',
     labels: ['forge', 'review', 'automation', automationTriggerToken(payload)],
   });
+}
+
+function findActiveCompletedTaskReviewTask(
+  deps: GoalAutomationExecuteDeps,
+  scopeId: string,
+  payload: GoalAutomationExecutePayload
+): SpaceTask | null {
+  const scope = deps.evolutionRepo.getScope(scopeId);
+  if (!scope) return null;
+  const currentToken = automationTriggerToken(payload);
+  return (
+    deps.taskRepo.listBySpace(scope.spaceId, true).find((task) => {
+      if (task.evolutionScopeId !== scopeId) return false;
+      if (!task.labels.includes('automation')) return false;
+      if (!task.labels.some((label) => label.startsWith('automation:completed_task_threshold:'))) {
+        return false;
+      }
+      if (task.labels.includes(currentToken)) return false;
+      return ['draft', 'open', 'in_progress', 'review', 'approved', 'blocked'].includes(
+        task.status
+      );
+    }) ?? null
+  );
 }
 
 function findExistingAutomationReviewTask(

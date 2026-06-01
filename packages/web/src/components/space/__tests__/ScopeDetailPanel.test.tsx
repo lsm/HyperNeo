@@ -447,6 +447,50 @@ describe('ScopeDetailPanel', () => {
     ).toBe('10');
   });
 
+  it('ignores stale completed-task automation update responses', async () => {
+    let resolveFirst: (value: { scope: EvolutionScope }) => void = () => undefined;
+    mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+      if (method === 'evolution.scope.get') {
+        return { scope: makeScope({ policy: { automation: { completedTaskThreshold: 7 } } }) };
+      }
+      if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+      if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
+      if (method === 'evolution.review.get') {
+        return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
+      }
+      if (method === 'evolution.scope.update') {
+        const payload = data as { params: { policy: EvolutionScope['policy'] } };
+        if (payload.params.policy.automation?.completedTaskThreshold === 12) {
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return { scope: makeScope({ policy: payload.params.policy }) };
+      }
+      throw new Error(`Unexpected RPC ${method}`);
+    });
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+      target: { value: '12' },
+    });
+    fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+      target: { value: '13' },
+    });
+
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+    );
+    resolveFirst({ scope: makeScope({ policy: { automation: { completedTaskThreshold: 12 } } }) });
+
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+    expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+      id: 'scope-1',
+      params: { policy: { automation: { completedTaskThreshold: 13 } } },
+    });
+  });
+
   it('clears the judge model override', async () => {
     setupRequests(
       makeScope({

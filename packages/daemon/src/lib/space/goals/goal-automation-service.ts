@@ -83,18 +83,6 @@ export class GoalAutomationService {
     if (completedTaskIds.size < threshold) {
       return { enqueued: false, reason: 'below_threshold', count: completedTaskIds.size };
     }
-    const activeAutomation = findActiveAutomationReviewTask(this.deps.taskRepo, scope);
-    if (activeAutomation) {
-      this.enqueue({
-        goalId: goal.id,
-        scopeId: scope.id,
-        triggerKind: 'completed_task_threshold',
-        triggerKey,
-        reason: 'task_completed',
-        taskId,
-      });
-      return { enqueued: true, reason: 'queued', count: completedTaskIds.size };
-    }
     this.enqueue({
       goalId: goal.id,
       scopeId: scope.id,
@@ -231,23 +219,6 @@ export function externalEventTriggerKey(
   subscription: GoalForgeAutomationEventSubscription
 ): string {
   return `event:${subscription.source ?? '*'}:${subscription.topic}`;
-}
-
-function findActiveAutomationReviewTask(
-  taskRepo: SpaceTaskRepository,
-  scope: EvolutionScope
-): SpaceTask | null {
-  return (
-    taskRepo
-      .listBySpace(scope.spaceId, true)
-      .find(
-        (task) =>
-          task.evolutionScopeId === scope.id &&
-          task.labels.includes('automation') &&
-          task.labels.some((label) => label.startsWith('automation:completed_task_threshold:')) &&
-          ['draft', 'open', 'in_progress', 'review', 'approved', 'blocked'].includes(task.status)
-      ) ?? null
-  );
 }
 
 export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {

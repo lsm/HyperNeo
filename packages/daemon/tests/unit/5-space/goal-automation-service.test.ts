@@ -299,140 +299,6 @@ describe('GoalAutomationService', () => {
     );
   });
 
-  it('queues automation job instead of goal task when active review exists', () => {
-    const goal = goalRepo.create({ spaceId, title: 'No overlap', type: 'recurring' });
-    const scope = evolutionRepo.createScope({
-      spaceId,
-      spaceGoalId: goal.id,
-      kind: 'mission',
-      name: 'No overlap',
-      objective: 'Avoid duplicate reviews',
-      policy: { automation: { completedTaskThreshold: 1 } },
-    });
-    const activeTask = taskRepo.createTask({
-      spaceId,
-      title: 'Review Forge retrospective: No overlap',
-      goalId: goal.id,
-      evolutionScopeId: scope.id,
-      labels: [
-        'forge',
-        'review',
-        'automation',
-        'automation:completed_task_threshold:threshold:1:run',
-      ],
-    });
-    taskRepo.updateTask(activeTask.id, { status: 'in_progress' });
-    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
-    taskRepo.updateTask(task.id, { status: 'done' });
-    evolutionRepo.createEvidence({
-      scopeId: scope.id,
-      kind: 'task_result',
-      sourceId: task.id,
-      summary: 'Done',
-      createdAt: 10,
-    });
-
-    const result = service.onTaskCompleted(task.id);
-
-    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
-    const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].payload).toMatchObject({
-      goalId: goal.id,
-      scopeId: scope.id,
-      triggerKind: 'completed_task_threshold',
-      triggerKey: 'threshold:1',
-      taskId: task.id,
-    });
-    expect(goalRepo.getById(goal.id)?.pendingNextRun).toBe(false);
-    expect(cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1')).toBeNull();
-  });
-
-  it('detects active completed-task reviews across threshold changes', () => {
-    const goal = goalRepo.create({ spaceId, title: 'Changed threshold', type: 'recurring' });
-    const scope = evolutionRepo.createScope({
-      spaceId,
-      spaceGoalId: goal.id,
-      kind: 'mission',
-      name: 'Changed threshold',
-      objective: 'Avoid duplicate reviews after config changes',
-      policy: { automation: { completedTaskThreshold: 5 } },
-    });
-    taskRepo.createTask({
-      spaceId,
-      title: 'Review Forge retrospective: Changed threshold',
-      goalId: goal.id,
-      evolutionScopeId: scope.id,
-      labels: [
-        'forge',
-        'review',
-        'automation',
-        'automation:completed_task_threshold:threshold:10:run',
-      ],
-    });
-    let lastTaskId = '';
-    for (let i = 1; i <= 5; i++) {
-      const task = taskRepo.createTask({ spaceId, title: `Task ${i}`, goalId: goal.id });
-      taskRepo.updateTask(task.id, { status: 'done' });
-      evolutionRepo.createEvidence({
-        scopeId: scope.id,
-        kind: 'task_result',
-        sourceId: task.id,
-        summary: `Task ${i} done`,
-        createdAt: i,
-      });
-      lastTaskId = task.id;
-    }
-
-    const result = service.onTaskCompleted(lastTaskId);
-
-    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 5 });
-    const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].payload).toMatchObject({ triggerKey: 'threshold:5' });
-  });
-
-  it('treats blocked automation review tasks as active overlap', () => {
-    const goal = goalRepo.create({ spaceId, title: 'Blocked review', type: 'recurring' });
-    const scope = evolutionRepo.createScope({
-      spaceId,
-      spaceGoalId: goal.id,
-      kind: 'mission',
-      name: 'Blocked review',
-      objective: 'Avoid duplicate blocked reviews',
-      policy: { automation: { completedTaskThreshold: 1 } },
-    });
-    const activeTask = taskRepo.createTask({
-      spaceId,
-      title: 'Review Forge retrospective: Blocked review',
-      goalId: goal.id,
-      evolutionScopeId: scope.id,
-      labels: [
-        'forge',
-        'review',
-        'automation',
-        'automation:completed_task_threshold:threshold:1:run',
-      ],
-    });
-    taskRepo.updateTask(activeTask.id, { status: 'blocked' });
-    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
-    taskRepo.updateTask(task.id, { status: 'done' });
-    evolutionRepo.createEvidence({
-      scopeId: scope.id,
-      kind: 'task_result',
-      sourceId: task.id,
-      summary: 'Done',
-      createdAt: 10,
-    });
-
-    const result = service.onTaskCompleted(task.id);
-
-    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
-    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
-      1
-    );
-  });
-
   it('uses cursor state to avoid duplicate threshold retrospectives', () => {
     const goal = goalRepo.create({ spaceId, title: 'Avoid duplicates', type: 'recurring' });
     const scope = evolutionRepo.createScope({
@@ -1177,6 +1043,147 @@ describe('handleGoalAutomationExecute', () => {
       lastEpisodeId: result.episodeId,
     });
     expect(cursor?.metadata.evidenceIds).toEqual([evidence.id]);
+  });
+
+  it('defers completed-task execution when another Forge review is active', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Defer overlap', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Defer overlap',
+      objective: 'Avoid overlapping review tasks',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const firstTask = taskRepo.createTask({ spaceId, title: 'First done', goalId: goal.id });
+    taskRepo.updateTask(firstTask.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: firstTask.id,
+      summary: 'First done',
+      createdAt: 10,
+    });
+    const activeReview = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Defer overlap',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      description: 'Episode: episode-active',
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:first-task',
+      ],
+    });
+    taskRepo.updateTask(activeReview.id, { status: 'in_progress' });
+    const secondTask = taskRepo.createTask({ spaceId, title: 'Second done', goalId: goal.id });
+    taskRepo.updateTask(secondTask.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: secondTask.id,
+      summary: 'Second done',
+      createdAt: 20,
+    });
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: secondTask.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not create episode while active review exists');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'active_review',
+      evidenceCount: 2,
+    });
+    expect(taskRepo.listBySpace(spaceId, true)).toHaveLength(3);
+    expect(cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1')).toBeNull();
+  });
+
+  it('defers completed-task execution across threshold changes and blocked reviews', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Changed threshold', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Changed threshold',
+      objective: 'Avoid overlapping review tasks after config changes',
+      policy: { automation: { completedTaskThreshold: 5 } },
+    });
+    const activeReview = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Changed threshold',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      description: 'Episode: episode-active',
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:10:previous-task',
+      ],
+    });
+    taskRepo.updateTask(activeReview.id, { status: 'blocked' });
+    let lastTaskId = '';
+    for (let i = 1; i <= 5; i++) {
+      const task = taskRepo.createTask({ spaceId, title: `Task ${i}`, goalId: goal.id });
+      taskRepo.updateTask(task.id, { status: 'done' });
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task_result',
+        sourceId: task.id,
+        summary: `Task ${i} done`,
+        createdAt: i,
+      });
+      lastTaskId = task.id;
+    }
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:5',
+        reason: 'task_completed',
+        taskId: lastTaskId,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not create episode while blocked review exists');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'active_review',
+      evidenceCount: 5,
+    });
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
   it('keeps backlog cursor contiguous when capped external event is newer', async () => {
