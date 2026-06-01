@@ -25,6 +25,7 @@ import {
   type AnthropicContentBlockToolUse,
   type AnthropicRequest,
   contentBlockStartTextSSE,
+  contentBlockStartThinkingSSE,
   contentBlockStartToolUseSSE,
   contentBlockStopSSE,
   errorSSE,
@@ -33,6 +34,7 @@ import {
   messageStartSSE,
   messageStopSSE,
   textDeltaSSE,
+  thinkingDeltaSSE,
 } from '../provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
@@ -132,6 +134,7 @@ type OpenAIChatStreamChoice = {
   delta?: {
     role?: string;
     content?: string | null;
+    reasoning_content?: string | null;
     tool_calls?: Array<{
       index?: number;
       id?: string;
@@ -172,10 +175,6 @@ function mapUpstreamStatus(status: number): AnthropicErrorType {
   if (status === 429) return 'rate_limit_error';
   if (status >= 500) return 'api_error';
   return 'invalid_request_error';
-}
-
-function estimateOutputTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 function genMessageId(): string {
@@ -521,8 +520,10 @@ async function streamChatToAnthropic(params: {
   let started = false;
   let textOpen = false;
   let textBlockIndex = -1;
+  let thinkingOpen = false;
+  let thinkingBlockIndex = -1;
   let nextBlockIndex = 0;
-  let heuristicOutputText = '';
+  let heuristicOutputTokens = 0;
   let finalPromptTokens: number | undefined;
   let finalCompletionTokens: number | undefined;
   let finishReason: string | null = null;
@@ -554,6 +555,22 @@ async function streamChatToAnthropic(params: {
     if (!textOpen) return;
     send(contentBlockStopSSE(textBlockIndex));
     textOpen = false;
+  };
+
+  const startThinkingBlock = () => {
+    if (thinkingOpen) return;
+    ensureStarted();
+    closeTextBlock();
+    thinkingBlockIndex = nextBlockIndex++;
+    send(contentBlockStartThinkingSSE(thinkingBlockIndex));
+    thinkingOpen = true;
+  };
+
+  const closeThinkingBlock = () => {
+    if (!thinkingOpen) return;
+    send(contentBlockStopSSE(thinkingBlockIndex));
+    thinkingOpen = false;
+    thinkingBlockIndex = -1;
   };
 
   const openToolCall = (call: PendingToolCall) => {
@@ -594,15 +611,22 @@ async function streamChatToAnthropic(params: {
       const delta = choice.delta;
       if (!delta) continue;
 
+      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+        startThinkingBlock();
+        send(thinkingDeltaSSE(thinkingBlockIndex, delta.reasoning_content));
+        heuristicOutputTokens += Math.max(1, Math.ceil(delta.reasoning_content.length / 4));
+      }
+
       if (typeof delta.content === 'string' && delta.content.length > 0) {
         ensureStarted();
+        closeThinkingBlock();
         if (!textOpen) {
           textBlockIndex = nextBlockIndex++;
           send(contentBlockStartTextSSE(textBlockIndex));
           textOpen = true;
         }
         send(textDeltaSSE(textBlockIndex, delta.content));
-        heuristicOutputText += delta.content;
+        heuristicOutputTokens += Math.max(1, Math.ceil(delta.content.length / 4));
       }
 
       if (delta.tool_calls) {
@@ -666,6 +690,7 @@ async function streamChatToAnthropic(params: {
       if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
     }
 
+    closeThinkingBlock();
     closeTextBlock();
 
     const stopReason: 'tool_use' | 'max_tokens' | 'end_turn' =
@@ -678,7 +703,7 @@ async function streamChatToAnthropic(params: {
     send(
       messageDeltaSSE(stopReason, {
         inputTokens: finalPromptTokens ?? inputTokens,
-        outputTokens: finalCompletionTokens ?? estimateOutputTokens(heuristicOutputText),
+        outputTokens: finalCompletionTokens ?? Math.max(1, heuristicOutputTokens),
         modelContextWindow,
       })
     );
