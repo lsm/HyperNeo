@@ -122,6 +122,7 @@ import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
+import { mergeEvolutionPolicy } from '../space/evolution-scope-service';
 import {
   isHttpExtension,
   isRpcExtension,
@@ -722,7 +723,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
     beforeScopeUpdate: (existing, params) => {
       validateGoalAutomationSelfNagPolicy({
-        policy: params.policy ? { ...existing.policy, ...params.policy } : existing.policy,
+        policy: params.policyPatch
+          ? mergeEvolutionPolicy(existing.policy, params.policyPatch)
+          : params.policy
+            ? { ...existing.policy, ...params.policy }
+            : existing.policy,
       });
     },
     onScopeSaved: (scope) => {

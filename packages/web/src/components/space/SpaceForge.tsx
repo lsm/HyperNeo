@@ -1626,6 +1626,9 @@ export function ScopeDetail({
     const nextAutomation = { ...currentAutomation };
     if (updates.enabled !== undefined) {
       nextAutomation.completedTaskAutomationEnabled = updates.enabled;
+      if (updates.enabled && nextAutomation.completedTaskThreshold === undefined) {
+        nextAutomation.completedTaskThreshold = DEFAULT_COMPLETED_TASK_THRESHOLD;
+      }
     }
     if (updates.threshold !== undefined) {
       nextAutomation.completedTaskThreshold = updates.threshold;

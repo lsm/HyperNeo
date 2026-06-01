@@ -88,10 +88,12 @@ export async function handleGoalAutomationExecute(
     ensureExternalEventEvidence(deps, payload, scope.id);
   }
   const cursor =
-    deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey) ??
-    (payload.triggerKind === 'completed_task_threshold'
-      ? deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
-      : null);
+    payload.triggerKind === 'completed_task_threshold'
+      ? newestCursor(
+          deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey),
+          deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
+        )
+      : deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
   const policy = readAutomationPolicyForScope(scope);
   const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
   const dueEvidence = selectEvidenceAfterCursor(
@@ -169,6 +171,18 @@ export async function handleGoalAutomationExecute(
     evidenceCount: evidence.length,
     skipped: false,
   };
+}
+
+function newestCursor<T extends { lastEvidenceCreatedAt: number | null; updatedAt: number }>(
+  first: T | null,
+  second: T | null
+): T | null {
+  if (!first) return second;
+  if (!second) return first;
+  const firstEvidence = first.lastEvidenceCreatedAt ?? 0;
+  const secondEvidence = second.lastEvidenceCreatedAt ?? 0;
+  if (firstEvidence !== secondEvidence) return firstEvidence > secondEvidence ? first : second;
+  return first.updatedAt >= second.updatedAt ? first : second;
 }
 
 function findTriggerEvidence(

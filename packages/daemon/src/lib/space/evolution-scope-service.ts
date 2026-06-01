@@ -35,7 +35,10 @@ import type {
 const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
 
-function mergePolicy(policy: EvolutionPolicy, patch: EvolutionPolicy): EvolutionPolicy {
+export function mergeEvolutionPolicy(
+  policy: EvolutionPolicy,
+  patch: EvolutionPolicy
+): EvolutionPolicy {
   return {
     ...policy,
     ...patch,
@@ -213,7 +216,7 @@ export class EvolutionScopeService {
     const updateParams = params.policyPatch
       ? {
           ...params,
-          policy: mergePolicy(existing.policy, params.policyPatch),
+          policy: mergeEvolutionPolicy(existing.policy, params.policyPatch),
           policyPatch: undefined,
         }
       : params;

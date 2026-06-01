@@ -425,6 +425,29 @@ describe('ScopeDetailPanel', () => {
     });
   });
 
+  it('persists the default threshold when enabling completed-task automation', async () => {
+    setupRequests(makeScope({ policy: { automation: { completedTaskAutomationEnabled: false } } }));
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+    );
+    expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+      id: 'scope-1',
+      params: {
+        policyPatch: {
+          automation: {
+            completedTaskAutomationEnabled: true,
+            completedTaskThreshold: 10,
+          },
+        },
+      },
+    });
+  });
+
   it('updates completed-task automation threshold', async () => {
     setupRequests(makeScope({ policy: { automation: { completedTaskThreshold: 7 } } }));
     renderPanel();

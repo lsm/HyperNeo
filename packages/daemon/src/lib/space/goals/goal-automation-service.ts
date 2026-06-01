@@ -70,9 +70,7 @@ export class GoalAutomationService {
       return { enqueued: false, reason: 'disabled' };
     }
     const triggerKey = completedTaskTriggerKey(threshold);
-    const cursor =
-      this.deps.cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', triggerKey) ??
-      latestCompletedTaskCursor(this.deps.cursorRepo, goal.id, scope.id);
+    const cursor = latestCompletedTaskCursor(this.deps.cursorRepo, goal.id, scope.id, triggerKey);
     const dueEvidence = selectEvidenceAfterCursor(
       this.deps.evolutionRepo.listEvidence(scope.id),
       cursor?.lastEvidenceCreatedAt ?? null,
@@ -224,9 +222,25 @@ export function externalEventTriggerKey(
 function latestCompletedTaskCursor(
   cursorRepo: GoalAutomationCursorRepository,
   goalId: string,
-  scopeId: string
+  scopeId: string,
+  triggerKey: string
 ) {
-  return cursorRepo.getLatestForTriggerKind(goalId, scopeId, 'completed_task_threshold');
+  return newestCursor(
+    cursorRepo.get(goalId, scopeId, 'completed_task_threshold', triggerKey),
+    cursorRepo.getLatestForTriggerKind(goalId, scopeId, 'completed_task_threshold')
+  );
+}
+
+function newestCursor<T extends { lastEvidenceCreatedAt: number | null; updatedAt: number }>(
+  first: T | null,
+  second: T | null
+): T | null {
+  if (!first) return second;
+  if (!second) return first;
+  const firstEvidence = first.lastEvidenceCreatedAt ?? 0;
+  const secondEvidence = second.lastEvidenceCreatedAt ?? 0;
+  if (firstEvidence !== secondEvidence) return firstEvidence > secondEvidence ? first : second;
+  return first.updatedAt >= second.updatedAt ? first : second;
 }
 
 export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {

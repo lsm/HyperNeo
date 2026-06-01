@@ -21,6 +21,7 @@ import {
   validateGoalAutomationSelfNagPolicy,
   syncGoalAutomationSelfNagScheduleForScope,
 } from '../../../src/lib/rpc-handlers';
+import { mergeEvolutionPolicy } from '../../../src/lib/space/evolution-scope-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
 import { createSpaceTables } from '../helpers/space-test-db';
 
@@ -408,7 +409,7 @@ describe('GoalAutomationService', () => {
     );
   });
 
-  it('uses latest completed-task cursor after threshold changes', () => {
+  it('uses newest completed-task cursor after threshold changes', () => {
     const goal = goalRepo.create({ spaceId, title: 'Threshold changed', type: 'recurring' });
     const scope = evolutionRepo.createScope({
       spaceId,
@@ -416,13 +417,13 @@ describe('GoalAutomationService', () => {
       kind: 'mission',
       name: 'Threshold changed',
       objective: 'Do not replay completed work',
-      policy: { automation: { completedTaskThreshold: 5 } },
+      policy: { automation: { completedTaskThreshold: 10 } },
     });
-    let latestEvidenceId = '';
+    let threshold10EvidenceId = '';
     for (let i = 1; i <= 10; i++) {
       const task = taskRepo.createTask({ spaceId, title: `Old task ${i}`, goalId: goal.id });
       taskRepo.updateTask(task.id, { status: 'done' });
-      latestEvidenceId = evolutionRepo.createEvidence({
+      threshold10EvidenceId = evolutionRepo.createEvidence({
         scopeId: scope.id,
         kind: 'task_result',
         sourceId: task.id,
@@ -437,11 +438,41 @@ describe('GoalAutomationService', () => {
       triggerKind: 'completed_task_threshold',
       triggerKey: 'threshold:10',
       lastEvidenceCreatedAt: 10,
-      lastEvidenceId: latestEvidenceId,
+      lastEvidenceId: threshold10EvidenceId,
       lastTaskCompletedAt: null,
       lastExternalEventId: null,
       lastEpisodeId: null,
-      lastFiredAt: Date.now(),
+      lastFiredAt: 10,
+      metadata: {},
+    });
+    let threshold5EvidenceId = '';
+    for (let i = 11; i <= 15; i++) {
+      const task = taskRepo.createTask({
+        spaceId,
+        title: `Intermediate task ${i}`,
+        goalId: goal.id,
+      });
+      taskRepo.updateTask(task.id, { status: 'done' });
+      threshold5EvidenceId = evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task_result',
+        sourceId: task.id,
+        summary: `Intermediate result ${i}`,
+        createdAt: i,
+      }).id;
+    }
+    cursorRepo.upsert({
+      spaceId,
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:5',
+      lastEvidenceCreatedAt: 15,
+      lastEvidenceId: threshold5EvidenceId,
+      lastTaskCompletedAt: null,
+      lastExternalEventId: null,
+      lastEpisodeId: null,
+      lastFiredAt: 15,
       metadata: {},
     });
     const freshTask = taskRepo.createTask({ spaceId, title: 'Fresh task', goalId: goal.id });
@@ -451,7 +482,7 @@ describe('GoalAutomationService', () => {
       kind: 'task_result',
       sourceId: freshTask.id,
       summary: 'Fresh result',
-      createdAt: 11,
+      createdAt: 16,
     });
 
     const result = service.onTaskCompleted(freshTask.id);
@@ -806,6 +837,27 @@ describe('GoalAutomationService', () => {
         policy: { automation: { completedTaskThreshold: '5' as never } },
       })
     ).toThrow('Completed-task automation threshold must be a positive integer');
+  });
+
+  it('rejects invalid automation policy patches before scope save', () => {
+    const existingPolicy = {
+      automation: { completedTaskThreshold: 7, selfNagCronExpression: '0 * * * *' },
+    };
+
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: mergeEvolutionPolicy(existingPolicy, {
+          automation: { completedTaskThreshold: '5' as never },
+        }),
+      })
+    ).toThrow('Completed-task automation threshold must be a positive integer');
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: mergeEvolutionPolicy(existingPolicy, {
+          automation: { selfNagCronExpression: 'not-a-cron' },
+        }),
+      })
+    ).toThrow(/Invalid cron expression/);
   });
 
   it('rejects invalid self-nag timezone before scope save', () => {
@@ -1390,7 +1442,7 @@ describe('handleGoalAutomationExecute', () => {
     );
   });
 
-  it('uses latest completed-task cursor after threshold changes in executor', async () => {
+  it('uses newest completed-task cursor after threshold changes in executor', async () => {
     const goal = goalRepo.create({
       spaceId,
       title: 'Executor threshold changed',
@@ -1402,13 +1454,13 @@ describe('handleGoalAutomationExecute', () => {
       kind: 'mission',
       name: 'Executor threshold changed',
       objective: 'Do not replay old evidence in executor',
-      policy: { automation: { completedTaskThreshold: 5 } },
+      policy: { automation: { completedTaskThreshold: 10 } },
     });
-    let latestEvidenceId = '';
+    let threshold10EvidenceId = '';
     for (let i = 1; i <= 10; i++) {
       const task = taskRepo.createTask({ spaceId, title: `Old task ${i}`, goalId: goal.id });
       taskRepo.updateTask(task.id, { status: 'done' });
-      latestEvidenceId = evolutionRepo.createEvidence({
+      threshold10EvidenceId = evolutionRepo.createEvidence({
         scopeId: scope.id,
         kind: 'task_result',
         sourceId: task.id,
@@ -1423,11 +1475,41 @@ describe('handleGoalAutomationExecute', () => {
       triggerKind: 'completed_task_threshold',
       triggerKey: 'threshold:10',
       lastEvidenceCreatedAt: 10,
-      lastEvidenceId: latestEvidenceId,
+      lastEvidenceId: threshold10EvidenceId,
       lastTaskCompletedAt: null,
       lastExternalEventId: null,
       lastEpisodeId: null,
-      lastFiredAt: Date.now(),
+      lastFiredAt: 10,
+      metadata: {},
+    });
+    let threshold5EvidenceId = '';
+    for (let i = 11; i <= 15; i++) {
+      const task = taskRepo.createTask({
+        spaceId,
+        title: `Intermediate task ${i}`,
+        goalId: goal.id,
+      });
+      taskRepo.updateTask(task.id, { status: 'done' });
+      threshold5EvidenceId = evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task_result',
+        sourceId: task.id,
+        summary: `Intermediate result ${i}`,
+        createdAt: i,
+      }).id;
+    }
+    cursorRepo.upsert({
+      spaceId,
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:5',
+      lastEvidenceCreatedAt: 15,
+      lastEvidenceId: threshold5EvidenceId,
+      lastTaskCompletedAt: null,
+      lastExternalEventId: null,
+      lastEpisodeId: null,
+      lastFiredAt: 15,
       metadata: {},
     });
     const freshTask = taskRepo.createTask({ spaceId, title: 'Fresh task', goalId: goal.id });
@@ -1437,7 +1519,7 @@ describe('handleGoalAutomationExecute', () => {
       kind: 'task_result',
       sourceId: freshTask.id,
       summary: 'Fresh result',
-      createdAt: 11,
+      createdAt: 16,
     });
 
     const result = await handleGoalAutomationExecute(
@@ -1445,7 +1527,7 @@ describe('handleGoalAutomationExecute', () => {
         goalId: goal.id,
         scopeId: scope.id,
         triggerKind: 'completed_task_threshold',
-        triggerKey: 'threshold:5',
+        triggerKey: 'threshold:10',
         reason: 'task_completed',
         taskId: freshTask.id,
       }),
