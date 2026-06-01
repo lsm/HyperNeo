@@ -209,6 +209,52 @@ export async function waitForOptionalProviderRegistration(
   await registerLoadedCopilotProvider(registry ?? initializeProviders());
 }
 
+/**
+ * Register a single built-in provider by ID if it is not already in the registry.
+ * This is the surgical re-registration path used when a provider is re-enabled
+ * after being disabled and removed from the registry.
+ *
+ * Unlike `initializeProviders()`, this only touches the requested provider so
+ * disabled built-ins are not accidentally recreated.
+ */
+export async function ensureBuiltInProviderRegistered(providerId: string): Promise<void> {
+  const registry = getProviderRegistry();
+  if (registry.has(providerId)) return;
+
+  switch (providerId) {
+    case 'anthropic':
+      registerIfMissing(registry, new AnthropicProvider());
+      break;
+    case 'glm':
+      registerIfMissing(registry, new GlmProvider());
+      break;
+    case 'kimi':
+      registerIfMissing(registry, new KimiProvider());
+      break;
+    case 'minimax':
+      registerIfMissing(registry, new MinimaxProvider());
+      break;
+    case 'openrouter':
+      registerIfMissing(registry, new OpenRouterProvider());
+      break;
+    case 'ollama':
+      registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
+      break;
+    case 'ollama-cloud':
+      registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
+      break;
+    case 'anthropic-codex':
+      registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
+      break;
+    case 'anthropic-copilot':
+      registerCopilotProvider(registry);
+      await waitForOptionalProviderRegistration(registry);
+      break;
+    default:
+      break;
+  }
+}
+
 async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promise<void> {
   if (registry.has('anthropic-copilot')) return;
 

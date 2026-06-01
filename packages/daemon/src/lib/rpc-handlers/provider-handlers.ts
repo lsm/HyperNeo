@@ -250,8 +250,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             if (record.isEnabled === false) {
               await removeProviderFromRegistry(record.providerId);
             } else {
-              const { initializeProviders } = await import('../providers/factory.js');
-              initializeProviders();
+              const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+              await ensureBuiltInProviderRegistered(record.providerId);
               const creds = await credentialManager.getCredentials(record.providerId);
               await syncProviderToRegistry(record, creds);
             }
