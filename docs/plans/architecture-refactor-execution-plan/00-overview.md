@@ -203,6 +203,8 @@ Purpose: make the refactor executable by Goal/Forge without touching runtime beh
 
 Purpose: make ownership visible before moving behavior.
 
+Detailed plan: [M1 Shared Boundaries](10-m1-shared-boundaries.md).
+
 | PR | Scope | Release safety | Acceptance |
 | --- | --- | --- | --- |
 | 1.1 | Add `@neokai/shared` export-map parity and subpath skeletons: `contracts`, `read-models`, `domain`, `messaging`, `compat`. | Re-export only; no behavior changes. | Existing imports keep working; new subpaths compile; exported paths do not point at missing files. |
