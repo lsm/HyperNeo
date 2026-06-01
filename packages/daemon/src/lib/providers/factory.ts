@@ -98,8 +98,13 @@ export function initializeProviders(): ProviderRegistry {
  *
  * Use this when a built-in provider was unregistered (e.g., user deleted it)
  * and needs to be restored without re-creating every other built-in provider.
+ *
+ * Copilot is async because its module is loaded lazily.
  */
-export function registerBuiltInProvider(registry: ProviderRegistry, providerId: string): void {
+export async function registerBuiltInProvider(
+  registry: ProviderRegistry,
+  providerId: string
+): Promise<void> {
   if (registry.has(providerId)) return;
   switch (providerId) {
     case 'anthropic':
@@ -125,6 +130,9 @@ export function registerBuiltInProvider(registry: ProviderRegistry, providerId: 
       break;
     case 'anthropic-codex':
       registry.register(new AnthropicToCodexBridgeProvider());
+      break;
+    case 'anthropic-copilot':
+      await waitForOptionalProviderRegistration(registry);
       break;
     default:
       logger.warn(`Unknown built-in provider ID: ${providerId}`);

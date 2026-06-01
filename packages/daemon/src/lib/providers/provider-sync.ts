@@ -31,7 +31,7 @@ export async function syncProviderToRegistry(
   // If one was unregistered (e.g., user deleted and is re-adding it),
   // restore only that provider instead of re-creating every core provider.
   if (record.kind === 'built_in') {
-    registerBuiltInProvider(registry, record.providerId);
+    await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
     if (provider?.setCredentials && credentials) {
       // For providers that manage their own auth state (e.g. Codex), skip

@@ -100,7 +100,7 @@ export function setupAuthHandlers(
       // Re-register built-in providers that may have been unregistered (e.g.,
       // after the user deleted and is now re-adding the provider).
       const registry = getProviderRegistry();
-      registerBuiltInProvider(registry, providerId);
+      await registerBuiltInProvider(registry, providerId);
 
       const provider = registry.get(providerId);
       if (!provider) {
