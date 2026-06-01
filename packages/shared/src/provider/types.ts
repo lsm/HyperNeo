@@ -235,6 +235,17 @@ export interface Provider {
   refreshToken?(): Promise<boolean>;
 
   /**
+   * Optional: Set per-session thinking configuration for providers that need
+   * a side-channel to communicate thinking state to their bridge/translation
+   * layer (e.g. the Codex bridge, where the Anthropic SDK client omits the
+   * thinking field from request bodies).
+   */
+  setSessionThinkingConfig?(
+    sessionId: string,
+    thinkingLevel: string | undefined
+  ): void | Promise<void>;
+
+  /**
    * Optional: Shut down any resources held by this provider (e.g. an embedded
    * HTTP server). Called during daemon shutdown so the event loop can exit.
    */

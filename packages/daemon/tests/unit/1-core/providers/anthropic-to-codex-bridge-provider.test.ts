@@ -945,4 +945,33 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
   });
+
+  describe('setSessionThinkingConfig', () => {
+    it('propagates thinking config to the active bridge server', () => {
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-123' });
+
+      // Should not throw
+      p.setSessionThinkingConfig('sess-123', 'think32k');
+
+      p.stopAllBridgeServers();
+    });
+
+    it('is a no-op when no bridge server is active', () => {
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      // No buildSdkConfig call — no bridge server started
+      expect(() => p.setSessionThinkingConfig('sess-456', 'think16k')).not.toThrow();
+    });
+
+    it('clears config when thinking level is off or undefined', () => {
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-789' });
+
+      p.setSessionThinkingConfig('sess-789', 'think32k');
+      p.setSessionThinkingConfig('sess-789', 'off');
+      p.setSessionThinkingConfig('sess-789', undefined);
+
+      p.stopAllBridgeServers();
+    });
+  });
 });

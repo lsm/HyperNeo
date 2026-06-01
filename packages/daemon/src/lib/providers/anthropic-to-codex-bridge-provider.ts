@@ -30,6 +30,7 @@ import type {
   ProviderOAuthFlowData,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
+import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import {
   type OpenAIResponsesBridgeAuth,
   type OpenAIResponsesBridgeServer,
@@ -565,6 +566,33 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       isAnthropicCompatible: true,
       apiVersion: 'v1',
     };
+  }
+
+  /**
+   * Propagate the session's thinking level to the Responses bridge.
+   *
+   * The Claude Code CLI handles thinking internally and does not include the
+   * thinking field in Anthropic Messages API request bodies. Without this
+   * side-channel the bridge has no way to know that reasoning should be
+   * forwarded to the OpenAI Responses API.
+   */
+  setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
+    const auth = this.cachedBridgeAuth ?? undefined;
+    const authKey = this.bridgeAuthCacheKey(auth);
+    const bridgeKey = `responses:${authKey}`;
+    const bridgeServer = this.bridgeServers.get(bridgeKey);
+    if (!bridgeServer?.setSessionThinkingConfig) return;
+
+    const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
+    if (tokens === undefined || tokens === null) {
+      bridgeServer.setSessionThinkingConfig(sessionId, undefined);
+      return;
+    }
+
+    bridgeServer.setSessionThinkingConfig(sessionId, {
+      type: 'enabled',
+      budget_tokens: tokens,
+    });
   }
 
   /** Stop all bridge servers and reset cached auth state. Called at provider shutdown (e.g. tests). */
