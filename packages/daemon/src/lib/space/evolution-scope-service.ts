@@ -5,6 +5,7 @@ import type {
   EvidenceKind,
   EvidenceRef,
   EvolutionLesson,
+  EvolutionPolicy,
   EvolutionScope,
   EvolutionScopeListParams,
   MetricSnapshot,
@@ -33,6 +34,16 @@ import type {
 
 const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
+
+function mergePolicy(policy: EvolutionPolicy, patch: EvolutionPolicy): EvolutionPolicy {
+  return {
+    ...policy,
+    ...patch,
+    automation: patch.automation
+      ? { ...policy.automation, ...patch.automation }
+      : policy.automation,
+  };
+}
 
 function summarizeArtifactData(data: Record<string, unknown>): string {
   const text = stringifyArtifactField(data);
@@ -199,7 +210,14 @@ export class EvolutionScopeService {
     if (params.parentScopeId) {
       this.requireScopeInSpace(params.parentScopeId, existing.spaceId);
     }
-    return this.deps.evolutionRepo.updateScope(id, params);
+    const updateParams = params.policyPatch
+      ? {
+          ...params,
+          policy: mergePolicy(existing.policy, params.policyPatch),
+          policyPatch: undefined,
+        }
+      : params;
+    return this.deps.evolutionRepo.updateScope(id, updateParams);
   }
 
   resolveScopeForGoal(params: ResolveScopeForGoalParams): EvolutionScope | null {

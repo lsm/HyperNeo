@@ -1,6 +1,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@neokai/shared';
-import type { Job } from '../../storage/repositories/job-queue-repository';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
@@ -13,6 +13,7 @@ import {
   readCompletedTaskThreshold,
   selectEvidenceAfterCursor,
 } from '../space/goals/goal-automation-service';
+import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants';
 import { Logger } from '../logger';
 
 const log = new Logger('goal-automation-execute');
@@ -49,6 +50,7 @@ export interface GoalAutomationExecuteDeps {
   taskCreatedEventHub?: {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
+  jobQueue?: Pick<JobQueueRepository, 'enqueueUniquePending'>;
 }
 
 export interface GoalAutomationExecuteResult extends Record<string, unknown> {
@@ -65,6 +67,7 @@ export interface GoalAutomationExecuteResult extends Record<string, unknown> {
     | 'no_evidence'
     | 'below_threshold'
     | 'active_review';
+  requeued?: boolean;
 }
 
 export async function handleGoalAutomationExecute(
@@ -82,7 +85,11 @@ export async function handleGoalAutomationExecute(
   if (payload.externalEvent) {
     ensureExternalEventEvidence(deps, payload, scope.id);
   }
-  const cursor = deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
+  const cursor =
+    deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey) ??
+    (payload.triggerKind === 'completed_task_threshold'
+      ? deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
+      : null);
   const policy = readAutomationPolicyForScope(scope);
   const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
   const dueEvidence = selectEvidenceAfterCursor(
@@ -107,7 +114,7 @@ export async function handleGoalAutomationExecute(
       return skipped(payload, 'below_threshold', dueEvidence.length);
     }
     if (findActiveCompletedTaskReviewTask(deps, scope.id, payload)) {
-      return skipped(payload, 'active_review', dueEvidence.length);
+      return requeueActiveReview(deps, payload, dueEvidence.length);
     }
   }
 
@@ -411,6 +418,35 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[]): T {
 function readMaxEvidence(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 12;
   return Math.max(1, Math.min(50, Math.floor(value)));
+}
+
+function requeueActiveReview(
+  deps: GoalAutomationExecuteDeps,
+  payload: GoalAutomationExecutePayload,
+  evidenceCount: number
+): GoalAutomationExecuteResult {
+  deps.jobQueue?.enqueueUniquePending({
+    queue: GOAL_AUTOMATION_EXECUTE,
+    payload,
+    matchPayload: uniqueJobMatchPayload(payload),
+    activeStatuses: ['pending'],
+    maxRetries: 2,
+    runAt: Date.now() + 60_000,
+  });
+  return {
+    ...skipped(payload, 'active_review', evidenceCount),
+    requeued: !!deps.jobQueue,
+  };
+}
+
+function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
+  return {
+    goalId: payload.goalId,
+    scopeId: payload.scopeId,
+    triggerKind: payload.triggerKind,
+    triggerKey: payload.triggerKey,
+    externalEventId: payload.externalEventId ?? null,
+  };
 }
 
 function skipped(

@@ -129,16 +129,20 @@ import {
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
 
-export function validateGoalAutomationSelfNagPolicy(params: {
-  policy?: EvolutionScope['policy'];
-}): void {
-  const policy = readAutomationPolicyForScope({
-    policy: params.policy,
-  } as EvolutionScope);
-  const threshold = policy.completedTaskThreshold;
+function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
+  const threshold = policy?.automation?.completedTaskThreshold;
   if (threshold !== undefined && (!Number.isInteger(threshold) || threshold <= 0)) {
     throw new Error('Completed-task automation threshold must be a positive integer');
   }
+}
+
+export function validateGoalAutomationSelfNagPolicy(params: {
+  policy?: EvolutionScope['policy'];
+}): void {
+  validateCompletedTaskThreshold(params.policy);
+  const policy = readAutomationPolicyForScope({
+    policy: params.policy ?? {},
+  } as EvolutionScope);
   const expression = policy.selfNagCronExpression;
   if (!expression) return;
   if (!isValidCronExpression(expression)) {
@@ -706,6 +710,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionRepo: deps.db.evolution,
       cursorRepo: deps.db.goalAutomationCursors,
       episodeService: evolutionEpisodeService,
+      jobQueue: deps.jobQueue,
       taskCreatedEventHub: {
         publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
       },

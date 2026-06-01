@@ -102,6 +102,7 @@ export interface UpdateEvolutionScopeParams {
   parentScopeId?: string | null;
   metricDefinitions?: MetricDefinition[];
   policy?: EvolutionPolicy;
+  policyPatch?: EvolutionPolicy;
 }
 
 export interface EvidenceRef {

@@ -66,13 +66,13 @@ export class GoalAutomationService {
     const policy = readAutomationPolicyForScope(scope);
     const threshold = readCompletedTaskThreshold(policy);
     if (threshold === null) return { enqueued: false, reason: 'disabled' };
+    if (goal.type !== 'recurring' && policy.completedTaskThreshold === undefined) {
+      return { enqueued: false, reason: 'disabled' };
+    }
     const triggerKey = completedTaskTriggerKey(threshold);
-    const cursor = this.deps.cursorRepo.get(
-      goal.id,
-      scope.id,
-      'completed_task_threshold',
-      triggerKey
-    );
+    const cursor =
+      this.deps.cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', triggerKey) ??
+      latestCompletedTaskCursor(this.deps.cursorRepo, goal.id, scope.id);
     const dueEvidence = selectEvidenceAfterCursor(
       this.deps.evolutionRepo.listEvidence(scope.id),
       cursor?.lastEvidenceCreatedAt ?? null,
@@ -219,6 +219,14 @@ export function externalEventTriggerKey(
   subscription: GoalForgeAutomationEventSubscription
 ): string {
   return `event:${subscription.source ?? '*'}:${subscription.topic}`;
+}
+
+function latestCompletedTaskCursor(
+  cursorRepo: GoalAutomationCursorRepository,
+  goalId: string,
+  scopeId: string
+) {
+  return cursorRepo.getLatestForTriggerKind(goalId, scopeId, 'completed_task_threshold');
 }
 
 export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {

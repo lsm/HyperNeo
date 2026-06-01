@@ -1640,7 +1640,7 @@ export function ScopeDetail({
       setSettingsError(null);
       const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
         id: scope.id,
-        params: { policy: { ...scope.policy, automation: nextAutomation } },
+        params: { policyPatch: { automation: nextAutomation } },
       });
       if (completedTaskAutomationRequestVersion.current !== version) return;
       if (response.scope) {

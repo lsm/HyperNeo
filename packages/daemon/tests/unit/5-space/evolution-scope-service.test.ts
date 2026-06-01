@@ -73,6 +73,39 @@ describe('EvolutionScopeService', () => {
     expect(service.resolveScopeForGoal({ spaceGoalId: goal.id })?.id).toBe(scope.id);
   });
 
+  it('merges policy patches into the stored policy', () => {
+    const scope = service.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Patch policy',
+      objective: 'Preserve concurrent settings',
+      policy: {
+        episodeJudgeModel: 'claude-sonnet-4-6',
+        episodeJudgeProvider: 'anthropic',
+        automation: {
+          completedTaskThreshold: 7,
+          selfNagCronExpression: '0 0 * * *',
+        },
+      },
+    });
+
+    const updated = service.updateScope(scope.id, {
+      policyPatch: {
+        automation: { completedTaskAutomationEnabled: false },
+      },
+    });
+
+    expect(updated?.policy).toEqual({
+      episodeJudgeModel: 'claude-sonnet-4-6',
+      episodeJudgeProvider: 'anthropic',
+      automation: {
+        completedTaskThreshold: 7,
+        completedTaskAutomationEnabled: false,
+        selfNagCronExpression: '0 0 * * *',
+      },
+    });
+  });
+
   it('attaches scheduled goal task evidence by resolving scope through spaceGoalId', () => {
     const goal = goalRepo.create({ spaceId, title: 'Weekly check-in', type: 'recurring' });
     const scope = service.createScopeFromGoal({ spaceGoalId: goal.id });

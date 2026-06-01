@@ -283,8 +283,19 @@ function setupRequests(scope = makeScope()) {
       return { snapshot: makeSnapshot({ id: 'snapshot-2', values: { latency: 3 } }) };
     }
     if (method === 'evolution.scope.update') {
-      const payload = data as { id: string; params: { policy: EvolutionScope['policy'] } };
-      return { scope: makeScope({ policy: payload.params.policy }) };
+      const payload = data as {
+        id: string;
+        params: { policy?: EvolutionScope['policy']; policyPatch?: EvolutionScope['policy'] };
+      };
+      const basePolicy = makeScope().policy;
+      const policy = payload.params.policy ?? {
+        ...basePolicy,
+        ...payload.params.policyPatch,
+        automation: payload.params.policyPatch?.automation
+          ? { ...(basePolicy.automation ?? {}), ...payload.params.policyPatch.automation }
+          : basePolicy.automation,
+      };
+      return { scope: makeScope({ policy }) };
     }
     throw new Error(`Unexpected RPC ${method}`);
   });
@@ -404,8 +415,7 @@ describe('ScopeDetailPanel', () => {
     expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
       id: 'scope-1',
       params: {
-        policy: {
-          maxActiveLessons: 3,
+        policyPatch: {
           automation: {
             completedTaskThreshold: 7,
             completedTaskAutomationEnabled: false,
@@ -430,7 +440,7 @@ describe('ScopeDetailPanel', () => {
     expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
       id: 'scope-1',
       params: {
-        policy: {
+        policyPatch: {
           automation: { completedTaskThreshold: 12 },
         },
       },
@@ -459,13 +469,13 @@ describe('ScopeDetailPanel', () => {
         return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
       }
       if (method === 'evolution.scope.update') {
-        const payload = data as { params: { policy: EvolutionScope['policy'] } };
-        if (payload.params.policy.automation?.completedTaskThreshold === 12) {
+        const payload = data as { params: { policyPatch: EvolutionScope['policy'] } };
+        if (payload.params.policyPatch.automation?.completedTaskThreshold === 12) {
           return new Promise((resolve) => {
             resolveFirst = resolve;
           });
         }
-        return { scope: makeScope({ policy: payload.params.policy }) };
+        return { scope: makeScope({ policy: payload.params.policyPatch }) };
       }
       throw new Error(`Unexpected RPC ${method}`);
     });
@@ -487,7 +497,7 @@ describe('ScopeDetailPanel', () => {
     await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
     expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
       id: 'scope-1',
-      params: { policy: { automation: { completedTaskThreshold: 13 } } },
+      params: { policyPatch: { automation: { completedTaskThreshold: 13 } } },
     });
   });
 
