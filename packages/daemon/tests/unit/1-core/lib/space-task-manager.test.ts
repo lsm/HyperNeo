@@ -155,6 +155,17 @@ describe('SpaceTaskManager', () => {
       expect(blocked.result).toBe('Blocked waiting for dependency');
     });
 
+    it('backfills result from incoming reportedSummary when existing reportedSummary is null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      const done = await manager.setTaskStatus(task.id, 'done', {
+        reportedSummary: 'Completed via incoming summary',
+      });
+      expect(done.status).toBe('done');
+      expect(done.result).toBe('Completed via incoming summary');
+      expect(done.reportedSummary).toBe('Completed via incoming summary');
+    });
+
     it('transitions open -> blocked (blocker found before start)', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       const blocked = await manager.setTaskStatus(task.id, 'blocked', {
