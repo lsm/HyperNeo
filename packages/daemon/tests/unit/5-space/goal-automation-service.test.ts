@@ -1244,7 +1244,77 @@ describe('handleGoalAutomationExecute', () => {
       scopeId: scope.id,
       triggerKind: 'completed_task_threshold',
       triggerKey: 'threshold:1',
+      activeReviewRequeueCount: 1,
     });
+  });
+
+  it('caps active-review requeues', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Cap requeue', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Cap requeue',
+      objective: 'Avoid infinite active-review requeues',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const activeReview = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Cap requeue',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      description: 'Episode: episode-active',
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:first-task',
+      ],
+    });
+    taskRepo.updateTask(activeReview.id, { status: 'in_progress' });
+    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Done task',
+      createdAt: 10,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: task.id,
+        activeReviewRequeueCount: 60,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        jobQueue,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not create episode while active review exists');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'active_review',
+      evidenceCount: 1,
+      requeued: false,
+    });
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      0
+    );
   });
 
   it('defers completed-task execution across threshold changes and blocked reviews', async () => {

@@ -17,6 +17,7 @@ import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants';
 import { Logger } from '../logger';
 
 const log = new Logger('goal-automation-execute');
+const MAX_ACTIVE_REVIEW_REQUEUES = 60;
 
 export interface GoalAutomationExternalEventSnapshot {
   source: string;
@@ -38,6 +39,7 @@ export interface GoalAutomationExecutePayload extends Record<string, unknown> {
   scheduleId?: string;
   externalEventId?: string;
   externalEvent?: GoalAutomationExternalEventSnapshot;
+  activeReviewRequeueCount?: number;
 }
 
 export interface GoalAutomationExecuteDeps {
@@ -379,6 +381,7 @@ function validatePayload(payload: Record<string, unknown>): GoalAutomationExecut
     scheduleId: optionalString(payload.scheduleId),
     externalEventId: optionalString(payload.externalEventId),
     externalEvent: normalizeExternalEvent(payload.externalEvent),
+    activeReviewRequeueCount: optionalPositiveInteger(payload.activeReviewRequeueCount),
   };
 }
 
@@ -415,6 +418,10 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[]): T {
   return value as T;
 }
 
+function optionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function readMaxEvidence(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 12;
   return Math.max(1, Math.min(50, Math.floor(value)));
@@ -425,9 +432,20 @@ function requeueActiveReview(
   payload: GoalAutomationExecutePayload,
   evidenceCount: number
 ): GoalAutomationExecuteResult {
+  const requeueCount = readActiveReviewRequeueCount(payload);
+  if (requeueCount >= MAX_ACTIVE_REVIEW_REQUEUES) {
+    return {
+      ...skipped(payload, 'active_review', evidenceCount),
+      requeued: false,
+    };
+  }
+  const requeuePayload = {
+    ...payload,
+    activeReviewRequeueCount: requeueCount + 1,
+  };
   deps.jobQueue?.enqueueUniquePending({
     queue: GOAL_AUTOMATION_EXECUTE,
-    payload,
+    payload: requeuePayload,
     matchPayload: uniqueJobMatchPayload(payload),
     activeStatuses: ['pending'],
     maxRetries: 2,
@@ -437,6 +455,11 @@ function requeueActiveReview(
     ...skipped(payload, 'active_review', evidenceCount),
     requeued: !!deps.jobQueue,
   };
+}
+
+function readActiveReviewRequeueCount(payload: GoalAutomationExecutePayload): number {
+  const value = payload.activeReviewRequeueCount;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
 }
 
 function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
