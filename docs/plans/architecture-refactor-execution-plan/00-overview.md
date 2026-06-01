@@ -19,6 +19,13 @@ The target architecture is already defined in:
 
 This plan is the execution layer over those specs. It defines the Goal/Forge operating model, PR sequence, release invariants, and acceptance gates.
 
+M0 guardrail artifacts:
+
+- [Architecture Refactor PR Evidence Template](01-release-evidence-template.md)
+- [Source File Size Ratchet](02-file-size-ratchet.md)
+- [M0 Current-State Inventory](03-current-state-inventory.md)
+- [File Size Ratchet Baseline](file-size-ratchet.json)
+
 ## Operating Model
 
 Create one parent Goal:
@@ -75,6 +82,7 @@ Suggested verification baseline:
 
 ```bash
 bun run check
+bun run architecture:file-size-report
 ```
 
 Use narrower test commands during development, then run the baseline before merge. Do not run root `bun test`.
