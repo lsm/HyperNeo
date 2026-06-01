@@ -2591,7 +2591,7 @@ describe('openai-responses-bridge server', () => {
 
     server.setSessionThinkingConfig?.('session-a', {
       type: 'enabled',
-      budget_tokens: 32000,
+      budget_tokens: 31999,
     });
 
     const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {

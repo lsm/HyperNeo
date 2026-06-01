@@ -375,6 +375,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     ].join(':');
   }
 
+  /**
+   * Resolve the active bridge auth using the same precedence as buildSdkConfig:
+   *   1. OPENAI_API_KEY env var
+   *   2. Cached credentials file
+   *   3. cachedBridgeAuth (from prior OAuth flow)
+   */
+  private resolveBridgeAuth(): OpenAIResponsesBridgeAuth | undefined {
+    const envAuth = this.env.OPENAI_API_KEY
+      ? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
+      : undefined;
+    const fileAuth = this.cachedCredentials ? this.toBridgeAuth(this.cachedCredentials) : undefined;
+    return envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
+  }
+
   private modelAliases(): Record<string, string> {
     return Object.fromEntries(
       ANTHROPIC_CODEX_MODELS.flatMap((model) =>
@@ -503,11 +517,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const sessionId = sessionConfig?.sessionId ?? 'default';
     // buildSdkConfig() is synchronous per the Provider interface.  The async
     // discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
-    const envAuth = this.env.OPENAI_API_KEY
-      ? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
-      : undefined;
-    const fileAuth = this.cachedCredentials ? this.toBridgeAuth(this.cachedCredentials) : undefined;
-    const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
+    const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
     let bridgeServer = this.bridgeServers.get(bridgeKey);
@@ -577,14 +587,14 @@ export class AnthropicToCodexBridgeProvider implements Provider {
    * forwarded to the OpenAI Responses API.
    */
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
-    const auth = this.cachedBridgeAuth ?? undefined;
+    const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
     const bridgeServer = this.bridgeServers.get(bridgeKey);
     if (!bridgeServer?.setSessionThinkingConfig) return;
 
     const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
-    if (tokens === undefined || tokens === null) {
+    if (tokens === undefined) {
       bridgeServer.setSessionThinkingConfig(sessionId, undefined);
       return;
     }

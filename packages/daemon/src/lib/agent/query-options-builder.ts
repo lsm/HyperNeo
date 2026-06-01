@@ -665,6 +665,18 @@ export class QueryOptionsBuilder {
     return result as Options;
   }
 
+  /**
+   * Return the effective thinking level for this session, mirroring the
+   * computation in `addSessionStateOptions` so callers (e.g. the Codex
+   * bridge side-channel) use the same value.
+   */
+  getEffectiveThinkingLevel(): ThinkingLevel {
+    const globalSettings = this.ctx.settingsManager.getGlobalSettings();
+    return normalizeThinkingLevel(
+      this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
+    );
+  }
+
   private getSdkResumeWorkspacePath(): string | undefined {
     return this.ctx.session.sdkOriginPath ?? this.getCwd();
   }
