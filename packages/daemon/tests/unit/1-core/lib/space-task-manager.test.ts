@@ -166,6 +166,18 @@ describe('SpaceTaskManager', () => {
       expect(done.reportedSummary).toBe('Completed via incoming summary');
     });
 
+    it('does not backfill result when reportedSummary is explicitly null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, { reportedSummary: 'Stale summary' });
+      const done = await manager.setTaskStatus(task.id, 'done', {
+        reportedSummary: null,
+      });
+      expect(done.status).toBe('done');
+      expect(done.result).toBeNull();
+      expect(done.reportedSummary).toBeNull();
+    });
+
     it('transitions open -> blocked (blocker found before start)', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       const blocked = await manager.setTaskStatus(task.id, 'blocked', {

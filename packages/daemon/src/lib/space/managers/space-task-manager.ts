@@ -167,7 +167,7 @@ export class SpaceTaskManager {
     newStatus: SpaceTaskStatus,
     options?: {
       result?: string;
-      reportedSummary?: string;
+      reportedSummary?: string | null;
       blockReason?: SpaceBlockReason;
       approvalSource?: SpaceApprovalSource;
       // `null` explicitly clears a prior value; `undefined` leaves any
@@ -195,13 +195,15 @@ export class SpaceTaskManager {
     if (newStatus === 'done' || newStatus === 'blocked') {
       if (options?.result) {
         updates.result = options.result;
-      } else if (!task.result) {
+      } else if (!task.result && options?.reportedSummary !== null) {
         // Backfill result from reportedSummary so terminal tasks never reach
         // `done`/`blocked` with a null result when a summary exists.
         const summary = options?.reportedSummary ?? task.reportedSummary;
         if (summary) updates.result = summary;
       }
-      if (options?.reportedSummary) updates.reportedSummary = options.reportedSummary;
+      if (options?.reportedSummary !== undefined) {
+        updates.reportedSummary = options.reportedSummary;
+      }
     }
 
     // Stamp blockReason when entering blocked, clear when leaving
