@@ -130,6 +130,7 @@ export function setupAuthHandlers(
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           }
           unsubscribe?.();
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();

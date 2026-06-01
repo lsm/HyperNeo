@@ -136,15 +136,23 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('session.errorClear')).toBe(true);
     });
 
+    it('should subscribe to provider bridge events', () => {
+      const { internalEventBus, gateway, eventHandlers } = buildFixture();
+      const bridge = new ClientEventBridge(internalEventBus, gateway);
+      bridge.start();
+
+      expect(eventHandlers.has('providers.changed')).toBe(true);
+    });
+
     it('should be idempotent', () => {
       const { internalEventBus, gateway, eventHandlers } = buildFixture();
       const bridge = new ClientEventBridge(internalEventBus, gateway);
       bridge.start();
       bridge.start();
 
-      // 20 space + 3 session + 2 conn/auth + 1 config + 2 error = 28 unique events
+      // 20 space + 4 session + 2 conn/auth + 1 config + 2 error = 29 unique events
       // (context.updated has 2 handlers but is 1 unique event key)
-      expect(eventHandlers.size).toBe(28);
+      expect(eventHandlers.size).toBe(29);
     });
   });
 
@@ -155,8 +163,8 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      // 29 internalEventBus.subscribe calls total (context.updated has 2 handlers)
-      expect(unsubscribers.length).toBe(29);
+      // 30 internalEventBus.subscribe calls total (context.updated has 2 handlers)
+      expect(unsubscribers.length).toBe(30);
     });
   });
 
@@ -467,6 +475,18 @@ describe('ClientEventBridge', () => {
       expect(published[0].method).toBe('context.updated');
       expect(published[0].data).toEqual(contextInfo);
       expect(published[0].channel).toEqual({ kind: 'session', sessionId: 'sess-1' });
+    });
+
+    it('forwards providers.changed to global channel', () => {
+      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+      createClientEventBridge(internalEventBus, gateway).start();
+
+      const data = { sessionId: 'global' };
+      eventHandlers.get('providers.changed')![0](data);
+
+      expect(published[0].method).toBe('providers.changed');
+      expect(published[0].data).toEqual(data);
+      expect(published[0].channel).toEqual({ kind: 'global' });
     });
   });
 
