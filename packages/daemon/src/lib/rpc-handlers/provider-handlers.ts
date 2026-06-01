@@ -11,6 +11,7 @@ import type { ProviderRepository } from '../../storage/repositories/provider-rep
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
+import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
@@ -248,6 +249,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
           if (shouldResync) {
             if (record.isEnabled === false) {
+              if (record.kind === 'built_in') {
+                markBuiltInProviderDisabled(record.providerId);
+              }
               await removeProviderFromRegistry(record.providerId);
             } else {
               const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
@@ -274,6 +278,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       // DB-first: delete the row before touching the registry so a failure in
       // credential removal doesn't leave a ghost record that resurrects on restart.
       providerRepo.deleteProvider(data.id);
+      if (record.kind === 'built_in') {
+        markBuiltInProviderDisabled(record.providerId);
+      }
       await removeProviderFromRegistry(record.providerId);
       try {
         await credentialManager.removeCredentials(record.providerId);
