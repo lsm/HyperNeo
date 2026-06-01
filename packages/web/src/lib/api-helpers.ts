@@ -453,5 +453,5 @@ export async function listCustomEndpointModels(data: {
   return await hub.request<{
     models: Array<{ id: string; name?: string }>;
     fromCache: boolean;
-  }>('customEndpoints.listModels', data);
+  }>('customEndpoints.listModels', data, { timeout: 15000 });
 }

@@ -5,6 +5,7 @@
  * Extracted from CustomEndpointsSettings so it can be reused by AddProviderModal.
  */
 
+import { useEffect } from 'preact/hooks';
 import type {
   CustomEndpointConfig,
   CustomEndpointModel,
@@ -415,6 +416,12 @@ export function EditorModal({
     state.id.trim() &&
     existingIds.includes(state.id.trim().toLowerCase());
   const validationError = validateEditor(state);
+
+  useEffect(() => {
+    if (fetchedModels !== null && state.selectedFetchedModelIds?.length) {
+      update({ selectedFetchedModelIds: [] });
+    }
+  }, [fetchedModels]);
 
   const existingModelIds = new Set(state.models.map((m) => m.id.trim()));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];

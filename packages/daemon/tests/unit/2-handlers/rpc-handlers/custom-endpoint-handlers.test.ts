@@ -438,6 +438,21 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(capturedUrl).toBe('http://localhost:1234/v1/models');
     });
 
+    it('strips /chat/completions from baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'm1', object: 'model' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1/chat/completions' }, {});
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
     it('accepts anthropic-messages model objects with type and display_name', async () => {
       global.fetch = mock(async () => ({
         ok: true,

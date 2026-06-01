@@ -68,6 +68,7 @@ function buildModelListUrl(baseUrl: string, type: string): string {
     path = path.replace(/\/api\/tags$/i, '');
     parsed.pathname = `${path}/api/tags`;
   } else {
+    path = path.replace(/\/chat\/completions$/i, '');
     path = path.replace(/\/v1\/models$/i, '');
     path = path.replace(/\/v1$/i, '');
     parsed.pathname = `${path}/v1/models`;
