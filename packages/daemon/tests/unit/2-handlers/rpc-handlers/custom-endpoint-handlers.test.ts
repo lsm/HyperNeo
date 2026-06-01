@@ -8,7 +8,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { CustomEndpointConfig, GlobalSettings } from '@neokai/shared';
-import { registerCustomEndpointHandlers } from '../../../../src/lib/rpc-handlers/custom-endpoint-handlers';
+import {
+  registerCustomEndpointHandlers,
+  clearModelListCache,
+} from '../../../../src/lib/rpc-handlers/custom-endpoint-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type {
   DaemonInternalEventMap,
@@ -77,6 +80,7 @@ describe('Custom Endpoint RPC handlers', () => {
   beforeEach(() => {
     syncCalls.splice(0);
     clearModelsCacheCalls.splice(0);
+    clearModelListCache();
     hubData = createMockMessageHub();
     settings = createMockSettings();
     eventBus = {
@@ -257,6 +261,151 @@ describe('Custom Endpoint RPC handlers', () => {
       await Promise.all([add({ endpoint: a }, {}), add({ endpoint: b }, {})]);
       const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
       expect(ids).toEqual(['a', 'b']);
+    });
+  });
+
+  describe('customEndpoints.listModels', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('fetches models from /v1/models for openai-chat', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-4', object: 'model' },
+            { id: 'gpt-3.5-turbo', object: 'model' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+        fromCache: boolean;
+      };
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].id).toBe('gpt-4');
+      expect(result.fromCache).toBe(false);
+    });
+
+    it('fetches models from /api/tags for ollama-native', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          models: [{ name: 'llama2' }, { name: 'codellama', model: 'codellama:7b' }],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        { baseUrl: 'http://localhost:11434', type: 'ollama-native' },
+        {}
+      )) as { models: Array<{ id: string }> };
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].id).toBe('llama2');
+      expect(result.models[1].id).toBe('codellama');
+    });
+
+    it('returns cached results within 30s', async () => {
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'm1', object: 'model' }],
+          }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const first = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        fromCache: boolean;
+      };
+      expect(first.fromCache).toBe(false);
+      expect(callCount).toBe(1);
+
+      const second = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        fromCache: boolean;
+      };
+      expect(second.fromCache).toBe(true);
+      expect(callCount).toBe(1);
+    });
+
+    it('throws on HTTP error', async () => {
+      global.fetch = mock(async () => ({
+        ok: false,
+        status: 401,
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await expect(handler({ baseUrl: 'http://localhost:1234/v1' }, {})).rejects.toThrow(
+        /HTTP 401/
+      );
+    });
+
+    it('throws on network/timeout errors', async () => {
+      global.fetch = mock(async () => {
+        throw new Error('Connection refused');
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await expect(handler({ baseUrl: 'http://localhost:1234/v1' }, {})).rejects.toThrow(
+        /Connection refused/
+      );
+    });
+
+    it('rejects invalid baseUrl', async () => {
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await expect(handler({ baseUrl: '' }, {})).rejects.toThrow(/baseUrl is required/);
+      await expect(handler({ baseUrl: 'ftp://nope' }, {})).rejects.toThrow(/http/);
+    });
+
+    it('includes Authorization and extra headers', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      global.fetch = mock(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'sk-test',
+          headers: { 'X-Custom': 'val' },
+        },
+        {}
+      );
+      expect(capturedHeaders.Authorization).toBe('Bearer sk-test');
+      expect(capturedHeaders['X-Custom']).toBe('val');
+    });
+
+    it('filters out entries with missing ids', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'valid', object: 'model' },
+            { id: '', object: 'model' },
+            { object: 'model' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+      };
+      expect(result.models).toHaveLength(1);
+      expect(result.models[0].id).toBe('valid');
     });
   });
 });

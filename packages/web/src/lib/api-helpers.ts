@@ -439,3 +439,19 @@ export async function removeCustomEndpoint(id: string): Promise<{ success: boole
   const hub = getHubOrThrow();
   return await hub.request('customEndpoints.remove', { id });
 }
+
+export async function listCustomEndpointModels(data: {
+  baseUrl: string;
+  type?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}): Promise<{
+  models: Array<{ id: string; name?: string }>;
+  fromCache: boolean;
+}> {
+  const hub = getHubOrThrow();
+  return await hub.request<{
+    models: Array<{ id: string; name?: string }>;
+    fromCache: boolean;
+  }>('customEndpoints.listModels', data);
+}

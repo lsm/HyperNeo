@@ -20,6 +20,7 @@ import {
   addCustomEndpoint,
   updateCustomEndpoint,
   removeCustomEndpoint,
+  listCustomEndpointModels,
 } from '../../lib/api-helpers.ts';
 import { connectionManager } from '../../lib/connection-manager';
 import { toast } from '../../lib/toast.ts';
@@ -47,6 +48,12 @@ export function CustomEndpointsSettings() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<Array<{ id: string; name?: string }> | null>(
+    null
+  );
+  const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   const load = async () => {
     try {
@@ -152,6 +159,43 @@ export function CustomEndpointsSettings() {
       toast.error(e instanceof Error ? e.message : 'Test failed');
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleFetchModels = async () => {
+    if (!editor) return;
+    if (!editor.baseUrl.trim()) {
+      toast.error('Base URL is required to fetch models');
+      return;
+    }
+    try {
+      setFetchingModels(true);
+      setFetchModelsError(null);
+      const headers: Record<string, string> = {};
+      try {
+        const parsed = parseHeaders(editor.headersText);
+        if (parsed) Object.assign(headers, parsed);
+      } catch {
+        // ignore
+      }
+      const { models } = await listCustomEndpointModels({
+        baseUrl: editor.baseUrl.trim(),
+        type: editor.type,
+        apiKey: editor.apiKey.trim() || undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
+      });
+      setFetchedModels(models);
+      setFetchedAt(Date.now());
+      if (models.length === 0) {
+        toast.info('No models found — you can still enter one manually');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to fetch models';
+      setFetchModelsError(msg);
+      setFetchedModels(null);
+      setFetchedAt(null);
+    } finally {
+      setFetchingModels(false);
     }
   };
 
@@ -287,6 +331,11 @@ export function CustomEndpointsSettings() {
           saving={saving}
           onTest={handleTest}
           testing={testing}
+          onFetchModels={handleFetchModels}
+          fetchingModels={fetchingModels}
+          fetchedModels={fetchedModels}
+          fetchModelsError={fetchModelsError}
+          fetchedAt={fetchedAt}
         />
       )}
     </SettingsSection>

@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'preact/hooks';
-import { createProvider, loginProvider } from '../../lib/api-helpers.ts';
+import { createProvider, loginProvider, listCustomEndpointModels } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { Button } from '../ui/Button.tsx';
 import { OAuthModal, type OAuthFlowState } from './OAuthModal.tsx';
@@ -19,6 +19,7 @@ import {
   editorToConfig,
   validateEditor,
   testCustomEndpoint,
+  parseHeaders,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
 import type { ProviderAuthResponse } from '@neokai/shared/provider';
@@ -109,6 +110,12 @@ export function AddProviderModal({
   const [showPresets, setShowPresets] = useState(false);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<Array<{ id: string; name?: string }> | null>(
+    null
+  );
+  const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   const isAdded = (providerId: string) => existingProviderIds.includes(providerId);
 
@@ -253,6 +260,43 @@ export function AddProviderModal({
       toast.error(e instanceof Error ? e.message : 'Test failed');
     } finally {
       setTestingCustom(false);
+    }
+  };
+
+  const handleFetchModels = async () => {
+    if (!customEditor) return;
+    if (!customEditor.baseUrl.trim()) {
+      toast.error('Base URL is required to fetch models');
+      return;
+    }
+    try {
+      setFetchingModels(true);
+      setFetchModelsError(null);
+      const headers: Record<string, string> = {};
+      try {
+        const parsed = parseHeaders(customEditor.headersText);
+        if (parsed) Object.assign(headers, parsed);
+      } catch {
+        // ignore
+      }
+      const { models } = await listCustomEndpointModels({
+        baseUrl: customEditor.baseUrl.trim(),
+        type: customEditor.type,
+        apiKey: customEditor.apiKey.trim() || undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
+      });
+      setFetchedModels(models);
+      setFetchedAt(Date.now());
+      if (models.length === 0) {
+        toast.info('No models found — you can still enter one manually');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to fetch models';
+      setFetchModelsError(msg);
+      setFetchedModels(null);
+      setFetchedAt(null);
+    } finally {
+      setFetchingModels(false);
     }
   };
 
@@ -434,6 +478,11 @@ export function AddProviderModal({
           saving={savingCustom}
           onTest={handleTestCustom}
           testing={testingCustom}
+          onFetchModels={handleFetchModels}
+          fetchingModels={fetchingModels}
+          fetchedModels={fetchedModels}
+          fetchModelsError={fetchModelsError}
+          fetchedAt={fetchedAt}
         />
       )}
 
