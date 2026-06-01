@@ -53,6 +53,28 @@ function cacheKey(params: {
   ]);
 }
 
+/**
+ * Build the model-list URL by stripping known trailing suffixes from the
+ * base URL path before appending the correct route. Mirrors the URL builders
+ * in the bridge servers so a user-pasted `.../v1` or `.../v1/models` doesn't
+ * produce a double-suffixed path like `.../v1/v1/models`.
+ */
+function buildModelListUrl(baseUrl: string, type: string): string {
+  const trimmed = baseUrl.trim();
+  const parsed = new URL(trimmed);
+  let path = parsed.pathname.replace(/\/+$/, '');
+
+  if (type === 'ollama-native') {
+    path = path.replace(/\/api\/tags$/i, '');
+    parsed.pathname = `${path}/api/tags`;
+  } else {
+    path = path.replace(/\/v1\/models$/i, '');
+    path = path.replace(/\/v1$/i, '');
+    parsed.pathname = `${path}/v1/models`;
+  }
+  return parsed.toString();
+}
+
 function normalizeModelList(type: string, data: unknown): Array<{ id: string; name?: string }> {
   if (type === 'ollama-native') {
     // Ollama /api/tags returns { models: [{ name, model?, ... }] }
@@ -67,13 +89,41 @@ function normalizeModelList(type: string, data: unknown): Array<{ id: string; na
       .filter((m): m is { id: string; name?: string } => m !== null);
   }
 
+  if (type === 'anthropic-messages') {
+    // Anthropic-compatible /v1/models returns { data: [{ id, type?, display_name? }] }
+    const body = data as
+      | {
+          data?: Array<{
+            id?: string;
+            type?: string;
+            display_name?: string;
+            object?: string;
+          }>;
+        }
+      | undefined;
+    const list = body?.data ?? [];
+    return list
+      .map((m) => {
+        const id = m.id;
+        if (!id) return null;
+        const isModel =
+          m.type === 'model' ||
+          m.object === 'model' ||
+          (m.object === undefined && m.type === undefined);
+        if (!isModel) return null;
+        return m.display_name ? { id, name: m.display_name } : { id };
+      })
+      .filter((m): m is { id: string; name?: string } => m !== null);
+  }
+
   // OpenAI-compatible /v1/models returns { data: [{ id, object? }] }
   const body = data as { data?: Array<{ id?: string; object?: string }> } | undefined;
   const list = body?.data ?? [];
   return list
     .map((m) => {
       const id = m.id;
-      if (!id || m.object !== 'model') return null;
+      if (!id) return null;
+      if (m.object !== undefined && m.object !== 'model') return null;
       return { id };
     })
     .filter((m): m is { id: string; name?: string } => m !== null);
@@ -86,11 +136,16 @@ async function fetchModelsFromEndpoint(params: {
   headers?: Record<string, string>;
 }): Promise<Array<{ id: string; name?: string }>> {
   const resolvedType = (params.type ?? 'openai-chat') as string;
-  const url = params.baseUrl.replace(/\/+$/, '');
-  const probeUrl = resolvedType === 'ollama-native' ? `${url}/api/tags` : `${url}/v1/models`;
+  const probeUrl = buildModelListUrl(params.baseUrl, resolvedType);
 
   const headers: Record<string, string> = {};
-  if (params.apiKey) headers.Authorization = `Bearer ${params.apiKey}`;
+  if (params.apiKey) {
+    headers.Authorization = `Bearer ${params.apiKey}`;
+    if (resolvedType === 'anthropic-messages') {
+      headers['x-api-key'] = params.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    }
+  }
   if (params.headers) Object.assign(headers, params.headers);
 
   const controller = new AbortController();

@@ -407,5 +407,103 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(result.models).toHaveLength(1);
       expect(result.models[0].id).toBe('valid');
     });
+
+    it('does not double-append /v1 when baseUrl already ends in /v1', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'm1', object: 'model' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1' }, {});
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('strips /v1/models from baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'm1', object: 'model' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1/models' }, {});
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('accepts anthropic-messages model objects with type and display_name', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'claude-sonnet-4-5', type: 'model', display_name: 'Claude Sonnet 4.5' },
+            { id: 'claude-opus-4-5', object: 'model' },
+            { id: 'skipped', type: 'unknown' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        { baseUrl: 'http://localhost:1234/v1', type: 'anthropic-messages' },
+        {}
+      )) as { models: Array<{ id: string; name?: string }> };
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].id).toBe('claude-sonnet-4-5');
+      expect(result.models[0].name).toBe('Claude Sonnet 4.5');
+      expect(result.models[1].id).toBe('claude-opus-4-5');
+    });
+
+    it('sends anthropic auth headers for anthropic-messages endpoints', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      global.fetch = mock(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1',
+          type: 'anthropic-messages',
+          apiKey: 'sk-ant',
+        },
+        {}
+      );
+      expect(capturedHeaders.Authorization).toBe('Bearer sk-ant');
+      expect(capturedHeaders['x-api-key']).toBe('sk-ant');
+      expect(capturedHeaders['anthropic-version']).toBe('2023-06-01');
+    });
+
+    it('accepts openai entries that omit the object field', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-4' },
+            { id: 'gpt-3.5-turbo', object: 'model' },
+            { id: 'skipped', object: 'fine-tune' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+      };
+      expect(result.models).toHaveLength(2);
+      expect(result.models.map((m) => m.id)).toContain('gpt-4');
+      expect(result.models.map((m) => m.id)).toContain('gpt-3.5-turbo');
+    });
   });
 });
