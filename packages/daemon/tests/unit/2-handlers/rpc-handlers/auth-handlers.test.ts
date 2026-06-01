@@ -14,6 +14,7 @@ import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handler
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@neokai/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
+import { resetProviderFactory, initializeProviders } from '../../../../src/lib/providers/factory';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -204,6 +205,39 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Provider not found');
+    });
+
+    it('re-initializes built-in providers that were unregistered', async () => {
+      // Simulate a built-in provider that was unregistered (e.g., user deleted it)
+      resetProviderFactory();
+      resetProviderRegistry();
+      registry = getProviderRegistry();
+
+      // Register only a mock provider, not the real built-ins
+      const mockProvider = createMockProvider({ id: 'anthropic-codex' });
+      registry.register(mockProvider);
+
+      // Now unregister it to simulate deletion
+      registry.unregister('anthropic-codex');
+      expect(registry.has('anthropic-codex')).toBe(false);
+
+      // Re-setup handlers so they use the new registry
+      setupAuthHandlers(messageHubData.hub, mockAuthManager as unknown as AuthManager);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      // This would have failed before the fix because the provider was unregistered.
+      // With initializeProviders() called inside the handler, built-ins are restored.
+      const result = (await handler!({ providerId: 'anthropic-codex' }, {})) as {
+        success: boolean;
+        authUrl?: string;
+      };
+
+      // The real AnthropicToCodexBridgeProvider is registered by initializeProviders()
+      expect(registry.has('anthropic-codex')).toBe(true);
+      // The real provider supports OAuth, so login should succeed
+      expect(result.success).toBe(true);
     });
 
     it('returns error when provider does not support OAuth', async () => {

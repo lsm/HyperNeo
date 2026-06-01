@@ -21,6 +21,7 @@ import type {
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { getProviderRegistry } from '../providers/registry';
+import { initializeProviders } from '../providers/factory.js';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
 
@@ -96,6 +97,9 @@ export function setupAuthHandlers(
     'auth.login',
     async (req: ProviderAuthRequest): Promise<ProviderAuthResponse> => {
       const { providerId } = req;
+      // Re-register built-in providers that may have been unregistered (e.g.,
+      // after the user deleted and is now re-adding the provider).
+      initializeProviders();
       const registry = getProviderRegistry();
 
       const provider = registry.get(providerId);

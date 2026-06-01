@@ -945,4 +945,76 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // refreshToken() — stale credential clearing
+  // -------------------------------------------------------------------------
+
+  describe('refreshToken() stale credential clearing', () => {
+    let tmpDir: string;
+    let fetchSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-refresh-test-'));
+      fetchSpy = spyOn(globalThis, 'fetch').mockRejectedValue(
+        new Error('fetch not mocked for this test')
+      );
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('clears stale credentials when token refresh fails with invalid_grant', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'invalid-refresh-token',
+        expires: Date.now() - 60_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"invalid_grant"}', {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      // Credentials should be cleared so the user is prompted to re-authenticate
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(false);
+      expect(await p.getApiKey()).toBeUndefined();
+      p.stopAllBridgeServers();
+    });
+
+    it('clears stale credentials when token refresh returns 400', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'revoked-refresh-token',
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"invalid_request"}', {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(false);
+      p.stopAllBridgeServers();
+    });
+  });
 });

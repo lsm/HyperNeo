@@ -400,7 +400,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     const tokens = await this.tryRefreshCodexToken(credentials.refresh);
     if (!tokens) {
-      logger.warn('AnthropicToCodexBridgeProvider: OAuth token refresh failed');
+      logger.warn(
+        'AnthropicToCodexBridgeProvider: OAuth token refresh failed — clearing stale credentials'
+      );
+      await this.logout();
       return undefined;
     }
 

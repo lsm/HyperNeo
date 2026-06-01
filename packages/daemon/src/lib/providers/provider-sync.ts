@@ -28,8 +28,10 @@ export async function syncProviderToRegistry(
   const registry = getProviderRegistry();
 
   // Built-in providers are already registered by initializeProviders().
-  // We only need to call setCredentials() on them.
+  // If one was unregistered (e.g., user deleted and is re-adding it),
+  // re-run initialization to restore missing core providers.
   if (record.kind === 'built_in') {
+    initializeProviders();
     const provider = registry.get(record.providerId);
     if (provider?.setCredentials && credentials) {
       provider.setCredentials(credentials);
