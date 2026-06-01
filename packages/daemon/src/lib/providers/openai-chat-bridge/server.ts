@@ -523,7 +523,8 @@ async function streamChatToAnthropic(params: {
   let thinkingOpen = false;
   let thinkingBlockIndex = -1;
   let nextBlockIndex = 0;
-  let heuristicOutputTokens = 0;
+  let heuristicOutputText = '';
+  let heuristicOutputThinking = '';
   let finalPromptTokens: number | undefined;
   let finalCompletionTokens: number | undefined;
   let finishReason: string | null = null;
@@ -576,6 +577,7 @@ async function streamChatToAnthropic(params: {
   const openToolCall = (call: PendingToolCall) => {
     if (call.opened) return;
     ensureStarted();
+    closeThinkingBlock();
     closeTextBlock();
     call.blockIndex = nextBlockIndex++;
     send(contentBlockStartToolUseSSE(call.blockIndex, call.id, call.name));
@@ -614,7 +616,7 @@ async function streamChatToAnthropic(params: {
       if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
         startThinkingBlock();
         send(thinkingDeltaSSE(thinkingBlockIndex, delta.reasoning_content));
-        heuristicOutputTokens += Math.max(1, Math.ceil(delta.reasoning_content.length / 4));
+        heuristicOutputThinking += delta.reasoning_content;
       }
 
       if (typeof delta.content === 'string' && delta.content.length > 0) {
@@ -626,7 +628,7 @@ async function streamChatToAnthropic(params: {
           textOpen = true;
         }
         send(textDeltaSSE(textBlockIndex, delta.content));
-        heuristicOutputTokens += Math.max(1, Math.ceil(delta.content.length / 4));
+        heuristicOutputText += delta.content;
       }
 
       if (delta.tool_calls) {
@@ -700,10 +702,14 @@ async function streamChatToAnthropic(params: {
           ? 'max_tokens'
           : 'end_turn';
 
+    const textTokens =
+      heuristicOutputText.length > 0 ? Math.ceil(heuristicOutputText.length / 4) : 0;
+    const thinkingTokens =
+      heuristicOutputThinking.length > 0 ? Math.ceil(heuristicOutputThinking.length / 4) : 0;
     send(
       messageDeltaSSE(stopReason, {
         inputTokens: finalPromptTokens ?? inputTokens,
-        outputTokens: finalCompletionTokens ?? Math.max(1, heuristicOutputTokens),
+        outputTokens: finalCompletionTokens ?? Math.max(1, textTokens + thinkingTokens),
         modelContextWindow,
       })
     );

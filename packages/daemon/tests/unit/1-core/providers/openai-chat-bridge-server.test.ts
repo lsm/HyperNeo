@@ -1052,5 +1052,92 @@ describe('OpenAI Chat Completions bridge server', () => {
       // reasoning (9 chars) => ceil(9/4)=3, text (4 chars) => ceil(4/4)=1, total 4.
       expect(outputTokens).toBe(4);
     });
+
+    it('closes thinking block before tool_use when reasoning is followed by tool_calls', async () => {
+      const fetchMock = mock(async () => {
+        const body = sseBody([
+          { choices: [{ index: 0, delta: { reasoning_content: 'plan' } }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_plan',
+                      type: 'function',
+                      function: { name: 'act', arguments: '{}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+        ]);
+        return new Response(body, { status: 200 });
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+          tools: [{ name: 'act', description: '', input_schema: { type: 'object' } }],
+        }),
+      });
+      const text = await response.text();
+      // thinking opens, then closes before tool_use
+      expect(text).toContain('"type":"thinking"');
+      expect(text).toContain('"type":"tool_use"');
+      expect(text).toContain('"name":"act"');
+      expect(text).toContain('"stop_reason":"tool_use"');
+      // ensure the thinking block is stopped before the tool_use block starts
+      const thinkingStopPos = text.indexOf('event: content_block_stop');
+      const toolUseStartPos = text.indexOf('"type":"tool_use"');
+      expect(thinkingStopPos).toBeGreaterThan(-1);
+      expect(toolUseStartPos).toBeGreaterThan(-1);
+      expect(thinkingStopPos).toBeLessThan(toolUseStartPos);
+    });
+
+    it('handles a reasoning-only stream with no content delta', async () => {
+      const fetchMock = mock(async () => {
+        const body = sseBody([
+          { choices: [{ index: 0, delta: { reasoning_content: 'Only reasoning' } }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        ]);
+        return new Response(body, { status: 200 });
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      const text = await response.text();
+      expect(text).toContain('"type":"thinking"');
+      expect(text).toContain('"thinking":"Only reasoning"');
+      expect(text).toContain('"stop_reason":"end_turn"');
+      expect(text).toContain('event: message_stop');
+      // must not contain a text block
+      expect(text).not.toContain('"type":"text"');
+    });
   });
 });
