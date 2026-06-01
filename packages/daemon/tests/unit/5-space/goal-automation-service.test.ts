@@ -299,7 +299,7 @@ describe('GoalAutomationService', () => {
     );
   });
 
-  it('queues pending count automation instead of overlapping active review tasks', () => {
+  it('queues automation job instead of goal task when active review exists', () => {
     const goal = goalRepo.create({ spaceId, title: 'No overlap', type: 'recurring' });
     const scope = evolutionRepo.createScope({
       spaceId,
@@ -324,7 +324,100 @@ describe('GoalAutomationService', () => {
     taskRepo.updateTask(activeTask.id, { status: 'in_progress' });
     const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
     taskRepo.updateTask(task.id, { status: 'done' });
-    const evidence = evolutionRepo.createEvidence({
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Done',
+      createdAt: 10,
+    });
+
+    const result = service.onTaskCompleted(task.id);
+
+    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
+    const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].payload).toMatchObject({
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:1',
+      taskId: task.id,
+    });
+    expect(goalRepo.getById(goal.id)?.pendingNextRun).toBe(false);
+    expect(cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1')).toBeNull();
+  });
+
+  it('detects active completed-task reviews across threshold changes', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Changed threshold', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Changed threshold',
+      objective: 'Avoid duplicate reviews after config changes',
+      policy: { automation: { completedTaskThreshold: 5 } },
+    });
+    taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Changed threshold',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:10:run',
+      ],
+    });
+    let lastTaskId = '';
+    for (let i = 1; i <= 5; i++) {
+      const task = taskRepo.createTask({ spaceId, title: `Task ${i}`, goalId: goal.id });
+      taskRepo.updateTask(task.id, { status: 'done' });
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task_result',
+        sourceId: task.id,
+        summary: `Task ${i} done`,
+        createdAt: i,
+      });
+      lastTaskId = task.id;
+    }
+
+    const result = service.onTaskCompleted(lastTaskId);
+
+    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 5 });
+    const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].payload).toMatchObject({ triggerKey: 'threshold:5' });
+  });
+
+  it('treats blocked automation review tasks as active overlap', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Blocked review', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Blocked review',
+      objective: 'Avoid duplicate blocked reviews',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const activeTask = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Blocked review',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:run',
+      ],
+    });
+    taskRepo.updateTask(activeTask.id, { status: 'blocked' });
+    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    evolutionRepo.createEvidence({
       scopeId: scope.id,
       kind: 'task_result',
       sourceId: task.id,
@@ -336,21 +429,8 @@ describe('GoalAutomationService', () => {
 
     expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
     expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
-      0
+      1
     );
-    const updatedGoal = goalRepo.getById(goal.id);
-    expect(updatedGoal?.pendingNextRun).toBe(true);
-    const cursor = cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1');
-    expect(cursor).toMatchObject({
-      lastEvidenceCreatedAt: 10,
-      lastEvidenceId: evidence.id,
-      metadata: {
-        reason: 'task_completed_pending_active_review',
-        pendingNextRun: true,
-        taskId: task.id,
-        evidenceCount: 1,
-      },
-    });
   });
 
   it('uses cursor state to avoid duplicate threshold retrospectives', () => {

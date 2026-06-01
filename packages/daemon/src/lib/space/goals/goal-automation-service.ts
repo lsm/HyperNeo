@@ -83,9 +83,16 @@ export class GoalAutomationService {
     if (completedTaskIds.size < threshold) {
       return { enqueued: false, reason: 'below_threshold', count: completedTaskIds.size };
     }
-    const activeAutomation = findActiveAutomationReviewTask(this.deps.taskRepo, scope, triggerKey);
+    const activeAutomation = findActiveAutomationReviewTask(this.deps.taskRepo, scope);
     if (activeAutomation) {
-      queuePendingCompletedTaskRun(this.deps, goal, scope, threshold, dueEvidence, taskId);
+      this.enqueue({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey,
+        reason: 'task_completed',
+        taskId,
+      });
       return { enqueued: true, reason: 'queued', count: completedTaskIds.size };
     }
     this.enqueue({
@@ -228,10 +235,8 @@ export function externalEventTriggerKey(
 
 function findActiveAutomationReviewTask(
   taskRepo: SpaceTaskRepository,
-  scope: EvolutionScope,
-  triggerKey: string
+  scope: EvolutionScope
 ): SpaceTask | null {
-  const token = `automation:completed_task_threshold:${triggerKey}:`;
   return (
     taskRepo
       .listBySpace(scope.spaceId, true)
@@ -239,41 +244,10 @@ function findActiveAutomationReviewTask(
         (task) =>
           task.evolutionScopeId === scope.id &&
           task.labels.includes('automation') &&
-          task.labels.some((label) => label.startsWith(token)) &&
-          ['draft', 'open', 'in_progress', 'review', 'approved'].includes(task.status)
+          task.labels.some((label) => label.startsWith('automation:completed_task_threshold:')) &&
+          ['draft', 'open', 'in_progress', 'review', 'approved', 'blocked'].includes(task.status)
       ) ?? null
   );
-}
-
-function queuePendingCompletedTaskRun(
-  deps: Pick<GoalAutomationServiceDeps, 'cursorRepo' | 'goalRepo'>,
-  goal: SpaceGoal,
-  scope: EvolutionScope,
-  threshold: number,
-  dueEvidence: EvidenceRef[],
-  taskId: string
-): void {
-  deps.goalRepo.queueNextRun(goal.id);
-  const cursor = maxEvidenceCursor(dueEvidence);
-  deps.cursorRepo.upsert({
-    spaceId: goal.spaceId,
-    goalId: goal.id,
-    scopeId: scope.id,
-    triggerKind: 'completed_task_threshold',
-    triggerKey: completedTaskTriggerKey(threshold),
-    lastEvidenceCreatedAt: cursor?.createdAt ?? null,
-    lastEvidenceId: cursor?.id ?? null,
-    lastTaskCompletedAt: null,
-    lastExternalEventId: null,
-    lastEpisodeId: null,
-    lastFiredAt: Date.now(),
-    metadata: {
-      reason: 'task_completed_pending_active_review',
-      pendingNextRun: true,
-      taskId,
-      evidenceCount: dueEvidence.length,
-    },
-  });
 }
 
 export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {
