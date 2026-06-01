@@ -31,14 +31,16 @@ export async function syncProviderToRegistry(
   // If one was unregistered (e.g., user deleted and is re-adding it),
   // restore only that provider instead of re-creating every core provider.
   if (record.kind === 'built_in') {
+    const wasMissing = !registry.has(record.providerId);
     await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
     if (provider?.setCredentials && credentials) {
       // For providers that manage their own auth state (e.g. Codex), skip
-      // applying stale credential-store rows when the provider's own state
-      // says it has been logged out. This prevents resurrecting credentials
-      // that were cleared by a failed runtime refresh.
-      if (provider.logout && provider.getCredentials) {
+      // applying stale credential-store rows on startup sync when the
+      // provider's own state says it has been logged out. Always apply
+      // credentials when the provider was freshly re-registered (add/update
+      // flow) so the live registry gets authenticated immediately.
+      if (!wasMissing && provider.logout && provider.getCredentials) {
         const own = await provider.getCredentials();
         if (!own) {
           logger.info(`Skipping stale stored credentials for ${record.providerId}`);
