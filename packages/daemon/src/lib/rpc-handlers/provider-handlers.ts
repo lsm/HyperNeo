@@ -12,6 +12,7 @@ import type { ProviderCredentialManager } from '../credentials/provider-credenti
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
 const VALID_PROVIDER_KINDS = new Set(['built_in', 'custom_endpoint']);
 const VALID_AUTH_TYPES = new Set(['api_key', 'oauth', 'none']);
@@ -108,10 +109,19 @@ export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+}
+
+async function clearCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>
+): Promise<void> {
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache();
+  internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
-  const { messageHub, providerRepo, credentialManager } = deps;
+  const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
 
   /** List all providers with live auth status from the registry. */
   messageHub.onRequest('providers.list', async () => {
@@ -180,6 +190,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           throw err;
         }
 
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+
         return { success: true, provider: record };
       });
     }
@@ -238,6 +250,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             await syncProviderToRegistry(record, creds);
           }
 
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+
           return { success: true, provider: record };
         });
       });
@@ -255,6 +269,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       providerRepo.deleteProvider(data.id);
       await removeProviderFromRegistry(record.providerId);
       await credentialManager.removeCredentials(record.providerId);
+
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
 
       return { success: true };
     });

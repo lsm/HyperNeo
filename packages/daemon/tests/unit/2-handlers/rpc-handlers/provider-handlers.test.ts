@@ -11,8 +11,25 @@ import type { ProviderRepository } from '../../../../src/storage/repositories/pr
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { ProviderRecord, CreateProviderParams } from '@neokai/shared';
 import type { Provider } from '@neokai/shared/provider';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
+
+function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
+  return {
+    publishAsync: mock(() => {}),
+    publish: mock(async () => ({ delivered: 0, failures: [] })),
+    subscribe: mock(() => () => {}),
+    off: mock(() => {}),
+    clear: mock(() => {}),
+    getHandlerCount: mock(() => 0),
+    getHandlerCountForSession: mock(() => 0),
+    getHandlerCountForNamespace: mock(() => 0),
+  } as unknown as InternalEventBus<DaemonInternalEventMap>;
+}
 
 function createMockMessageHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
   const handlers = new Map<string, RequestHandler>();
@@ -114,11 +131,13 @@ describe('Provider RPC handlers', () => {
   let hubData: ReturnType<typeof createMockMessageHub>;
   let repo: ReturnType<typeof createMockProviderRepo>;
   let creds: ReturnType<typeof createMockCredentialManager>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
 
   beforeEach(() => {
     hubData = createMockMessageHub();
     repo = createMockProviderRepo();
     creds = createMockCredentialManager();
+    eventBus = createMockInternalEventBus();
     resetProviderRegistry();
     resetProviderFactory();
   });
@@ -133,6 +152,7 @@ describe('Provider RPC handlers', () => {
       messageHub: hubData.hub,
       providerRepo: repo,
       credentialManager: creds,
+      internalEventBus: eventBus,
     });
     return hubData.handlers;
   }
@@ -199,6 +219,25 @@ describe('Provider RPC handlers', () => {
         )
       ).rejects.toThrow('kind must be one of');
     });
+
+    it('emits providers.changed after creation', async () => {
+      const handlers = setup();
+      await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'openrouter',
+            displayName: 'OpenRouter',
+            kind: 'built_in',
+            authType: 'api_key',
+          },
+          credentials: { apiKey: 'sk-or-test' },
+        },
+        {}
+      );
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
   });
 
   describe('providers.update', () => {
@@ -217,6 +256,23 @@ describe('Provider RPC handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.provider.displayName).toBe('Anthropic Inc');
+    });
+
+    it('emits providers.changed after update', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { displayName: 'Anthropic Inc' } },
+        {}
+      );
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
   });
 
@@ -242,6 +298,20 @@ describe('Provider RPC handlers', () => {
       await expect(handlers.get('providers.delete')!({ id: 'missing' }, {})).rejects.toThrow(
         'not found'
       );
+    });
+
+    it('emits providers.changed after deletion', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const handlers = setup();
+      await handlers.get('providers.delete')!({ id: created.id }, {});
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
   });
 

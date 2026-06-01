@@ -374,6 +374,18 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
     }
   }, [loadModelInfo, isConnected]);
 
+  // Reload model list when providers change (added/removed/updated)
+  useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadModelInfo();
+    });
+    return () => {
+      unsub();
+    };
+  }, [loadModelInfo]);
+
   const switchModel = useCallback(
     async (model: ModelInfo) => {
       if (!model.provider) {

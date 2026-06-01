@@ -165,6 +165,9 @@ async function persistAndSync(
     namespaceId: 'global',
     settings: updated,
   });
+  internalEventBus.publishAsync('providers.changed', {
+    sessionId: 'global',
+  });
 
   // Compat: sync the full list to the providers table so the unified registry
   // stays in sync with the legacy customEndpoints JSON blob.

@@ -91,6 +91,9 @@ export function registerSettingsHandlers(
           namespaceId: 'global',
           settings: updated,
         });
+        if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
+          internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+        }
 
         // Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
@@ -145,6 +148,9 @@ export function registerSettingsHandlers(
         namespaceId: 'global',
         settings: settingsToPersist,
       });
+      if (customEndpointsProvided || data.settings.providerModelAllowlists !== undefined) {
+        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+      }
       return { success: true };
     };
     // Always serialise through the customEndpoints lock — even when the
