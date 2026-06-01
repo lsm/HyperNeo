@@ -218,7 +218,7 @@ interface PolledGate {
 
 function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
   return (workflow.gates ?? [])
-    .map((gate) => ({ gate, poll: getEffectiveGatePoll(gate) }))
+    .map((gate) => ({ gate, poll: getEffectiveGatePoll(gate, workflow) }))
     .filter((entry): entry is PolledGate => !!entry.poll);
 }
 

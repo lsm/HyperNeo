@@ -215,7 +215,7 @@ async function evaluateTerminalGateFeatures(
   for (const gate of workflow.gates ?? []) {
     if (!hasGateFeatures(gate)) continue;
     if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
-    const effectiveGate = getEffectiveGate(gate);
+    const effectiveGate = getEffectiveGate(gate, workflow);
     if (!effectiveGate.script) continue;
 
     const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);

@@ -3103,7 +3103,8 @@ export class SpaceRuntime {
       this.pollManager.stopPolls(run.id);
       return;
     }
-    const pollGateCount = workflow.gates?.filter((gate) => getEffectiveGatePoll(gate)).length ?? 0;
+    const pollGateCount =
+      workflow.gates?.filter((gate) => getEffectiveGatePoll(gate, workflow)).length ?? 0;
     if (pollGateCount === 0) {
       log.info(
         `SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow has no polled gates`
@@ -3891,7 +3892,7 @@ export class SpaceRuntime {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
       if (liveScript && storedGate.script) gate = { ...storedGate, script: liveScript };
     }
-    gate = getEffectiveGate(gate);
+    gate = getEffectiveGate(gate, workflow);
     const gateDataRepo = new GateDataRepository(this.config.db);
     const gateDataRecord = gateDataRepo.get(runId, gate.id);
     const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);

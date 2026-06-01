@@ -1102,6 +1102,28 @@ export function NodeConfigPanel({
           <label class="flex items-center gap-2 text-xs text-gray-300">
             <input
               type="checkbox"
+              checked={!!step.requireCodexApproval}
+              data-testid="require-codex-approval-checkbox"
+              onChange={(e) =>
+                onUpdate({
+                  ...step,
+                  requireCodexApproval: (e.currentTarget as HTMLInputElement).checked,
+                })
+              }
+              class="w-3 h-3 rounded accent-blue-500"
+            />
+            <span class="font-medium">Require Codex approval</span>
+          </label>
+          <p class="mt-2 text-xs leading-5 text-gray-400">
+            When enabled, approval gates on channels from this node also require a codex[bot] +1
+            reaction before opening.
+          </p>
+        </div>
+
+        <div class="rounded-lg border border-white/10 bg-dark-850 p-3">
+          <label class="flex items-center gap-2 text-xs text-gray-300">
+            <input
+              type="checkbox"
               checked={!!step.postApproval}
               data-testid="post-approval-enabled-checkbox"
               onChange={(e) =>

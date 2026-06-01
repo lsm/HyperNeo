@@ -1171,7 +1171,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
           check: { op: 'count', match: 'approved', min: 4 },
         },
       ],
-      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1353,7 +1352,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           check: { op: '==', value: true },
         },
       ],
-      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1626,15 +1624,24 @@ export function mergeGateStructuralFieldsFromTemplate(
       // script or poll, so feature-backed mechanisms do not silently override
       // custom gate logic at runtime. When copying is allowed, propagate the
       // template's features (including undefined when the template removed them).
+      // Preserve existing codex_review_bot feature during transition to node-level
+      // config so pre-existing workflows that relied on gate-level codex keep working.
       const shouldCopyFeatures = !gate.script && !gate.poll;
+      let nextFeatures: Gate['features'] | undefined;
+      if (shouldCopyFeatures) {
+        if (templateGate.features) {
+          nextFeatures = { ...templateGate.features };
+        }
+        if (gate.features?.codex_review_bot) {
+          nextFeatures = { codex_review_bot: true, ...nextFeatures };
+        }
+      } else {
+        nextFeatures = gate.features;
+      }
       return {
         ...gate,
         fields,
-        features: shouldCopyFeatures
-          ? templateGate.features
-            ? { ...templateGate.features }
-            : undefined
-          : gate.features,
+        features: nextFeatures,
       };
     })
     .concat(missingTemplateGates);

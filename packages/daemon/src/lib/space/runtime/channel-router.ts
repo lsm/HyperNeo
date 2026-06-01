@@ -1051,7 +1051,7 @@ export class ChannelRouter {
     //   independently of workflow.updatedAt). Caching such gates would create a
     //   fail-open path where a once-open gate bypasses evaluation even after
     //   script updates or external state changes.
-    const effectiveGateDef = getEffectiveGate(gateDef);
+    const effectiveGateDef = getEffectiveGate(gateDef, workflow);
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
 
     if (!channelIsCyclic) return false;
@@ -1173,7 +1173,7 @@ export class ChannelRouter {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }
-    gateDef = getEffectiveGate(gateDef);
+    gateDef = getEffectiveGate(gateDef, workflow);
 
     // Load runtime data from DB; fall back to computed defaults from fields
     const record = this.config.gateDataRepo?.get(runId, gateId);

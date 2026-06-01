@@ -1792,6 +1792,11 @@ export interface WorkflowNode {
    * this route after the task becomes approved.
    */
   postApproval?: PostApprovalRoute;
+  /**
+   * When true, gated channels from this node that have an approval gate will
+   * also require a codex[bot] +1 reaction before opening. Defaults to false.
+   */
+  requireCodexApproval?: boolean;
 }
 
 /**
@@ -1810,6 +1815,8 @@ export interface WorkflowNodeInput {
   agents: WorkflowNodeAgent[];
   /** Optional node-level post-approval route. See {@link WorkflowNode.postApproval}. */
   postApproval?: PostApprovalRoute;
+  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  requireCodexApproval?: boolean;
 }
 
 /**
@@ -2257,6 +2264,8 @@ export interface ExportedWorkflowNode {
   name: string;
   /** Optional node-level post-approval route. */
   postApproval?: PostApprovalRoute;
+  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  requireCodexApproval?: boolean;
 }
 
 /**

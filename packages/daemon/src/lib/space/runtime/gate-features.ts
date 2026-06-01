@@ -1,5 +1,5 @@
-import { hasEnabledGateFeature } from '@neokai/shared';
-import type { Gate, GatePoll, GateScript } from '@neokai/shared';
+import { hasEnabledGateFeature, resolveNodeAgents } from '@neokai/shared';
+import type { Gate, GatePoll, GateScript, SpaceWorkflow } from '@neokai/shared';
 
 export interface GateFeatureDefinition {
   script?: () => GateScript;
@@ -29,6 +29,35 @@ function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
     .filter((name) => hasEnabledGateFeature(gate, name))
     .map((name) => gateFeatureRegistry.get(name))
     .filter((definition): definition is GateFeatureDefinition => !!definition);
+}
+
+/**
+ * Checks whether any node that sends messages through channels guarded by
+ * `gateId` has `requireCodexApproval: true`. Used to dynamically inject the
+ * codex review bot gate feature at runtime based on node-level config.
+ */
+function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow): boolean {
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    if (channel.from === '*') {
+      return workflow.nodes.some((n) => n.requireCodexApproval);
+    }
+    // Match by node name
+    const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
+    if (nodeByName?.requireCodexApproval) return true;
+    // Match by agent name within a node
+    for (const node of workflow.nodes) {
+      try {
+        const agents = resolveNodeAgents(node);
+        if (agents.some((a) => a.name === channel.from) && node.requireCodexApproval) {
+          return true;
+        }
+      } catch {
+        // skip malformed nodes
+      }
+    }
+  }
+  return false;
 }
 
 export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
@@ -244,8 +273,19 @@ export function validateGateFeatures(gate: Gate): string[] {
   return errors;
 }
 
-export function getEffectiveGate(gate: Gate): Gate {
+export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
   const definitions = getEnabledGateFeatureDefinitions(gate);
+
+  if (
+    workflow &&
+    !definitions.some((d) => d === gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE))
+  ) {
+    if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
+      const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
+      if (codexDef) definitions.push(codexDef);
+    }
+  }
+
   const scriptDefinition = definitions.find((definition) => definition.script);
   const pollDefinition = definitions.find((definition) => definition.poll);
 
@@ -258,9 +298,19 @@ export function getEffectiveGate(gate: Gate): Gate {
   };
 }
 
-export function getEffectiveGatePoll(gate: Gate): GatePoll | undefined {
-  const pollDefinition = getEnabledGateFeatureDefinitions(gate).find(
-    (definition) => definition.poll
-  );
+export function getEffectiveGatePoll(gate: Gate, workflow?: SpaceWorkflow): GatePoll | undefined {
+  const definitions = getEnabledGateFeatureDefinitions(gate);
+
+  if (
+    workflow &&
+    !definitions.some((d) => d === gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE))
+  ) {
+    if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
+      const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
+      if (codexDef) definitions.push(codexDef);
+    }
+  }
+
+  const pollDefinition = definitions.find((definition) => definition.poll);
   return pollDefinition?.poll?.() ?? gate.poll;
 }
