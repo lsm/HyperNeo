@@ -526,7 +526,7 @@ export function setupSpaceTaskHandlers(
                 : (updateParams.approvalReason ?? undefined);
 
             task = await taskManager.setTaskStatus(taskId, updateParams.status, {
-              result: updateParams.result ?? undefined,
+              result: Object.hasOwn(updateParams, 'result') ? updateParams.result : undefined,
               reportedSummary: Object.hasOwn(updateParams, 'reportedSummary')
                 ? updateParams.reportedSummary
                 : undefined,

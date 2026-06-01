@@ -166,7 +166,7 @@ export class SpaceTaskManager {
     taskId: string,
     newStatus: SpaceTaskStatus,
     options?: {
-      result?: string;
+      result?: string | null;
       reportedSummary?: string | null;
       blockReason?: SpaceBlockReason;
       approvalSource?: SpaceApprovalSource;
@@ -193,7 +193,7 @@ export class SpaceTaskManager {
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
     if (newStatus === 'done' || newStatus === 'blocked') {
-      if (options?.result) {
+      if (options?.result !== undefined) {
         updates.result = options.result;
       } else if (!task.result && options?.reportedSummary !== null) {
         // Backfill result from reportedSummary so terminal tasks never reach
@@ -241,12 +241,14 @@ export class SpaceTaskManager {
     }
 
     // Clear result when restarting or deprioritizing.
-    // Covers blocked, cancelled, done → reactivation, and in_progress → open (pause).
+    // Covers blocked, cancelled, done → reactivation, in_progress → open (pause),
+    // and review → in_progress (human rejection).
     if (
       (task.status === 'blocked' && (newStatus === 'open' || newStatus === 'in_progress')) ||
       (task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
       (task.status === 'done' && newStatus === 'in_progress') ||
-      (task.status === 'in_progress' && newStatus === 'open')
+      (task.status === 'in_progress' && newStatus === 'open') ||
+      (task.status === 'review' && newStatus === 'in_progress')
     ) {
       updates.result = null;
       updates.reportedSummary = null;

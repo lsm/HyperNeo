@@ -178,6 +178,31 @@ describe('SpaceTaskManager', () => {
       expect(done.reportedSummary).toBeNull();
     });
 
+    it('does not backfill result when result is explicitly null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, { reportedSummary: 'Stale summary' });
+      const done = await manager.setTaskStatus(task.id, 'done', {
+        result: null,
+      });
+      expect(done.status).toBe('done');
+      expect(done.result).toBeNull();
+    });
+
+    it('clears reportedSummary on review → in_progress (human rejection)', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.submitTaskForReview(task.id, {
+        submittedByNodeId: null,
+        reason: 'ready',
+      });
+      await manager.updateTask(task.id, { reportedSummary: 'Old review summary' });
+      const reopened = await manager.setTaskStatus(task.id, 'in_progress');
+      expect(reopened.status).toBe('in_progress');
+      expect(reopened.reportedSummary).toBeNull();
+      expect(reopened.result).toBeNull();
+    });
+
     it('transitions open -> blocked (blocker found before start)', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       const blocked = await manager.setTaskStatus(task.id, 'blocked', {
