@@ -273,11 +273,18 @@ export function validateGateFeatures(gate: Gate): string[] {
   return errors;
 }
 
-export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
-  const definitions = getEnabledGateFeatureDefinitions(gate);
+function isApprovalGate(gate: Gate): boolean {
+  return (gate.fields ?? []).some((f) => f.name === 'approved');
+}
 
+function maybeInjectCodexFeature(
+  gate: Gate,
+  workflow: SpaceWorkflow | undefined,
+  definitions: GateFeatureDefinition[]
+): void {
   if (
     workflow &&
+    isApprovalGate(gate) &&
     !definitions.some((d) => d === gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE))
   ) {
     if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
@@ -285,6 +292,11 @@ export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
       if (codexDef) definitions.push(codexDef);
     }
   }
+}
+
+export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
+  const definitions = getEnabledGateFeatureDefinitions(gate);
+  maybeInjectCodexFeature(gate, workflow, definitions);
 
   const scriptDefinition = definitions.find((definition) => definition.script);
   const pollDefinition = definitions.find((definition) => definition.poll);
@@ -300,16 +312,7 @@ export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
 
 export function getEffectiveGatePoll(gate: Gate, workflow?: SpaceWorkflow): GatePoll | undefined {
   const definitions = getEnabledGateFeatureDefinitions(gate);
-
-  if (
-    workflow &&
-    !definitions.some((d) => d === gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE))
-  ) {
-    if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
-      const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
-      if (codexDef) definitions.push(codexDef);
-    }
-  }
+  maybeInjectCodexFeature(gate, workflow, definitions);
 
   const pollDefinition = definitions.find((definition) => definition.poll);
   return pollDefinition?.poll?.() ?? gate.poll;

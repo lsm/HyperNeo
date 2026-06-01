@@ -140,6 +140,7 @@ const exportedWorkflowNodeSchema = z.object({
       instructions: z.string(),
     })
     .optional(),
+  requireCodexApproval: z.boolean().optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -320,6 +321,8 @@ export function exportWorkflow(
       agents: exportedAgents,
     };
     if (node.postApproval !== undefined) exported.postApproval = node.postApproval;
+    if (node.requireCodexApproval !== undefined)
+      exported.requireCodexApproval = node.requireCodexApproval;
 
     return exported;
   });

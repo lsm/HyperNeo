@@ -52,7 +52,7 @@ import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, hasGateFeatures, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -213,7 +213,6 @@ async function evaluateTerminalGateFeatures(
   }
 
   for (const gate of workflow.gates ?? []) {
-    if (!hasGateFeatures(gate)) continue;
     if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
     const effectiveGate = getEffectiveGate(gate, workflow);
     if (!effectiveGate.script) continue;
@@ -893,7 +892,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   workflowRunId
                 );
                 const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef),
+                  getEffectiveGate(gateDef, workflow),
                   updated.data,
                   scriptExecutor,
                   scriptContext
@@ -1267,7 +1266,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // async script-based gates; otherwise falls back to field-only evaluation.
       const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
       const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef),
+        getEffectiveGate(gateDef, workflow ?? undefined),
         currentData,
         scriptExecutor,
         scriptContext

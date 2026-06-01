@@ -78,6 +78,8 @@ interface NodeConfigJson {
   agents?: WorkflowNodeAgent[];
   /** Optional post-approval route scoped to this workflow node. */
   postApproval?: PostApprovalRoute;
+  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  requireCodexApproval?: boolean;
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -141,6 +143,7 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     name: row.name,
     agents,
     ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
+    ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
   };
 }
 
@@ -682,6 +685,9 @@ export class SpaceWorkflowRepository {
     }
     if (input.postApproval) {
       nodeCfg.postApproval = input.postApproval;
+    }
+    if (input.requireCodexApproval) {
+      nodeCfg.requireCodexApproval = true;
     }
 
     return nodeCfg;

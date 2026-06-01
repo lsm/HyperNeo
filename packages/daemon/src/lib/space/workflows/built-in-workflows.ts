@@ -1038,6 +1038,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       id: PD_PLAN_REVIEW_NODE,
       name: 'Plan Review',
+      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1248,6 +1249,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: FULLSTACK_REVIEW_NODE,
       name: 'Review',
+      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',

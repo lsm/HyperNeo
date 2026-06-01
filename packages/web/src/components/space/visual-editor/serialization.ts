@@ -310,6 +310,7 @@ function buildWorkflowFields(state: VisualEditorState): {
       name: node.step.name || `Step ${i + 1}`,
       agents,
       ...(postApproval ? { postApproval } : {}),
+      ...(node.step.requireCodexApproval ? { requireCodexApproval: true } : {}),
     };
   });
 

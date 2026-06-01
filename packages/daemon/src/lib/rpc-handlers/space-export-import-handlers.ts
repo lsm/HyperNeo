@@ -295,6 +295,7 @@ export function buildWorkflowCreateParams(
       name: exportedNode.name,
       agents,
       postApproval: exportedNode.postApproval,
+      requireCodexApproval: exportedNode.requireCodexApproval,
     };
 
     return node;
