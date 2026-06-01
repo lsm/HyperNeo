@@ -98,7 +98,7 @@ import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { getEffectiveGate } from '../runtime/gate-features';
+import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
 
 /**
  * Resolves the most recent PR URL for a workflow run by scanning gate
@@ -214,6 +214,7 @@ async function evaluateTerminalGateFeatures(
 
   for (const gate of workflow.gates ?? []) {
     if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
+    if (!hasInjectedGateFeature(gate, workflow)) continue;
     const effectiveGate = getEffectiveGate(gate, workflow);
     if (!effectiveGate.script) continue;
 

@@ -141,6 +141,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       })),
       postApproval:
         s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined),
+      requireCodexApproval: s.requireCodexApproval,
     };
     return { step, position };
   });

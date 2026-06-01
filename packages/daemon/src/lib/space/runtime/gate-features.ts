@@ -42,10 +42,12 @@ function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow):
     if (channel.from === '*') {
       return workflow.nodes.some((n) => n.requireCodexApproval);
     }
-    // Match by node name
+    // Match by node name — if found, use ONLY this node's flag
     const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
-    if (nodeByName?.requireCodexApproval) return true;
-    // Match by agent name within a node
+    if (nodeByName) {
+      return !!nodeByName.requireCodexApproval;
+    }
+    // Fall back to agent-name matching only when no node name matches
     for (const node of workflow.nodes) {
       try {
         const agents = resolveNodeAgents(node);
@@ -274,7 +276,14 @@ export function validateGateFeatures(gate: Gate): string[] {
 }
 
 function isApprovalGate(gate: Gate): boolean {
-  return (gate.fields ?? []).some((f) => f.name === 'approved');
+  return (gate.fields ?? []).some((f) => {
+    if (f.name === 'approved') return true;
+    if (f.name === 'approvals' && f.type === 'map') {
+      const check = f.check as { match?: unknown } | undefined;
+      if (check?.match === 'approved') return true;
+    }
+    return false;
+  });
 }
 
 function maybeInjectCodexFeature(
@@ -282,6 +291,7 @@ function maybeInjectCodexFeature(
   workflow: SpaceWorkflow | undefined,
   definitions: GateFeatureDefinition[]
 ): void {
+  if (gate.script) return; // do not replace custom gate scripts
   if (
     workflow &&
     isApprovalGate(gate) &&
@@ -292,6 +302,18 @@ function maybeInjectCodexFeature(
       if (codexDef) definitions.push(codexDef);
     }
   }
+}
+
+/**
+ * Returns true when the gate would have a script or poll injected by a registered
+ * gate feature (including the dynamically-injected codex review bot).
+ */
+export function hasInjectedGateFeature(gate: Gate, workflow?: SpaceWorkflow): boolean {
+  if (hasRegisteredGateFeatures(gate)) return true;
+  if (workflow && isApprovalGate(gate) && doesAnySourceNodeRequireCodex(gate.id, workflow)) {
+    return true;
+  }
+  return false;
 }
 
 export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
