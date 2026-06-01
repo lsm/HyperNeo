@@ -1635,6 +1635,7 @@ export function ScopeDetail({
     }
     const threshold = nextAutomation.completedTaskThreshold ?? DEFAULT_COMPLETED_TASK_THRESHOLD;
     if (!Number.isInteger(threshold) || threshold <= 0) {
+      setSavingCompletedTaskAutomation(false);
       setSettingsError('Completed-task threshold must be a positive integer');
       return;
     }
@@ -1664,8 +1665,10 @@ export function ScopeDetail({
   };
 
   const completedTaskAutomation = scope.policy.automation ?? {};
+  const hasCompletedTaskThreshold = completedTaskAutomation.completedTaskThreshold !== undefined;
   const completedTaskAutomationEnabled =
-    completedTaskAutomation.completedTaskAutomationEnabled !== false;
+    completedTaskAutomation.completedTaskAutomationEnabled !== false &&
+    (goal?.type === 'recurring' || hasCompletedTaskThreshold);
   const completedTaskThreshold =
     completedTaskAutomation.completedTaskThreshold ?? DEFAULT_COMPLETED_TASK_THRESHOLD;
 

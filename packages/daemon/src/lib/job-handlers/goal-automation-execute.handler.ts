@@ -173,15 +173,23 @@ export async function handleGoalAutomationExecute(
   };
 }
 
-function newestCursor<T extends { lastEvidenceCreatedAt: number | null; updatedAt: number }>(
-  first: T | null,
-  second: T | null
-): T | null {
+function newestCursor<
+  T extends {
+    lastEvidenceCreatedAt: number | null;
+    lastEvidenceId: string | null;
+    updatedAt: number;
+  },
+>(first: T | null, second: T | null): T | null {
   if (!first) return second;
   if (!second) return first;
   const firstEvidence = first.lastEvidenceCreatedAt ?? 0;
   const secondEvidence = second.lastEvidenceCreatedAt ?? 0;
   if (firstEvidence !== secondEvidence) return firstEvidence > secondEvidence ? first : second;
+  const firstEvidenceId = first.lastEvidenceId ?? '';
+  const secondEvidenceId = second.lastEvidenceId ?? '';
+  if (firstEvidenceId !== secondEvidenceId) {
+    return firstEvidenceId.localeCompare(secondEvidenceId) >= 0 ? first : second;
+  }
   return first.updatedAt >= second.updatedAt ? first : second;
 }
 
@@ -477,13 +485,16 @@ function readActiveReviewRequeueCount(payload: GoalAutomationExecutePayload): nu
 }
 
 function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
-  return {
+  const matchPayload: Record<string, unknown> = {
     goalId: payload.goalId,
     scopeId: payload.scopeId,
     triggerKind: payload.triggerKind,
     triggerKey: payload.triggerKey,
-    externalEventId: payload.externalEventId ?? null,
   };
+  if (payload.externalEventId !== undefined) {
+    matchPayload.externalEventId = payload.externalEventId;
+  }
+  return matchPayload;
 }
 
 function skipped(

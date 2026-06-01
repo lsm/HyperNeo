@@ -409,6 +409,75 @@ describe('GoalAutomationService', () => {
     );
   });
 
+  it('uses newest completed-task cursor id after threshold changes with tied timestamps', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Threshold tied cursor', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Threshold tied cursor',
+      objective: 'Do not replay tied cursor evidence',
+      policy: { automation: { completedTaskThreshold: 2 } },
+    });
+    const first = taskRepo.createTask({ spaceId, title: 'First tied task', goalId: goal.id });
+    const second = taskRepo.createTask({ spaceId, title: 'Second tied task', goalId: goal.id });
+    const third = taskRepo.createTask({ spaceId, title: 'Fresh task', goalId: goal.id });
+    taskRepo.updateTask(first.id, { status: 'done' });
+    taskRepo.updateTask(second.id, { status: 'done' });
+    taskRepo.updateTask(third.id, { status: 'done' });
+    const firstEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: first.id,
+      summary: 'First tied result',
+      createdAt: 20,
+    });
+    const secondEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: second.id,
+      summary: 'Second tied result',
+      createdAt: 20,
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: third.id,
+      summary: 'Fresh result',
+      createdAt: 30,
+    });
+    const orderedIds = [firstEvidence.id, secondEvidence.id].sort();
+    cursorRepo.upsert({
+      spaceId,
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:2',
+      lastEvidenceCreatedAt: 20,
+      lastEvidenceId: orderedIds[0],
+      lastFiredAt: 30,
+      metadata: {},
+    });
+    cursorRepo.upsert({
+      spaceId,
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:5',
+      lastEvidenceCreatedAt: 20,
+      lastEvidenceId: orderedIds[1],
+      lastFiredAt: 10,
+      metadata: {},
+    });
+
+    const result = service.onTaskCompleted(third.id);
+
+    expect(result).toEqual({ enqueued: false, reason: 'below_threshold', count: 1 });
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      0
+    );
+  });
+
   it('uses newest completed-task cursor after threshold changes', () => {
     const goal = goalRepo.create({ spaceId, title: 'Threshold changed', type: 'recurring' });
     const scope = evolutionRepo.createScope({
@@ -1217,6 +1286,88 @@ describe('handleGoalAutomationExecute', () => {
     expect(cursor?.metadata.evidenceIds).toEqual([evidence.id]);
   });
 
+  it('deduplicates pending active-review requeues when payload omits external event id', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Dedupe requeue', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Dedupe requeue',
+      objective: 'Avoid duplicate deferred jobs',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const activeReview = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Dedupe requeue',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      description: 'Episode: episode-active',
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:first-task',
+      ],
+    });
+    taskRepo.updateTask(activeReview.id, { status: 'in_progress' });
+    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Done task',
+      createdAt: 10,
+    });
+    jobQueue.enqueueUniquePending({
+      queue: GOAL_AUTOMATION_EXECUTE,
+      payload: {
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: task.id,
+        activeReviewRequeueCount: 1,
+      },
+      matchPayload: {
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+      },
+      activeStatuses: ['pending'],
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: task.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        jobQueue,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not create episode while active review exists');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'active_review', requeued: true });
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      1
+    );
+  });
+
   it('defers completed-task execution when another Forge review is active', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Defer overlap', type: 'recurring' });
     const scope = evolutionRepo.createScope({
@@ -1440,6 +1591,97 @@ describe('handleGoalAutomationExecute', () => {
     expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
       1
     );
+  });
+
+  it('uses newest completed-task cursor id after threshold changes in executor', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Executor tied cursor', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Executor tied cursor',
+      objective: 'Do not replay tied cursor evidence in executor',
+      policy: { automation: { completedTaskThreshold: 2 } },
+    });
+    const first = taskRepo.createTask({ spaceId, title: 'First tied task', goalId: goal.id });
+    const second = taskRepo.createTask({ spaceId, title: 'Second tied task', goalId: goal.id });
+    const fresh = taskRepo.createTask({ spaceId, title: 'Fresh task', goalId: goal.id });
+    taskRepo.updateTask(first.id, { status: 'done' });
+    taskRepo.updateTask(second.id, { status: 'done' });
+    taskRepo.updateTask(fresh.id, { status: 'done' });
+    const firstEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: first.id,
+      summary: 'First tied result',
+      createdAt: 20,
+    });
+    const secondEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: second.id,
+      summary: 'Second tied result',
+      createdAt: 20,
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: fresh.id,
+      summary: 'Fresh result',
+      createdAt: 30,
+    });
+    const orderedIds = [firstEvidence.id, secondEvidence.id].sort();
+    cursorRepo.upsert({
+      spaceId,
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:2',
+      lastEvidenceCreatedAt: 20,
+      lastEvidenceId: orderedIds[0],
+      lastFiredAt: 30,
+      metadata: {},
+    });
+    cursorRepo.upsert({
+      spaceId,
+      goalId: goal.id,
+      scopeId: scope.id,
+      triggerKind: 'completed_task_threshold',
+      triggerKey: 'threshold:5',
+      lastEvidenceCreatedAt: 20,
+      lastEvidenceId: orderedIds[1],
+      lastFiredAt: 10,
+      metadata: {},
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:2',
+        reason: 'task_completed',
+        taskId: fresh.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not replay tied evidence after threshold changes');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'below_threshold',
+      evidenceCount: 1,
+    });
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
   it('uses newest completed-task cursor after threshold changes in executor', async () => {

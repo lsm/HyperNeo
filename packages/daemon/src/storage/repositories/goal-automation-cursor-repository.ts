@@ -62,7 +62,7 @@ export class GoalAutomationCursorRepository {
       .prepare(
         `SELECT * FROM goal_automation_cursors
 					 WHERE goal_id = ? AND scope_id = ? AND trigger_kind = ?
-					 ORDER BY COALESCE(last_evidence_created_at, 0) DESC, COALESCE(last_fired_at, 0) DESC, updated_at DESC
+					 ORDER BY COALESCE(last_evidence_created_at, 0) DESC, COALESCE(last_evidence_id, '') DESC, COALESCE(last_fired_at, 0) DESC, updated_at DESC
 					 LIMIT 1`
       )
       .get(goalId, scopeId, triggerKind) as Record<string, unknown> | undefined;
