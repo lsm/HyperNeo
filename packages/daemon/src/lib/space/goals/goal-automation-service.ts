@@ -17,6 +17,7 @@ import type { EvolutionScopeService } from '../evolution-scope-service';
 import type { GoalAutomationExecutePayload } from '../../job-handlers/goal-automation-execute.handler';
 import { Logger } from '../../logger';
 
+export const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
 const DEFAULT_MAX_EVIDENCE_PER_EPISODE = 12;
 const log = new Logger('goal-automation-service');
 
@@ -81,6 +82,11 @@ export class GoalAutomationService {
     const completedTaskIds = new Set(dueEvidence.map((item) => item.sourceId as string));
     if (completedTaskIds.size < threshold) {
       return { enqueued: false, reason: 'below_threshold', count: completedTaskIds.size };
+    }
+    const activeAutomation = findActiveAutomationReviewTask(this.deps.taskRepo, scope, triggerKey);
+    if (activeAutomation) {
+      queuePendingCompletedTaskRun(this.deps, goal, scope, threshold, dueEvidence, taskId);
+      return { enqueued: true, reason: 'queued', count: completedTaskIds.size };
     }
     this.enqueue({
       goalId: goal.id,
@@ -220,8 +226,60 @@ export function externalEventTriggerKey(
   return `event:${subscription.source ?? '*'}:${subscription.topic}`;
 }
 
+function findActiveAutomationReviewTask(
+  taskRepo: SpaceTaskRepository,
+  scope: EvolutionScope,
+  triggerKey: string
+): SpaceTask | null {
+  const token = `automation:completed_task_threshold:${triggerKey}:`;
+  return (
+    taskRepo
+      .listBySpace(scope.spaceId, true)
+      .find(
+        (task) =>
+          task.evolutionScopeId === scope.id &&
+          task.labels.includes('automation') &&
+          task.labels.some((label) => label.startsWith(token)) &&
+          ['draft', 'open', 'in_progress', 'review', 'approved'].includes(task.status)
+      ) ?? null
+  );
+}
+
+function queuePendingCompletedTaskRun(
+  deps: Pick<GoalAutomationServiceDeps, 'cursorRepo' | 'goalRepo'>,
+  goal: SpaceGoal,
+  scope: EvolutionScope,
+  threshold: number,
+  dueEvidence: EvidenceRef[],
+  taskId: string
+): void {
+  deps.goalRepo.queueNextRun(goal.id);
+  const cursor = maxEvidenceCursor(dueEvidence);
+  deps.cursorRepo.upsert({
+    spaceId: goal.spaceId,
+    goalId: goal.id,
+    scopeId: scope.id,
+    triggerKind: 'completed_task_threshold',
+    triggerKey: completedTaskTriggerKey(threshold),
+    lastEvidenceCreatedAt: cursor?.createdAt ?? null,
+    lastEvidenceId: cursor?.id ?? null,
+    lastTaskCompletedAt: null,
+    lastExternalEventId: null,
+    lastEpisodeId: null,
+    lastFiredAt: Date.now(),
+    metadata: {
+      reason: 'task_completed_pending_active_review',
+      pendingNextRun: true,
+      taskId,
+      evidenceCount: dueEvidence.length,
+    },
+  });
+}
+
 export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {
+  if (policy.completedTaskAutomationEnabled === false) return null;
   const threshold = policy.completedTaskThreshold;
+  if (threshold === undefined) return DEFAULT_COMPLETED_TASK_THRESHOLD;
   if (typeof threshold !== 'number' || !Number.isFinite(threshold)) return null;
   const normalized = Math.floor(threshold);
   return normalized > 0 ? normalized : null;
@@ -233,6 +291,10 @@ function normalizePolicy(value: unknown): GoalForgeAutomationPolicy {
   return {
     completedTaskThreshold:
       typeof record.completedTaskThreshold === 'number' ? record.completedTaskThreshold : undefined,
+    completedTaskAutomationEnabled:
+      typeof record.completedTaskAutomationEnabled === 'boolean'
+        ? record.completedTaskAutomationEnabled
+        : undefined,
     selfNagCronExpression:
       typeof record.selfNagCronExpression === 'string'
         ? record.selfNagCronExpression.trim()

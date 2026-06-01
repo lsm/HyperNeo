@@ -237,6 +237,122 @@ describe('GoalAutomationService', () => {
     expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
   });
 
+  it('uses default completed-task threshold when unset', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Default threshold', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Default threshold',
+      objective: 'Use default batch size',
+      policy: {},
+    });
+    let lastTaskId = '';
+    for (let i = 1; i <= 10; i++) {
+      const task = taskRepo.createTask({ spaceId, title: `Task ${i}`, goalId: goal.id });
+      taskRepo.updateTask(task.id, { status: 'done' });
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task_result',
+        sourceId: task.id,
+        summary: `Task ${i} result`,
+        createdAt: i,
+      });
+      lastTaskId = task.id;
+    }
+
+    const result = service.onTaskCompleted(lastTaskId);
+
+    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 10 });
+    const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].payload).toMatchObject({ triggerKey: 'threshold:10' });
+  });
+
+  it('skips completed-task automation when count-based policy is disabled', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Disabled count', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Disabled count',
+      objective: 'Do not run count automation',
+      policy: {
+        automation: { completedTaskThreshold: 1, completedTaskAutomationEnabled: false },
+      },
+    });
+    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Done',
+      createdAt: 10,
+    });
+
+    const result = service.onTaskCompleted(task.id);
+
+    expect(result).toEqual({ enqueued: false, reason: 'disabled' });
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      0
+    );
+  });
+
+  it('queues pending count automation instead of overlapping active review tasks', () => {
+    const goal = goalRepo.create({ spaceId, title: 'No overlap', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'No overlap',
+      objective: 'Avoid duplicate reviews',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const activeTask = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: No overlap',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:run',
+      ],
+    });
+    taskRepo.updateTask(activeTask.id, { status: 'in_progress' });
+    const task = taskRepo.createTask({ spaceId, title: 'Done task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    const evidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Done',
+      createdAt: 10,
+    });
+
+    const result = service.onTaskCompleted(task.id);
+
+    expect(result).toEqual({ enqueued: true, reason: 'queued', count: 1 });
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      0
+    );
+    const updatedGoal = goalRepo.getById(goal.id);
+    expect(updatedGoal?.pendingNextRun).toBe(true);
+    const cursor = cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1');
+    expect(cursor).toMatchObject({
+      lastEvidenceCreatedAt: 10,
+      lastEvidenceId: evidence.id,
+      metadata: {
+        reason: 'task_completed_pending_active_review',
+        pendingNextRun: true,
+        taskId: task.id,
+        evidenceCount: 1,
+      },
+    });
+  });
+
   it('uses cursor state to avoid duplicate threshold retrospectives', () => {
     const goal = goalRepo.create({ spaceId, title: 'Avoid duplicates', type: 'recurring' });
     const scope = evolutionRepo.createScope({
@@ -614,6 +730,19 @@ describe('GoalAutomationService', () => {
     const pausedSchedule = scheduleService.listSchedules(spaceId, 'paused')[0];
     expect(pausedSchedule.id).toBe(activeSchedule.id);
     expect(pausedSchedule.pendingJobId).toBeNull();
+  });
+
+  it('rejects invalid completed-task threshold before scope save', () => {
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: { completedTaskThreshold: 0 } },
+      })
+    ).toThrow('Completed-task automation threshold must be a positive integer');
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: { completedTaskThreshold: 1.5 } },
+      })
+    ).toThrow('Completed-task automation threshold must be a positive integer');
   });
 
   it('rejects invalid self-nag timezone before scope save', () => {

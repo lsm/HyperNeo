@@ -52,6 +52,7 @@ const SCOPE_KINDS: EvolutionScopeKind[] = ['mission', 'project', 'campaign', 'wo
 const SCOPE_TABS: ScopeTab[] = ['overview', 'evidence', 'metrics', 'lessons', 'episodes'];
 const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 'maintain'];
 const EPISODE_JUDGE_TIMEOUT_MS = 120000;
+const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
 
 interface SpaceForgeProps {
   spaceId: string;
@@ -1558,6 +1559,7 @@ export function ScopeDetail({
   const [tab, setTab] = useState<ScopeTab>('overview');
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [savingJudgeModel, setSavingJudgeModel] = useState(false);
+  const [savingCompletedTaskAutomation, setSavingCompletedTaskAutomation] = useState(false);
   const judgeModelRequestVersion = useRef(0);
   const judgeModelScopeId = useRef(scope.id);
   const goal = getGoal(scope, goals);
@@ -1567,6 +1569,7 @@ export function ScopeDetail({
     judgeModelScopeId.current = scope.id;
     judgeModelRequestVersion.current += 1;
     setSavingJudgeModel(false);
+    setSavingCompletedTaskAutomation(false);
     setSettingsError(null);
   }, [scope.id]);
 
@@ -1611,6 +1614,49 @@ export function ScopeDetail({
       }
     }
   };
+
+  const handleCompletedTaskAutomationChange = async (updates: {
+    enabled?: boolean;
+    threshold?: number;
+  }) => {
+    const currentAutomation = scope.policy.automation ?? {};
+    const nextAutomation = { ...currentAutomation };
+    if (updates.enabled !== undefined) {
+      nextAutomation.completedTaskAutomationEnabled = updates.enabled;
+    }
+    if (updates.threshold !== undefined) {
+      nextAutomation.completedTaskThreshold = updates.threshold;
+    }
+    const threshold = nextAutomation.completedTaskThreshold ?? DEFAULT_COMPLETED_TASK_THRESHOLD;
+    if (!Number.isInteger(threshold) || threshold <= 0) {
+      setSettingsError('Completed-task threshold must be a positive integer');
+      return;
+    }
+    try {
+      setSavingCompletedTaskAutomation(true);
+      setSettingsError(null);
+      const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
+        id: scope.id,
+        params: { policy: { ...scope.policy, automation: nextAutomation } },
+      });
+      if (response.scope) {
+        onScopeUpdated(response.scope);
+        toast.success('Completed-task automation updated');
+      }
+    } catch (err) {
+      setSettingsError(
+        err instanceof Error ? err.message : 'Failed to update completed-task automation'
+      );
+    } finally {
+      setSavingCompletedTaskAutomation(false);
+    }
+  };
+
+  const completedTaskAutomation = scope.policy.automation ?? {};
+  const completedTaskAutomationEnabled =
+    completedTaskAutomation.completedTaskAutomationEnabled !== false;
+  const completedTaskThreshold =
+    completedTaskAutomation.completedTaskThreshold ?? DEFAULT_COMPLETED_TASK_THRESHOLD;
 
   return (
     <div class="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
@@ -1704,6 +1750,48 @@ export function ScopeDetail({
               {savingJudgeModel && <p class="mt-2 text-xs text-gray-400">Saving…</p>}
               {settingsError && <p class="mt-2 text-xs text-red-400">{settingsError}</p>}
             </section>
+            {goal && (
+              <section class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                <div class="mb-3">
+                  <h3 class="text-sm font-medium text-gray-100">Completed-task automation</h3>
+                  <p class="mt-1 text-xs text-gray-400">
+                    Draft a Forge episode after a configured number of completed scoped tasks.
+                  </p>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-gray-200">
+                  <input
+                    type="checkbox"
+                    checked={completedTaskAutomationEnabled}
+                    disabled={savingCompletedTaskAutomation}
+                    onChange={(event) =>
+                      handleCompletedTaskAutomationChange({
+                        enabled: (event.currentTarget as HTMLInputElement).checked,
+                      })
+                    }
+                    class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-500 focus:ring-blue-500"
+                  />
+                  Enable count-based episode drafts
+                </label>
+                <label class="mt-3 block text-xs font-medium uppercase tracking-wide text-gray-400">
+                  Completed task threshold
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={completedTaskThreshold}
+                    disabled={savingCompletedTaskAutomation}
+                    onChange={(event) =>
+                      handleCompletedTaskAutomationChange({
+                        threshold: Number((event.currentTarget as HTMLInputElement).value),
+                      })
+                    }
+                    data-testid="scope-completed-task-threshold-input"
+                    class="mt-1 w-32 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                  />
+                </label>
+                {savingCompletedTaskAutomation && <p class="mt-2 text-xs text-gray-400">Saving…</p>}
+              </section>
+            )}
           </div>
         )}
         {tab === 'evidence' && <EvidenceTab scope={scope} />}

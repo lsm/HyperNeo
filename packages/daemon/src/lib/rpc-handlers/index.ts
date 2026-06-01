@@ -135,6 +135,10 @@ export function validateGoalAutomationSelfNagPolicy(params: {
   const policy = readAutomationPolicyForScope({
     policy: params.policy,
   } as EvolutionScope);
+  const threshold = policy.completedTaskThreshold;
+  if (threshold !== undefined && (!Number.isInteger(threshold) || threshold <= 0)) {
+    throw new Error('Completed-task automation threshold must be a positive integer');
+  }
   const expression = policy.selfNagCronExpression;
   if (!expression) return;
   if (!isValidCronExpression(expression)) {

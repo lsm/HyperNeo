@@ -46,6 +46,7 @@ export interface GoalForgeAutomationEventSubscription {
 
 export interface GoalForgeAutomationPolicy {
   completedTaskThreshold?: number;
+  completedTaskAutomationEnabled?: boolean;
   selfNagCronExpression?: string;
   selfNagTimezone?: string;
   eventSubscriptions?: GoalForgeAutomationEventSubscription[];

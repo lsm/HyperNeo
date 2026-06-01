@@ -384,6 +384,69 @@ describe('ScopeDetailPanel', () => {
     });
   });
 
+  it('updates completed-task automation settings while preserving threshold', async () => {
+    setupRequests(
+      makeScope({
+        policy: {
+          maxActiveLessons: 3,
+          automation: { completedTaskThreshold: 7 },
+        },
+      })
+    );
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+    );
+    expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+      id: 'scope-1',
+      params: {
+        policy: {
+          maxActiveLessons: 3,
+          automation: {
+            completedTaskThreshold: 7,
+            completedTaskAutomationEnabled: false,
+          },
+        },
+      },
+    });
+  });
+
+  it('updates completed-task automation threshold', async () => {
+    setupRequests(makeScope({ policy: { automation: { completedTaskThreshold: 7 } } }));
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+      target: { value: '12' },
+    });
+
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+    );
+    expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+      id: 'scope-1',
+      params: {
+        policy: {
+          automation: { completedTaskThreshold: 12 },
+        },
+      },
+    });
+  });
+
+  it('shows default completed-task automation threshold', async () => {
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+
+    expect(
+      (screen.getByTestId('scope-completed-task-threshold-input') as HTMLInputElement).value
+    ).toBe('10');
+  });
+
   it('clears the judge model override', async () => {
     setupRequests(
       makeScope({
