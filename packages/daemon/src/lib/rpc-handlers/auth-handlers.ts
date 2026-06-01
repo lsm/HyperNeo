@@ -254,9 +254,14 @@ export function setupAuthHandlers(
       try {
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
-          // Definitive refresh failure — clear the stale credential store row so
-          // syncAllProviders() doesn't resurrect it on the next startup.
-          await credentialManager?.removeCredentials(providerId);
+          // Only clear the credential store row when the provider itself also
+          // cleared its credentials (definitive invalid-grant failure). If the
+          // provider still has credentials, the failure was transient (network,
+          // 5xx, 429) and the row should be preserved for retry.
+          const remaining = await provider.getCredentials?.();
+          if (!remaining) {
+            await credentialManager?.removeCredentials(providerId);
+          }
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',

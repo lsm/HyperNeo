@@ -725,7 +725,7 @@ describe('Auth RPC Handlers', () => {
       expect(result.error).toContain('Please try logging out');
     });
 
-    it('removes stale credentials from store when token refresh fails', async () => {
+    it('removes stale credentials from store on definitive refresh failure', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {}),
       };
@@ -734,8 +734,11 @@ describe('Auth RPC Handlers', () => {
         mockAuthManager as unknown as AuthManager,
         credentialManager as never
       );
+      // Definitive failure: refreshToken returns false AND getCredentials returns null
+      // (provider cleared its own credentials via logout)
       const mockProvider = createMockProvider({
         refreshToken: mock(async () => false),
+        getCredentials: mock(async () => null),
       });
       registry.register(mockProvider);
 
@@ -749,6 +752,37 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('preserves credential store row on transient refresh failure', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      // Transient failure: refreshToken returns false BUT getCredentials still has tokens
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'still-valid',
+        })),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
     });
 
     it('handles refresh token errors', async () => {
