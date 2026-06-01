@@ -166,7 +166,6 @@ type SessionReasoningEntry = {
 
 type SessionThinkingConfigEntry = {
   thinking: AnthropicRequest['thinking'];
-  cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
 /**
@@ -1184,9 +1183,6 @@ export function createOpenAIResponsesBridgeServer(
   };
 
   const deleteSessionThinkingConfig = (sessionId: string): void => {
-    const entry = sessionThinkingConfigs.get(sessionId);
-    if (!entry) return;
-    clearTimeout(entry.cleanupTimer);
     sessionThinkingConfigs.delete(sessionId);
   };
 
@@ -1195,11 +1191,7 @@ export function createOpenAIResponsesBridgeServer(
     thinking: AnthropicRequest['thinking']
   ): void => {
     deleteSessionThinkingConfig(sessionId);
-    const cleanupTimer = setTimeout(() => {
-      logger.warn(`openai-responses: thinking config TTL expired sessionId=${sessionId}`);
-      sessionThinkingConfigs.delete(sessionId);
-    }, continuationTtlMs);
-    sessionThinkingConfigs.set(sessionId, { thinking, cleanupTimer });
+    sessionThinkingConfigs.set(sessionId, { thinking });
   };
 
   const consumeContinuation = (
@@ -1441,9 +1433,6 @@ export function createOpenAIResponsesBridgeServer(
         clearTimeout(entry.cleanupTimer);
       }
       sessionReasoningItems.clear();
-      for (const entry of sessionThinkingConfigs.values()) {
-        clearTimeout(entry.cleanupTimer);
-      }
       sessionThinkingConfigs.clear();
       server.stop(true);
     },
