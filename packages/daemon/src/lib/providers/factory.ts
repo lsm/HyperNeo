@@ -44,11 +44,12 @@ let initialized = false;
 export function initializeProviders(): ProviderRegistry {
   const registry = getProviderRegistry();
 
-  // If already initialized and the core providers are still present, return the
-  // existing registry. This handles the case where getProviderRegistry() was
-  // called but no providers were registered, and the case where the registry was
-  // reset without resetting the factory.
-  if (initialized && hasCoreProviders(registry)) {
+  // Once initialized, never re-register providers automatically. This prevents
+  // disabled built-ins from being resurrected when other callers (e.g.
+  // syncCustomEndpointProviders) trigger initialization. Explicit re-enablement
+  // must go through ensureBuiltInProviderRegistered().
+  // Tests that reset the registry should also call resetProviderFactory().
+  if (initialized) {
     return registry;
   }
 
@@ -185,10 +186,6 @@ function canonicalise(value: unknown): unknown {
   return out;
 }
 
-function hasCoreProviders(registry: ProviderRegistry): boolean {
-  return CORE_PROVIDER_IDS.every((id) => registry.has(id));
-}
-
 function registerIfMissing(registry: ProviderRegistry, provider: Provider): void {
   if (!registry.has(provider.id)) {
     registry.register(provider);
@@ -268,17 +265,6 @@ async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promis
 
 let copilotProviderModule: Promise<typeof import('./anthropic-copilot/index.js') | null> | null =
   null;
-
-const CORE_PROVIDER_IDS = [
-  'anthropic',
-  'glm',
-  'kimi',
-  'minimax',
-  'openrouter',
-  'ollama',
-  'ollama-cloud',
-  'anthropic-codex',
-];
 
 /** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
 const lastSyncedConfigByProviderId = new Map<string, string>();
