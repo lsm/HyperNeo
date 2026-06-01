@@ -27,6 +27,7 @@ import type {
   GateScript,
   Gate,
   SpaceWorkflow,
+  WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
@@ -1530,6 +1531,40 @@ function mergeNodeStructuralFieldsFromTemplate(
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
 }
 
+/**
+ * When a gate still carries the legacy `codex_review_bot` feature (preserved
+ * during restamp for backward compatibility), set `requireCodexApproval: true`
+ * on the source node(s) for that gate's channels so the visual editor toggle
+ * reflects reality and the node-level config drives runtime injection.
+ */
+function migrateCodexFeatureToNodeToggle(
+  nodes: WorkflowNode[],
+  channels: WorkflowChannel[],
+  gates: Gate[]
+): WorkflowNode[] {
+  const codexGateIds = new Set(
+    gates.filter((g) => g.features?.codex_review_bot === true).map((g) => g.id)
+  );
+  if (codexGateIds.size === 0) return nodes;
+
+  const nodesToFlag = new Set<string>();
+  for (const channel of channels) {
+    if (channel.gateId && codexGateIds.has(channel.gateId)) {
+      if (channel.from === '*') {
+        for (const node of nodes) nodesToFlag.add(node.id);
+      } else {
+        const node = nodes.find((n) => n.name === channel.from);
+        if (node) nodesToFlag.add(node.id);
+      }
+    }
+  }
+  if (nodesToFlag.size === 0) return nodes;
+
+  return nodes.map((node) =>
+    nodesToFlag.has(node.id) ? { ...node, requireCodexApproval: true } : node
+  );
+}
+
 function nodeReferences(node: WorkflowNode): Set<string> {
   return new Set([
     node.id,
@@ -1757,6 +1792,11 @@ export function seedBuiltInWorkflows(
           row.nodes
         );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
+        const migratedNodes = migrateCodexFeatureToNodeToggle(
+          mergedNodes,
+          mergedChannels ?? row.channels ?? [],
+          mergedGates ?? row.gates ?? []
+        );
         const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
 
@@ -1766,12 +1806,12 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: mergedGates,
-          ...(hasNewTemplateNodes ? { nodes: mergedNodes } : {}),
+          ...(hasNewTemplateNodes ? { nodes: migratedNodes } : {}),
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
         });
         if (!hasNewTemplateNodes) {
-          workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
+          workflowManager.updateWorkflowNodeToolGuards(row.id, migratedNodes);
         }
         restamped.push(template.name);
         builtInSeederLog.info(

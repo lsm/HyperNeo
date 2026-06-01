@@ -310,7 +310,12 @@ function maybeInjectCodexFeature(
  */
 export function hasInjectedGateFeature(gate: Gate, workflow?: SpaceWorkflow): boolean {
   if (hasRegisteredGateFeatures(gate)) return true;
-  if (workflow && isApprovalGate(gate) && doesAnySourceNodeRequireCodex(gate.id, workflow)) {
+  if (
+    workflow &&
+    !gate.script &&
+    isApprovalGate(gate) &&
+    doesAnySourceNodeRequireCodex(gate.id, workflow)
+  ) {
     return true;
   }
   return false;

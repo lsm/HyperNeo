@@ -486,6 +486,7 @@ export class SpaceWorkflowRepository {
       const cfg: NodeConfigJson = {
         agents: node.agents,
         ...(node.postApproval ? { postApproval: node.postApproval } : {}),
+        ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
       };
       const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
       if (result.changes === 0) {
