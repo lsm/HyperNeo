@@ -238,16 +238,23 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
 
-          // Re-sync to registry if config or credentials changed.
+          // Re-sync to registry if config, credentials, or enabled state changed.
           const shouldResync =
             data.credentials !== undefined ||
             updates.baseUrl !== undefined ||
             updates.customEndpointConfigJson !== undefined ||
-            updates.configJson !== undefined;
+            updates.configJson !== undefined ||
+            updates.isEnabled !== undefined;
 
           if (shouldResync) {
-            const creds = await credentialManager.getCredentials(record.providerId);
-            await syncProviderToRegistry(record, creds);
+            if (record.isEnabled === false) {
+              await removeProviderFromRegistry(record.providerId);
+            } else {
+              const { initializeProviders } = await import('../providers/factory.js');
+              initializeProviders();
+              const creds = await credentialManager.getCredentials(record.providerId);
+              await syncProviderToRegistry(record, creds);
+            }
           }
 
           await clearCacheAndNotifyProvidersChanged(internalEventBus);
@@ -268,10 +275,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       // credential removal doesn't leave a ghost record that resurrects on restart.
       providerRepo.deleteProvider(data.id);
       await removeProviderFromRegistry(record.providerId);
-      await credentialManager.removeCredentials(record.providerId);
-
-      await clearCacheAndNotifyProvidersChanged(internalEventBus);
-
+      try {
+        await credentialManager.removeCredentials(record.providerId);
+      } finally {
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+      }
       return { success: true };
     });
   });

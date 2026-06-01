@@ -228,6 +228,7 @@ export function setupAuthHandlers(
         if (credentialManager) {
           await credentialManager.removeCredentials(providerId);
         }
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,
