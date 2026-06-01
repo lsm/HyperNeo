@@ -193,7 +193,13 @@ export class SpaceTaskManager {
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
     if (newStatus === 'done' || newStatus === 'blocked') {
-      if (options?.result) updates.result = options.result;
+      if (options?.result) {
+        updates.result = options.result;
+      } else if (!task.result && task.reportedSummary) {
+        // Backfill result from reportedSummary so terminal tasks never reach
+        // `done`/`blocked` with a null result when a summary exists.
+        updates.result = task.reportedSummary;
+      }
       if (options?.reportedSummary) updates.reportedSummary = options.reportedSummary;
     }
 

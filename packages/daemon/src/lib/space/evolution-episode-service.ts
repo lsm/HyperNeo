@@ -516,7 +516,7 @@ ${JSON.stringify(
     status: task.status,
     reportedStatus: task.reportedStatus,
     reportedSummary: truncate(task.reportedSummary ?? '', MAX_TEXT),
-    result: truncate(task.result ?? '', MAX_TEXT),
+    result: truncate(task.result ?? task.reportedSummary ?? '', MAX_TEXT),
   })),
   null,
   2
