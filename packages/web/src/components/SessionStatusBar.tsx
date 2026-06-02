@@ -22,6 +22,7 @@ import {
   getThinkingOptionsForProvider,
 } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
@@ -276,7 +277,7 @@ export default function SessionStatusBar({
   );
   const [modelSearchQuery, setModelSearchQuery] = useState('');
 
-  useEffect(() => {
+  const loadAuthStatuses = useCallback(() => {
     let cancelled = false;
     callIfConnected('auth.providers', {})
       .then((res) => {
@@ -295,6 +296,22 @@ export default function SessionStatusBar({
       cancelled = true;
     };
   }, [callIfConnected]);
+
+  useEffect(() => {
+    return loadAuthStatuses();
+  }, [loadAuthStatuses]);
+
+  // Refresh auth statuses when providers change so the picker filter stays current.
+  useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadAuthStatuses();
+    });
+    return () => {
+      unsub();
+    };
+  }, [loadAuthStatuses, connectionState.value]);
 
   // Dropdowns - only one can be open at a time
   const modelDropdown = useModal();

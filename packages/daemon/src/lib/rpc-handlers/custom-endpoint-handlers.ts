@@ -146,15 +146,40 @@ function removeEndpointFromProviderTable(db: Database | undefined, endpointId: s
   }
 }
 
+/**
+ * Sync the full custom endpoint list to the providers table.
+ * Disabled endpoints are still updated so re-enablement uses the latest config.
+ */
+export function syncCustomEndpointsToProviderTable(
+  db: Database,
+  endpoints: CustomEndpointConfig[]
+): void {
+  if (!db?.providers?.listProviders) return;
+  const allProviderIds = new Set(endpoints.map((e) => customProviderIdFor(e.id)));
+  for (const endpoint of endpoints) {
+    syncEndpointToProviderTable(db, endpoint);
+  }
+  // Remove any provider records for endpoints that no longer exist.
+  for (const record of db.providers.listProviders()) {
+    if (record.kind === 'custom_endpoint' && !allProviderIds.has(record.providerId)) {
+      db.providers.deleteProvider(record.id);
+    }
+  }
+}
+
 async function persistAndSync(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   endpoints: CustomEndpointConfig[],
   db?: Database
 ): Promise<void> {
+  // Filter out custom endpoints disabled in the providers table so legacy
+  // sync does not re-register them despite is_enabled = 0.
+  const syncEndpoints = db ? filterDisabledCustomEndpoints(endpoints, db) : endpoints;
+
   const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
   const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-  await syncCustomEndpointProviders(endpoints);
+  await syncCustomEndpointProviders(syncEndpoints);
   // Invalidate the cached global model list so newly added/removed custom
   // models become discoverable immediately instead of waiting for the TTL
   // to expire. Without this, model resolution can keep using stale defaults
@@ -165,20 +190,14 @@ async function persistAndSync(
     namespaceId: 'global',
     settings: updated,
   });
+  internalEventBus.publishAsync('providers.changed', {
+    sessionId: 'global',
+  });
 
   // Compat: sync the full list to the providers table so the unified registry
   // stays in sync with the legacy customEndpoints JSON blob.
   if (db) {
-    const allProviderIds = new Set(endpoints.map((e) => customProviderIdFor(e.id)));
-    for (const endpoint of endpoints) {
-      syncEndpointToProviderTable(db, endpoint);
-    }
-    // Remove any provider records for endpoints that no longer exist.
-    for (const record of db.providers.listProviders()) {
-      if (record.kind === 'custom_endpoint' && !allProviderIds.has(record.providerId)) {
-        db.providers.deleteProvider(record.id);
-      }
-    }
+    syncCustomEndpointsToProviderTable(db, endpoints);
   }
 }
 
@@ -202,6 +221,25 @@ export function withCustomEndpointsLock<T>(fn: () => Promise<T>): Promise<T> {
   // Swallow errors on the queue tail so one failure doesn't poison the chain.
   mutationQueue = run.catch(() => {});
   return run;
+}
+
+/**
+ * Filter out custom endpoints that are disabled in the providers table.
+ * Used by both the legacy custom-endpoint handlers and the generic settings
+ * handlers so disabled endpoints are not re-registered by unrelated syncs.
+ */
+export function filterDisabledCustomEndpoints(
+  endpoints: CustomEndpointConfig[],
+  db: Database
+): CustomEndpointConfig[] {
+  if (!db?.providers?.listProviders) return endpoints;
+  const disabledIds = new Set(
+    db.providers
+      .listProviders()
+      .filter((p) => p.kind === 'custom_endpoint' && !p.isEnabled)
+      .map((p) => p.providerId)
+  );
+  return endpoints.filter((e) => !disabledIds.has(customProviderIdFor(e.id)));
 }
 
 export function registerCustomEndpointHandlers(
