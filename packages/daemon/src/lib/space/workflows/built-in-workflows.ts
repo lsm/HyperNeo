@@ -1600,6 +1600,16 @@ function migrateCodexFeatureToNodeToggle(
 
   const nodesToFlag = collectSourceNodes(codexGateIds);
   const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
+
+  // Also strip toggles for nodes connected to ANY scripted gate (even without
+  // a legacy codex_review_bot feature). Dynamic Codex injection is blocked for
+  // scripted gates, so a node toggle is misleading when the node sends through
+  // one — it appears to require codex[bot] approval but cannot enforce it.
+  const allScriptedGateIds = new Set(gates.filter((g) => g.script).map((g) => g.id));
+  for (const nodeId of collectSourceNodes(allScriptedGateIds)) {
+    nodesToUnflag.add(nodeId);
+  }
+
   // Nodes connected to both scripted and non-scripted codex gates keep the
   // toggle (the non-scripted gate migration takes precedence).
   for (const nodeId of nodesToFlag) {
