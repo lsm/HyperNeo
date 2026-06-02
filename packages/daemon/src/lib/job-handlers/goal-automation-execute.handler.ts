@@ -357,8 +357,15 @@ function findExistingAutomationReviewTask(
   const task = deps.taskRepo.listBySpace(scope.spaceId, true).find((item) => {
     if (item.evolutionScopeId !== scopeId) return false;
     if (!item.labels.includes('automation') || !item.labels.includes(token)) return false;
-    // For self-nag, only match tasks created after the last cursor fire.
-    if (payload.triggerKind === 'self_nag' && item.createdAt <= afterTimestamp) return false;
+    // For self-nag and completed_task_threshold, only match tasks created
+    // after the last cursor fire. This prevents reusing terminal review
+    // tasks when the same trigger fires again for newer evidence.
+    if (
+      (payload.triggerKind === 'self_nag' || payload.triggerKind === 'completed_task_threshold') &&
+      item.createdAt <= afterTimestamp
+    ) {
+      return false;
+    }
     return true;
   });
   if (!task) return null;

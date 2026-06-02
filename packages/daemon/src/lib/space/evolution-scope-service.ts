@@ -39,12 +39,20 @@ export function mergeEvolutionPolicy(
   policy: EvolutionPolicy,
   patch: EvolutionPolicy
 ): EvolutionPolicy {
+  const patchAutomation = patch.automation;
+  const isValidObject =
+    patchAutomation !== undefined &&
+    typeof patchAutomation === 'object' &&
+    !Array.isArray(patchAutomation) &&
+    patchAutomation !== null;
   return {
     ...policy,
     ...patch,
-    automation: patch.automation
-      ? { ...policy.automation, ...patch.automation }
-      : policy.automation,
+    automation: isValidObject
+      ? { ...policy.automation, ...patchAutomation }
+      : patchAutomation !== undefined
+        ? patchAutomation
+        : policy.automation,
   };
 }
 

@@ -1755,6 +1755,110 @@ describe('handleGoalAutomationExecute', () => {
     });
   });
 
+  it('does not reuse terminal completed-task review tasks for the same trigger', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Terminal reuse', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Terminal reuse',
+      objective: 'Avoid reusing terminal review',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const firstTask = taskRepo.createTask({ spaceId, title: 'First done', goalId: goal.id });
+    taskRepo.updateTask(firstTask.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: firstTask.id,
+      summary: 'First done',
+      createdAt: 10,
+    });
+
+    // First run: creates episode and review task
+    const firstResult = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: firstTask.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'First retrospective',
+              evidenceIds,
+              outcomeSummary: 'First outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+        },
+      }
+    );
+    expect(firstResult.skipped).toBe(false);
+    expect(firstResult.episodeId).not.toBeNull();
+
+    // Mark review task as terminal
+    const reviewTask = taskRepo.getTask(firstResult.reviewTaskId as string);
+    expect(reviewTask).not.toBeNull();
+    taskRepo.updateTask(reviewTask!.id, { status: 'done' });
+
+    // Add newer evidence
+    const secondTask = taskRepo.createTask({ spaceId, title: 'Second done', goalId: goal.id });
+    taskRepo.updateTask(secondTask.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: secondTask.id,
+      summary: 'Second done',
+      createdAt: 20,
+    });
+
+    // Re-trigger for the same first task (simulating re-terminal handling)
+    const secondResult = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: firstTask.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Second retrospective',
+              evidenceIds,
+              outcomeSummary: 'Second outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+        },
+      }
+    );
+
+    expect(secondResult.skipped).toBe(false);
+    expect(secondResult.episodeId).not.toBe(firstResult.episodeId);
+  });
+
   it('caps active-review requeues', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Cap requeue', type: 'recurring' });
     const scope = evolutionRepo.createScope({

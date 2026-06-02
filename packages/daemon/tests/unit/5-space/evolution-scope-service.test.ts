@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import {
+  EvolutionScopeService,
+  mergeEvolutionPolicy,
+} from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
@@ -398,5 +401,42 @@ describe('EvolutionScopeService', () => {
         objective: 'Should fail',
       })
     ).toThrow(`SpaceGoal not found in space: ${otherGoal.id}`);
+  });
+});
+
+describe('mergeEvolutionPolicy', () => {
+  it('merges nested automation objects', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: { completedTaskAutomationEnabled: true } }
+    );
+    expect(merged.automation).toEqual({
+      completedTaskThreshold: 5,
+      completedTaskAutomationEnabled: true,
+    });
+  });
+
+  it('passes through non-object automation patch so validation can reject it', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: 'bad' as never }
+    );
+    expect(merged.automation).toBe('bad');
+  });
+
+  it('passes through null automation patch so validation can reject it', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: null as never }
+    );
+    expect(merged.automation).toBeNull();
+  });
+
+  it('passes through array automation patch so validation can reject it', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: ['bad'] as never }
+    );
+    expect(merged.automation).toEqual(['bad']);
   });
 });
