@@ -145,9 +145,13 @@ export async function handleGoalAutomationExecute(
       } else {
         episodeEvidence = uniqueEvidence([...evidence, triggerEvidence]);
       }
+    } else if (triggerEvidence && payload.triggerKind === 'external_event') {
+      episodeEvidence = uniqueEvidence([...evidence, triggerEvidence]);
     }
     const cursorEvidence =
-      payload.triggerKind === 'completed_task_threshold' && triggerEvidence
+      triggerEvidence &&
+      (payload.triggerKind === 'completed_task_threshold' ||
+        payload.triggerKind === 'external_event')
         ? episodeEvidence
         : evidence;
     const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);

@@ -686,6 +686,64 @@ describe('GoalAutomationService', () => {
     expect(duplicate).toEqual({ enqueued: false, reason: 'not_applicable' });
   });
 
+  it('deduplicates external events against processing jobs', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Deduplicate processing', type: 'recurring' });
+    const subscription = {
+      source: 'github',
+      topic: 'pull_request/*',
+      filter: { action: 'closed' },
+    };
+    evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Deduplicate processing',
+      objective: 'Avoid duplicate episodes',
+      policy: { automation: { eventSubscriptions: [subscription] } },
+    });
+
+    service.onExternalEventPublished({
+      eventId: 'event-1',
+      spaceId,
+      source: 'github',
+      topic: 'pull_request/closed',
+      dedupeKey: 'pr-1',
+      summary: 'PR closed',
+      externalUrl: 'https://example.test/pr/1',
+      payload: { action: 'closed' },
+      occurredAt: 30,
+      ingestedAt: 31,
+    });
+
+    // Simulate the job being claimed (moved to processing)
+    const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
+    expect(jobs).toHaveLength(1);
+    db.prepare("UPDATE job_queue SET status = 'processing', started_at = ? WHERE id = ?").run(
+      Date.now(),
+      jobs[0].id
+    );
+
+    // Same event should not enqueue a second job while the first is processing
+    service.onExternalEventPublished({
+      eventId: 'event-1',
+      spaceId,
+      source: 'github',
+      topic: 'pull_request/closed',
+      dedupeKey: 'pr-1',
+      summary: 'PR closed',
+      payload: { action: 'closed' },
+      occurredAt: 30,
+      ingestedAt: 31,
+    });
+
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      0
+    );
+    expect(
+      jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'processing' })
+    ).toHaveLength(1);
+  });
+
   it('skips self-nag when no new evidence exists after the cursor', () => {
     const goal = goalRepo.create({ spaceId, title: 'Periodic check', type: 'recurring' });
     const scope = evolutionRepo.createScope({
@@ -2455,7 +2513,7 @@ describe('handleGoalAutomationExecute', () => {
     );
 
     const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:pull_request/*');
-    expect(cursor?.lastEvidenceCreatedAt).toBe(12);
+    expect(cursor?.lastEvidenceCreatedAt).toBe(30);
     expect(cursor?.lastExternalEventId).toBe('fresh-event');
   });
 
@@ -2833,14 +2891,13 @@ describe('handleGoalAutomationExecute', () => {
     );
 
     expect(result.skipped).toBe(false);
-    // External events stay capped — the trigger is tracked via lastExternalEventId
-    // rather than appended to the episode, preventing backlog blow-up.
-    expect(episodeEvidenceIds).toHaveLength(12);
+    // The capped slice (12) plus the triggering external-event evidence.
+    expect(episodeEvidenceIds).toHaveLength(13);
     const freshEvidence = evolutionRepo
       .listEvidence(scope.id)
       .find((item) => item.sourceId === 'fresh-event');
     expect(freshEvidence).toBeDefined();
-    expect(episodeEvidenceIds).not.toContain(freshEvidence?.id as string);
+    expect(episodeEvidenceIds).toContain(freshEvidence?.id as string);
     const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:pull_request/*');
     expect(cursor?.lastExternalEventId).toBe('fresh-event');
   });
