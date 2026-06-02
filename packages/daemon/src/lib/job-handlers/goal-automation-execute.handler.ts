@@ -138,7 +138,7 @@ export async function handleGoalAutomationExecute(
 
   try {
     let episodeEvidence = evidence;
-    if (triggerEvidence) {
+    if (triggerEvidence && payload.triggerKind === 'completed_task_threshold') {
       const triggerIndex = dueEvidence.findIndex((item) => item.id === triggerEvidence.id);
       if (triggerIndex >= maxEvidence) {
         episodeEvidence = dueEvidence.slice(0, triggerIndex + 1);
@@ -347,12 +347,17 @@ function findExistingAutomationReviewTask(
   // Only reuse a task if it was created in the current automation run
   // (after the cursor's lastFiredAt). This prevents cross-tick dedup
   // while still protecting against retry duplication within a tick.
-  const cursor = deps.cursorRepo.get(
-    payload.goalId,
-    scopeId,
-    payload.triggerKind,
-    payload.triggerKey
-  );
+  const cursor =
+    payload.triggerKind === 'completed_task_threshold'
+      ? newestCursor(
+          deps.cursorRepo.get(payload.goalId, scopeId, payload.triggerKind, payload.triggerKey),
+          deps.cursorRepo.getLatestForTriggerKind(
+            payload.goalId,
+            scopeId,
+            'completed_task_threshold'
+          )
+        )
+      : deps.cursorRepo.get(payload.goalId, scopeId, payload.triggerKind, payload.triggerKey);
   const afterTimestamp = cursor?.lastFiredAt ?? 0;
   const task = deps.taskRepo.listBySpace(scope.spaceId, true).find((item) => {
     if (item.evolutionScopeId !== scopeId) return false;

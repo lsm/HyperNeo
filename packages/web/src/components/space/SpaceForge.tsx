@@ -1565,6 +1565,7 @@ export function ScopeDetail({
   const judgeModelScopeId = useRef(scope.id);
   const automationDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAutomationUpdates = useRef<{ enabled?: boolean; threshold?: number }>({});
+  const automationSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const goal = getGoal(scope, goals);
 
   useEffect(() => {
@@ -1579,6 +1580,7 @@ export function ScopeDetail({
       clearTimeout(automationDebounceRef.current);
       automationDebounceRef.current = null;
     }
+    pendingAutomationUpdates.current = {};
   }, [scope.id]);
 
   const handleJudgeModelChange = async (
@@ -1687,7 +1689,9 @@ export function ScopeDetail({
       const merged = pendingAutomationUpdates.current;
       pendingAutomationUpdates.current = {};
       automationDebounceRef.current = null;
-      void runCompletedTaskAutomationUpdate(version, merged);
+      automationSaveQueue.current = automationSaveQueue.current
+        .then(() => runCompletedTaskAutomationUpdate(version, merged))
+        .catch(() => runCompletedTaskAutomationUpdate(version, merged));
     }, 300);
   };
 

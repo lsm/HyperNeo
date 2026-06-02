@@ -172,6 +172,7 @@ export class GoalAutomationService {
       queue: GOAL_AUTOMATION_EXECUTE,
       payload,
       matchPayload: uniqueJobMatchPayload(payload),
+      activeStatuses: ['pending'],
       maxRetries: 2,
     });
     if (!job) log.debug('goal automation job already pending', payload);
