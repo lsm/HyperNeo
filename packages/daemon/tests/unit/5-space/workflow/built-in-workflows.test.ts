@@ -3640,7 +3640,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -3764,7 +3764,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         pr_url: prUrl,
         codex_bot_reaction: 'timeout',
         head_sha: 'sha-timeout',
-        codex_bot_warning: 'codex[bot] +1 reaction missing after timeout; allowing gate',
+        codex_bot_warning: 'codex review bot +1 reaction missing after timeout; allowing gate',
       });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
