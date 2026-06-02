@@ -2143,6 +2143,7 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 10,
     });
 
+    const before = Date.now();
     const result = await handleGoalAutomationExecute(
       createAutomationJob({
         goalId: goal.id,
@@ -2178,7 +2179,7 @@ describe('handleGoalAutomationExecute', () => {
       status: 'pending',
     });
     expect(pending).toHaveLength(1);
-    expect(pending[0].runAt).toBeGreaterThanOrEqual(Date.now() + 300_000);
+    expect(pending[0].runAt).toBeGreaterThanOrEqual(before + 300_000);
   });
 
   it('defers completed-task execution across threshold changes and blocked reviews', async () => {
