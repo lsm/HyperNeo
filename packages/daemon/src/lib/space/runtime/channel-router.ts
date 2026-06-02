@@ -516,6 +516,7 @@ export class ChannelRouter {
       return { allowed: true };
     }
     const { channel, index } = match;
+    const gateSourceName = this.getChannelSourceName(workflow, channel, fromRole);
 
     const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
 
@@ -539,13 +540,18 @@ export class ChannelRouter {
     if (channel.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, channel.from);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
 
       if (skipEval) {
         return { allowed: true };
       }
 
-      const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow, channel.from);
+      const gateResult = await this.evaluateGateById(
+        runId,
+        channel.gateId,
+        workflow,
+        gateSourceName
+      );
       return { allowed: gateResult.open, reason: gateResult.reason };
     }
 
@@ -639,6 +645,9 @@ export class ChannelRouter {
     const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
     const channel = match?.channel;
     const channelIndex = match?.index ?? -1;
+    const gateSourceName = channel
+      ? this.getChannelSourceName(workflow, channel, fromRole)
+      : undefined;
     const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
     // ── 2. Target resolution: agent name → DM, node name → fan-out ────────
@@ -689,14 +698,14 @@ export class ChannelRouter {
     if (channel?.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, channel.from);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
 
       if (!skipEval) {
         const gateResult = await this.evaluateGateById(
           runId,
           channel.gateId,
           workflow,
-          channel.from
+          gateSourceName
         );
         if (gateResult.open) {
           this.cacheGateOpened(runId, channel.gateId, workflow);
@@ -738,14 +747,14 @@ export class ChannelRouter {
     if (channel?.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, channel.from);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
 
       if (!skipEval) {
         const postActivationGate = await this.evaluateGateById(
           runId,
           channel.gateId,
           workflow,
-          channel.from
+          gateSourceName
         );
         if (postActivationGate.open) {
           this.cacheGateOpened(runId, channel.gateId, workflow);
@@ -1061,6 +1070,16 @@ export class ChannelRouter {
    * For non-cyclic channels or cyclic channels whose gate does not reset,
    * the cached state is authoritative.
    */
+  private getChannelSourceName(
+    workflow: SpaceWorkflow,
+    channel: WorkflowChannel,
+    fromRole?: string
+  ): string {
+    if (channel.from !== '*') return channel.from;
+    if (!fromRole) return channel.from;
+    return this.findNodeByAgentName(workflow, fromRole)?.name ?? fromRole;
+  }
+
   private mustReevaluateGate(
     gateId: string,
     channelIsCyclic: boolean,

@@ -540,17 +540,10 @@ export class SpaceWorkflowManager {
         if (!gate?.script || !isApprovalGate(gate)) continue;
 
         if (ch.from === '*') {
-          // Wildcard dynamic injection only applies when ALL nodes opt in.
-          // Partial opt-in means this wildcard gate won't get Codex for this
-          // node, so there's no conflict to reject.
-          const allOptIn = nodes.every((n) => n.requireCodexApproval);
-          if (allOptIn) {
-            throw new WorkflowValidationError(
-              `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on wildcard channel[${ci}]; ` +
-                'dynamic Codex injection is blocked when an approval gate has a custom script'
-            );
-          }
-          continue;
+          throw new WorkflowValidationError(
+            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on wildcard channel[${ci}]; ` +
+              'dynamic Codex injection is blocked when an approval gate has a custom script'
+          );
         }
 
         if (nodeRefs.has(ch.from)) {

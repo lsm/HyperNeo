@@ -1881,7 +1881,6 @@ export function seedBuiltInWorkflows(
           mergedChannels ?? row.channels ?? [],
           mergedGates ?? row.gates ?? []
         );
-        const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
 
         workflowManager.updateWorkflow(row.id, {
@@ -1890,13 +1889,10 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          ...(hasNewTemplateNodes ? { nodes: migratedNodes } : {}),
+          nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
         });
-        if (!hasNewTemplateNodes) {
-          workflowManager.updateWorkflowNodeToolGuards(row.id, migratedNodes);
-        }
         restamped.push(template.name);
         builtInSeederLog.info(
           `re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +

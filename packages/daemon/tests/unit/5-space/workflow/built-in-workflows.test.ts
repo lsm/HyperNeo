@@ -1492,6 +1492,7 @@ describe('getBuiltInWorkflows()', () => {
 
 describe('seedBuiltInWorkflows()', () => {
   let db: BunDatabase;
+  let repo: SpaceWorkflowRepository;
   let manager: SpaceWorkflowManager;
   const SPACE_ID = 'seed-test-space';
 
@@ -1525,7 +1526,7 @@ describe('seedBuiltInWorkflows()', () => {
     seedAgent(db, REVIEWER_ID, SPACE_ID, 'Reviewer');
     seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
-    const repo = new SpaceWorkflowRepository(db);
+    repo = new SpaceWorkflowRepository(db);
     // No agentLookup — seeder bypasses lookup by passing real IDs directly
     manager = new SpaceWorkflowManager(repo);
   });
@@ -2119,15 +2120,10 @@ describe('seedBuiltInWorkflows()', () => {
           }
     );
 
-    // Clear requireCodexApproval on the Review node because dynamic injection
-    // is blocked for scripted gates; keeping the toggle would fail validation.
-    const nodesWithoutCodex = workflow.nodes.map((node) =>
-      node.name === 'Review' ? { ...node, requireCodexApproval: undefined } : node
-    );
-    manager.updateWorkflow(workflow.id, {
-      gates: gateWithCustomScript,
-      nodes: nodesWithoutCodex,
-    });
+    // Simulate a legacy/customized row that predates scripted-gate validation:
+    // the Review node still has requireCodexApproval, but restamp must unflag it
+    // in the same update that validates the custom scripted approval gate.
+    repo.updateWorkflow(workflow.id, { gates: gateWithCustomScript });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'pre-custom-script-hash',
       workflow.id
@@ -2140,6 +2136,46 @@ describe('seedBuiltInWorkflows()', () => {
     const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
     expect(gate.script?.source).toBe('echo custom');
     expect(gate.features).toBeUndefined();
+    expect(
+      after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval
+    ).toBeUndefined();
+  });
+
+  test('workflow validation rejects partial wildcard opt-in on scripted approval gates', () => {
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Partial Wildcard Scripted Approval',
+        description: '',
+        nodes: [
+          {
+            id: 'node-coder',
+            name: 'Coding',
+            agents: [{ agentId: CODER_ID, name: 'coder' }],
+            requireCodexApproval: true,
+          },
+          {
+            id: 'node-reviewer',
+            name: 'Review',
+            agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }],
+          },
+        ],
+        startNodeId: 'node-coder',
+        endNodeId: 'node-reviewer',
+        channels: [{ id: 'ch-wildcard', from: '*', to: 'Review', gateId: 'approval-gate' }],
+        gates: [
+          {
+            id: 'approval-gate',
+            fields: [
+              { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+            ],
+            script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
+            resetOnCycle: false,
+          },
+        ],
+        completionAutonomyLevel: 3,
+      })
+    ).toThrow(/wildcard channel/);
   });
 
   test('re-stamp does not copy features onto gates with custom poll', () => {
