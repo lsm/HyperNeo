@@ -464,6 +464,26 @@ export class SpaceWorkflowManager {
       const node = nodes[i];
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
+      this.validateCodexPollInterval(node, i);
+    }
+  }
+
+  private validateCodexPollInterval(node: WorkflowNodeInput, index: number): void {
+    if (node.codexPollIntervalMs === undefined || node.codexPollIntervalMs === null) {
+      return;
+    }
+    if (
+      typeof node.codexPollIntervalMs !== 'number' ||
+      !Number.isFinite(node.codexPollIntervalMs)
+    ) {
+      throw new WorkflowValidationError(
+        `node[${index}]: codexPollIntervalMs must be a finite number`
+      );
+    }
+    if (node.codexPollIntervalMs <= 0) {
+      throw new WorkflowValidationError(
+        `node[${index}]: codexPollIntervalMs must be a positive number`
+      );
     }
   }
 

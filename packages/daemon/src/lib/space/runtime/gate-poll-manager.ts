@@ -226,18 +226,32 @@ interface PolledGate {
 }
 
 function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
-  const seen = new Set<string>();
   const result: PolledGate[] = [];
+  const nativeSeen = new Set<string>();
+  const injectedSeen = new Set<string>();
+
   for (const channel of workflow.channels ?? []) {
     if (!channel.gateId) continue;
     const gate = workflow.gates?.find((g) => g.id === channel.gateId);
     if (!gate) continue;
     const poll = getEffectiveGatePoll(gate, workflow, channel.from);
     if (!poll) continue;
-    const key = `${gate.id}:${channel.from}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ gate, poll, sourceName: channel.from });
+
+    // A "native" poll is one that exists on the gate itself (gate.poll or a
+    // registered feature poll). These are gate-scoped: one timer per gate.
+    // Dynamically-injected Codex polls are source-scoped: one timer per
+    // flagged channel source so the correct target node receives guidance.
+    const hasNativePoll = !!getEffectiveGatePoll(gate, undefined);
+    if (hasNativePoll) {
+      if (nativeSeen.has(gate.id)) continue;
+      nativeSeen.add(gate.id);
+      result.push({ gate, poll, sourceName: channel.from });
+    } else {
+      const key = `${gate.id}:${channel.from}`;
+      if (injectedSeen.has(key)) continue;
+      injectedSeen.add(key);
+      result.push({ gate, poll, sourceName: channel.from });
+    }
   }
   return result;
 }

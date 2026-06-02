@@ -918,7 +918,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   workflowRunId
                 );
                 const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef, workflow),
+                  getEffectiveGate(gateDef, workflow, myNodeName),
                   updated.data,
                   scriptExecutor,
                   scriptContext
@@ -1291,8 +1291,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
       const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
+      const currentNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
+      const sourceName = currentNode?.name ?? myAgentName;
       const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef, workflow ?? undefined),
+        getEffectiveGate(gateDef, workflow ?? undefined, sourceName),
         currentData,
         scriptExecutor,
         scriptContext

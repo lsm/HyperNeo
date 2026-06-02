@@ -163,6 +163,58 @@ function getMinCodexPollIntervalMs(gateId: string, workflow: SpaceWorkflow): num
   return min ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
 }
 
+/**
+ * Returns the custom poll interval (ms) for the specific source node that
+ * requires Codex approval. Falls back to the default constant when the source
+ * does not set an explicit interval.
+ */
+function getSpecificCodexPollIntervalMs(
+  gateId: string,
+  workflow: SpaceWorkflow,
+  sourceName: string
+): number {
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    if (channel.from === '*') {
+      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
+        const node = workflow.nodes.find((n) => n.name === sourceName);
+        if (node?.codexPollIntervalMs) return node.codexPollIntervalMs;
+        for (const n of workflow.nodes) {
+          try {
+            const agents = resolveNodeAgents(n);
+            if (agents.some((a) => a.name === sourceName) && n.codexPollIntervalMs) {
+              return n.codexPollIntervalMs;
+            }
+          } catch {
+            // skip malformed nodes
+          }
+        }
+      }
+      continue;
+    }
+    if (channel.from !== sourceName) continue;
+    const nodeByName = workflow.nodes.find((n) => n.name === sourceName);
+    if (nodeByName?.requireCodexApproval && nodeByName.codexPollIntervalMs) {
+      return nodeByName.codexPollIntervalMs;
+    }
+    for (const node of workflow.nodes) {
+      try {
+        const agents = resolveNodeAgents(node);
+        if (
+          agents.some((a) => a.name === sourceName) &&
+          node.requireCodexApproval &&
+          node.codexPollIntervalMs
+        ) {
+          return node.codexPollIntervalMs;
+        }
+      } catch {
+        // skip malformed nodes
+      }
+    }
+  }
+  return CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
+}
+
 export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 600;
 export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = Number(
@@ -407,7 +459,9 @@ function maybeInjectCodexFeature(
     if (needsCodex) {
       const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
       if (codexDef) {
-        const intervalMs = getMinCodexPollIntervalMs(gate.id, workflow);
+        const intervalMs = sourceNodeName
+          ? getSpecificCodexPollIntervalMs(gate.id, workflow, sourceNodeName)
+          : getMinCodexPollIntervalMs(gate.id, workflow);
         // Preserve an existing custom poll by injecting only the script half
         // of the Codex feature when gate.poll is already present.
         if (gate.poll) {
