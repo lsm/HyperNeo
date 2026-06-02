@@ -20,19 +20,24 @@ function makeFakeBridge(): {
   factory: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
   configs: OpenAIChatBridgeConfig[];
   stoppedPorts: number[];
+  thinkingConfigs: Array<{ sessionId: string; thinking: unknown }>;
 } {
   const configs: OpenAIChatBridgeConfig[] = [];
   const stoppedPorts: number[] = [];
+  const thinkingConfigs: Array<{ sessionId: string; thinking: unknown }> = [];
   let nextPort = 40000;
   const factory = (config: OpenAIChatBridgeConfig): OpenAIChatBridgeServer => {
     configs.push(config);
     const port = nextPort++;
     return {
       port,
+      setSessionThinkingConfig: (sessionId: string, thinking: unknown) => {
+        thinkingConfigs.push({ sessionId, thinking });
+      },
       stop: () => stoppedPorts.push(port),
     };
   };
-  return { factory, configs, stoppedPorts };
+  return { factory, configs, stoppedPorts, thinkingConfigs };
 }
 
 const baseConfig: CustomEndpointConfig = {
@@ -495,6 +500,43 @@ describe('CustomEndpointProvider', () => {
       expect(anthropicCaps.caching).toBe(true);
       expect(anthropicCaps.thinking).toBe(true);
       expect(anthropicCaps.vision).toBe(true);
+    });
+  });
+
+  describe('setSessionThinkingConfig side-channel', () => {
+    it('embeds sessionId into ANTHROPIC_AUTH_TOKEN so the bridge can identify the session', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+      const cfg = p.buildSdkConfig('qwen2.5-7b', { sessionId: 'sess-abc' });
+      expect(cfg.envVars.ANTHROPIC_AUTH_TOKEN).toBe('custom-endpoint:sess-abc');
+    });
+
+    it('forwards setSessionThinkingConfig to every chat bridge', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+      p.buildSdkConfig('qwen2.5-7b');
+      p.buildSdkConfig('qwen2.5-vl-7b');
+      p.setSessionThinkingConfig('sess-1', 'think8k');
+      expect(fake.thinkingConfigs).toHaveLength(2);
+      expect(fake.thinkingConfigs[0]).toMatchObject({
+        sessionId: 'sess-1',
+        thinking: { type: 'enabled', budget_tokens: 8000 },
+      });
+      expect(fake.thinkingConfigs[1]).toMatchObject({
+        sessionId: 'sess-1',
+        thinking: { type: 'enabled', budget_tokens: 8000 },
+      });
+    });
+
+    it('sends undefined thinking when level is off or unknown', () => {
+      const fake = makeFakeBridge();
+      const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+      p.buildSdkConfig('qwen2.5-7b');
+      p.setSessionThinkingConfig('sess-1', 'off');
+      expect(fake.thinkingConfigs[0]).toMatchObject({
+        sessionId: 'sess-1',
+        thinking: undefined,
+      });
     });
   });
 });
