@@ -30,6 +30,7 @@ import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script
 import {
   getEffectiveGate,
   isApprovalGate,
+  resolveCodexPollIntervalMs,
 } from '../../../../src/lib/space/runtime/gate-features.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -3670,6 +3671,77 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         resetOnCycle: false,
       })
     ).toBe(true);
+  });
+
+  test('isApprovalGate recognizes boolean approval checks independent of field name', () => {
+    expect(
+      isApprovalGate({
+        id: 'semantic-boolean-approval-gate',
+        fields: [
+          {
+            name: 'signoff',
+            type: 'boolean',
+            writers: [],
+            check: { op: '==', value: true },
+          },
+        ],
+        resetOnCycle: false,
+      })
+    ).toBe(true);
+  });
+
+  test('invalid Codex poll interval env values fall back to default', () => {
+    expect(resolveCodexPollIntervalMs(undefined)).toBe(300000);
+    expect(resolveCodexPollIntervalMs('5m')).toBe(300000);
+    expect(resolveCodexPollIntervalMs('0')).toBe(300000);
+    expect(resolveCodexPollIntervalMs(30000)).toBe(30000);
+  });
+
+  test('dynamic Codex injection resolves agent source before colliding node name', () => {
+    const gate = {
+      id: 'agent-source-gate',
+      fields: [
+        {
+          name: 'signoff',
+          type: 'boolean' as const,
+          writers: [],
+          check: { op: '==', value: true },
+        },
+      ],
+      resetOnCycle: false,
+    };
+    const effectiveGate = getEffectiveGate(
+      gate,
+      {
+        id: 'wf-agent-source-collision',
+        spaceId: 'space-1',
+        name: 'Agent Source Collision',
+        tags: [],
+        nodes: [
+          {
+            id: 'node-source',
+            name: 'SourceNode',
+            requireCodexApproval: true,
+            agents: [{ agentId: 'agent-coder', name: 'Reviewer' }],
+          },
+          {
+            id: 'node-collision',
+            name: 'Reviewer',
+            agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+          },
+        ],
+        channels: [{ id: 'ch-agent-source', from: 'Reviewer', to: 'reviewer', gateId: gate.id }],
+        gates: [gate],
+        startNodeId: 'node-source',
+        endNodeId: 'node-collision',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        completionAutonomyLevel: 3,
+      },
+      'Reviewer'
+    );
+
+    expect(effectiveGate.script?.source).toContain('codex[bot]');
   });
 
   test('codex feature script and poll override custom script and poll consistently', () => {

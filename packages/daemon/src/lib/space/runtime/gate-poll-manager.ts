@@ -118,9 +118,6 @@ export function extractPrContext(prUrl: string): {
  * still resolve their concrete target node.
  */
 function resolveNodeNameByRef(workflow: SpaceWorkflow, ref: string): string | null {
-  const nodeByName = workflow.nodes.find((node) => node.name === ref);
-  if (nodeByName) return nodeByName.name;
-
   for (const node of workflow.nodes) {
     try {
       if (resolveNodeAgents(node).some((agent) => agent.name === ref)) return node.name;
@@ -128,6 +125,9 @@ function resolveNodeNameByRef(workflow: SpaceWorkflow, ref: string): string | nu
       // skip malformed nodes
     }
   }
+
+  const nodeByName = workflow.nodes.find((node) => node.name === ref);
+  if (nodeByName) return nodeByName.name;
   return null;
 }
 

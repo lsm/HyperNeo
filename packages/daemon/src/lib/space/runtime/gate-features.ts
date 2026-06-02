@@ -37,9 +37,6 @@ function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
  * codex review bot gate feature at runtime based on node-level config.
  */
 function findNodeBySourceName(workflow: SpaceWorkflow, sourceName: string) {
-  const nodeByName = workflow.nodes.find((n) => n.name === sourceName);
-  if (nodeByName) return nodeByName;
-
   for (const node of workflow.nodes) {
     try {
       const agents = resolveNodeAgents(node);
@@ -48,7 +45,8 @@ function findNodeBySourceName(workflow: SpaceWorkflow, sourceName: string) {
       // skip malformed nodes
     }
   }
-  return undefined;
+
+  return workflow.nodes.find((n) => n.name === sourceName);
 }
 
 function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow): boolean {
@@ -137,8 +135,15 @@ function getSpecificCodexPollIntervalMs(
 
 export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 600;
-export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = Number(
-  process.env.NEOKAI_CODEX_POLL_INTERVAL_MS || '300000'
+const DEFAULT_CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 300000;
+
+export function resolveCodexPollIntervalMs(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
+}
+
+export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = resolveCodexPollIntervalMs(
+  process.env.NEOKAI_CODEX_POLL_INTERVAL_MS
 );
 
 const CODEX_REVIEW_BOT_SCRIPT = [
@@ -352,11 +357,10 @@ export function validateGateFeatures(gate: Gate): string[] {
 
 export function isApprovalGate(gate: Gate): boolean {
   return (gate.fields ?? []).some((f) => {
+    const check = f.check as { op?: unknown; match?: unknown; value?: unknown } | undefined;
     if (f.name === 'approved') return true;
-    if (f.type === 'map') {
-      const check = f.check as { op?: unknown; match?: unknown } | undefined;
-      if (check?.op === 'count' && check.match === 'approved') return true;
-    }
+    if (f.type === 'boolean' && check?.op === '==' && check.value === true) return true;
+    if (f.type === 'map' && check?.op === 'count' && check.match === 'approved') return true;
     return false;
   });
 }
