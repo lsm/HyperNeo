@@ -34,6 +34,7 @@ export function useFetchModels(editor: EditorState | null) {
   useEffect(() => {
     clearFetchState();
     activeRequestRef.current++;
+    setFetchingModels(false);
   }, [editor?.baseUrl, editor?.type, editor?.apiKey, editor?.headersText]);
 
   const handleFetchModels = useCallback(async () => {

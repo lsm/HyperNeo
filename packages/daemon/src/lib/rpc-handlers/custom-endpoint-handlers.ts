@@ -65,10 +65,13 @@ function buildModelListUrl(baseUrl: string, type: string): string {
   let path = parsed.pathname.replace(/\/+$/, '');
 
   if (type === 'ollama-native') {
+    path = path.replace(/\/api\/chat$/i, '');
     path = path.replace(/\/api\/tags$/i, '');
     parsed.pathname = `${path}/api/tags`;
   } else {
     path = path.replace(/\/chat\/completions$/i, '');
+    path = path.replace(/\/v1\/messages\/count_tokens$/i, '');
+    path = path.replace(/\/v1\/messages$/i, '');
     path = path.replace(/\/v1\/models$/i, '');
     path = path.replace(/\/v1$/i, '');
     parsed.pathname = `${path}/v1/models`;

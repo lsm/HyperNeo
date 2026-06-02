@@ -453,6 +453,60 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(capturedUrl).toBe('http://localhost:1234/v1/models');
     });
 
+    it('strips /api/chat from ollama baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: 'llama2' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:11434/api/chat', type: 'ollama-native' }, {});
+      expect(capturedUrl).toBe('http://localhost:11434/api/tags');
+    });
+
+    it('strips /v1/messages from anthropic baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        { baseUrl: 'http://localhost:1234/v1/messages', type: 'anthropic-messages' },
+        {}
+      );
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('strips /v1/messages/count_tokens from anthropic baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1/messages/count_tokens',
+          type: 'anthropic-messages',
+        },
+        {}
+      );
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
     it('accepts anthropic-messages model objects with type and display_name', async () => {
       global.fetch = mock(async () => ({
         ok: true,
