@@ -57,6 +57,12 @@ interface WorkflowFingerprint {
    */
   nodePostApproval: string[];
   /**
+   * Node-level Codex approval flags, sorted. Format: `<nodeName>|true`.
+   * Detects changes to the requireCodexApproval toggle so drift detection
+   * catches user edits and template changes that flip this flag.
+   */
+  nodeCodexFlags: string[];
+  /**
    * Legacy workflow-level post-approval route. Kept in the fingerprint so
    * clearing old template-level routes also triggers a re-stamp.
    */
@@ -172,6 +178,12 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  // Serialize node-level Codex approval flags.
+  const nodeCodexFlags = workflow.nodes
+    .filter((n) => n.requireCodexApproval)
+    .map((n) => `${n.name}|true`)
+    .sort();
+
   // Serialize legacy workflow-level post-approval route.
   const legacyPostApproval = workflow.postApproval
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
@@ -186,6 +198,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     nodePrompts,
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
+    nodeCodexFlags,
     legacyPostApproval,
   };
 }

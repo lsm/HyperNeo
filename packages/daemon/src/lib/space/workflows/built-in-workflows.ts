@@ -1586,6 +1586,9 @@ function migrateCodexFeatureToNodeToggle(
 
   const migratedGates = gates.map((gate) => {
     if (!gate.features?.codex_review_bot) return gate;
+    // Preserve legacy feature on gates with custom scripts since dynamic
+    // injection would be blocked and the node flag cannot replace it.
+    if (gate.script) return gate;
     const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
     return {
       ...gate,
@@ -1700,7 +1703,7 @@ export function mergeGateStructuralFieldsFromTemplate(
         if (templateGate.features) {
           nextFeatures = { ...templateGate.features };
         }
-        if (gate.features?.codex_review_bot) {
+        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
           nextFeatures = { codex_review_bot: true, ...nextFeatures };
         }
       } else {
