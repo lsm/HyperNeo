@@ -3506,7 +3506,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain('head_sha');
     expect(effectiveGate.script?.source).toContain('^https://([^/]+)/');
     expect(effectiveGate.script?.source).not.toContain('github\\.com');
-    expect(effectiveGate.poll?.intervalMs).toBe(60_000);
+    expect(effectiveGate.poll?.intervalMs).toBe(300_000);
   });
 
   test('codex feature script and poll override custom script and poll consistently', () => {

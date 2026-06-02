@@ -189,12 +189,13 @@ async function evaluateTerminalGateFeatures(
   // (to current node) are only included when there is exactly one incoming
   // channel total, so we do not falsely treat an unrelated incoming gate as the
   // traversed path when multiple paths converge on a shared terminal node.
-  let relevantGateIds: Set<string> | undefined;
-  let currentNodeName: string | undefined;
+  // Maps gateId → the channel `from` value that matched, so source-scoped Codex
+  // injection uses the actual sender name (node name or agent slot) rather than
+  // the current node name.
+  const relevantGateSources = new Map<string, string>();
   if (currentNodeId && workflow.channels) {
-    currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
+    const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
-      const nodeName = currentNodeName;
       const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
       const currentNodeAgentNames = new Set<string>();
       if (currentNode) {
@@ -208,32 +209,34 @@ async function evaluateTerminalGateFeatures(
       }
       const incomingChannels = workflow.channels.filter((ch) => {
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        if (toList.includes(nodeName) || toList.includes('*')) return true;
+        if (toList.includes(currentNodeName) || toList.includes('*')) return true;
         return currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t));
       });
       const includeIncoming = incomingChannels.length === 1;
-      relevantGateIds = new Set(
-        workflow.channels
-          .filter((ch) => {
-            if (ch.from === nodeName || ch.from === '*') return true;
-            if (currentNodeAgentNames.has(ch.from)) return true;
-            if (!includeIncoming) return false;
-            const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-            if (toList.includes(nodeName) || toList.includes('*')) return true;
-            return (
-              currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t))
-            );
-          })
-          .map((ch) => ch.gateId)
-          .filter((id): id is string => !!id)
-      );
+      for (const ch of workflow.channels) {
+        if (!ch.gateId) continue;
+        const isOutgoing =
+          ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
+        let isIncoming = false;
+        if (includeIncoming) {
+          const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+          isIncoming =
+            toList.includes(currentNodeName) ||
+            toList.includes('*') ||
+            (currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t)));
+        }
+        if (isOutgoing || isIncoming) {
+          relevantGateSources.set(ch.gateId, ch.from);
+        }
+      }
     }
   }
 
   for (const gate of workflow.gates ?? []) {
-    if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
-    if (!hasInjectedGateFeature(gate, workflow, currentNodeName)) continue;
-    const effectiveGate = getEffectiveGate(gate, workflow, currentNodeName);
+    if (relevantGateSources.size > 0 && !relevantGateSources.has(gate.id)) continue;
+    const sourceName = relevantGateSources.get(gate.id);
+    if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
+    const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
     if (!effectiveGate.script) continue;
 
     const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
