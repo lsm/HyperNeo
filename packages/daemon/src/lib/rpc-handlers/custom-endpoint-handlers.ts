@@ -152,9 +152,22 @@ async function persistAndSync(
   endpoints: CustomEndpointConfig[],
   db?: Database
 ): Promise<void> {
+  // Filter out custom endpoints disabled in the providers table so legacy
+  // sync does not re-register them despite is_enabled = 0.
+  let syncEndpoints = endpoints;
+  if (db) {
+    const disabledIds = new Set(
+      db.providers
+        .listProviders()
+        .filter((p) => p.kind === 'custom_endpoint' && !p.isEnabled)
+        .map((p) => p.providerId)
+    );
+    syncEndpoints = endpoints.filter((e) => !disabledIds.has(customProviderIdFor(e.id)));
+  }
+
   const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
   const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-  await syncCustomEndpointProviders(endpoints);
+  await syncCustomEndpointProviders(syncEndpoints);
   // Invalidate the cached global model list so newly added/removed custom
   // models become discoverable immediately instead of waiting for the TTL
   // to expire. Without this, model resolution can keep using stale defaults

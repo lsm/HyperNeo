@@ -309,6 +309,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
+    // Seed disabled built-in state so initializeProviders() won't register
+    // providers that were explicitly disabled or deleted in a prior run.
+    for (const record of db.providers.listProviders()) {
+      if (record.kind === 'built_in' && record.isEnabled === false) {
+        markBuiltInProviderDisabled(record.providerId);
+      }
+    }
+
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
@@ -337,14 +345,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       await syncAllProviders(() => db.providers.listEnabledProviders(), credentialManager);
     } catch (err) {
       logError('[Daemon] Provider sync failed (non-fatal):', err);
-    }
-
-    // Seed disabled built-in state so initializeProviders() won't resurrect
-    // providers that were explicitly disabled or deleted in a prior run.
-    for (const record of db.providers.listProviders()) {
-      if (record.kind === 'built_in' && record.isEnabled === false) {
-        markBuiltInProviderDisabled(record.providerId);
-      }
     }
 
     // Check authentication status.

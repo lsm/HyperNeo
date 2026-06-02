@@ -124,10 +124,14 @@ function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
   // Key by "provider:id" so same-id models from different providers
   // are preserved as distinct entries rather than last-writer-wins.
   const modelMap = new Map<string, ModelInfo>();
+  const registry = getProviderRegistry();
 
-  // Add fallback models first
+  // Add fallback models only when their provider is still registered.
+  // This prevents disabled/deleted providers from leaving ghost entries.
   for (const model of FALLBACK_MODELS) {
-    modelMap.set(`${model.provider}:${model.id}`, model);
+    if (registry.has(model.provider)) {
+      modelMap.set(`${model.provider}:${model.id}`, model);
+    }
   }
 
   // Provider models override fallbacks with same (provider, id)
