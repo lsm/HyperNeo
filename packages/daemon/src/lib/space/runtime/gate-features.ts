@@ -81,7 +81,11 @@ function doesSpecificSourceNodeRequireCodex(
 ): boolean {
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
-    if (channel.from !== sourceName && channel.from !== '*') continue;
+    const sourceMatches =
+      channel.from === '*' ||
+      channel.from === sourceName ||
+      findNodesBySourceName(workflow, channel.from).some((node) => node.name === sourceName);
+    if (!sourceMatches) continue;
 
     return findNodesBySourceName(workflow, sourceName).some((node) => node.requireCodexApproval);
   }

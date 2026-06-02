@@ -131,6 +131,22 @@ function resolveNodeNameByRef(workflow: SpaceWorkflow, ref: string): string | nu
   return null;
 }
 
+function resolveSourceNodeNamesByRef(workflow: SpaceWorkflow, ref: string): string[] {
+  const matches: string[] = [];
+  for (const node of workflow.nodes) {
+    if (node.name === ref) matches.push(node.name);
+  }
+  for (const node of workflow.nodes) {
+    if (matches.includes(node.name)) continue;
+    try {
+      if (resolveNodeAgents(node).some((agent) => agent.name === ref)) matches.push(node.name);
+    } catch {
+      // skip malformed nodes
+    }
+  }
+  return matches;
+}
+
 export function resolveTargetNodeName(
   gateId: string,
   workflow: SpaceWorkflow,
@@ -142,6 +158,13 @@ export function resolveTargetNodeName(
   if (sourceName !== undefined) {
     channel = channels.find((ch) => ch.gateId === gateId && ch.from === sourceName);
     if (!channel) {
+      channel = channels.find(
+        (ch) =>
+          ch.gateId === gateId &&
+          resolveSourceNodeNamesByRef(workflow, ch.from).includes(sourceName)
+      );
+    }
+    if (!channel) {
       channel = channels.find((ch) => ch.gateId === gateId && ch.from === '*');
     }
   } else {
@@ -152,7 +175,6 @@ export function resolveTargetNodeName(
   }
 
   if (target === 'from') {
-    // For wildcard channels, return the concrete sourceName instead of '*'.
     const fromTarget = channel.from === '*' && sourceName !== undefined ? sourceName : channel.from;
     return resolveNodeNameByRef(workflow, fromTarget);
   }
@@ -302,10 +324,17 @@ function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
       nativeSeen.add(gate.id);
       result.push({ gate, poll, sourceName: channel.from });
     } else {
-      const key = `${gate.id}:${channel.from}`;
-      if (injectedSeen.has(key)) continue;
-      injectedSeen.add(key);
-      result.push({ gate, poll, sourceName: channel.from });
+      const sourceNodeNames = resolveSourceNodeNamesByRef(workflow, channel.from);
+      for (const sourceName of sourceNodeNames) {
+        const sourceNode = workflow.nodes.find((node) => node.name === sourceName);
+        if (!sourceNode?.requireCodexApproval) continue;
+        const nodePoll = getEffectiveGatePoll(gate, workflow, sourceName);
+        if (!nodePoll) continue;
+        const key = `${gate.id}:${sourceName}`;
+        if (injectedSeen.has(key)) continue;
+        injectedSeen.add(key);
+        result.push({ gate, poll: nodePoll, sourceName });
+      }
     }
   }
   return result;
