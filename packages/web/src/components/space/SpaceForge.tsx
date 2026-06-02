@@ -1564,6 +1564,7 @@ export function ScopeDetail({
   const completedTaskAutomationRequestVersion = useRef(0);
   const judgeModelScopeId = useRef(scope.id);
   const automationDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutomationUpdates = useRef<{ enabled?: boolean; threshold?: number }>({});
   const goal = getGoal(scope, goals);
 
   useEffect(() => {
@@ -1588,21 +1589,17 @@ export function ScopeDetail({
     try {
       setSavingJudgeModel(true);
       setSettingsError(null);
-      const nextPolicy = { ...scope.policy };
+      const patch: Partial<EvolutionScope['policy']> = {};
       if (value) {
-        nextPolicy.episodeJudgeModel = value;
-        if (selection?.provider) {
-          nextPolicy.episodeJudgeProvider = selection.provider;
-        } else {
-          delete nextPolicy.episodeJudgeProvider;
-        }
+        patch.episodeJudgeModel = value;
+        patch.episodeJudgeProvider = selection?.provider;
       } else {
-        delete nextPolicy.episodeJudgeModel;
-        delete nextPolicy.episodeJudgeProvider;
+        patch.episodeJudgeModel = null as never;
+        patch.episodeJudgeProvider = null as never;
       }
       const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
         id: scope.id,
-        params: { policy: nextPolicy },
+        params: { policyPatch: patch },
       });
       if (judgeModelRequestVersion.current !== version) return;
       if (response.scope) {
@@ -1682,14 +1679,16 @@ export function ScopeDetail({
       clearTimeout(automationDebounceRef.current);
       automationDebounceRef.current = null;
     }
+    pendingAutomationUpdates.current = { ...pendingAutomationUpdates.current, ...updates };
     if (updates.threshold !== undefined) {
       setSettingsError(null);
-      automationDebounceRef.current = setTimeout(() => {
-        runCompletedTaskAutomationUpdate(version, updates);
-      }, 300);
-      return;
     }
-    void runCompletedTaskAutomationUpdate(version, updates);
+    automationDebounceRef.current = setTimeout(() => {
+      const merged = pendingAutomationUpdates.current;
+      pendingAutomationUpdates.current = {};
+      automationDebounceRef.current = null;
+      void runCompletedTaskAutomationUpdate(version, merged);
+    }, 300);
   };
 
   const completedTaskAutomation = scope.policy.automation ?? {};

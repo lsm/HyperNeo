@@ -386,8 +386,7 @@ describe('ScopeDetailPanel', () => {
     expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
       id: 'scope-1',
       params: {
-        policy: {
-          maxActiveLessons: 3,
+        policyPatch: {
           episodeJudgeModel: 'claude-sonnet-4-6',
           episodeJudgeProvider: 'anthropic',
         },
@@ -407,21 +406,26 @@ describe('ScopeDetailPanel', () => {
     renderPanel();
 
     await screen.findByRole('heading', { name: 'Review quality scope' });
-    fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
-
-    await waitFor(() =>
-      expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
-    );
-    expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
-      id: 'scope-1',
-      params: {
-        policyPatch: {
-          automation: {
-            completedTaskAutomationEnabled: false,
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+      );
+      expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+        id: 'scope-1',
+        params: {
+          policyPatch: {
+            automation: {
+              completedTaskAutomationEnabled: false,
+            },
           },
         },
-      },
-    });
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('persists the default threshold when enabling completed-task automation', async () => {
@@ -429,22 +433,27 @@ describe('ScopeDetailPanel', () => {
     renderPanel();
 
     await screen.findByRole('heading', { name: 'Review quality scope' });
-    fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
-
-    await waitFor(() =>
-      expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
-    );
-    expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
-      id: 'scope-1',
-      params: {
-        policyPatch: {
-          automation: {
-            completedTaskAutomationEnabled: true,
-            completedTaskThreshold: 10,
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+      );
+      expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+        id: 'scope-1',
+        params: {
+          policyPatch: {
+            automation: {
+              completedTaskAutomationEnabled: true,
+              completedTaskThreshold: 10,
+            },
           },
         },
-      },
-    });
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('updates completed-task automation threshold', async () => {
@@ -499,6 +508,73 @@ describe('ScopeDetailPanel', () => {
           },
         })
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces rapid checkbox toggles through the same debounce', async () => {
+    setupRequests(makeScope({ policy: { automation: { completedTaskAutomationEnabled: false } } }));
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    mockRequest.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+
+      expect(mockRequest).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+      );
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+      expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+        id: 'scope-1',
+        params: {
+          policyPatch: {
+            automation: {
+              completedTaskAutomationEnabled: false,
+            },
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('accumulates checkbox and threshold changes into a single patch', async () => {
+    setupRequests(makeScope({ policy: { automation: { completedTaskAutomationEnabled: false } } }));
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    mockRequest.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+      fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+        target: { value: '12' },
+      });
+
+      expect(mockRequest).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+      );
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+      expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+        id: 'scope-1',
+        params: {
+          policyPatch: {
+            automation: {
+              completedTaskAutomationEnabled: true,
+              completedTaskThreshold: 12,
+            },
+          },
+        },
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -622,7 +698,12 @@ describe('ScopeDetailPanel', () => {
     );
     expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
       id: 'scope-1',
-      params: { policy: { maxActiveLessons: 3 } },
+      params: {
+        policyPatch: {
+          episodeJudgeModel: null,
+          episodeJudgeProvider: null,
+        },
+      },
     });
   });
 
@@ -636,13 +717,13 @@ describe('ScopeDetailPanel', () => {
         return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
       }
       if (method === 'evolution.scope.update') {
-        const payload = data as { params: { policy: EvolutionScope['policy'] } };
-        if (payload.params.policy.episodeJudgeModel === 'claude-sonnet-4-6') {
+        const payload = data as { params: { policyPatch: EvolutionScope['policy'] } };
+        if (payload.params.policyPatch.episodeJudgeModel === 'claude-sonnet-4-6') {
           return new Promise((resolve) => {
             resolveFirst = resolve;
           });
         }
-        return { scope: makeScope({ policy: payload.params.policy }) };
+        return { scope: makeScope({ policy: payload.params.policyPatch }) };
       }
       throw new Error(`Unexpected RPC ${method}`);
     });

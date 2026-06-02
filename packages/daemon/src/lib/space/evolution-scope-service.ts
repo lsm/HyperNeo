@@ -39,6 +39,15 @@ export function mergeEvolutionPolicy(
   policy: EvolutionPolicy,
   patch: EvolutionPolicy
 ): EvolutionPolicy {
+  const merged: EvolutionPolicy = { ...policy, ...patch };
+  for (const key of Object.keys(patch)) {
+    if (
+      patch[key as keyof EvolutionPolicy] === undefined ||
+      patch[key as keyof EvolutionPolicy] === null
+    ) {
+      delete (merged as Record<string, unknown>)[key];
+    }
+  }
   const patchAutomation = patch.automation;
   const isValidObject =
     patchAutomation !== undefined &&
@@ -46,8 +55,7 @@ export function mergeEvolutionPolicy(
     !Array.isArray(patchAutomation) &&
     patchAutomation !== null;
   return {
-    ...policy,
-    ...patch,
+    ...merged,
     automation: isValidObject
       ? { ...policy.automation, ...patchAutomation }
       : patchAutomation !== undefined

@@ -439,4 +439,22 @@ describe('mergeEvolutionPolicy', () => {
     );
     expect(merged.automation).toEqual(['bad']);
   });
+
+  it('deletes top-level keys set to null in the patch', () => {
+    const merged = mergeEvolutionPolicy(
+      { episodeJudgeModel: 'claude-sonnet', maxActiveLessons: 3 },
+      { episodeJudgeModel: null as never }
+    );
+    expect(merged).not.toHaveProperty('episodeJudgeModel');
+    expect(merged.maxActiveLessons).toBe(3);
+  });
+
+  it('deletes top-level keys set to undefined in the patch', () => {
+    const merged = mergeEvolutionPolicy(
+      { episodeJudgeModel: 'claude-sonnet', maxActiveLessons: 3 },
+      { episodeJudgeModel: undefined }
+    );
+    expect(merged).not.toHaveProperty('episodeJudgeModel');
+    expect(merged.maxActiveLessons).toBe(3);
+  });
 });
