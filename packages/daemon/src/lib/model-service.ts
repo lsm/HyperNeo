@@ -343,8 +343,11 @@ export async function initializeModels(): Promise<void> {
       throw new Error('No models returned from providers');
     }
   } catch {
-    // Failed to load models - use well-known Anthropic models as fallback
-    modelsCache.set(cacheKey, FALLBACK_MODELS);
+    // Failed to load models - use well-known Anthropic models as fallback,
+    // but only for providers that are still registered.
+    const registry = getProviderRegistry();
+    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+    modelsCache.set(cacheKey, filteredFallbacks);
     cacheTimestamps.set(cacheKey, Date.now());
   }
 }
@@ -457,7 +460,9 @@ export async function refreshModels(): Promise<void> {
       } else if (!previousModels || previousModels.length === 0) {
         // Cache was cleared or was already empty — restore fallback models
         // so the UI and model resolution paths always have a baseline catalog.
-        modelsCache.set(cacheKey, FALLBACK_MODELS);
+        const registry = getProviderRegistry();
+        const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+        modelsCache.set(cacheKey, filteredFallbacks);
         cacheTimestamps.set(cacheKey, Date.now());
       }
     } finally {

@@ -337,7 +337,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // endpoint configs are logged and skipped rather than blocking daemon startup.
     {
       const { syncCustomEndpointProviders } = await import('./lib/providers/factory.js');
-      await syncCustomEndpointProviders(settingsManager.getGlobalSettings().customEndpoints);
+      const { filterDisabledCustomEndpoints } = await import(
+        './lib/rpc-handlers/custom-endpoint-handlers.js'
+      );
+      const endpoints = settingsManager.getGlobalSettings().customEndpoints ?? [];
+      const syncEndpoints = filterDisabledCustomEndpoints(endpoints, db);
+      await syncCustomEndpointProviders(syncEndpoints);
     }
 
     // Sync all enabled providers from the providers table into the registry.
