@@ -1589,6 +1589,7 @@ export function ScopeDetail({
   ) => {
     const version = ++judgeModelRequestVersion.current;
     try {
+      if (judgeModelRequestVersion.current !== version) return;
       setSavingJudgeModel(true);
       setSettingsError(null);
       const patch: Partial<EvolutionScope['policy']> = {};
@@ -1652,6 +1653,7 @@ export function ScopeDetail({
       return;
     }
     try {
+      if (completedTaskAutomationRequestVersion.current !== version) return;
       setSavingCompletedTaskAutomation(true);
       setSettingsError(null);
       const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {

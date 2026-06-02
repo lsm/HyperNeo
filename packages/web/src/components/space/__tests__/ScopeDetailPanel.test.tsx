@@ -415,6 +415,62 @@ describe('ScopeDetailPanel', () => {
     }
   });
 
+  it('ignores stale in-flight automation saves after scope change', async () => {
+    let resolveUpdate: (value: { scope: EvolutionScope }) => void = () => undefined;
+    let resolveScope2: (value: { scope: EvolutionScope }) => void = () => undefined;
+    mockRequest.mockImplementation(async (method: string, data?: unknown) => {
+      if (method === 'evolution.scope.get') {
+        const { id } = data as { id: string };
+        if (id === 'scope-2') {
+          return new Promise((resolve) => {
+            resolveScope2 = resolve;
+          });
+        }
+        return { scope: makeScope({ id }) };
+      }
+      if (method === 'evolution.scope.update') {
+        return new Promise((resolve) => {
+          resolveUpdate = resolve;
+        });
+      }
+      if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
+      if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
+      if (method === 'evolution.review.get') {
+        return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
+      }
+      throw new Error(`Unexpected RPC ${method}`);
+    });
+    const { rerender } = renderPanel('scope-1');
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+      await vi.advanceTimersByTimeAsync(300);
+
+      // Save request is now in-flight
+      expect(
+        (screen.getByLabelText('Enable count-based episode drafts') as HTMLInputElement).disabled
+      ).toBe(true);
+
+      // Switch scope before the update resolves
+      rerender(<ScopeDetailPanel spaceId="space-1" scopeId="scope-2" />);
+      await waitFor(() => expect(screen.getByText('Loading…')).toBeTruthy());
+      resolveScope2({ scope: makeScope({ id: 'scope-2', name: 'Second scope' }) });
+      await screen.findByRole('heading', { name: 'Second scope' });
+
+      // Resolve the stale update
+      resolveUpdate({ scope: makeScope({ id: 'scope-1' }) });
+      await waitFor(() =>
+        expect(
+          (screen.getByLabelText('Enable count-based episode drafts') as HTMLInputElement).disabled
+        ).toBe(false)
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('updates the judge model while preserving policy keys', async () => {
     setupRequests(makeScope({ policy: { maxActiveLessons: 3 } }));
     renderPanel();
