@@ -850,12 +850,17 @@ export class ChannelRouter {
     }
 
     // Evaluate the gate per channel with source-scoped effective gate so that
-    // an unflagged channel can open even when a flagged channel sharing the
-    // same gate is blocked by Codex.
+    // dynamic features on wildcard channels are evaluated against concrete
+    // source nodes instead of the literal '*'. With no sender attached to a
+    // gate-data write, wildcard channels only open when the gate is open for
+    // every possible source node.
     const openChannels: typeof channels = [];
     for (const ch of channels) {
-      const chResult = await this.evaluateGateById(runId, gateId, workflow, ch.from);
-      if (chResult.open) {
+      const sourceNames = this.getGateDataChangeSourceNames(workflow, ch);
+      const results = await Promise.all(
+        sourceNames.map((sourceName) => this.evaluateGateById(runId, gateId, workflow, sourceName))
+      );
+      if (results.every((result) => result.open)) {
         openChannels.push(ch);
       }
     }
@@ -1078,6 +1083,14 @@ export class ChannelRouter {
     if (channel.from !== '*') return channel.from;
     if (!fromRole) return channel.from;
     return this.findNodeByAgentName(workflow, fromRole)?.name ?? fromRole;
+  }
+
+  private getGateDataChangeSourceNames(
+    workflow: SpaceWorkflow,
+    channel: WorkflowChannel
+  ): string[] {
+    if (channel.from !== '*') return [channel.from];
+    return workflow.nodes.map((node) => node.name);
   }
 
   private mustReevaluateGate(

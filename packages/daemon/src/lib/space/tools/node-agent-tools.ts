@@ -169,7 +169,7 @@ function normalizeAgentNameToken(value: string): string {
   return value.trim().toLowerCase();
 }
 
-async function evaluateTerminalGateFeatures(
+export async function evaluateTerminalGateFeatures(
   workflow: SpaceWorkflow | null,
   gateDataRepo: GateDataRepository,
   workflowRunId: string,
@@ -229,7 +229,7 @@ async function evaluateTerminalGateFeatures(
         }
         if (isOutgoing || isIncoming) {
           const set = relevantGateSources.get(ch.gateId) ?? new Set<string>();
-          set.add(ch.from);
+          set.add(ch.from === '*' ? currentNodeName : ch.from);
           relevantGateSources.set(ch.gateId, set);
         }
       }

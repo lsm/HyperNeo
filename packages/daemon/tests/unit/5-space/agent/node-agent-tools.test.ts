@@ -24,6 +24,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import {
   createNodeAgentToolHandlers,
   createNodeAgentMcpServer,
+  evaluateTerminalGateFeatures,
   type NodeAgentToolsConfig,
 } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
@@ -2789,6 +2790,58 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.success).toBe(true);
     expect(data.gateOpen).toBe(false);
     expect(data.reason).toContain('Codex still pending');
+  });
+
+  test('terminal gate feature checks use current node source for wildcard channels', async () => {
+    const gate: Gate = {
+      id: 'terminal-wildcard-codex-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
+      nodes: [
+        {
+          id: 'node-coder',
+          name: 'Coding',
+          agents: [{ agentId: 'agent-coder', name: 'coder' }],
+          requireCodexApproval: true,
+        },
+        {
+          id: 'node-reviewer',
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      channels: [{ id: 'ch-wildcard-reviewer', from: '*', to: 'reviewer', gateId: gate.id }],
+    });
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, gate.id, { approved: true });
+    const mockExecutor = async () => ({
+      success: false,
+      data: {},
+      error: 'Codex still pending',
+    });
+
+    const result = await evaluateTerminalGateFeatures(
+      workflow,
+      gateDataRepo,
+      ctx.workflowRunId,
+      mockExecutor,
+      {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: gate.id,
+      },
+      'node-coder',
+      ctx.artifactRepo
+    );
+    const data = JSON.parse(result!.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('Codex still pending');
   });
 
   test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {
