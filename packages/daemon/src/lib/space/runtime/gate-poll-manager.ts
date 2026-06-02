@@ -269,10 +269,12 @@ function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
         result.push({ gate, poll, sourceName: '*' });
       } else {
         for (const node of workflow.nodes) {
+          const nodePoll = getEffectiveGatePoll(gate, workflow, node.name);
+          if (!nodePoll) continue;
           const key = `${gate.id}:${node.name}`;
           if (injectedSeen.has(key)) continue;
           injectedSeen.add(key);
-          result.push({ gate, poll, sourceName: node.name });
+          result.push({ gate, poll: nodePoll, sourceName: node.name });
         }
       }
       continue;

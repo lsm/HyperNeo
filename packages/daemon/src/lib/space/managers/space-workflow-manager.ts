@@ -19,6 +19,7 @@ import type {
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
+  Gate,
 } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
@@ -106,6 +107,12 @@ export class SpaceWorkflowManager {
     if (params.gates && params.gates.length > 0) {
       this.validateGates(params.gates);
     }
+
+    this.validateCodexApprovalAgainstScriptedGates(
+      nodes,
+      params.channels ?? [],
+      params.gates ?? []
+    );
 
     // Hard-reject invalid post-approval routes at create time. Stale routes
     // (target no longer exists) must be caught before the row lands in the DB,
@@ -318,6 +325,14 @@ export class SpaceWorkflowManager {
       }
     }
 
+    const effectiveChannels = params.channels ?? existing.channels ?? [];
+    const effectiveGates = params.gates ?? existing.gates ?? [];
+    this.validateCodexApprovalAgainstScriptedGates(
+      effectiveNodes,
+      effectiveChannels,
+      effectiveGates
+    );
+
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
     // does not spuriously invalidate the route. `null` clears the legacy
@@ -465,6 +480,7 @@ export class SpaceWorkflowManager {
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
       this.validateCodexPollInterval(node, i);
+      this.validateCodexApprovalFlag(node, i);
     }
   }
 
@@ -484,6 +500,46 @@ export class SpaceWorkflowManager {
       throw new WorkflowValidationError(
         `node[${index}]: codexPollIntervalMs must be a positive number`
       );
+    }
+  }
+
+  private validateCodexApprovalFlag(node: WorkflowNodeInput, index: number): void {
+    if (node.requireCodexApproval === undefined || node.requireCodexApproval === null) {
+      return;
+    }
+    if (typeof node.requireCodexApproval !== 'boolean') {
+      throw new WorkflowValidationError(`node[${index}]: requireCodexApproval must be a boolean`);
+    }
+  }
+
+  private validateCodexApprovalAgainstScriptedGates(
+    nodes: WorkflowNodeInput[],
+    channels: WorkflowChannel[],
+    gates: Gate[]
+  ): void {
+    const gateMap = new Map(gates.map((g) => [g.id, g]));
+
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (!node.requireCodexApproval) continue;
+
+      const nodeRefs = new Set([node.name, ...(node.agents?.map((a) => a.name) ?? [])]);
+
+      for (let ci = 0; ci < channels.length; ci++) {
+        const ch = channels[ci];
+        if (!ch.gateId) continue;
+        const gate = gateMap.get(ch.gateId);
+        if (!gate?.script) continue;
+
+        const originatesFromNode = ch.from === '*' || nodeRefs.has(ch.from);
+
+        if (originatesFromNode) {
+          throw new WorkflowValidationError(
+            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted gate "${ch.gateId}" on channel[${ci}]; ` +
+              'dynamic Codex injection is blocked when a gate has a custom script'
+          );
+        }
+      }
     }
   }
 
