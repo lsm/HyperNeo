@@ -1536,16 +1536,19 @@ function mergeNodeStructuralFieldsFromTemplate(
  * during restamp for backward compatibility), set `requireCodexApproval: true`
  * on the source node(s) for that gate's channels so the visual editor toggle
  * reflects reality and the node-level config drives runtime injection.
+ *
+ * Also strips `codex_review_bot` from the gate features so the node toggle
+ * becomes the single source of truth and can be disabled by unchecking it.
  */
 function migrateCodexFeatureToNodeToggle(
   nodes: WorkflowNode[],
   channels: WorkflowChannel[],
   gates: Gate[]
-): WorkflowNode[] {
+): { nodes: WorkflowNode[]; gates: Gate[] } {
   const codexGateIds = new Set(
     gates.filter((g) => g.features?.codex_review_bot === true).map((g) => g.id)
   );
-  if (codexGateIds.size === 0) return nodes;
+  if (codexGateIds.size === 0) return { nodes, gates };
 
   const nodesToFlag = new Set<string>();
   for (const channel of channels) {
@@ -1558,11 +1561,24 @@ function migrateCodexFeatureToNodeToggle(
       }
     }
   }
-  if (nodesToFlag.size === 0) return nodes;
 
-  return nodes.map((node) =>
-    nodesToFlag.has(node.id) ? { ...node, requireCodexApproval: true } : node
-  );
+  const migratedNodes =
+    nodesToFlag.size === 0
+      ? nodes
+      : nodes.map((node) =>
+          nodesToFlag.has(node.id) ? { ...node, requireCodexApproval: true } : node
+        );
+
+  const migratedGates = gates.map((gate) => {
+    if (!gate.features?.codex_review_bot) return gate;
+    const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
+    return {
+      ...gate,
+      features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
+    };
+  });
+
+  return { nodes: migratedNodes, gates: migratedGates };
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {
@@ -1792,7 +1808,7 @@ export function seedBuiltInWorkflows(
           row.nodes
         );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const migratedNodes = migrateCodexFeatureToNodeToggle(
+        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
           mergedNodes,
           mergedChannels ?? row.channels ?? [],
           mergedGates ?? row.gates ?? []
@@ -1805,7 +1821,7 @@ export function seedBuiltInWorkflows(
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: mergedGates,
+          gates: migratedGates,
           ...(hasNewTemplateNodes ? { nodes: migratedNodes } : {}),
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,

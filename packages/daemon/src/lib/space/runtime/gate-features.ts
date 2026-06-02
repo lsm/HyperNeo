@@ -296,7 +296,7 @@ function maybeInjectCodexFeature(
   workflow: SpaceWorkflow | undefined,
   definitions: GateFeatureDefinition[]
 ): void {
-  if (gate.script || gate.poll) return; // do not replace custom gate scripts or polls
+  if (gate.script) return; // do not replace custom gate scripts
   if (
     workflow &&
     isApprovalGate(gate) &&
