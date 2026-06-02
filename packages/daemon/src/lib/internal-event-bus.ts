@@ -703,6 +703,7 @@ interface ClientForwardingEvents {
     workflow: import('@neokai/shared').SpaceWorkflow;
   };
   'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
+  'providers.changed': { sessionId: string };
 }
 
 /**

@@ -21,8 +21,17 @@ import type {
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { getProviderRegistry } from '../providers/registry';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
+
+async function clearCacheAndNotifyProvidersChanged(
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+): Promise<void> {
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache();
+  internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
+}
 
 /**
  * Setup authentication-related RPC handlers
@@ -30,7 +39,8 @@ const log = new Logger('auth-handlers');
 export function setupAuthHandlers(
   messageHub: MessageHub,
   authManager: AuthManager,
-  credentialManager?: ProviderCredentialManager
+  credentialManager?: ProviderCredentialManager,
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
   // NeoKai auth status (Anthropic)
   messageHub.onRequest('auth.status', async () => {
@@ -120,6 +130,7 @@ export function setupAuthHandlers(
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           }
           unsubscribe?.();
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();
@@ -211,11 +222,13 @@ export function setupAuthHandlers(
             provider.setCredentials({ type: 'api_key', apiKey: '' });
           }
         }
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
       } catch (error) {
         if (credentialManager) {
           await credentialManager.removeCredentials(providerId);
         }
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,
@@ -259,6 +272,7 @@ export function setupAuthHandlers(
         if (credentials?.type === 'oauth') {
           await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
       } catch (error) {
         log.error(`Token refresh failed for ${providerId}:`, error);
