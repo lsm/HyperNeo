@@ -554,6 +554,30 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(capturedHeaders['anthropic-version']).toBe('2023-06-01');
     });
 
+    it('sends anthropic-version even without apiKey for anthropic-messages', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      global.fetch = mock(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1',
+          type: 'anthropic-messages',
+          headers: { 'x-api-key': 'from-headers' },
+        },
+        {}
+      );
+      expect(capturedHeaders.Authorization).toBeUndefined();
+      expect(capturedHeaders['x-api-key']).toBe('from-headers');
+      expect(capturedHeaders['anthropic-version']).toBe('2023-06-01');
+    });
+
     it('accepts openai entries that omit the object field', async () => {
       global.fetch = mock(async () => ({
         ok: true,

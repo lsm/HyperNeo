@@ -147,8 +147,10 @@ async function fetchModelsFromEndpoint(params: {
     headers.Authorization = `Bearer ${params.apiKey}`;
     if (resolvedType === 'anthropic-messages') {
       headers['x-api-key'] = params.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
     }
+  }
+  if (resolvedType === 'anthropic-messages') {
+    headers['anthropic-version'] = '2023-06-01';
   }
   if (params.headers) Object.assign(headers, params.headers);
 
