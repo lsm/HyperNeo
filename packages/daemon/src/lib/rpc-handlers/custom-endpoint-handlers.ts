@@ -23,6 +23,174 @@ const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([
 
 const log = new Logger('rpc-handlers:custom-endpoints');
 
+/** Model list cache entry */
+interface CachedModels {
+  models: Array<{ id: string; name?: string }>;
+  fetchedAt: number;
+}
+
+/** In-memory cache for model-list fetches (30s TTL). */
+const modelListCache = new Map<string, CachedModels>();
+const MODEL_LIST_CACHE_TTL_MS = 30_000;
+
+// knip-ignore-next-line
+/** Clear the model-list cache (used by tests). */
+export function clearModelListCache(): void {
+  modelListCache.clear();
+}
+
+function cacheKey(params: {
+  baseUrl: string;
+  type?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}): string {
+  return JSON.stringify([
+    params.baseUrl,
+    params.type ?? 'openai-chat',
+    params.apiKey ?? '',
+    JSON.stringify(params.headers ?? {}),
+  ]);
+}
+
+/**
+ * Build the model-list URL by stripping known trailing suffixes from the
+ * base URL path before appending the correct route. Mirrors the URL builders
+ * in the bridge servers so a user-pasted `.../v1` or `.../v1/models` doesn't
+ * produce a double-suffixed path like `.../v1/v1/models`.
+ */
+/**
+ * Detect Azure OpenAI-style URLs (`…/openai/deployments/{name}/…`) and
+ * return the deployment name as the only available model. Azure does not
+ * expose a `/v1/models` equivalent, so we derive the model from the URL
+ * path rather than probing a non-existent endpoint.
+ */
+function extractAzureDeploymentModel(baseUrl: string): { id: string } | null {
+  const parsed = new URL(baseUrl.trim());
+  const match = parsed.pathname.match(/\/openai\/deployments\/([^/]+)/i);
+  if (!match) return null;
+  return { id: decodeURIComponent(match[1]) };
+}
+
+function buildModelListUrl(baseUrl: string, type: string): string {
+  const trimmed = baseUrl.trim();
+  const parsed = new URL(trimmed);
+  let path = parsed.pathname.replace(/\/+$/, '');
+
+  if (type === 'ollama-native') {
+    path = path.replace(/\/api\/chat$/i, '');
+    path = path.replace(/\/api\/tags$/i, '');
+    parsed.pathname = `${path}/api/tags`;
+  } else {
+    path = path.replace(/\/chat\/completions$/i, '');
+    path = path.replace(/\/v1\/messages\/count_tokens$/i, '');
+    path = path.replace(/\/v1\/messages$/i, '');
+    path = path.replace(/\/v1\/models$/i, '');
+    path = path.replace(/\/v1$/i, '');
+    parsed.pathname = `${path}/v1/models`;
+  }
+  return parsed.toString();
+}
+
+function normalizeModelList(type: string, data: unknown): Array<{ id: string; name?: string }> {
+  if (type === 'ollama-native') {
+    // Ollama /api/tags returns { models: [{ name, model?, ... }] }
+    const body = data as { models?: Array<{ name?: string; model?: string }> } | undefined;
+    const list = body?.models ?? [];
+    return list
+      .map((m) => {
+        const id = m.name || m.model;
+        if (!id) return null;
+        return { id };
+      })
+      .filter((m): m is { id: string; name?: string } => m !== null);
+  }
+
+  if (type === 'anthropic-messages') {
+    // Anthropic-compatible /v1/models returns { data: [{ id, type?, display_name? }] }
+    const body = data as
+      | {
+          data?: Array<{
+            id?: string;
+            type?: string;
+            display_name?: string;
+            object?: string;
+          }>;
+        }
+      | undefined;
+    const list = body?.data ?? [];
+    return list
+      .map((m) => {
+        const id = m.id;
+        if (!id) return null;
+        const isModel =
+          m.type === 'model' ||
+          m.object === 'model' ||
+          (m.object === undefined && m.type === undefined);
+        if (!isModel) return null;
+        return m.display_name ? { id, name: m.display_name } : { id };
+      })
+      .filter((m): m is { id: string; name?: string } => m !== null);
+  }
+
+  // OpenAI-compatible /v1/models returns { data: [{ id, object? }] }
+  const body = data as { data?: Array<{ id?: string; object?: string }> } | undefined;
+  const list = body?.data ?? [];
+  return list
+    .map((m) => {
+      const id = m.id;
+      if (!id) return null;
+      if (m.object !== undefined && m.object !== 'model') return null;
+      return { id };
+    })
+    .filter((m): m is { id: string; name?: string } => m !== null);
+}
+
+async function fetchModelsFromEndpoint(params: {
+  baseUrl: string;
+  type?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}): Promise<Array<{ id: string; name?: string }>> {
+  const resolvedType = (params.type ?? 'openai-chat') as string;
+  const probeUrl = buildModelListUrl(params.baseUrl, resolvedType);
+
+  const headers: Record<string, string> = {};
+  if (params.apiKey) {
+    headers.Authorization = `Bearer ${params.apiKey}`;
+    if (resolvedType === 'anthropic-messages') {
+      headers['x-api-key'] = params.apiKey;
+    }
+  }
+  if (resolvedType === 'anthropic-messages') {
+    headers['anthropic-version'] = '2023-06-01';
+  }
+  if (params.headers) Object.assign(headers, params.headers);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const resp = await fetch(probeUrl, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      throw new Error(`Endpoint returned HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    return normalizeModelList(resolvedType, data);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Request timed out after 10s');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Validate a single endpoint. Exported for callers (e.g. the generic
  * `settings.global.update`/`save` RPCs) that need to reject invalid configs
@@ -252,6 +420,46 @@ export function registerCustomEndpointHandlers(
   messageHub.onRequest('customEndpoints.list', async () => {
     return { endpoints: settingsManager.getGlobalSettings().customEndpoints ?? [] };
   });
+
+  /** Fetch available models from a custom endpoint. */
+  messageHub.onRequest(
+    'customEndpoints.listModels',
+    async (data: {
+      baseUrl: string;
+      type?: string;
+      apiKey?: string;
+      headers?: Record<string, string>;
+    }) => {
+      if (!data?.baseUrl || typeof data.baseUrl !== 'string')
+        throw new Error('baseUrl is required');
+      let url: URL;
+      try {
+        url = new URL(data.baseUrl);
+      } catch {
+        throw new Error('Invalid baseUrl');
+      }
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('baseUrl must use http:// or https://');
+      }
+
+      const key = cacheKey(data);
+      const cached = modelListCache.get(key);
+      if (cached && Date.now() - cached.fetchedAt < MODEL_LIST_CACHE_TTL_MS) {
+        return { models: cached.models, fromCache: true };
+      }
+
+      const azureModel = extractAzureDeploymentModel(data.baseUrl);
+      if (azureModel) {
+        const models = [azureModel];
+        modelListCache.set(key, { models, fetchedAt: Date.now() });
+        return { models, fromCache: false };
+      }
+
+      const models = await fetchModelsFromEndpoint(data);
+      modelListCache.set(key, { models, fetchedAt: Date.now() });
+      return { models, fromCache: false };
+    }
+  );
 
   /** Add a new custom endpoint. Rejects when the id already exists. */
   messageHub.onRequest('customEndpoints.add', async (data: { endpoint: CustomEndpointConfig }) => {

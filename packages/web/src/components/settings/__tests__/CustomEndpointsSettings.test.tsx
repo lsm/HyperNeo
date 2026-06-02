@@ -48,7 +48,7 @@ vi.mock('../../../lib/connection-manager', () => ({
 }));
 
 import { CustomEndpointsSettings } from '../CustomEndpointsSettings.tsx';
-import { __test__ } from '../CustomEndpointEditor.tsx';
+import { __test__, EditorModal } from '../CustomEndpointEditor.tsx';
 import { CUSTOM_ENDPOINT_PRESETS, findPreset } from '../customEndpointPresets.ts';
 
 describe('CustomEndpointsSettings — helpers', () => {
@@ -194,5 +194,137 @@ describe('CustomEndpointsSettings — presets', () => {
     const p = findPreset('openrouter')!;
     expect(p.apiKeyRequired).toBe(true);
     expect(p.defaultModelCapabilities?.streamUsage).toBe(true);
+  });
+});
+
+describe('EditorModal — fetch models', () => {
+  const baseState = (): import('../CustomEndpointEditor.tsx').EditorState => ({
+    mode: 'create',
+    id: 'test',
+    type: 'openai-chat',
+    name: 'Test',
+    baseUrl: 'http://localhost:1234/v1',
+    apiKey: '',
+    headersText: '',
+    defaultModelId: '',
+    models: [],
+  });
+
+  beforeEach(() => {
+    cleanup();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('shows fetch models button and disabled state when baseUrl is empty', async () => {
+    const state = { ...baseState(), baseUrl: '' };
+    render(
+      <EditorModal
+        state={state}
+        existingIds={[]}
+        onChange={() => {}}
+        onSave={() => {}}
+        onClose={() => {}}
+        saving={false}
+        onTest={() => {}}
+        testing={false}
+        onFetchModels={() => {}}
+        fetchingModels={false}
+        fetchedModels={null}
+        fetchModelsError={null}
+        fetchedAt={null}
+      />
+    );
+    const fetchBtn = screen.getAllByText('Fetch models')[0] as HTMLButtonElement;
+    expect(fetchBtn).toBeTruthy();
+    expect(fetchBtn.disabled).toBe(true);
+  });
+
+  it('renders fetched models as checkboxes', async () => {
+    const state = baseState();
+    const { container } = render(
+      <EditorModal
+        state={state}
+        existingIds={[]}
+        onChange={() => {}}
+        onSave={() => {}}
+        onClose={() => {}}
+        saving={false}
+        onTest={() => {}}
+        testing={false}
+        onFetchModels={() => {}}
+        fetchingModels={false}
+        fetchedModels={[{ id: 'gpt-4' }, { id: 'gpt-3.5-turbo', name: 'GPT-3.5' }]}
+        fetchModelsError={null}
+        fetchedAt={Date.now()}
+      />
+    );
+    await waitFor(() => {
+      expect(container.textContent).toContain('2 models found');
+      expect(container.textContent).toContain('gpt-4');
+      expect(container.textContent).toContain('GPT-3.5');
+    });
+  });
+
+  it('calls onChange with selected models when adding fetched models', async () => {
+    let changedState: import('../CustomEndpointEditor.tsx').EditorState | null = null;
+    const state = { ...baseState(), selectedFetchedModelIds: ['gpt-4'] };
+    const { container } = render(
+      <EditorModal
+        state={state}
+        existingIds={[]}
+        onChange={(s) => {
+          changedState = s;
+        }}
+        onSave={() => {}}
+        onClose={() => {}}
+        saving={false}
+        onTest={() => {}}
+        testing={false}
+        onFetchModels={() => {}}
+        fetchingModels={false}
+        fetchedModels={[{ id: 'gpt-4' }]}
+        fetchModelsError={null}
+        fetchedAt={Date.now()}
+      />
+    );
+    const addBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Add selected')
+    );
+    expect(addBtn).toBeTruthy();
+    if (addBtn) fireEvent.click(addBtn);
+
+    await waitFor(() => {
+      expect(changedState).not.toBeNull();
+    });
+    expect(changedState!.models).toHaveLength(1);
+    expect(changedState!.models[0].id).toBe('gpt-4');
+    expect(changedState!.selectedFetchedModelIds).toEqual([]);
+  });
+
+  it('shows error message when fetch fails', async () => {
+    const state = baseState();
+    const { container } = render(
+      <EditorModal
+        state={state}
+        existingIds={[]}
+        onChange={() => {}}
+        onSave={() => {}}
+        onClose={() => {}}
+        saving={false}
+        onTest={() => {}}
+        testing={false}
+        onFetchModels={() => {}}
+        fetchingModels={false}
+        fetchedModels={null}
+        fetchModelsError="Connection refused"
+        fetchedAt={null}
+      />
+    );
+    await waitFor(() => {
+      expect(container.textContent).toContain('Connection refused');
+    });
   });
 });

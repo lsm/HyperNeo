@@ -21,6 +21,7 @@ import {
   testCustomEndpoint,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
+import { useFetchModels } from './useFetchModels.ts';
 import type { ProviderAuthResponse } from '@neokai/shared/provider';
 
 interface BuiltInProviderPreset {
@@ -109,6 +110,8 @@ export function AddProviderModal({
   const [showPresets, setShowPresets] = useState(false);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
+    useFetchModels(customEditor);
 
   const isAdded = (providerId: string) => existingProviderIds.includes(providerId);
 
@@ -434,6 +437,11 @@ export function AddProviderModal({
           saving={savingCustom}
           onTest={handleTestCustom}
           testing={testingCustom}
+          onFetchModels={handleFetchModels}
+          fetchingModels={fetchingModels}
+          fetchedModels={fetchedModels}
+          fetchModelsError={fetchModelsError}
+          fetchedAt={fetchedAt}
         />
       )}
 
