@@ -30,7 +30,7 @@ import type {
   WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
-import { generateUUID, resolveNodeAgents } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
@@ -1546,7 +1546,7 @@ function migrateCodexFeatureToNodeToggle(
   gates: Gate[]
 ): { nodes: WorkflowNode[]; gates: Gate[] } {
   const codexGateIds = new Set(
-    gates.filter((g) => g.features?.codex_review_bot === true).map((g) => g.id)
+    gates.filter((g) => hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
   );
   if (codexGateIds.size === 0) return { nodes, gates };
 
