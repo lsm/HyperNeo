@@ -190,9 +190,11 @@ async function evaluateTerminalGateFeatures(
   // channel total, so we do not falsely treat an unrelated incoming gate as the
   // traversed path when multiple paths converge on a shared terminal node.
   let relevantGateIds: Set<string> | undefined;
+  let currentNodeName: string | undefined;
   if (currentNodeId && workflow.channels) {
-    const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
+    currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
+      const nodeName = currentNodeName;
       const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
       const currentNodeAgentNames = new Set<string>();
       if (currentNode) {
@@ -206,18 +208,18 @@ async function evaluateTerminalGateFeatures(
       }
       const incomingChannels = workflow.channels.filter((ch) => {
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        if (toList.includes(currentNodeName) || toList.includes('*')) return true;
+        if (toList.includes(nodeName) || toList.includes('*')) return true;
         return currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t));
       });
       const includeIncoming = incomingChannels.length === 1;
       relevantGateIds = new Set(
         workflow.channels
           .filter((ch) => {
-            if (ch.from === currentNodeName || ch.from === '*') return true;
+            if (ch.from === nodeName || ch.from === '*') return true;
             if (currentNodeAgentNames.has(ch.from)) return true;
             if (!includeIncoming) return false;
             const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-            if (toList.includes(currentNodeName) || toList.includes('*')) return true;
+            if (toList.includes(nodeName) || toList.includes('*')) return true;
             return (
               currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t))
             );
@@ -230,8 +232,8 @@ async function evaluateTerminalGateFeatures(
 
   for (const gate of workflow.gates ?? []) {
     if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
-    if (!hasInjectedGateFeature(gate, workflow)) continue;
-    const effectiveGate = getEffectiveGate(gate, workflow);
+    if (!hasInjectedGateFeature(gate, workflow, currentNodeName)) continue;
+    const effectiveGate = getEffectiveGate(gate, workflow, currentNodeName);
     if (!effectiveGate.script) continue;
 
     const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);

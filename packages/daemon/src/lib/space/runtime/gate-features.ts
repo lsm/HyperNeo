@@ -72,6 +72,47 @@ function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow):
 }
 
 /**
+ * Checks whether the specific source node (by node name or agent slot name)
+ * that sends messages through channels guarded by `gateId` has
+ * `requireCodexApproval: true`. Used for source-scoped Codex injection so a
+ * shared gate only enforces Codex for flagged sources.
+ */
+function doesSpecificSourceNodeRequireCodex(
+  gateId: string,
+  workflow: SpaceWorkflow,
+  sourceName: string
+): boolean {
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    if (channel.from === '*') {
+      // Wildcard channels only get Codex when ALL nodes opt in.
+      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
+        return true;
+      }
+      continue;
+    }
+    if (channel.from !== sourceName) continue;
+    // Match by node name — if found, use ONLY this node's flag
+    const nodeByName = workflow.nodes.find((n) => n.name === sourceName);
+    if (nodeByName) {
+      return !!nodeByName.requireCodexApproval;
+    }
+    // Fall back to agent-name matching only when no node name matches
+    for (const node of workflow.nodes) {
+      try {
+        const agents = resolveNodeAgents(node);
+        if (agents.some((a) => a.name === sourceName)) {
+          return !!node.requireCodexApproval;
+        }
+      } catch {
+        // skip malformed nodes
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Returns the minimum custom poll interval (ms) among source nodes that both
  * require Codex approval and set an explicit interval. Falls back to the
  * default constant when no source node overrides it.
@@ -351,7 +392,8 @@ function isApprovalGate(gate: Gate): boolean {
 function maybeInjectCodexFeature(
   gate: Gate,
   workflow: SpaceWorkflow | undefined,
-  definitions: GateFeatureDefinition[]
+  definitions: GateFeatureDefinition[],
+  sourceNodeName?: string
 ): void {
   if (gate.script) return; // do not replace custom gate scripts
   if (
@@ -359,7 +401,10 @@ function maybeInjectCodexFeature(
     isApprovalGate(gate) &&
     !definitions.some((d) => d === gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE))
   ) {
-    if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
+    const needsCodex = sourceNodeName
+      ? doesSpecificSourceNodeRequireCodex(gate.id, workflow, sourceNodeName)
+      : doesAnySourceNodeRequireCodex(gate.id, workflow);
+    if (needsCodex) {
       const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
       if (codexDef) {
         const intervalMs = getMinCodexPollIntervalMs(gate.id, workflow);
@@ -381,23 +426,30 @@ function maybeInjectCodexFeature(
 /**
  * Returns true when the gate would have a script or poll injected by a registered
  * gate feature (including the dynamically-injected codex review bot).
+ * When `sourceNodeName` is provided, the check is scoped to that specific source.
  */
-export function hasInjectedGateFeature(gate: Gate, workflow?: SpaceWorkflow): boolean {
+export function hasInjectedGateFeature(
+  gate: Gate,
+  workflow?: SpaceWorkflow,
+  sourceNodeName?: string
+): boolean {
   if (hasRegisteredGateFeatures(gate)) return true;
-  if (
-    workflow &&
-    !gate.script &&
-    isApprovalGate(gate) &&
-    doesAnySourceNodeRequireCodex(gate.id, workflow)
-  ) {
-    return true;
+  if (workflow && !gate.script && isApprovalGate(gate)) {
+    const needsCodex = sourceNodeName
+      ? doesSpecificSourceNodeRequireCodex(gate.id, workflow, sourceNodeName)
+      : doesAnySourceNodeRequireCodex(gate.id, workflow);
+    if (needsCodex) return true;
   }
   return false;
 }
 
-export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
+export function getEffectiveGate(
+  gate: Gate,
+  workflow?: SpaceWorkflow,
+  sourceNodeName?: string
+): Gate {
   const definitions = getEnabledGateFeatureDefinitions(gate);
-  maybeInjectCodexFeature(gate, workflow, definitions);
+  maybeInjectCodexFeature(gate, workflow, definitions, sourceNodeName);
 
   const scriptDefinition = definitions.find((definition) => definition.script);
   const pollDefinition = definitions.find((definition) => definition.poll);
@@ -411,9 +463,13 @@ export function getEffectiveGate(gate: Gate, workflow?: SpaceWorkflow): Gate {
   };
 }
 
-export function getEffectiveGatePoll(gate: Gate, workflow?: SpaceWorkflow): GatePoll | undefined {
+export function getEffectiveGatePoll(
+  gate: Gate,
+  workflow?: SpaceWorkflow,
+  sourceNodeName?: string
+): GatePoll | undefined {
   const definitions = getEnabledGateFeatureDefinitions(gate);
-  maybeInjectCodexFeature(gate, workflow, definitions);
+  maybeInjectCodexFeature(gate, workflow, definitions, sourceNodeName);
 
   const pollDefinition = definitions.find((definition) => definition.poll);
   return pollDefinition?.poll?.() ?? gate.poll;

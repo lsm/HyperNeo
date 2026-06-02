@@ -1562,41 +1562,62 @@ function migrateCodexFeatureToNodeToggle(
   const codexGateIds = new Set(
     gates.filter((g) => !g.script && hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
   );
-  if (codexGateIds.size === 0) return { nodes, gates };
+  // Scripted gates with legacy codex: strip node toggles so the UI doesn't
+  // show a misleading enabled checkbox for gates where dynamic injection is
+  // blocked and the legacy feature is the actual mechanism.
+  const scriptedCodexGateIds = new Set(
+    gates.filter((g) => g.script && hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
+  );
 
-  const nodesToFlag = new Set<string>();
-  for (const channel of channels) {
-    if (channel.gateId && codexGateIds.has(channel.gateId)) {
+  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
+    const result = new Set<string>();
+    for (const channel of channels) {
+      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
       if (channel.from === '*') {
-        for (const node of nodes) nodesToFlag.add(node.id);
+        for (const node of nodes) result.add(node.id);
         continue;
       }
-      // Match by node name first
       const nodeByName = nodes.find((n) => n.name === channel.from);
       if (nodeByName) {
-        nodesToFlag.add(nodeByName.id);
+        result.add(nodeByName.id);
         continue;
       }
-      // Fall back to agent-name matching
       for (const node of nodes) {
         try {
           const agents = resolveNodeAgents(node);
           if (agents.some((a) => a.name === channel.from)) {
-            nodesToFlag.add(node.id);
+            result.add(node.id);
           }
         } catch {
           // skip malformed nodes
         }
       }
     }
+    return result;
+  };
+
+  const nodesToFlag = collectSourceNodes(codexGateIds);
+  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
+  // Nodes connected to both scripted and non-scripted codex gates keep the
+  // toggle (the non-scripted gate migration takes precedence).
+  for (const nodeId of nodesToFlag) {
+    nodesToUnflag.delete(nodeId);
   }
 
-  const migratedNodes =
-    nodesToFlag.size === 0
-      ? nodes
-      : nodes.map((node) =>
-          nodesToFlag.has(node.id) ? { ...node, requireCodexApproval: true } : node
-        );
+  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
+  const migratedNodes = needsNodeChange
+    ? nodes.map((node) => {
+        if (nodesToUnflag.has(node.id)) {
+          const next = { ...node };
+          delete next.requireCodexApproval;
+          return next;
+        }
+        if (nodesToFlag.has(node.id)) {
+          return { ...node, requireCodexApproval: true };
+        }
+        return node;
+      })
+    : nodes;
 
   const migratedGates = gates.map((gate) => {
     if (!gate.features?.codex_review_bot) return gate;

@@ -3892,7 +3892,7 @@ export class SpaceRuntime {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
       if (liveScript && storedGate.script) gate = { ...storedGate, script: liveScript };
     }
-    gate = getEffectiveGate(gate, workflow);
+    gate = getEffectiveGate(gate, workflow, channel.from);
     const gateDataRepo = new GateDataRepository(this.config.db);
     const gateDataRecord = gateDataRepo.get(runId, gate.id);
     const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);

@@ -539,13 +539,13 @@ export class ChannelRouter {
     if (channel.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, channel.from);
 
       if (skipEval) {
         return { allowed: true };
       }
 
-      const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+      const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow, channel.from);
       return { allowed: gateResult.open, reason: gateResult.reason };
     }
 
@@ -689,10 +689,15 @@ export class ChannelRouter {
     if (channel?.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, channel.from);
 
       if (!skipEval) {
-        const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+        const gateResult = await this.evaluateGateById(
+          runId,
+          channel.gateId,
+          workflow,
+          channel.from
+        );
         if (gateResult.open) {
           this.cacheGateOpened(runId, channel.gateId, workflow);
         }
@@ -733,10 +738,15 @@ export class ChannelRouter {
     if (channel?.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, channel.from);
 
       if (!skipEval) {
-        const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
+        const postActivationGate = await this.evaluateGateById(
+          runId,
+          channel.gateId,
+          workflow,
+          channel.from
+        );
         if (postActivationGate.open) {
           this.cacheGateOpened(runId, channel.gateId, workflow);
         }
@@ -1035,7 +1045,8 @@ export class ChannelRouter {
   private mustReevaluateGate(
     gateId: string,
     channelIsCyclic: boolean,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    sourceNodeName?: string
   ): boolean {
     // Check gate existence BEFORE the cyclic-channel shortcut — if the gate
     // definition was removed from the workflow (e.g. by a workflow edit),
@@ -1051,7 +1062,7 @@ export class ChannelRouter {
     //   independently of workflow.updatedAt). Caching such gates would create a
     //   fail-open path where a once-open gate bypasses evaluation even after
     //   script updates or external state changes.
-    const effectiveGateDef = getEffectiveGate(gateDef, workflow);
+    const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
 
     if (!channelIsCyclic) return false;
@@ -1115,9 +1126,12 @@ export class ChannelRouter {
   private async evaluateGateById(
     runId: string,
     gateId: string,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    sourceNodeName?: string
   ): Promise<GateEvalResult> {
-    const key = `${runId}:${gateId}`;
+    // Include source in the in-flight key so that unflagged and flagged
+    // sources do not share coalesced evaluations for the same gate.
+    const key = sourceNodeName ? `${runId}:${gateId}:${sourceNodeName}` : `${runId}:${gateId}`;
 
     // Coalescing: if an evaluation is already in-flight, await it,
     // then re-evaluate directly to ensure fresh data. This avoids
@@ -1128,11 +1142,11 @@ export class ChannelRouter {
     if (inflight) {
       await inflight;
       // Re-evaluate directly (bypass coalescing to avoid infinite loops)
-      return this.doEvaluateGate(runId, gateId, workflow);
+      return this.doEvaluateGate(runId, gateId, workflow, sourceNodeName);
     }
 
     // No in-flight evaluation — start a new one
-    const evalPromise = this.doEvaluateGate(runId, gateId, workflow);
+    const evalPromise = this.doEvaluateGate(runId, gateId, workflow, sourceNodeName);
     this.gateEvaluations.set(key, evalPromise);
 
     try {
@@ -1151,7 +1165,8 @@ export class ChannelRouter {
   private async doEvaluateGate(
     runId: string,
     gateId: string,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    sourceNodeName?: string
   ): Promise<GateEvalResult> {
     const storedGateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!storedGateDef) {
@@ -1173,7 +1188,7 @@ export class ChannelRouter {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }
-    gateDef = getEffectiveGate(gateDef, workflow);
+    gateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
 
     // Load runtime data from DB; fall back to computed defaults from fields
     const record = this.config.gateDataRepo?.get(runId, gateId);
