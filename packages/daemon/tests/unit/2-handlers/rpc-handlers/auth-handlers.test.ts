@@ -14,6 +14,7 @@ import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handler
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@neokai/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -206,6 +207,39 @@ describe('Auth RPC Handlers', () => {
       expect(result.error).toContain('Provider not found');
     });
 
+    it('re-initializes built-in providers that were unregistered', async () => {
+      // Simulate a built-in provider that was unregistered (e.g., user deleted it)
+      resetProviderFactory();
+      resetProviderRegistry();
+      registry = getProviderRegistry();
+
+      // Register only a mock provider, not the real built-ins
+      const mockProvider = createMockProvider({ id: 'anthropic-codex' });
+      registry.register(mockProvider);
+
+      // Now unregister it to simulate deletion
+      registry.unregister('anthropic-codex');
+      expect(registry.has('anthropic-codex')).toBe(false);
+
+      // Re-setup handlers so they use the new registry
+      setupAuthHandlers(messageHubData.hub, mockAuthManager as unknown as AuthManager);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      // This would have failed before the fix because the provider was unregistered.
+      // With initializeProviders() called inside the handler, built-ins are restored.
+      const result = (await handler!({ providerId: 'anthropic-codex' }, {})) as {
+        success: boolean;
+        authUrl?: string;
+      };
+
+      // The real AnthropicToCodexBridgeProvider is registered by initializeProviders()
+      expect(registry.has('anthropic-codex')).toBe(true);
+      // The real provider supports OAuth, so login should succeed
+      expect(result.success).toBe(true);
+    });
+
     it('returns error when provider does not support OAuth', async () => {
       const mockProvider = createMockProvider({
         startOAuthFlow: undefined,
@@ -370,6 +404,33 @@ describe('Auth RPC Handlers', () => {
       };
 
       expect(result.success).toBe(true);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('always removes credential store row even when stored row is absent', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider();
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.logout).toHaveBeenCalled();
+      // Should still call removeCredentials to ensure no stale ghost rows remain
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
@@ -662,6 +723,72 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Please try logging out');
+    });
+
+    it('removes stale credentials from store on definitive refresh failure', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      // Definitive failure: refreshToken returns false AND getCredentials returns null
+      // (provider cleared its own credentials via logout)
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => null),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('restores credential store row on transient refresh failure', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+        storeOAuthTokens: mock(async () => {}),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      // Transient failure: refreshToken returns false BUT getCredentials still has tokens
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'still-valid',
+        })),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      // Row is removed first, then restored because provider still holds credentials
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
+        type: 'oauth',
+        accessToken: 'still-valid',
+      });
     });
 
     it('handles refresh token errors', async () => {

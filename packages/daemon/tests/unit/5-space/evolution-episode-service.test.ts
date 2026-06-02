@@ -469,6 +469,16 @@ describe('EvolutionEpisodeService', () => {
       result: 'PR updated and tests pass',
       reportedSummary: 'Resolved reviewer comments',
     });
+    const taskWithoutResult = taskRepo.createTask({
+      spaceId,
+      title: 'Fix without explicit result',
+      description: 'Only reportedSummary',
+      evolutionScopeId: scope.id,
+    });
+    taskRepo.updateTask(taskWithoutResult.id, {
+      result: null,
+      reportedSummary: 'Fallback summary visible to judge',
+    });
     const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Code workflow' });
     const run = workflowRunRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Run one' });
     artifactRepo.upsert({
@@ -485,6 +495,13 @@ describe('EvolutionEpisodeService', () => {
       sourceId: task.id,
       summary: 'Task completed',
       createdAt: 100,
+    });
+    const taskWithoutResultEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: taskWithoutResult.id,
+      summary: 'Task without explicit result',
+      createdAt: 110,
     });
     const runEvidence = evolutionRepo.createEvidence({
       scopeId: scope.id,
@@ -522,16 +539,24 @@ describe('EvolutionEpisodeService', () => {
 
     const input = service.buildEpisodeInput({
       scopeId: scope.id,
-      evidenceIds: [taskEvidence.id, runEvidence.id, errorEvidence.id, note.id],
+      evidenceIds: [
+        taskEvidence.id,
+        taskWithoutResultEvidence.id,
+        runEvidence.id,
+        errorEvidence.id,
+        note.id,
+      ],
     });
     const prompt = buildEpisodeJudgePrompt(input);
 
     expect(input.timeWindow).toEqual({ start: 100, end: 225 });
     expect(input.workflowRuns).toHaveLength(1);
     expect(input.workflowRuns[0]?.run.id).toBe(run.id);
+    expect(input.tasks).toHaveLength(2);
     expect(prompt).toContain('Reduce review churn');
     expect(prompt).toContain('Resolved reviewer comments');
     expect(prompt).toContain('PR updated and tests pass');
+    expect(prompt).toContain('Fallback summary visible to judge');
     expect(prompt).toContain('Implementation ready');
     expect(prompt).toContain('Reviewer saw repeated confusion');
     expect(prompt).toContain('comments');

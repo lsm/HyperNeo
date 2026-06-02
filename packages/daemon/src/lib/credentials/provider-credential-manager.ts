@@ -66,7 +66,6 @@ export class ProviderCredentialManager {
 
   async removeCredentials(providerId: string): Promise<void> {
     await this.store.delete(credentialService(providerId), DEFAULT_ACCOUNT);
-    this.updateProviderAuth(providerId, 'none', 'unknown');
   }
 
   hasEnvironmentCredentials(providerId: string): boolean {
