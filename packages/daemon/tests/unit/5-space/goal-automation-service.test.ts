@@ -2513,7 +2513,7 @@ describe('handleGoalAutomationExecute', () => {
     );
 
     const cursor = cursorRepo.get(goal.id, scope.id, 'external_event', 'event:*:pull_request/*');
-    expect(cursor?.lastEvidenceCreatedAt).toBe(30);
+    expect(cursor?.lastEvidenceCreatedAt).toBe(12);
     expect(cursor?.lastExternalEventId).toBe('fresh-event');
   });
 

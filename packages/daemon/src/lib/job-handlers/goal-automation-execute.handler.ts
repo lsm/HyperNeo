@@ -149,9 +149,7 @@ export async function handleGoalAutomationExecute(
       episodeEvidence = uniqueEvidence([...evidence, triggerEvidence]);
     }
     const cursorEvidence =
-      triggerEvidence &&
-      (payload.triggerKind === 'completed_task_threshold' ||
-        payload.triggerKind === 'external_event')
+      triggerEvidence && payload.triggerKind === 'completed_task_threshold'
         ? episodeEvidence
         : evidence;
     const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
