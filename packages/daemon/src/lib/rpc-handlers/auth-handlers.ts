@@ -21,6 +21,7 @@ import type {
 import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { getProviderRegistry } from '../providers/registry';
+import { registerBuiltInProvider } from '../providers/factory.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
@@ -106,7 +107,10 @@ export function setupAuthHandlers(
     'auth.login',
     async (req: ProviderAuthRequest): Promise<ProviderAuthResponse> => {
       const { providerId } = req;
+      // Re-register built-in providers that may have been unregistered (e.g.,
+      // after the user deleted and is now re-adding the provider).
       const registry = getProviderRegistry();
+      await registerBuiltInProvider(registry, providerId);
 
       const provider = registry.get(providerId);
       if (!provider) {
@@ -216,11 +220,11 @@ export function setupAuthHandlers(
         if (provider.logout) {
           await provider.logout();
         }
-        if (storedCredentials) {
-          await credentialManager?.removeCredentials(providerId);
-          if (!provider.logout && provider.setCredentials) {
-            provider.setCredentials({ type: 'api_key', apiKey: '' });
-          }
+        // Always clear the credential store row so stale rows don't resurrect
+        // on the next daemon startup.
+        await credentialManager?.removeCredentials(providerId);
+        if (!provider.logout && provider.setCredentials) {
+          provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
@@ -263,6 +267,16 @@ export function setupAuthHandlers(
       try {
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
+          // Remove the credential store row first. For providers like Codex,
+          // getCredentials() can re-import stale credentials from an external
+          // auth file after a definitive failure, making a post-logout probe
+          // falsely truthy and leaving a stale row in place.
+          await credentialManager?.removeCredentials(providerId);
+          const remaining = await provider.getCredentials?.();
+          if (remaining?.type === 'oauth') {
+            // Transient failure — provider still holds credentials. Restore row.
+            await credentialManager?.storeOAuthTokens(providerId, remaining);
+          }
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',

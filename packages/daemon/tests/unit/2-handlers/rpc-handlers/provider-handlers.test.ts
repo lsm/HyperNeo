@@ -203,6 +203,29 @@ describe('Provider RPC handlers', () => {
       expect(creds.storeApiKey).toHaveBeenCalledWith('openrouter', 'sk-or-test');
     });
 
+    it('re-registers a built-in provider that was previously unregistered', async () => {
+      // Simulate deleting and re-adding a built-in provider
+      const registry = getProviderRegistry();
+      registry.unregister('anthropic-codex');
+      expect(registry.has('anthropic-codex')).toBe(false);
+
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'anthropic-codex',
+            displayName: 'OpenAI (Codex)',
+            kind: 'built_in',
+            authType: 'oauth',
+          },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(registry.has('anthropic-codex')).toBe(true);
+    });
+
     it('rejects invalid kind', async () => {
       const handlers = setup();
       await expect(

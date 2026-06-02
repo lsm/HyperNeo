@@ -10,7 +10,7 @@
 import type { ProviderRecord, CustomEndpointConfig } from '@neokai/shared';
 import type { ProviderCredentials } from '@neokai/shared/provider';
 import { getProviderRegistry } from './registry.js';
-import { initializeProviders } from './factory.js';
+import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -23,15 +23,30 @@ const logger = new Logger('providers:sync');
 
 export async function syncProviderToRegistry(
   record: ProviderRecord,
-  credentials?: ProviderCredentials | null
+  credentials?: ProviderCredentials | null,
+  isStartupSync = false
 ): Promise<void> {
   const registry = getProviderRegistry();
 
   // Built-in providers are already registered by initializeProviders().
-  // We only need to call setCredentials() on them.
+  // If one was unregistered (e.g., user deleted and is re-adding it),
+  // restore only that provider instead of re-creating every core provider.
   if (record.kind === 'built_in') {
+    await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
     if (provider?.setCredentials && credentials) {
+      // On startup sync, for providers that manage their own auth state (e.g.
+      // Codex), skip applying stale credential-store rows when the provider's
+      // own auth file/cache says it has been logged out. This prevents
+      // resurrecting credentials that were cleared by a failed runtime refresh.
+      // For add/update flows (isStartupSync=false) always apply credentials.
+      if (isStartupSync && provider.logout && provider.getCredentials) {
+        const own = await provider.getCredentials();
+        if (!own) {
+          logger.info(`Skipping stale stored credentials for ${record.providerId}`);
+          return;
+        }
+      }
       provider.setCredentials(credentials);
       logger.info(`Applied credentials to built-in provider ${record.providerId}`);
     }
@@ -98,7 +113,7 @@ export async function syncAllProviders(
   for (const record of records) {
     try {
       const credentials = await credentialManager.getCredentials(record.providerId);
-      await syncProviderToRegistry(record, credentials);
+      await syncProviderToRegistry(record, credentials, true);
     } catch (err) {
       logger.warn(`Failed to sync provider ${record.providerId}:`, err);
     }
@@ -113,6 +128,14 @@ export async function removeProviderFromRegistry(providerId: string): Promise<vo
   const registry = getProviderRegistry();
   const provider = registry.get(providerId);
   if (!provider) return;
+
+  if (provider.logout) {
+    try {
+      await provider.logout();
+    } catch (err) {
+      logger.warn(`Failed to log out provider ${providerId}:`, err);
+    }
+  }
 
   if (provider.shutdown) {
     try {
