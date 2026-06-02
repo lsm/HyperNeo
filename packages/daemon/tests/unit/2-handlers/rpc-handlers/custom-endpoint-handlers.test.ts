@@ -8,7 +8,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { CustomEndpointConfig, GlobalSettings } from '@neokai/shared';
-import { registerCustomEndpointHandlers } from '../../../../src/lib/rpc-handlers/custom-endpoint-handlers';
+import {
+  registerCustomEndpointHandlers,
+  clearModelListCache,
+} from '../../../../src/lib/rpc-handlers/custom-endpoint-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type {
   DaemonInternalEventMap,
@@ -77,6 +80,7 @@ describe('Custom Endpoint RPC handlers', () => {
   beforeEach(() => {
     syncCalls.splice(0);
     clearModelsCacheCalls.splice(0);
+    clearModelListCache();
     hubData = createMockMessageHub();
     settings = createMockSettings();
     eventBus = {
@@ -257,6 +261,383 @@ describe('Custom Endpoint RPC handlers', () => {
       await Promise.all([add({ endpoint: a }, {}), add({ endpoint: b }, {})]);
       const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
       expect(ids).toEqual(['a', 'b']);
+    });
+  });
+
+  describe('customEndpoints.listModels', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('fetches models from /v1/models for openai-chat', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-4', object: 'model' },
+            { id: 'gpt-3.5-turbo', object: 'model' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+        fromCache: boolean;
+      };
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].id).toBe('gpt-4');
+      expect(result.fromCache).toBe(false);
+    });
+
+    it('fetches models from /api/tags for ollama-native', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          models: [{ name: 'llama2' }, { name: 'codellama', model: 'codellama:7b' }],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        { baseUrl: 'http://localhost:11434', type: 'ollama-native' },
+        {}
+      )) as { models: Array<{ id: string }> };
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].id).toBe('llama2');
+      expect(result.models[1].id).toBe('codellama');
+    });
+
+    it('returns cached results within 30s', async () => {
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'm1', object: 'model' }],
+          }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const first = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        fromCache: boolean;
+      };
+      expect(first.fromCache).toBe(false);
+      expect(callCount).toBe(1);
+
+      const second = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        fromCache: boolean;
+      };
+      expect(second.fromCache).toBe(true);
+      expect(callCount).toBe(1);
+    });
+
+    it('throws on HTTP error', async () => {
+      global.fetch = mock(async () => ({
+        ok: false,
+        status: 401,
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await expect(handler({ baseUrl: 'http://localhost:1234/v1' }, {})).rejects.toThrow(
+        /HTTP 401/
+      );
+    });
+
+    it('throws on network/timeout errors', async () => {
+      global.fetch = mock(async () => {
+        throw new Error('Connection refused');
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await expect(handler({ baseUrl: 'http://localhost:1234/v1' }, {})).rejects.toThrow(
+        /Connection refused/
+      );
+    });
+
+    it('rejects invalid baseUrl', async () => {
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await expect(handler({ baseUrl: '' }, {})).rejects.toThrow(/baseUrl is required/);
+      await expect(handler({ baseUrl: 'ftp://nope' }, {})).rejects.toThrow(/http/);
+    });
+
+    it('includes Authorization and extra headers', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      global.fetch = mock(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1',
+          apiKey: 'sk-test',
+          headers: { 'X-Custom': 'val' },
+        },
+        {}
+      );
+      expect(capturedHeaders.Authorization).toBe('Bearer sk-test');
+      expect(capturedHeaders['X-Custom']).toBe('val');
+    });
+
+    it('filters out entries with missing ids', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'valid', object: 'model' },
+            { id: '', object: 'model' },
+            { object: 'model' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+      };
+      expect(result.models).toHaveLength(1);
+      expect(result.models[0].id).toBe('valid');
+    });
+
+    it('does not double-append /v1 when baseUrl already ends in /v1', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'm1', object: 'model' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1' }, {});
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('strips /v1/models from baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'm1', object: 'model' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1/models' }, {});
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('strips /chat/completions from baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'm1', object: 'model' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:1234/v1/chat/completions' }, {});
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('derives model from Azure deployment URL without probing', async () => {
+      let fetchCalled = false;
+      global.fetch = mock(async () => {
+        fetchCalled = true;
+        return { ok: true, json: async () => ({ data: [] }) };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        {
+          baseUrl:
+            'https://my-resource.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview',
+        },
+        {}
+      )) as { models: Array<{ id: string }>; fromCache: boolean };
+      expect(result.models).toHaveLength(1);
+      expect(result.models[0].id).toBe('gpt-4o');
+      expect(result.fromCache).toBe(false);
+      expect(fetchCalled).toBe(false);
+    });
+
+    it('derives model from Azure deployment baseUrl without chat suffix', async () => {
+      let fetchCalled = false;
+      global.fetch = mock(async () => {
+        fetchCalled = true;
+        return { ok: true, json: async () => ({ data: [] }) };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        {
+          baseUrl:
+            'https://my-resource.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview',
+        },
+        {}
+      )) as { models: Array<{ id: string }> };
+      expect(result.models).toHaveLength(1);
+      expect(result.models[0].id).toBe('gpt-4o');
+      expect(fetchCalled).toBe(false);
+    });
+
+    it('strips /api/chat from ollama baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: 'llama2' }] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler({ baseUrl: 'http://localhost:11434/api/chat', type: 'ollama-native' }, {});
+      expect(capturedUrl).toBe('http://localhost:11434/api/tags');
+    });
+
+    it('strips /v1/messages from anthropic baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        { baseUrl: 'http://localhost:1234/v1/messages', type: 'anthropic-messages' },
+        {}
+      );
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('strips /v1/messages/count_tokens from anthropic baseUrl before appending', async () => {
+      let capturedUrl = '';
+      global.fetch = mock(async (url: unknown) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1/messages/count_tokens',
+          type: 'anthropic-messages',
+        },
+        {}
+      );
+      expect(capturedUrl).toBe('http://localhost:1234/v1/models');
+    });
+
+    it('accepts anthropic-messages model objects with type and display_name', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'claude-sonnet-4-5', type: 'model', display_name: 'Claude Sonnet 4.5' },
+            { id: 'claude-opus-4-5', object: 'model' },
+            { id: 'skipped', type: 'unknown' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        { baseUrl: 'http://localhost:1234/v1', type: 'anthropic-messages' },
+        {}
+      )) as { models: Array<{ id: string; name?: string }> };
+      expect(result.models).toHaveLength(2);
+      expect(result.models[0].id).toBe('claude-sonnet-4-5');
+      expect(result.models[0].name).toBe('Claude Sonnet 4.5');
+      expect(result.models[1].id).toBe('claude-opus-4-5');
+    });
+
+    it('sends anthropic auth headers for anthropic-messages endpoints', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      global.fetch = mock(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1',
+          type: 'anthropic-messages',
+          apiKey: 'sk-ant',
+        },
+        {}
+      );
+      expect(capturedHeaders.Authorization).toBe('Bearer sk-ant');
+      expect(capturedHeaders['x-api-key']).toBe('sk-ant');
+      expect(capturedHeaders['anthropic-version']).toBe('2023-06-01');
+    });
+
+    it('sends anthropic-version even without apiKey for anthropic-messages', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      global.fetch = mock(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        capturedHeaders = init?.headers ?? {};
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      await handler(
+        {
+          baseUrl: 'http://localhost:1234/v1',
+          type: 'anthropic-messages',
+          headers: { 'x-api-key': 'from-headers' },
+        },
+        {}
+      );
+      expect(capturedHeaders.Authorization).toBeUndefined();
+      expect(capturedHeaders['x-api-key']).toBe('from-headers');
+      expect(capturedHeaders['anthropic-version']).toBe('2023-06-01');
+    });
+
+    it('accepts openai entries that omit the object field', async () => {
+      global.fetch = mock(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-4' },
+            { id: 'gpt-3.5-turbo', object: 'model' },
+            { id: 'skipped', object: 'fine-tune' },
+          ],
+        }),
+      })) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler({ baseUrl: 'http://localhost:1234/v1' }, {})) as {
+        models: Array<{ id: string }>;
+      };
+      expect(result.models).toHaveLength(2);
+      expect(result.models.map((m) => m.id)).toContain('gpt-4');
+      expect(result.models.map((m) => m.id)).toContain('gpt-3.5-turbo');
     });
   });
 });

@@ -36,6 +36,7 @@ import {
   CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS,
   DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
   resolveCustomEndpointType,
+  THINKING_LEVEL_TOKENS,
   type CustomEndpointConfig,
   type CustomEndpointModel,
   type CustomEndpointModelCapabilities,
@@ -76,6 +77,10 @@ export function isCustomEndpointProviderId(providerId: string): boolean {
 interface CustomEndpointBridge {
   port: number;
   stop(): void;
+  setSessionThinkingConfig?(
+    sessionId: string,
+    thinking: { type: 'enabled'; budget_tokens: number } | undefined
+  ): void;
 }
 
 export interface CustomEndpointProviderOptions {
@@ -214,7 +219,7 @@ export class CustomEndpointProvider implements Provider {
     return {
       envVars: {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
-        ANTHROPIC_AUTH_TOKEN: 'custom-endpoint',
+        ANTHROPIC_AUTH_TOKEN: `custom-endpoint:${sessionConfig?.sessionId ?? 'default'}`,
         ANTHROPIC_API_KEY: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -243,6 +248,27 @@ export class CustomEndpointProvider implements Provider {
     if (!model) return undefined;
     const caps = resolveModelCapabilities(model, this.type);
     return caps.thinking ? 'on' : 'off';
+  }
+
+  /**
+   * Propagate the session's thinking level to all chat bridges.
+   *
+   * The Claude Code CLI handles thinking internally and does not include the
+   * thinking field in Anthropic Messages API request bodies. Without this
+   * side-channel the bridge has no way to know that reasoning should be
+   * forwarded to the OpenAI Chat Completions API.
+   */
+  setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
+    const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
+    const thinking =
+      tokens !== undefined
+        ? ({ type: 'enabled' as const, budget_tokens: tokens } as const)
+        : undefined;
+    for (const bridge of this.bridges.values()) {
+      if (bridge.setSessionThinkingConfig) {
+        bridge.setSessionThinkingConfig(sessionId, thinking);
+      }
+    }
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

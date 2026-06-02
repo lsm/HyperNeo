@@ -49,6 +49,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   logoutProvider: (providerId: string) => mockLogoutProvider(providerId),
   refreshProvider: (providerId: string) => mockRefreshProvider(providerId),
   createProvider: (params: unknown, creds?: unknown) => mockCreateProvider(params, creds),
+  listCustomEndpointModels: vi.fn(),
 }));
 
 vi.mock('../../../lib/toast.ts', () => ({

@@ -33,6 +33,7 @@ import {
   testCustomEndpoint,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
+import { useFetchModels } from './useFetchModels.ts';
 
 interface EnrichedProvider extends ProviderRecord {
   available: boolean;
@@ -51,6 +52,8 @@ export function ProvidersSettings() {
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
+    useFetchModels(customEditor);
 
   const loadProviders = async () => {
     try {
@@ -656,6 +659,11 @@ export function ProvidersSettings() {
           saving={savingCustom}
           onTest={handleTestCustom}
           testing={testingCustom}
+          onFetchModels={handleFetchModels}
+          fetchingModels={fetchingModels}
+          fetchedModels={fetchedModels}
+          fetchModelsError={fetchModelsError}
+          fetchedAt={fetchedAt}
         />
       )}
     </>

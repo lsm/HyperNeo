@@ -37,6 +37,7 @@ import {
   resolveCapabilities,
   type EditorState,
 } from './CustomEndpointEditor.tsx';
+import { useFetchModels } from './useFetchModels.ts';
 import { findPreset } from './customEndpointPresets.ts';
 
 export function CustomEndpointsSettings() {
@@ -47,6 +48,8 @@ export function CustomEndpointsSettings() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
+    useFetchModels(editor);
 
   const load = async () => {
     try {
@@ -287,6 +290,11 @@ export function CustomEndpointsSettings() {
           saving={saving}
           onTest={handleTest}
           testing={testing}
+          onFetchModels={handleFetchModels}
+          fetchingModels={fetchingModels}
+          fetchedModels={fetchedModels}
+          fetchModelsError={fetchModelsError}
+          fetchedAt={fetchedAt}
         />
       )}
     </SettingsSection>

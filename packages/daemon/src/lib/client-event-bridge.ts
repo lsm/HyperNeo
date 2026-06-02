@@ -211,6 +211,11 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
       return p.contextInfo;
     },
   },
+  {
+    event: 'providers.changed',
+    clientEvent: 'providers.changed',
+    channel: () => Channels.global(),
+  },
 ];
 
 /**

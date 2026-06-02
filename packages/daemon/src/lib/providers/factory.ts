@@ -34,6 +34,32 @@ const logger = new Logger('providers:factory');
 let initialized = false;
 
 /**
+ * Built-in providers explicitly disabled via providers.update are tracked here
+ * so initializeProviders() does not resurrect them on subsequent calls.
+ */
+const disabledBuiltInProviderIds = new Set<string>();
+
+/**
+ * Mark a built-in provider as disabled so initializeProviders() skips it.
+ */
+export function markBuiltInProviderDisabled(providerId: string): void {
+  disabledBuiltInProviderIds.add(providerId);
+}
+
+/**
+ * Mark a built-in provider as enabled so initializeProviders() can register it.
+ */
+export function markBuiltInProviderEnabled(providerId: string): void {
+  disabledBuiltInProviderIds.delete(providerId);
+}
+
+const CORE_PROVIDER_IDS = ['anthropic'];
+
+function hasCoreProviders(registry: ProviderRegistry): boolean {
+  return CORE_PROVIDER_IDS.every((id) => registry.has(id));
+}
+
+/**
  * Initialize the provider system
  *
  * Registers all built-in providers with the global registry.
@@ -53,36 +79,54 @@ export function initializeProviders(): ProviderRegistry {
   }
 
   // Register Anthropic provider (always available)
-  registerIfMissing(registry, new AnthropicProvider());
+  if (!disabledBuiltInProviderIds.has('anthropic')) {
+    registerIfMissing(registry, new AnthropicProvider());
+  }
 
   // Register GLM provider (will be available if API key is set)
-  registerIfMissing(registry, new GlmProvider());
+  if (!disabledBuiltInProviderIds.has('glm')) {
+    registerIfMissing(registry, new GlmProvider());
+  }
 
   // Register Kimi provider (will be available if KIMI_API_KEY or MOONSHOT_API_KEY is set)
-  registerIfMissing(registry, new KimiProvider());
+  if (!disabledBuiltInProviderIds.has('kimi')) {
+    registerIfMissing(registry, new KimiProvider());
+  }
 
   // Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
-  registerIfMissing(registry, new MinimaxProvider());
+  if (!disabledBuiltInProviderIds.has('minimax')) {
+    registerIfMissing(registry, new MinimaxProvider());
+  }
 
   // Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
-  registerIfMissing(registry, new OpenRouterProvider());
+  if (!disabledBuiltInProviderIds.has('openrouter')) {
+    registerIfMissing(registry, new OpenRouterProvider());
+  }
 
   // Register Ollama providers. Local Ollama is available by default at localhost:11434;
   // Ollama Cloud requires OLLAMA_CLOUD_API_KEY.
-  registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
-  registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
+  if (!disabledBuiltInProviderIds.has('ollama')) {
+    registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
+  }
+  if (!disabledBuiltInProviderIds.has('ollama-cloud')) {
+    registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
+  }
 
   // Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
   // Discovers credentials from env (OPENAI_API_KEY), ~/.neokai/auth.json,
   // and one-time import from ~/.codex/auth.json.
-  registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
+  if (!disabledBuiltInProviderIds.has('anthropic-codex')) {
+    registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
+  }
 
   // Register Anthropic Copilot provider (embedded Anthropic-compatible server).
   // process.cwd() is the fallback cwd; per-session workspace is threaded via
   // ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
   // Lazy registration keeps @github/copilot-sdk out of the startup import graph so
   // bun build --compile can tree-shake and bundle the SDK without crashing startup.
-  registerCopilotProvider(registry);
+  if (!disabledBuiltInProviderIds.has('anthropic-copilot')) {
+    registerCopilotProvider(registry);
+  }
 
   // Additional built-in providers can be registered here
   // Example:
@@ -231,10 +275,6 @@ function canonicalise(value: unknown): unknown {
   return out;
 }
 
-function hasCoreProviders(registry: ProviderRegistry): boolean {
-  return CORE_PROVIDER_IDS.every((id) => registry.has(id));
-}
-
 function registerIfMissing(registry: ProviderRegistry, provider: Provider): void {
   if (!registry.has(provider.id)) {
     registry.register(provider);
@@ -255,8 +295,56 @@ export async function waitForOptionalProviderRegistration(
   await registerLoadedCopilotProvider(registry ?? initializeProviders());
 }
 
+/**
+ * Register a single built-in provider by ID if it is not already in the registry.
+ * This is the surgical re-registration path used when a provider is re-enabled
+ * after being disabled and removed from the registry.
+ *
+ * Unlike `initializeProviders()`, this only touches the requested provider so
+ * disabled built-ins are not accidentally recreated.
+ */
+export async function ensureBuiltInProviderRegistered(providerId: string): Promise<void> {
+  const registry = getProviderRegistry();
+  if (registry.has(providerId)) return;
+  markBuiltInProviderEnabled(providerId);
+
+  switch (providerId) {
+    case 'anthropic':
+      registerIfMissing(registry, new AnthropicProvider());
+      break;
+    case 'glm':
+      registerIfMissing(registry, new GlmProvider());
+      break;
+    case 'kimi':
+      registerIfMissing(registry, new KimiProvider());
+      break;
+    case 'minimax':
+      registerIfMissing(registry, new MinimaxProvider());
+      break;
+    case 'openrouter':
+      registerIfMissing(registry, new OpenRouterProvider());
+      break;
+    case 'ollama':
+      registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
+      break;
+    case 'ollama-cloud':
+      registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
+      break;
+    case 'anthropic-codex':
+      registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
+      break;
+    case 'anthropic-copilot':
+      registerCopilotProvider(registry);
+      await waitForOptionalProviderRegistration(registry);
+      break;
+    default:
+      break;
+  }
+}
+
 async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promise<void> {
   if (registry.has('anthropic-copilot')) return;
+  if (disabledBuiltInProviderIds.has('anthropic-copilot')) return;
 
   // This dynamic import must remain a literal string: bun build --compile
   // discovers and embeds @github/copilot-sdk and vscode-jsonrpc through it.
@@ -268,17 +356,6 @@ async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promis
 
 let copilotProviderModule: Promise<typeof import('./anthropic-copilot/index.js') | null> | null =
   null;
-
-const CORE_PROVIDER_IDS = [
-  'anthropic',
-  'glm',
-  'kimi',
-  'minimax',
-  'openrouter',
-  'ollama',
-  'ollama-cloud',
-  'anthropic-codex',
-];
 
 /** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
 const lastSyncedConfigByProviderId = new Map<string, string>();
@@ -310,6 +387,7 @@ export function resetProviderFactory(): void {
   initialized = false;
   copilotProviderModule = null;
   lastSyncedConfigByProviderId.clear();
+  disabledBuiltInProviderIds.clear();
 }
 
 // Re-export types from shared package

@@ -414,7 +414,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
   setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
-  setupAuthHandlers(deps.messageHub, deps.authManager, deps.credentialManager);
+  setupAuthHandlers(
+    deps.messageHub,
+    deps.authManager,
+    deps.credentialManager,
+    deps.internalEventBus
+  );
   registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
   registerSettingsHandlers(
     deps.messageHub,
@@ -437,6 +442,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     messageHub: deps.messageHub,
     providerRepo: deps.db.providers,
     credentialManager: providerCredentialManager,
+    internalEventBus: deps.internalEventBus,
   });
 
   setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
