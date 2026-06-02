@@ -22,7 +22,7 @@
  * - All state is in-memory only; no DB persistence needed
  */
 
-import type { Gate, GatePoll, SpaceWorkflow } from '@neokai/shared';
+import { resolveNodeAgents, type Gate, type GatePoll, type SpaceWorkflow } from '@neokai/shared';
 import { Logger } from '../../logger';
 import { getEffectiveGatePoll } from './gate-features';
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
@@ -117,6 +117,20 @@ export function extractPrContext(prUrl: string): {
  * falls back to wildcard channels (`from: '*'`) so wildcard-gated polls can
  * still resolve their concrete target node.
  */
+function resolveNodeNameByRef(workflow: SpaceWorkflow, ref: string): string | null {
+  const nodeByName = workflow.nodes.find((node) => node.name === ref);
+  if (nodeByName) return nodeByName.name;
+
+  for (const node of workflow.nodes) {
+    try {
+      if (resolveNodeAgents(node).some((agent) => agent.name === ref)) return node.name;
+    } catch {
+      // skip malformed nodes
+    }
+  }
+  return null;
+}
+
 export function resolveTargetNodeName(
   gateId: string,
   workflow: SpaceWorkflow,
@@ -138,13 +152,14 @@ export function resolveTargetNodeName(
   }
 
   if (target === 'from') {
-    // For wildcard channels, return the concrete sourceName instead of '*'
-    return channel.from === '*' && sourceName !== undefined ? sourceName : channel.from;
+    // For wildcard channels, return the concrete sourceName instead of '*'.
+    const fromTarget = channel.from === '*' && sourceName !== undefined ? sourceName : channel.from;
+    return resolveNodeNameByRef(workflow, fromTarget);
   }
 
-  // For 'to', handle both single and array targets
+  // For 'to', handle both single and array targets.
   const toTarget = Array.isArray(channel.to) ? channel.to[0] : channel.to;
-  return toTarget ?? null;
+  return toTarget ? resolveNodeNameByRef(workflow, toTarget) : null;
 }
 
 /**

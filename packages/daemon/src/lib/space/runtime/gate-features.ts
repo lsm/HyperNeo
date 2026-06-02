@@ -36,37 +36,31 @@ function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
  * `gateId` has `requireCodexApproval: true`. Used to dynamically inject the
  * codex review bot gate feature at runtime based on node-level config.
  */
+function findNodeBySourceName(workflow: SpaceWorkflow, sourceName: string) {
+  const nodeByName = workflow.nodes.find((n) => n.name === sourceName);
+  if (nodeByName) return nodeByName;
+
+  for (const node of workflow.nodes) {
+    try {
+      const agents = resolveNodeAgents(node);
+      if (agents.some((a) => a.name === sourceName)) return node;
+    } catch {
+      // skip malformed nodes
+    }
+  }
+  return undefined;
+}
+
 function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow): boolean {
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
     if (channel.from === '*') {
-      // Wildcard channels only get Codex when ALL nodes opt in, so one
-      // flagged node cannot force Codex on unrelated unflagged nodes.
-      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
-        return true;
-      }
-      // Not all nodes opted in — keep scanning other channels for this gate.
+      if (workflow.nodes.some((n) => n.requireCodexApproval)) return true;
       continue;
     }
-    // Match by node name — if found, use ONLY this node's flag
-    const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
-    if (nodeByName) {
-      if (nodeByName.requireCodexApproval) return true;
-      // Continue scanning: the same gate may be reused by another channel
-      // from a different flagged node.
-      continue;
-    }
-    // Fall back to agent-name matching only when no node name matches
-    for (const node of workflow.nodes) {
-      try {
-        const agents = resolveNodeAgents(node);
-        if (agents.some((a) => a.name === channel.from) && node.requireCodexApproval) {
-          return true;
-        }
-      } catch {
-        // skip malformed nodes
-      }
-    }
+
+    const node = findNodeBySourceName(workflow, channel.from);
+    if (node?.requireCodexApproval) return true;
   }
   return false;
 }
@@ -84,30 +78,10 @@ function doesSpecificSourceNodeRequireCodex(
 ): boolean {
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
-    if (channel.from === '*') {
-      // Wildcard channels only get Codex when ALL nodes opt in.
-      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
-        return true;
-      }
-      continue;
-    }
-    if (channel.from !== sourceName) continue;
-    // Match by node name — if found, use ONLY this node's flag
-    const nodeByName = workflow.nodes.find((n) => n.name === sourceName);
-    if (nodeByName) {
-      return !!nodeByName.requireCodexApproval;
-    }
-    // Fall back to agent-name matching only when no node name matches
-    for (const node of workflow.nodes) {
-      try {
-        const agents = resolveNodeAgents(node);
-        if (agents.some((a) => a.name === sourceName)) {
-          return !!node.requireCodexApproval;
-        }
-      } catch {
-        // skip malformed nodes
-      }
-    }
+    if (channel.from !== sourceName && channel.from !== '*') continue;
+
+    const node = findNodeBySourceName(workflow, sourceName);
+    return !!node?.requireCodexApproval;
   }
   return false;
 }
@@ -122,42 +96,18 @@ function getMinCodexPollIntervalMs(gateId: string, workflow: SpaceWorkflow): num
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
     if (channel.from === '*') {
-      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
-        for (const node of workflow.nodes) {
-          if (node.codexPollIntervalMs) {
-            min =
-              min === undefined
-                ? node.codexPollIntervalMs
-                : Math.min(min, node.codexPollIntervalMs);
-          }
-        }
-      }
-      continue;
-    }
-    const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
-    if (nodeByName) {
-      if (nodeByName.requireCodexApproval && nodeByName.codexPollIntervalMs) {
-        min =
-          min === undefined
-            ? nodeByName.codexPollIntervalMs
-            : Math.min(min, nodeByName.codexPollIntervalMs);
-      }
-      continue;
-    }
-    for (const node of workflow.nodes) {
-      try {
-        const agents = resolveNodeAgents(node);
-        if (
-          agents.some((a) => a.name === channel.from) &&
-          node.requireCodexApproval &&
-          node.codexPollIntervalMs
-        ) {
+      for (const node of workflow.nodes) {
+        if (node.requireCodexApproval && node.codexPollIntervalMs) {
           min =
             min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
         }
-      } catch {
-        // skip malformed nodes
       }
+      continue;
+    }
+
+    const node = findNodeBySourceName(workflow, channel.from);
+    if (node?.requireCodexApproval && node.codexPollIntervalMs) {
+      min = min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
     }
   }
   return min ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
@@ -175,41 +125,11 @@ function getSpecificCodexPollIntervalMs(
 ): number {
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
-    if (channel.from === '*') {
-      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
-        const node = workflow.nodes.find((n) => n.name === sourceName);
-        if (node?.codexPollIntervalMs) return node.codexPollIntervalMs;
-        for (const n of workflow.nodes) {
-          try {
-            const agents = resolveNodeAgents(n);
-            if (agents.some((a) => a.name === sourceName) && n.codexPollIntervalMs) {
-              return n.codexPollIntervalMs;
-            }
-          } catch {
-            // skip malformed nodes
-          }
-        }
-      }
-      continue;
-    }
-    if (channel.from !== sourceName) continue;
-    const nodeByName = workflow.nodes.find((n) => n.name === sourceName);
-    if (nodeByName?.requireCodexApproval && nodeByName.codexPollIntervalMs) {
-      return nodeByName.codexPollIntervalMs;
-    }
-    for (const node of workflow.nodes) {
-      try {
-        const agents = resolveNodeAgents(node);
-        if (
-          agents.some((a) => a.name === sourceName) &&
-          node.requireCodexApproval &&
-          node.codexPollIntervalMs
-        ) {
-          return node.codexPollIntervalMs;
-        }
-      } catch {
-        // skip malformed nodes
-      }
+    if (channel.from !== sourceName && channel.from !== '*') continue;
+
+    const node = findNodeBySourceName(workflow, sourceName);
+    if (node?.requireCodexApproval && node.codexPollIntervalMs) {
+      return node.codexPollIntervalMs;
     }
   }
   return CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
@@ -433,9 +353,9 @@ export function validateGateFeatures(gate: Gate): string[] {
 export function isApprovalGate(gate: Gate): boolean {
   return (gate.fields ?? []).some((f) => {
     if (f.name === 'approved') return true;
-    if (f.name === 'approvals' && f.type === 'map') {
-      const check = f.check as { match?: unknown } | undefined;
-      if (check?.match === 'approved') return true;
+    if (f.type === 'map') {
+      const check = f.check as { op?: unknown; match?: unknown } | undefined;
+      if (check?.op === 'count' && check.match === 'approved') return true;
     }
     return false;
   });

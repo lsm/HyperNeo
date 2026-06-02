@@ -8,7 +8,7 @@
  * rather than fake timers, because Bun's test runner has limited async timer support.
  */
 
-import type { Gate, GatePoll, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import { type Gate, type GatePoll, type SpaceWorkflow, type WorkflowChannel } from '@neokai/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   extractPrContext,
@@ -910,6 +910,28 @@ describe('resolveTargetNodeName', () => {
     };
     const workflow = makeWorkflow([], [channel]);
     expect(resolveTargetNodeName('gate-1', workflow, 'to')).toBe('Reviewer');
+  });
+
+  test('resolves agent-name source to node name for target=from', () => {
+    const channel: WorkflowChannel = {
+      id: 'ch-1',
+      from: 'coder',
+      to: 'reviewer',
+      gateId: 'gate-1',
+    };
+    const workflow = makeWorkflow([], [channel]);
+    expect(resolveTargetNodeName('gate-1', workflow, 'from', 'coder')).toBe('Coder');
+  });
+
+  test('resolves wildcard source to concrete node name for target=from', () => {
+    const channel: WorkflowChannel = {
+      id: 'ch-1',
+      from: '*',
+      to: 'reviewer',
+      gateId: 'gate-1',
+    };
+    const workflow = makeWorkflow([], [channel]);
+    expect(resolveTargetNodeName('gate-1', workflow, 'from', 'coder')).toBe('Coder');
   });
 });
 

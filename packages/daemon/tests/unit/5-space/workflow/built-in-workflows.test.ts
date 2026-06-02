@@ -27,7 +27,10 @@ import {
 } from '../../../../src/lib/space/export-format.ts';
 import { evaluateFields, validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
-import { getEffectiveGate } from '../../../../src/lib/space/runtime/gate-features.ts';
+import {
+  getEffectiveGate,
+  isApprovalGate,
+} from '../../../../src/lib/space/runtime/gate-features.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
@@ -3515,6 +3518,56 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain('^https://([^/]+)/');
     expect(effectiveGate.script?.source).not.toContain('github\\.com');
     expect(effectiveGate.poll?.intervalMs).toBe(300_000);
+  });
+
+  test('dynamic codex injection honors wildcard source node opt-in', () => {
+    const gate = {
+      id: 'wildcard-approval-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const effectiveGate = getEffectiveGate(
+      gate,
+      {
+        id: 'wf-wildcard-codex',
+        spaceId: 'space-1',
+        name: 'Wildcard Codex Workflow',
+        tags: [],
+        nodes: [
+          { id: 'node-coder', name: 'Coder', agents: [], requireCodexApproval: true },
+          { id: 'node-reviewer', name: 'Reviewer', agents: [] },
+        ],
+        startNodeId: 'node-coder',
+        endNodeId: 'node-reviewer',
+        channels: [{ id: 'ch-1', from: '*', to: 'Reviewer', gateId: gate.id }],
+        gates: [gate],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        completionAutonomyLevel: 3,
+      },
+      'Coder'
+    );
+
+    expect(effectiveGate.script?.source).toContain('codex[bot]');
+  });
+
+  test('isApprovalGate recognizes vote-map approvals by check semantics', () => {
+    expect(
+      isApprovalGate({
+        id: 'semantic-approval-gate',
+        fields: [
+          {
+            name: 'votes',
+            type: 'map',
+            writers: [],
+            check: { op: 'count', match: 'approved', min: 1 },
+          },
+        ],
+        resetOnCycle: false,
+      })
+    ).toBe(true);
   });
 
   test('codex feature script and poll override custom script and poll consistently', () => {
