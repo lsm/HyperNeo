@@ -920,7 +920,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   workflowRunId
                 );
                 const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef, workflow, myNodeName),
+                  getEffectiveGate(gateDef, workflow, gatedChannel.from),
                   updated.data,
                   scriptExecutor,
                   scriptContext

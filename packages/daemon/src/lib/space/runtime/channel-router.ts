@@ -875,10 +875,12 @@ export class ChannelRouter {
       return [];
     }
 
-    // Determine if any of these channels are cyclic — if so, enforce the per-channel cap
-    // before activating any node (mirrors the guard in deliverMessage).
+    // Determine if any opened channels are cyclic — if so, enforce the
+    // per-channel cap before activating any node (mirrors the guard in
+    // deliverMessage). Only check channels that actually opened, so a closed
+    // cyclic channel sharing the gate does not block activation of an open one.
     const allChannels = workflow.channels ?? [];
-    for (const ch of channels) {
+    for (const ch of openChannels) {
       const chIdx = allChannels.indexOf(ch);
       if (chIdx >= 0 && this.isChannelCyclicByIndex(chIdx, workflow)) {
         const maxCycles = ch.maxCycles ?? 5;
