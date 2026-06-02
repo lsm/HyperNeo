@@ -1629,7 +1629,11 @@ export function ScopeDetail({
     const patch: Partial<typeof currentAutomation> = {};
     if (updates.enabled !== undefined) {
       patch.completedTaskAutomationEnabled = updates.enabled;
-      if (updates.enabled && currentAutomation.completedTaskThreshold === undefined) {
+      if (
+        updates.enabled &&
+        currentAutomation.completedTaskThreshold === undefined &&
+        goal?.type !== 'recurring'
+      ) {
         patch.completedTaskThreshold = DEFAULT_COMPLETED_TASK_THRESHOLD;
       }
     }

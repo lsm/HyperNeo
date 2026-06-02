@@ -335,9 +335,16 @@ export class EvolutionScopeService {
     const task = this.deps.taskRepo.getTask(params.taskId);
     if (!task) throw new Error(`Task not found: ${params.taskId}`);
     if (task.status !== 'done') return { scope: null, evidence: [] };
+    const forgeAutomationPrefixes = [
+      'automation:completed_task_threshold:',
+      'automation:self_nag:',
+      'automation:external_event:',
+    ];
     if (
       task.labels.includes('automation') &&
-      task.labels.some((label) => label.startsWith('automation:'))
+      task.labels.some((label) =>
+        forgeAutomationPrefixes.some((prefix) => label.startsWith(prefix))
+      )
     ) {
       return { scope: null, evidence: [] };
     }

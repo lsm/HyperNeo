@@ -2109,19 +2109,19 @@ describe('handleGoalAutomationExecute', () => {
     expect(thirdResult.episodeId).not.toBe(firstResult.episodeId);
   });
 
-  it('caps active-review requeues', async () => {
-    const goal = goalRepo.create({ spaceId, title: 'Cap requeue', type: 'recurring' });
+  it('uses extended delay after max active-review requeues', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Extended requeue', type: 'recurring' });
     const scope = evolutionRepo.createScope({
       spaceId,
       spaceGoalId: goal.id,
       kind: 'mission',
-      name: 'Cap requeue',
-      objective: 'Avoid infinite active-review requeues',
+      name: 'Extended requeue',
+      objective: 'Keep durable retry until active review clears',
       policy: { automation: { completedTaskThreshold: 1 } },
     });
     const activeReview = taskRepo.createTask({
       spaceId,
-      title: 'Review Forge retrospective: Cap requeue',
+      title: 'Review Forge retrospective: Extended requeue',
       goalId: goal.id,
       evolutionScopeId: scope.id,
       description: 'Episode: episode-active',
@@ -2171,11 +2171,14 @@ describe('handleGoalAutomationExecute', () => {
       skipped: true,
       skipReason: 'active_review',
       evidenceCount: 1,
-      requeued: false,
+      requeued: true,
     });
-    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
-      0
-    );
+    const pending = jobQueue.listJobs({
+      queue: GOAL_AUTOMATION_EXECUTE,
+      status: 'pending',
+    });
+    expect(pending).toHaveLength(1);
+    expect(pending[0].runAt).toBeGreaterThanOrEqual(Date.now() + 300_000);
   });
 
   it('defers completed-task execution across threshold changes and blocked reviews', async () => {

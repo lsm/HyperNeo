@@ -181,6 +181,28 @@ describe('Forge evidence capture on task completion', () => {
     );
   });
 
+  it('captures evidence for user-defined automation labels like automation:ci', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'User automation label',
+      objective: 'Capture evidence for user automation labels',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'CI automation task',
+      evolutionScopeId: scope.id,
+      labels: ['automation', 'automation:ci'],
+    });
+    const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+    await manager.setTaskStatus(task.id, 'done', { result: 'Done' });
+
+    expect(evolutionRepo.listEvidence(scope.id).some((item) => item.kind === 'task_result')).toBe(
+      true
+    );
+  });
+
   it('captures trace-derived evidence through the normal task completion path', async () => {
     const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
     const slowFailureScope = evolutionRepo.createScope({

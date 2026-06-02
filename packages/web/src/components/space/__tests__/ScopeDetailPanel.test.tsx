@@ -472,7 +472,35 @@ describe('ScopeDetailPanel', () => {
     }
   });
 
-  it('persists the default threshold when enabling completed-task automation', async () => {
+  it('does not send synthetic threshold for recurring goals when enabling', async () => {
+    setupRequests(makeScope({ policy: { automation: { completedTaskAutomationEnabled: false } } }));
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText('Enable count-based episode drafts'));
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(mockToastSuccess).toHaveBeenCalledWith('Completed-task automation updated')
+      );
+      expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+        id: 'scope-1',
+        params: {
+          policyPatch: {
+            automation: {
+              completedTaskAutomationEnabled: true,
+            },
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends default threshold for non-recurring goals when enabling', async () => {
+    mockGoals.value = [{ ...makeGoal(), type: 'one_shot' }];
     setupRequests(makeScope({ policy: { automation: { completedTaskAutomationEnabled: false } } }));
     renderPanel();
 

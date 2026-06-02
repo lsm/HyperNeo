@@ -18,6 +18,7 @@ import { Logger } from '../logger';
 
 const log = new Logger('goal-automation-execute');
 const MAX_ACTIVE_REVIEW_REQUEUES = 60;
+const EXTENDED_REQUEUE_DELAY_MS = 300_000;
 const activeAutomationLocks = new Set<string>();
 
 function automationLockKey(payload: GoalAutomationExecutePayload): string {
@@ -505,23 +506,18 @@ function requeueActiveReview(
   evidenceCount: number
 ): GoalAutomationExecuteResult {
   const requeueCount = readActiveReviewRequeueCount(payload);
-  if (requeueCount >= MAX_ACTIVE_REVIEW_REQUEUES) {
-    return {
-      ...skipped(payload, 'active_review', evidenceCount),
-      requeued: false,
-    };
-  }
   const requeuePayload = {
     ...payload,
     activeReviewRequeueCount: requeueCount + 1,
   };
+  const delay = requeueCount >= MAX_ACTIVE_REVIEW_REQUEUES ? EXTENDED_REQUEUE_DELAY_MS : 60_000;
   deps.jobQueue?.enqueueUniquePending({
     queue: GOAL_AUTOMATION_EXECUTE,
     payload: requeuePayload,
     matchPayload: uniqueJobMatchPayload(payload),
     activeStatuses: ['pending'],
     maxRetries: 2,
-    runAt: Date.now() + 60_000,
+    runAt: Date.now() + delay,
   });
   return {
     ...skipped(payload, 'active_review', evidenceCount),
