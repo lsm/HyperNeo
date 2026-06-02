@@ -193,9 +193,11 @@ async function evaluateTerminalGateFeatures(
   // injection uses the actual sender names (node name or agent slot) rather than
   // the current node name. Multiple sources for the same gate are all evaluated.
   const relevantGateSources = new Map<string, Set<string>>();
+  let scopingComputed = false;
   if (currentNodeId && workflow.channels) {
     const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
+      scopingComputed = true;
       const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
       const currentNodeAgentNames = new Set<string>();
       if (currentNode) {
@@ -236,7 +238,7 @@ async function evaluateTerminalGateFeatures(
 
   for (const gate of workflow.gates ?? []) {
     const sources = relevantGateSources.get(gate.id);
-    if (relevantGateSources.size > 0 && !sources) continue;
+    if (scopingComputed && !sources) continue;
     for (const sourceName of sources ?? [undefined]) {
       if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
       const effectiveGate = getEffectiveGate(gate, workflow, sourceName);

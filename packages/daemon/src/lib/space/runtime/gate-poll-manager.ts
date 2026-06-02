@@ -108,6 +108,15 @@ export function extractPrContext(prUrl: string): {
  * When `sourceName` is provided, the channel must also match that source so
  * per-source polls resolve the correct target node.
  */
+/**
+ * Resolves the target node name for a polled gate by finding the channel
+ * that references this gate.
+ *
+ * When `sourceName` is provided, the channel must also match that source so
+ * per-source polls resolve the correct target node. If no exact match exists,
+ * falls back to wildcard channels (`from: '*'`) so wildcard-gated polls can
+ * still resolve their concrete target node.
+ */
 export function resolveTargetNodeName(
   gateId: string,
   workflow: SpaceWorkflow,
@@ -115,16 +124,22 @@ export function resolveTargetNodeName(
   sourceName?: string
 ): string | null {
   const channels = workflow.channels ?? [];
-  const channel =
-    sourceName !== undefined
-      ? channels.find((ch) => ch.gateId === gateId && ch.from === sourceName)
-      : channels.find((ch) => ch.gateId === gateId);
+  let channel: (typeof channels)[number] | undefined;
+  if (sourceName !== undefined) {
+    channel = channels.find((ch) => ch.gateId === gateId && ch.from === sourceName);
+    if (!channel) {
+      channel = channels.find((ch) => ch.gateId === gateId && ch.from === '*');
+    }
+  } else {
+    channel = channels.find((ch) => ch.gateId === gateId);
+  }
   if (!channel) {
     return null;
   }
 
   if (target === 'from') {
-    return channel.from;
+    // For wildcard channels, return the concrete sourceName instead of '*'
+    return channel.from === '*' && sourceName !== undefined ? sourceName : channel.from;
   }
 
   // For 'to', handle both single and array targets
@@ -234,14 +249,38 @@ function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
     if (!channel.gateId) continue;
     const gate = workflow.gates?.find((g) => g.id === channel.gateId);
     if (!gate) continue;
-    const poll = getEffectiveGatePoll(gate, workflow, channel.from);
-    if (!poll) continue;
 
     // A "native" poll is one that exists on the gate itself (gate.poll or a
     // registered feature poll). These are gate-scoped: one timer per gate.
     // Dynamically-injected Codex polls are source-scoped: one timer per
     // flagged channel source so the correct target node receives guidance.
     const hasNativePoll = !!getEffectiveGatePoll(gate, undefined);
+
+    // Wildcard channels need special handling: resolveTargetNodeName cannot
+    // target the literal '*' source, so expand dynamically-injected polls to
+    // concrete node names.
+    if (channel.from === '*') {
+      const poll = getEffectiveGatePoll(gate, workflow, '*');
+      if (!poll) continue;
+
+      if (hasNativePoll) {
+        if (nativeSeen.has(gate.id)) continue;
+        nativeSeen.add(gate.id);
+        result.push({ gate, poll, sourceName: '*' });
+      } else {
+        for (const node of workflow.nodes) {
+          const key = `${gate.id}:${node.name}`;
+          if (injectedSeen.has(key)) continue;
+          injectedSeen.add(key);
+          result.push({ gate, poll, sourceName: node.name });
+        }
+      }
+      continue;
+    }
+
+    const poll = getEffectiveGatePoll(gate, workflow, channel.from);
+    if (!poll) continue;
+
     if (hasNativePoll) {
       if (nativeSeen.has(gate.id)) continue;
       nativeSeen.add(gate.id);
