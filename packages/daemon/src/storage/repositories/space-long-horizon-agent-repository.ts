@@ -376,13 +376,19 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToSubscription);
   }
 
-  deleteSubscriptionByAgentTopic(spaceId: string, agentId: string, topic: string): void {
+  deleteSubscriptionByRoute(
+    spaceId: string,
+    agentId: string,
+    source: string,
+    topic: string,
+    filterJson = '{}'
+  ): void {
     this.db
       .prepare(
         `DELETE FROM space_long_horizon_agent_event_subscriptions
-				 WHERE space_id = ? AND agent_id = ? AND topic = ?`
+				 WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ? AND filter_json = ?`
       )
-      .run(spaceId, agentId, topic);
+      .run(spaceId, agentId, source, topic, filterJson);
   }
 
   private requireAgent(agentId: string): SpaceLongHorizonAgent {

@@ -10430,11 +10430,36 @@ export function runMigration151(db: BunDatabase): void {
 
   const now = Date.now();
   db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agents (
+      id, space_id, handle, display_name, template_key, status, session_id,
+      instructions, autonomy_level, model, thinking_level, tool_permissions_json, created_at, updated_at
+    )
+    SELECT
+      legacy.agent_id,
+      legacy.space_id,
+      COALESCE(space_agents.handle, space_agents.name, legacy.agent_id),
+      COALESCE(space_agents.name, space_agents.handle, legacy.agent_id),
+      'migration.legacy_space_agent',
+      'active',
+      NULL,
+      COALESCE(space_agents.instructions, space_agents.system_prompt, ''),
+      NULL,
+      space_agents.model,
+      NULL,
+      COALESCE(space_agents.tools, '[]'),
+      COALESCE(space_agents.created_at, legacy.created_at, ?),
+      ?
+    FROM space_agent_event_subscriptions legacy
+    LEFT JOIN space_agents ON space_agents.id = legacy.agent_id AND space_agents.space_id = legacy.space_id
+    GROUP BY legacy.space_id, legacy.agent_id`
+  ).run(now, now);
+
+  db.prepare(
     `INSERT OR IGNORE INTO space_long_horizon_agent_event_subscriptions (
       id, space_id, agent_id, source, topic, filter_json, status, created_at, updated_at
     )
     SELECT
-      'm151:' || legacy.space_id || ':' || legacy.agent_id || ':' || legacy.topic_pattern,
+      'm151:' || legacy.space_id || ':' || legacy.agent_id || ':' || legacy.topic_pattern || ':' || COALESCE(legacy.label, ''),
       legacy.space_id,
       legacy.agent_id,
       substr(legacy.topic_pattern, 1, instr(legacy.topic_pattern || '/', '/') - 1),

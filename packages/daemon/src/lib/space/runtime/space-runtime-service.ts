@@ -352,10 +352,12 @@ export class SpaceRuntimeService {
     idempotencyKey: string;
   }): Promise<{ delivered: boolean }> {
     const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
-    if (!agent || agent.spaceId !== args.spaceId) return { delivered: false };
+    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
+      return { delivered: false };
+    }
     const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
     if (session) {
-      await this.injectLongTermAgentMessage(session, args.message);
+      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
       return { delivered: true };
     }
     return { delivered: false };
@@ -486,12 +488,10 @@ export class SpaceRuntimeService {
     const repo = this.config.longHorizonAgentRepo;
     if (!sessionManager || !repo) return null;
     const agent = repo.getById(agentId);
-    if (!agent || agent.spaceId !== spaceId) return null;
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return null;
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
-    const sessionId =
-      agent.sessionId ??
-      `space:long-horizon-agent:${encodeActorIdComponent(spaceId)}:${encodeActorIdComponent(agentId)}`;
+    const sessionId = longTermAgentSessionId(spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
     if (!session) {
       try {
@@ -519,8 +519,20 @@ export class SpaceRuntimeService {
       }
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
-      if (!agent.sessionId) repo.update(agent.id, { sessionId });
     }
+    if (agent.sessionId !== sessionId) repo.update(agent.id, { sessionId });
+    const currentMetadata = session.getSessionData().metadata;
+    this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+      metadata: {
+        ...currentMetadata,
+        promptProvenance: {
+          source: agent.templateKey ?? 'long_horizon_agent',
+          hash: agent.id,
+          agentId: agent.id,
+          agentName: agent.displayName,
+        },
+      },
+    });
     this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null);
     return session;
   }

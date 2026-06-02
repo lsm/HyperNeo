@@ -472,14 +472,37 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   function requireLongHorizonAgentInSpace(agentId: string) {
-    const agent = requireLongHorizonAgentRepo().getById(agentId);
-    if (!agent || agent.spaceId !== spaceId)
+    const repo = requireLongHorizonAgentRepo();
+    const existing = repo.getById(agentId);
+    if (existing) {
+      if (existing.spaceId !== spaceId) throw new Error(`Long-horizon agent not found: ${agentId}`);
+      return existing;
+    }
+
+    const spaceAgent = spaceAgentManager.getById(agentId);
+    if (!spaceAgent || spaceAgent.spaceId !== spaceId) {
       throw new Error(`Long-horizon agent not found: ${agentId}`);
-    return agent;
+    }
+
+    return repo.create({
+      id: spaceAgent.id,
+      spaceId,
+      handle: spaceAgent.handle ?? spaceAgent.name,
+      displayName: spaceAgent.name,
+      status: 'active',
+      instructions: spaceAgent.customPrompt ?? '',
+      model: spaceAgent.model,
+      thinkingLevel: spaceAgent.thinkingLevel,
+      toolPermissions: {},
+    });
   }
 
   function sourceFromTopicPattern(topicPattern: string): string {
     return topicPattern.split('/')[0] ?? '';
+  }
+
+  function filterJsonFromLabel(label?: string): string {
+    return JSON.stringify(label ? { label } : {});
   }
 
   function requireSpaceAgentInSpace(agentId: string): SpaceAgent {
@@ -832,6 +855,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           filter: args.label ? { label: args.label } : {},
           status: 'active',
         });
+        const refresh = runtime.refreshLongHorizonSubscription(spaceId, subscription.id);
+        if (!refresh.success) {
+          return jsonResult({ success: false, error: refresh.error ?? 'invalid pattern' });
+        }
         logAudit('subscribe_agent_event', args);
         return jsonResult({ success: true, subscription });
       } catch (err) {
@@ -843,14 +870,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async unsubscribe_agent_event(args: {
       agent_id: string;
       topic_pattern: string;
+      label?: string;
     }): Promise<ToolResult> {
       try {
         requireLongHorizonAgentInSpace(args.agent_id);
-        requireLongHorizonAgentRepo().deleteSubscriptionByAgentTopic(
+        const repo = requireLongHorizonAgentRepo();
+        const source = sourceFromTopicPattern(args.topic_pattern);
+        const filterJson = filterJsonFromLabel(args.label);
+        const subscription = repo.getSubscriptionByRoute(
           spaceId,
           args.agent_id,
-          args.topic_pattern
+          source,
+          args.topic_pattern,
+          filterJson
         );
+        repo.deleteSubscriptionByRoute(
+          spaceId,
+          args.agent_id,
+          source,
+          args.topic_pattern,
+          filterJson
+        );
+        if (subscription) runtime.removeLongHorizonSubscription(spaceId, subscription.id);
         logAudit('unsubscribe_agent_event', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -3428,7 +3469,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'subscribe_agent_event',
         'Record an external-event subscription for a long-horizon Space agent.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           topic_pattern: z.string().describe('External event topic glob pattern'),
           label: z.string().optional().describe('Human-readable subscription label'),
         },
@@ -3438,15 +3479,16 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'unsubscribe_agent_event',
         'Remove an external-event subscription from a long-horizon Space agent.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           topic_pattern: z.string().describe('External event topic glob pattern'),
+          label: z.string().optional().describe('Human-readable subscription label'),
         },
         (args) => handlers.unsubscribe_agent_event(args)
       ),
       tool(
         'list_agent_event_subscriptions',
         'List external-event subscriptions for a long-horizon Space agent.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        { agent_id: z.string().describe('Long-horizon agent ID') },
         (args) => handlers.list_agent_event_subscriptions(args)
       )
     );

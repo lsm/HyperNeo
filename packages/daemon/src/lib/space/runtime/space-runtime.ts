@@ -942,6 +942,46 @@ export class SpaceRuntime {
     return { success: true };
   }
 
+  refreshLongHorizonSubscription(
+    spaceId: string,
+    subscriptionId: string
+  ): { success: boolean; error?: string } {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return { success: false, error: 'Long-horizon agent repository unavailable.' };
+    this.topicTrie.remove(
+      (target) =>
+        isLongHorizonSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.subscriptionId === subscriptionId
+    );
+    const subscription = repo.getSubscription(subscriptionId);
+    if (!subscription || subscription.spaceId !== spaceId || subscription.status !== 'active') {
+      return { success: true };
+    }
+    const agent = repo.getById(subscription.agentId);
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return { success: true };
+    const validation = validateGlobPattern(subscription.topic);
+    if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
+    this.topicTrie.insert(subscription.topic, {
+      kind: 'long_horizon_agent',
+      spaceId: subscription.spaceId,
+      agentId: subscription.agentId,
+      source: subscription.source,
+      topic: subscription.topic,
+      subscriptionId: subscription.id,
+    });
+    return { success: true };
+  }
+
+  removeLongHorizonSubscription(spaceId: string, subscriptionId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isLongHorizonSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.subscriptionId === subscriptionId
+    );
+  }
+
   unregisterSubscription(
     workflowRunId: string,
     taskId: string,
@@ -1043,24 +1083,46 @@ export class SpaceRuntime {
       string,
       { target: WorkflowSubscriptionTarget; deliveryKey: string }
     >();
-    const longHorizonMatches = matches.filter(isLongHorizonSubscriptionTarget);
+    const longHorizonDeliveries = new Map<
+      string,
+      { target: LongHorizonSubscriptionTarget; deliveryKey: string }
+    >();
     for (const match of matches) {
-      if (isLongHorizonSubscriptionTarget(match)) continue;
       try {
+        if (isLongHorizonSubscriptionTarget(match)) {
+          const deliveryKey = this.buildLongHorizonDeliveryKey(match, payload);
+          store.registerExpectedDelivery(payload.eventId, deliveryKey, {
+            workflowRunId: `long_horizon:${match.spaceId}`,
+            taskId: match.subscriptionId,
+            nodeId: match.agentId,
+            agentName: match.agentId,
+          });
+          longHorizonDeliveries.set(deliveryKey, { target: match, deliveryKey });
+          continue;
+        }
         const target = this.resolveSubscriptionTarget(match);
         const deliveryKey = this.buildDeliveryKey(target, payload);
         store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
         workflowDeliveries.set(deliveryKey, { target, deliveryKey });
       } catch (err) {
+        const targetDescription = isLongHorizonSubscriptionTarget(match)
+          ? `${match.spaceId}/${match.agentId}`
+          : `${match.workflowRunId}/${match.nodeId}/${match.agentName}`;
         log.warn(
           `SpaceRuntime: failed to register external event ${payload.eventId} for ` +
-            `${match.workflowRunId}/${match.nodeId}/${match.agentName}: ${formatCommandError(err)}`
+            `${targetDescription}: ${formatCommandError(err)}`
         );
       }
     }
 
-    for (const match of longHorizonMatches) {
-      await this.deliverToLongHorizonAgent(match, payload, workflowDeliveries.size === 0);
+    for (const { target, deliveryKey } of longHorizonDeliveries.values()) {
+      if (
+        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
+        this.externalEventDeliveriesInFlight.has(deliveryKey)
+      ) {
+        continue;
+      }
+      await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
@@ -1102,30 +1164,73 @@ export class SpaceRuntime {
   private async deliverToLongHorizonAgent(
     target: LongHorizonSubscriptionTarget,
     event: ExternalEventPublishedPayload,
-    markEventDeliveredOnSuccess: boolean
+    deliveryKey: string
   ): Promise<void> {
-    if (!this.config.deliverLongHorizonExternalEvent) {
-      log.warn(
-        `SpaceRuntime: long-horizon event delivery unavailable for ${target.spaceId}/${target.agentId}`
-      );
-      return;
-    }
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
+      if (!this.config.deliverLongHorizonExternalEvent) {
+        throw new Error('long-horizon event delivery unavailable');
+      }
       const result = await this.config.deliverLongHorizonExternalEvent({
         spaceId: target.spaceId,
         agentId: target.agentId,
         message: this.formatExternalEventMessage(event),
-        idempotencyKey: this.buildLongHorizonDeliveryKey(target, event),
+        idempotencyKey: deliveryKey,
       });
-      if (result.delivered && markEventDeliveredOnSuccess) {
-        this.config.externalEventStore?.markEventDelivered(event.eventId);
-      }
+      if (!result.delivered) throw new Error('long-horizon agent unavailable');
+      this.clearExternalEventRetry(deliveryKey);
+      store.markDeliveryDelivered(event.eventId, deliveryKey);
+      store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
+      store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
     } catch (err) {
+      const failureReason = err instanceof Error ? err.message : String(err);
+      store.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: false,
+        reason: failureReason,
+      });
+      this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
       log.warn(
         `SpaceRuntime: failed to deliver external event ${event.eventId} to long-horizon agent ` +
-          `${target.agentId}: ${formatCommandError(err)}`
+          `${target.agentId}: ${failureReason}`
       );
+    } finally {
+      this.externalEventDeliveriesInFlight.delete(deliveryKey);
     }
+  }
+
+  private scheduleLongHorizonEventRetry(
+    target: LongHorizonSubscriptionTarget,
+    event: ExternalEventPublishedPayload,
+    deliveryKey: string,
+    failureReason: string
+  ): void {
+    if (this.externalEventRetryTimers.has(deliveryKey)) return;
+    const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
+    this.externalEventRetryCounts.set(deliveryKey, attempts);
+    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: true,
+        reason: failureReason,
+      });
+      this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+      this.clearExternalEventRetry(deliveryKey);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.externalEventRetryTimers.delete(deliveryKey);
+      if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
+        this.clearExternalEventRetry(deliveryKey);
+        return;
+      }
+      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
+        return;
+      }
+      void this.deliverToLongHorizonAgent(target, event, deliveryKey);
+    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    this.externalEventRetryTimers.set(deliveryKey, timer);
   }
 
   private async enqueueDeliverableExternalEvent(
@@ -3359,22 +3464,13 @@ export class SpaceRuntime {
       (target) => isLongHorizonSubscriptionTarget(target) && target.spaceId === spaceId
     );
     for (const subscription of repo.listActiveSubscriptionsBySpace(spaceId)) {
-      const validation = validateGlobPattern(subscription.topic);
-      if (!validation.valid) {
+      const result = this.refreshLongHorizonSubscription(spaceId, subscription.id);
+      if (!result.success) {
         log.warn(
           `SpaceRuntime: skipping invalid long-horizon subscription ${subscription.id}: ` +
-            (validation.reason ?? 'invalid pattern')
+            (result.error ?? 'invalid pattern')
         );
-        continue;
       }
-      this.topicTrie.insert(subscription.topic, {
-        kind: 'long_horizon_agent',
-        spaceId: subscription.spaceId,
-        agentId: subscription.agentId,
-        source: subscription.source,
-        topic: subscription.topic,
-        subscriptionId: subscription.id,
-      });
     }
   }
 

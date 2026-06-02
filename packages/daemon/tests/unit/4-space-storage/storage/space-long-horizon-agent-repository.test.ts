@@ -242,6 +242,14 @@ describe('SpaceLongHorizonAgentRepository', () => {
       filter: { label: 'reviews' },
       status: 'active',
     });
+    repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'triage' },
+      status: 'active',
+    });
     expect(repo.listActiveSubscriptionsBySpace('space-1')).toEqual([
       expect.objectContaining({
         id: created.id,
@@ -249,13 +257,21 @@ describe('SpaceLongHorizonAgentRepository', () => {
         topic: 'github/lsm/neokai/pull_request/*.review_submitted',
         status: 'active',
       }),
+      expect.objectContaining({
+        agentId: agent.id,
+        filter: { label: 'triage' },
+      }),
     ]);
 
-    repo.deleteSubscriptionByAgentTopic(
+    repo.deleteSubscriptionByRoute(
       'space-1',
       agent.id,
-      'github/lsm/neokai/pull_request/*.review_submitted'
+      'github',
+      'github/lsm/neokai/pull_request/*.review_submitted',
+      JSON.stringify({ label: 'reviews' })
     );
-    expect(repo.listSubscriptions(agent.id)).toHaveLength(0);
+    expect(repo.listSubscriptions(agent.id)).toEqual([
+      expect.objectContaining({ filter: { label: 'triage' } }),
+    ]);
   });
 });

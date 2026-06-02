@@ -170,6 +170,7 @@ function makeCtx(): TestCtx {
     workflowRunRepo,
     taskRepo,
     nodeExecutionRepo,
+    longHorizonAgentRepo,
   });
 
   const taskManager = new SpaceTaskManager(db, spaceId);
@@ -569,6 +570,22 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(subscriptions.subscriptions[0].topic).toBe('github/*/*/pull_request/*');
     expect(subscriptions.subscriptions[0].filter).toEqual({ label: 'PR activity' });
+
+    const removed = JSON.parse(
+      (
+        await handlers.unsubscribe_agent_event({
+          agent_id: longHorizonAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+          label: 'PR activity',
+        })
+      ).content[0].text
+    );
+    expect(removed.success).toBe(true);
+    const afterUnsubscribe = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
+    );
+    expect(afterUnsubscribe.subscriptions).toEqual([]);
 
     expect(
       JSON.parse(
