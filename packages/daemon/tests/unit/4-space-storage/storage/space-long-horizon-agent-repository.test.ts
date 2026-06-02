@@ -209,4 +209,53 @@ describe('SpaceLongHorizonAgentRepository', () => {
       status: 'active',
     });
   });
+
+  test('upserts, lists active, and deletes event subscriptions by route', () => {
+    const agent = repo.ensureCoordinator('space-1');
+
+    const created = repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'reviews' },
+      status: 'active',
+    });
+    const updated = repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'reviews' },
+      status: 'paused',
+    });
+
+    expect(updated.id).toBe(created.id);
+    expect(updated.status).toBe('paused');
+    expect(repo.listActiveSubscriptionsBySpace('space-1')).toHaveLength(0);
+
+    repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'reviews' },
+      status: 'active',
+    });
+    expect(repo.listActiveSubscriptionsBySpace('space-1')).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        agentId: agent.id,
+        topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+        status: 'active',
+      }),
+    ]);
+
+    repo.deleteSubscriptionByAgentTopic(
+      'space-1',
+      agent.id,
+      'github/lsm/neokai/pull_request/*.review_submitted'
+    );
+    expect(repo.listSubscriptions(agent.id)).toHaveLength(0);
+  });
 });

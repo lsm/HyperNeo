@@ -686,6 +686,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 150: Create providers table for unified provider registry.
   runMigration150(db);
+
+  // Migration 151: Consolidate agent event subscriptions into long-horizon table.
+  runMigration151(db);
 }
 
 /**
@@ -10412,4 +10415,39 @@ function runMigration150(db: BunDatabase): void {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
+}
+
+/**
+ * Migration 151 — Consolidate legacy agent event subscriptions.
+ */
+export function runMigration151(db: BunDatabase): void {
+  const hasLegacy = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_event_subscriptions'`
+    )
+    .get();
+  if (!hasLegacy) return;
+
+  const now = Date.now();
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agent_event_subscriptions (
+      id, space_id, agent_id, source, topic, filter_json, status, created_at, updated_at
+    )
+    SELECT
+      'm151:' || legacy.space_id || ':' || legacy.agent_id || ':' || legacy.topic_pattern,
+      legacy.space_id,
+      legacy.agent_id,
+      substr(legacy.topic_pattern, 1, instr(legacy.topic_pattern || '/', '/') - 1),
+      legacy.topic_pattern,
+      CASE
+        WHEN legacy.label IS NULL OR legacy.label = '' THEN '{}'
+        ELSE json_object('label', legacy.label)
+      END,
+      'active',
+      legacy.created_at,
+      ?
+    FROM space_agent_event_subscriptions legacy
+    JOIN space_long_horizon_agents agents ON agents.id = legacy.agent_id AND agents.space_id = legacy.space_id`
+  ).run(now);
+  db.exec(`DROP TABLE IF EXISTS space_agent_event_subscriptions`);
 }

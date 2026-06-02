@@ -48,6 +48,7 @@ import { z } from 'zod';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
@@ -69,6 +70,7 @@ import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { validateGlobPattern } from '../../external-events/topic-validator';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 
 const log = new Logger('space-agent-tools');
@@ -229,6 +231,8 @@ export interface SpaceAgentToolsConfig {
   spaceId: string;
   /** SQLite database for long-horizon agent assignment metadata. */
   db?: BunDatabase;
+  /** Long-horizon agent repository for durable agent event subscriptions. */
+  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   /** SpaceRuntime for starting and managing workflow runs. */
   runtime: SpaceRuntime;
   /** Workflow manager for listing available workflows. */
@@ -459,6 +463,23 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   function requireLongHorizonAgentDb(): BunDatabase {
     if (!db) throw new Error('Long-horizon agent management not available');
     return db;
+  }
+
+  function requireLongHorizonAgentRepo(): SpaceLongHorizonAgentRepository {
+    if (!config.longHorizonAgentRepo)
+      throw new Error('Long-horizon agent management not available');
+    return config.longHorizonAgentRepo;
+  }
+
+  function requireLongHorizonAgentInSpace(agentId: string) {
+    const agent = requireLongHorizonAgentRepo().getById(agentId);
+    if (!agent || agent.spaceId !== spaceId)
+      throw new Error(`Long-horizon agent not found: ${agentId}`);
+    return agent;
+  }
+
+  function sourceFromTopicPattern(topicPattern: string): string {
+    return topicPattern.split('/')[0] ?? '';
   }
 
   function requireSpaceAgentInSpace(agentId: string): SpaceAgent {
@@ -797,16 +818,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       label?: string;
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
-        requireLongHorizonAgentDb()
-          .prepare(
-            `INSERT INTO space_agent_event_subscriptions
-						 (space_id, agent_id, topic_pattern, label, created_at) VALUES (?, ?, ?, ?, ?)
-							 ON CONFLICT(agent_id, topic_pattern) DO UPDATE SET label = excluded.label`
-          )
-          .run(spaceId, args.agent_id, args.topic_pattern, args.label ?? null, Date.now());
+        requireLongHorizonAgentInSpace(args.agent_id);
+        const validation = validateGlobPattern(args.topic_pattern);
+        if (!validation.valid) {
+          return jsonResult({ success: false, error: validation.reason ?? 'invalid pattern' });
+        }
+        const repo = requireLongHorizonAgentRepo();
+        const subscription = repo.upsertSubscription({
+          spaceId,
+          agentId: args.agent_id,
+          source: sourceFromTopicPattern(args.topic_pattern),
+          topic: args.topic_pattern,
+          filter: args.label ? { label: args.label } : {},
+          status: 'active',
+        });
         logAudit('subscribe_agent_event', args);
-        return jsonResult({ success: true });
+        return jsonResult({ success: true, subscription });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
@@ -818,13 +845,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       topic_pattern: string;
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
-        requireLongHorizonAgentDb()
-          .prepare(
-            `DELETE FROM space_agent_event_subscriptions
-						 WHERE space_id = ? AND agent_id = ? AND topic_pattern = ?`
-          )
-          .run(spaceId, args.agent_id, args.topic_pattern);
+        requireLongHorizonAgentInSpace(args.agent_id);
+        requireLongHorizonAgentRepo().deleteSubscriptionByAgentTopic(
+          spaceId,
+          args.agent_id,
+          args.topic_pattern
+        );
         logAudit('unsubscribe_agent_event', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -835,13 +861,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async list_agent_event_subscriptions(args: { agent_id: string }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
-        const subscriptions = requireLongHorizonAgentDb()
-          .prepare(
-            `SELECT * FROM space_agent_event_subscriptions
-						 WHERE space_id = ? AND agent_id = ? ORDER BY created_at ASC`
-          )
-          .all(spaceId, args.agent_id);
+        requireLongHorizonAgentInSpace(args.agent_id);
+        const subscriptions = requireLongHorizonAgentRepo().listSubscriptions(args.agent_id);
         return jsonResult({ success: true, subscriptions });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

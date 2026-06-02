@@ -87,7 +87,7 @@ export function validateGlobPattern(pattern: string): ValidationResult {
  * their identifier here so unknown/typo'd sources fail loudly at publish time
  * rather than silently storing topics that no subscriber will ever match.
  */
-export const KNOWN_SOURCES: ReadonlySet<string> = new Set<string>(['github']);
+export const KNOWN_SOURCES: ReadonlySet<string> = new Set<string>(['github', 'space']);
 
 /**
  * Validate that a topic is a literal (no wildcards) suitable for storing

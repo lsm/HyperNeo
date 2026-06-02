@@ -25,6 +25,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -132,6 +133,7 @@ interface TestCtx {
   runtime: SpaceRuntime;
   nodeExecutionRepo: NodeExecutionRepository;
   spaceManager: SpaceManager;
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   goalService: SpaceGoalService;
   evolutionRepo: EvolutionRepository;
   evolutionScopeService: EvolutionScopeService;
@@ -158,6 +160,7 @@ function makeCtx(): TestCtx {
   const nodeExecutionRepo = new NodeExecutionRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const spaceManager = new SpaceManager(db);
+  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
   const runtime = new SpaceRuntime({
     db,
@@ -245,6 +248,7 @@ function makeCtx(): TestCtx {
     runtime,
     nodeExecutionRepo,
     spaceManager,
+    longHorizonAgentRepo,
     goalService,
     evolutionRepo,
     evolutionScopeService,
@@ -264,6 +268,7 @@ function makeHandlers(ctx: TestCtx) {
     spaceAgentManager: ctx.agentManager,
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     spaceManager: ctx.spaceManager,
+    longHorizonAgentRepo: ctx.longHorizonAgentRepo,
     goalService: ctx.goalService,
     evolutionScopeService: ctx.evolutionScopeService,
     evolutionEpisodeService: ctx.evolutionEpisodeService,
@@ -541,11 +546,17 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(reminders.reminders).toHaveLength(1);
 
+    const longHorizonAgent = ctx.longHorizonAgentRepo.create({
+      id: 'lh-tools-agent',
+      spaceId: ctx.spaceId,
+      handle: '@tools-agent',
+      displayName: 'Tools Agent',
+    });
     expect(
       JSON.parse(
         (
           await handlers.subscribe_agent_event({
-            agent_id: agent.id,
+            agent_id: longHorizonAgent.id,
             topic_pattern: 'github/*/*/pull_request/*',
             label: 'PR activity',
           })
@@ -553,9 +564,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).success
     ).toBe(true);
     const subscriptions = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
     );
-    expect(subscriptions.subscriptions[0].topic_pattern).toBe('github/*/*/pull_request/*');
+    expect(subscriptions.subscriptions[0].topic).toBe('github/*/*/pull_request/*');
+    expect(subscriptions.subscriptions[0].filter).toEqual({ label: 'PR activity' });
 
     expect(
       JSON.parse(
