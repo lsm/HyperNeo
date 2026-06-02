@@ -279,11 +279,15 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     if (!record) throw new Error(`Provider ${data.id} not found`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
-      // DB-first: delete the row before touching the registry so a failure in
-      // credential removal doesn't leave a ghost record that resurrects on restart.
-      providerRepo.deleteProvider(data.id);
       if (record.kind === 'built_in') {
+        // Built-ins cannot be truly deleted; keep the row disabled so the
+        // disabled state persists across daemon restarts.
+        providerRepo.updateProvider(data.id, { isEnabled: false });
         markBuiltInProviderDisabled(record.providerId);
+      } else {
+        // DB-first: delete the row before touching the registry so a failure in
+        // credential removal doesn't leave a ghost record that resurrects on restart.
+        providerRepo.deleteProvider(data.id);
       }
       await removeProviderFromRegistry(record.providerId);
       try {

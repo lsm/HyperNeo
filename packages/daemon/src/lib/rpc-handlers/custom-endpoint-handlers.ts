@@ -154,16 +154,7 @@ async function persistAndSync(
 ): Promise<void> {
   // Filter out custom endpoints disabled in the providers table so legacy
   // sync does not re-register them despite is_enabled = 0.
-  let syncEndpoints = endpoints;
-  if (db) {
-    const disabledIds = new Set(
-      db.providers
-        .listProviders()
-        .filter((p) => p.kind === 'custom_endpoint' && !p.isEnabled)
-        .map((p) => p.providerId)
-    );
-    syncEndpoints = endpoints.filter((e) => !disabledIds.has(customProviderIdFor(e.id)));
-  }
+  const syncEndpoints = db ? filterDisabledCustomEndpoints(endpoints, db) : endpoints;
 
   const updated = settingsManager.updateGlobalSettings({ customEndpoints: endpoints });
   const { syncCustomEndpointProviders } = await import('../providers/factory.js');
@@ -218,6 +209,25 @@ export function withCustomEndpointsLock<T>(fn: () => Promise<T>): Promise<T> {
   // Swallow errors on the queue tail so one failure doesn't poison the chain.
   mutationQueue = run.catch(() => {});
   return run;
+}
+
+/**
+ * Filter out custom endpoints that are disabled in the providers table.
+ * Used by both the legacy custom-endpoint handlers and the generic settings
+ * handlers so disabled endpoints are not re-registered by unrelated syncs.
+ */
+export function filterDisabledCustomEndpoints(
+  endpoints: CustomEndpointConfig[],
+  db: Database
+): CustomEndpointConfig[] {
+  if (!db?.providers?.listProviders) return endpoints;
+  const disabledIds = new Set(
+    db.providers
+      .listProviders()
+      .filter((p) => p.kind === 'custom_endpoint' && !p.isEnabled)
+      .map((p) => p.providerId)
+  );
+  return endpoints.filter((e) => !disabledIds.has(customProviderIdFor(e.id)));
 }
 
 export function registerCustomEndpointHandlers(

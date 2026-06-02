@@ -79,8 +79,13 @@ export function registerSettingsHandlers(
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
         if (touchesCustomEndpoints) {
+          const { filterDisabledCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+          const endpointsToSync = filterDisabledCustomEndpoints(
+            data.updates.customEndpoints ?? [],
+            db
+          );
           const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-          await syncCustomEndpointProviders(data.updates.customEndpoints);
+          await syncCustomEndpointProviders(endpointsToSync);
           // Stale model cache would still list removed custom models and
           // miss newly added ones until the TTL expires.
           const { clearModelsCache } = await import('../model-service');
@@ -138,8 +143,13 @@ export function registerSettingsHandlers(
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
       if (customEndpointsProvided) {
+        const { filterDisabledCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+        const endpointsToSync = filterDisabledCustomEndpoints(
+          data.settings.customEndpoints ?? [],
+          db
+        );
         const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-        await syncCustomEndpointProviders(data.settings.customEndpoints);
+        await syncCustomEndpointProviders(endpointsToSync);
         const { clearModelsCache } = await import('../model-service');
         clearModelsCache();
       }
