@@ -417,7 +417,6 @@ describe('ScopeDetailPanel', () => {
       params: {
         policyPatch: {
           automation: {
-            completedTaskThreshold: 7,
             completedTaskAutomationEnabled: false,
           },
         },

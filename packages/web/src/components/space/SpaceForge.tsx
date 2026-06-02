@@ -1623,17 +1623,20 @@ export function ScopeDetail({
   }) => {
     const version = ++completedTaskAutomationRequestVersion.current;
     const currentAutomation = scope.policy.automation ?? {};
-    const nextAutomation = { ...currentAutomation };
+    const patch: Partial<typeof currentAutomation> = {};
     if (updates.enabled !== undefined) {
-      nextAutomation.completedTaskAutomationEnabled = updates.enabled;
-      if (updates.enabled && nextAutomation.completedTaskThreshold === undefined) {
-        nextAutomation.completedTaskThreshold = DEFAULT_COMPLETED_TASK_THRESHOLD;
+      patch.completedTaskAutomationEnabled = updates.enabled;
+      if (updates.enabled && currentAutomation.completedTaskThreshold === undefined) {
+        patch.completedTaskThreshold = DEFAULT_COMPLETED_TASK_THRESHOLD;
       }
     }
     if (updates.threshold !== undefined) {
-      nextAutomation.completedTaskThreshold = updates.threshold;
+      patch.completedTaskThreshold = updates.threshold;
     }
-    const threshold = nextAutomation.completedTaskThreshold ?? DEFAULT_COMPLETED_TASK_THRESHOLD;
+    const threshold =
+      patch.completedTaskThreshold ??
+      currentAutomation.completedTaskThreshold ??
+      DEFAULT_COMPLETED_TASK_THRESHOLD;
     if (!Number.isInteger(threshold) || threshold <= 0) {
       setSavingCompletedTaskAutomation(false);
       setSettingsError('Completed-task threshold must be a positive integer');
@@ -1644,7 +1647,7 @@ export function ScopeDetail({
       setSettingsError(null);
       const response = await request<EvolutionScopeUpdateResponse>('evolution.scope.update', {
         id: scope.id,
-        params: { policyPatch: { automation: nextAutomation } },
+        params: { policyPatch: { automation: patch } },
       });
       if (completedTaskAutomationRequestVersion.current !== version) return;
       if (response.scope) {

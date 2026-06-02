@@ -141,6 +141,10 @@ export function validateGoalAutomationSelfNagPolicy(params: {
   policy?: EvolutionScope['policy'];
 }): void {
   validateCompletedTaskThreshold(params.policy);
+  const enabled = params.policy?.automation?.completedTaskAutomationEnabled;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new Error('completedTaskAutomationEnabled must be a boolean');
+  }
   const policy = readAutomationPolicyForScope({
     policy: params.policy ?? {},
   } as EvolutionScope);

@@ -963,6 +963,24 @@ describe('GoalAutomationService', () => {
     ).toThrow('Completed-task automation threshold must be a positive integer');
   });
 
+  it('rejects non-boolean completed-task automation enabled flags', () => {
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: { completedTaskAutomationEnabled: 'false' as never } },
+      })
+    ).toThrow('completedTaskAutomationEnabled must be a boolean');
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: { completedTaskAutomationEnabled: 1 as never } },
+      })
+    ).toThrow('completedTaskAutomationEnabled must be a boolean');
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: { completedTaskAutomationEnabled: false } },
+      })
+    ).not.toThrow();
+  });
+
   it('rejects invalid automation policy patches before scope save', () => {
     const existingPolicy = {
       automation: { completedTaskThreshold: 7, selfNagCronExpression: '0 * * * *' },

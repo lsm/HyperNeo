@@ -134,6 +134,26 @@ describe('Forge evidence capture on task completion', () => {
     expect(artifactEvidence?.metadata.artifactCount).toBe(1);
   });
 
+  it('skips evidence capture for automation review tasks', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Automation skip',
+      objective: 'Do not capture automation task evidence',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Automation skip',
+      evolutionScopeId: scope.id,
+      labels: ['forge', 'review', 'automation'],
+    });
+    const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+    await manager.setTaskStatus(task.id, 'done', { result: 'Reviewed' });
+
+    expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(0);
+  });
+
   it('captures trace-derived evidence through the normal task completion path', async () => {
     const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
     const slowFailureScope = evolutionRepo.createScope({
