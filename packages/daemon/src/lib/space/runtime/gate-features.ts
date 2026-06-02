@@ -40,12 +40,17 @@ function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow):
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
     if (channel.from === '*') {
-      return workflow.nodes.some((n) => n.requireCodexApproval);
+      // Wildcard channels only get Codex when ALL nodes opt in, so one
+      // flagged node cannot force Codex on unrelated unflagged nodes.
+      return workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval);
     }
     // Match by node name — if found, use ONLY this node's flag
     const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
     if (nodeByName) {
-      return !!nodeByName.requireCodexApproval;
+      if (nodeByName.requireCodexApproval) return true;
+      // Continue scanning: the same gate may be reused by another channel
+      // from a different flagged node.
+      continue;
     }
     // Fall back to agent-name matching only when no node name matches
     for (const node of workflow.nodes) {
@@ -291,7 +296,7 @@ function maybeInjectCodexFeature(
   workflow: SpaceWorkflow | undefined,
   definitions: GateFeatureDefinition[]
 ): void {
-  if (gate.script) return; // do not replace custom gate scripts
+  if (gate.script || gate.poll) return; // do not replace custom gate scripts or polls
   if (
     workflow &&
     isApprovalGate(gate) &&

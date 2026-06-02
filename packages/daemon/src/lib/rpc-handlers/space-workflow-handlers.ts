@@ -110,6 +110,7 @@ function buildTemplateUpdateParams(
       name: node.name,
       agents: resolvedAgents,
       ...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
+      ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
     };
   });
 

@@ -1878,6 +1878,7 @@ export function seedBuiltInWorkflows(
           agentId: resolvedIds.get(a.agentId)!,
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
+        ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
       }));
 
       const startNodeId = nodeIdMap.get(template.startNodeId);
