@@ -37,6 +37,7 @@ import { GitHubEventExtension } from './lib/external-events/github';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
+  markBuiltInProviderDisabled,
 } from './lib/providers/factory.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
@@ -308,6 +309,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
 
+    // Seed disabled built-in state so initializeProviders() won't register
+    // providers that were explicitly disabled or deleted in a prior run.
+    for (const record of db.providers.listProviders()) {
+      if (record.kind === 'built_in' && record.isEnabled === false) {
+        markBuiltInProviderDisabled(record.providerId);
+      }
+    }
+
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
@@ -328,7 +337,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // endpoint configs are logged and skipped rather than blocking daemon startup.
     {
       const { syncCustomEndpointProviders } = await import('./lib/providers/factory.js');
-      await syncCustomEndpointProviders(settingsManager.getGlobalSettings().customEndpoints);
+      const { filterDisabledCustomEndpoints } = await import(
+        './lib/rpc-handlers/custom-endpoint-handlers.js'
+      );
+      const endpoints = settingsManager.getGlobalSettings().customEndpoints ?? [];
+      const syncEndpoints = filterDisabledCustomEndpoints(endpoints, db);
+      await syncCustomEndpointProviders(syncEndpoints);
     }
 
     // Sync all enabled providers from the providers table into the registry.

@@ -186,6 +186,7 @@ describe('useModelSwitcher', () => {
   describe('loadModelInfo with mocked hub', () => {
     it('should load current model and available models on mount', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -235,6 +236,7 @@ describe('useModelSwitcher', () => {
 
     it('should classify models by family correctly', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -267,6 +269,7 @@ describe('useModelSwitcher', () => {
 
     it('should set glm provider for glm models', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -294,6 +297,7 @@ describe('useModelSwitcher', () => {
 
     it('should detect kimi family and provider for Kimi models', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -326,6 +330,7 @@ describe('useModelSwitcher', () => {
 
     it('should detect gpt family and anthropic-copilot provider for Copilot GPT models', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -358,6 +363,7 @@ describe('useModelSwitcher', () => {
 
     it('should detect claude family via copilot provider', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -391,6 +397,7 @@ describe('useModelSwitcher', () => {
 
     it('should map OpenRouter models to OpenRouter provider and slash-based families', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -449,6 +456,7 @@ describe('useModelSwitcher', () => {
 
     it('should sort models by family order', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -479,6 +487,7 @@ describe('useModelSwitcher', () => {
 
     it('should handle error during load gracefully', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValue({ acknowledged: true })
@@ -512,6 +521,7 @@ describe('useModelSwitcher', () => {
   describe('switchModel', () => {
     it('should show info toast when switching to same model', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -537,6 +547,7 @@ describe('useModelSwitcher', () => {
 
     it('should switch model successfully', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -572,6 +583,7 @@ describe('useModelSwitcher', () => {
 
     it('should handle switch failure from server', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -601,6 +613,7 @@ describe('useModelSwitcher', () => {
 
     it('should handle switch failure with default error', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -629,6 +642,7 @@ describe('useModelSwitcher', () => {
 
     it('should handle switch error with no connection', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -657,6 +671,7 @@ describe('useModelSwitcher', () => {
 
     it('should handle switch exception', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValue({ acknowledged: true })
@@ -696,6 +711,7 @@ describe('useModelSwitcher', () => {
       const switchingStates: boolean[] = [];
 
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -738,6 +754,7 @@ describe('useModelSwitcher', () => {
 
     it('should update currentModelInfo after successful switch', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -776,6 +793,7 @@ describe('useModelSwitcher', () => {
       // Two providers both expose claude-sonnet-4-20250514; the post-switch find must
       // prefer the entry for the provider that was actually switched to.
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -828,6 +846,7 @@ describe('useModelSwitcher', () => {
   describe('switchModel - provider validation', () => {
     it('should show error when provider is missing from model', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -857,6 +876,7 @@ describe('useModelSwitcher', () => {
   describe('reload', () => {
     it('should reload model info', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           // First load (mount)
@@ -893,6 +913,7 @@ describe('useModelSwitcher', () => {
   describe('sessionId changes', () => {
     it('should reload when sessionId changes', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           // First load (session-1)
@@ -928,9 +949,63 @@ describe('useModelSwitcher', () => {
     });
   });
 
+  describe('providers.changed event', () => {
+    it('should reload model info when providers.changed event fires', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          // First load (mount)
+          .mockResolvedValueOnce({
+            currentModel: 'model-1',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [{ id: 'model-1', display_name: 'Model 1', description: '' }],
+          })
+          // Second load (after providers.changed)
+          .mockResolvedValueOnce({
+            currentModel: 'model-1',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              { id: 'model-1', display_name: 'Model 1', description: '' },
+              { id: 'model-2', display_name: 'Model 2', description: '' },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.availableModels.length).toBe(1);
+
+      // Simulate providers.changed event by invoking the registered handler
+      const eventHandler = mockHub.onEvent.mock.results[0]?.value;
+      // onEvent returns an unsubscribe function; the handler is the second arg
+      const registeredHandler = mockHub.onEvent.mock.calls.find(
+        (call) => call[0] === 'providers.changed'
+      )?.[1];
+      expect(registeredHandler).toBeDefined();
+      await act(async () => {
+        registeredHandler();
+      });
+
+      await waitFor(() => {
+        expect(result.current.availableModels.length).toBe(2);
+      });
+    });
+  });
+
   describe('function stability', () => {
     it('should return stable reload function on same sessionId', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
@@ -1030,6 +1105,7 @@ describe('useModelSwitcher', () => {
   describe('model alias extraction', () => {
     it('should extract alias from model ID', async () => {
       const mockHub = {
+        onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
