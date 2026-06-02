@@ -32,6 +32,7 @@ import type {
 } from '@neokai/shared';
 import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { isApprovalGate } from '../runtime/gate-features';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
@@ -1561,14 +1562,20 @@ function migrateCodexFeatureToNodeToggle(
   // feature; leaving them untouched preserves the legacy feature as the sole
   // mechanism and keeps the checkbox as a single source of truth for
   // non-scripted gates.
+  // Only migrate legacy features on approval gates — dynamic Codex injection
+  // requires isApprovalGate(), so migrating a non-approval gate would break it.
   const codexGateIds = new Set(
-    gates.filter((g) => !g.script && hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
+    gates
+      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
+      .map((g) => g.id)
   );
-  // Scripted gates with legacy codex: strip node toggles so the UI doesn't
-  // show a misleading enabled checkbox for gates where dynamic injection is
-  // blocked and the legacy feature is the actual mechanism.
+  // Scripted approval gates with legacy codex: strip node toggles so the UI
+  // doesn't show a misleading enabled checkbox for gates where dynamic
+  // injection is blocked and the legacy feature is the actual mechanism.
   const scriptedCodexGateIds = new Set(
-    gates.filter((g) => g.script && hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
+    gates
+      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
+      .map((g) => g.id)
   );
 
   const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
@@ -1601,12 +1608,14 @@ function migrateCodexFeatureToNodeToggle(
   const nodesToFlag = collectSourceNodes(codexGateIds);
   const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
 
-  // Also strip toggles for nodes connected to ANY scripted gate (even without
-  // a legacy codex_review_bot feature). Dynamic Codex injection is blocked for
-  // scripted gates, so a node toggle is misleading when the node sends through
-  // one — it appears to require codex[bot] approval but cannot enforce it.
-  const allScriptedGateIds = new Set(gates.filter((g) => g.script).map((g) => g.id));
-  for (const nodeId of collectSourceNodes(allScriptedGateIds)) {
+  // Also strip toggles for nodes connected to ANY scripted approval gate
+  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
+  // is blocked for scripted approval gates, so a node toggle is misleading
+  // when the node sends through one.
+  const allScriptedApprovalGateIds = new Set(
+    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
+  );
+  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
     nodesToUnflag.add(nodeId);
   }
 
