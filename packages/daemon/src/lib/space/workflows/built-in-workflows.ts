@@ -1610,12 +1610,6 @@ function migrateCodexFeatureToNodeToggle(
     nodesToUnflag.add(nodeId);
   }
 
-  // Nodes connected to both scripted and non-scripted codex gates keep the
-  // toggle (the non-scripted gate migration takes precedence).
-  for (const nodeId of nodesToFlag) {
-    nodesToUnflag.delete(nodeId);
-  }
-
   const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
   const migratedNodes = needsNodeChange
     ? nodes.map((node) => {

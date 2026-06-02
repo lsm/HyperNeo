@@ -430,7 +430,7 @@ export function validateGateFeatures(gate: Gate): string[] {
   return errors;
 }
 
-function isApprovalGate(gate: Gate): boolean {
+export function isApprovalGate(gate: Gate): boolean {
   return (gate.fields ?? []).some((f) => {
     if (f.name === 'approved') return true;
     if (f.name === 'approvals' && f.type === 'map') {

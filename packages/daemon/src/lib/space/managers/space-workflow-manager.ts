@@ -31,6 +31,7 @@ import {
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator';
 import { validateGate } from '../runtime/gate-evaluator';
+import { isApprovalGate } from '../runtime/gate-features';
 import { slugify, validateSlug } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
@@ -501,6 +502,9 @@ export class SpaceWorkflowManager {
         `node[${index}]: codexPollIntervalMs must be a positive number`
       );
     }
+    if (!Number.isInteger(node.codexPollIntervalMs)) {
+      throw new WorkflowValidationError(`node[${index}]: codexPollIntervalMs must be an integer`);
+    }
   }
 
   private validateCodexApprovalFlag(node: WorkflowNodeInput, index: number): void {
@@ -529,14 +533,14 @@ export class SpaceWorkflowManager {
         const ch = channels[ci];
         if (!ch.gateId) continue;
         const gate = gateMap.get(ch.gateId);
-        if (!gate?.script) continue;
+        if (!gate?.script || !isApprovalGate(gate)) continue;
 
         const originatesFromNode = ch.from === '*' || nodeRefs.has(ch.from);
 
         if (originatesFromNode) {
           throw new WorkflowValidationError(
-            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted gate "${ch.gateId}" on channel[${ci}]; ` +
-              'dynamic Codex injection is blocked when a gate has a custom script'
+            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on channel[${ci}]; ` +
+              'dynamic Codex injection is blocked when an approval gate has a custom script'
           );
         }
       }
