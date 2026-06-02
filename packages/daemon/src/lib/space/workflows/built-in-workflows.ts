@@ -1484,7 +1484,7 @@ export interface SeedBuiltInWorkflowsResult {
  */
 function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[],
+  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval' | 'requireCodexApproval'>[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
@@ -1518,6 +1518,9 @@ function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
+      requireCodexApproval: templateNode
+        ? templateNode.requireCodexApproval
+        : node.requireCodexApproval,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateGuards = templateAgentsByKey.get(key);
@@ -1545,8 +1548,13 @@ function migrateCodexFeatureToNodeToggle(
   channels: WorkflowChannel[],
   gates: Gate[]
 ): { nodes: WorkflowNode[]; gates: Gate[] } {
+  // Only migrate gates that do not have a custom script. For scripted gates,
+  // dynamic injection is blocked so the node flag cannot replace the legacy
+  // feature; leaving them untouched preserves the legacy feature as the sole
+  // mechanism and keeps the checkbox as a single source of truth for
+  // non-scripted gates.
   const codexGateIds = new Set(
-    gates.filter((g) => hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
+    gates.filter((g) => !g.script && hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
   );
   if (codexGateIds.size === 0) return { nodes, gates };
 
