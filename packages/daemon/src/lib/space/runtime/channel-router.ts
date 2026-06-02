@@ -840,12 +840,22 @@ export class ChannelRouter {
       }
     }
 
-    // Evaluate the gate once (shared across all channels referencing it)
-    const gateResult = await this.evaluateGateById(runId, gateId, workflow);
-    if (gateResult.open) {
+    // Evaluate the gate per channel with source-scoped effective gate so that
+    // an unflagged channel can open even when a flagged channel sharing the
+    // same gate is blocked by Codex.
+    const openChannels: typeof channels = [];
+    for (const ch of channels) {
+      const chResult = await this.evaluateGateById(runId, gateId, workflow, ch.from);
+      if (chResult.open) {
+        openChannels.push(ch);
+      }
+    }
+
+    if (openChannels.length > 0) {
       this.cacheGateOpened(runId, gateId, workflow);
     }
-    if (!gateResult.open) {
+
+    if (openChannels.length === 0) {
       // Notify caller when the gate is waiting for human approval. Only fires for
       // external-approval gates — those with an `approved` field with no declared
       // writers (i.e. only a human can set `approved: true`).
@@ -868,7 +878,6 @@ export class ChannelRouter {
     // Determine if any of these channels are cyclic — if so, enforce the per-channel cap
     // before activating any node (mirrors the guard in deliverMessage).
     const allChannels = workflow.channels ?? [];
-    let cyclicChannelMatch: { index: number; maxCycles: number } | null = null;
     for (const ch of channels) {
       const chIdx = allChannels.indexOf(ch);
       if (chIdx >= 0 && this.isChannelCyclicByIndex(chIdx, workflow)) {
@@ -878,15 +887,23 @@ export class ChannelRouter {
             `Cyclic channel via gate "${gateId}" (index ${chIdx}) has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
           );
         }
-        cyclicChannelMatch = { index: chIdx, maxCycles };
       }
     }
 
-    // Gate is open → collect all unique node IDs that need activation.
-    // Multiple channels may point to the same target (e.g. fan-out via node name),
-    // so deduplicate before spawning to avoid redundant activateNode() calls.
+    // Only increment cycle counters for cyclic channels that actually opened.
+    let cyclicChannelMatch: { index: number; maxCycles: number } | null = null;
+    for (const ch of openChannels) {
+      const chIdx = allChannels.indexOf(ch);
+      if (chIdx >= 0 && this.isChannelCyclicByIndex(chIdx, workflow)) {
+        cyclicChannelMatch = { index: chIdx, maxCycles: ch.maxCycles ?? 5 };
+      }
+    }
+
+    // Gate is open for at least one channel → collect unique node IDs that
+    // need activation from the open channels only. Deduplicate before spawning
+    // to avoid redundant activateNode() calls.
     const nodeIdsToActivate = new Set<string>();
-    for (const channel of channels) {
+    for (const channel of openChannels) {
       const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
       for (const target of targets) {
         // Resolve target: first by agent name, then by node name (fan-out)
