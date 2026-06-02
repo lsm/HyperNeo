@@ -2219,6 +2219,29 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result![0].features).toEqual({ codex_review_bot: true });
   });
 
+  test('re-stamp preserves codex_review_bot on non-approval gates', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const gatesWithNonApprovalCodex = workflow.gates!.map((gate) =>
+      gate.id !== 'code-pr-gate' ? gate : { ...gate, features: { codex_review_bot: true } }
+    );
+
+    repo.updateWorkflow(workflow.id, { gates: gatesWithNonApprovalCodex });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-non-approval-codex-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const gate = after.gates!.find((g) => g.id === 'code-pr-gate')!;
+    expect(gate.features?.codex_review_bot).toBe(true);
+  });
+
   test('mergeGateStructuralFieldsFromTemplate clears non-codex features when template removes them', () => {
     const existingGates = [{ id: 'g1', fields: [], features: { some_other_feature: true } }];
     const templateGates = [{ id: 'g1', fields: [] }];

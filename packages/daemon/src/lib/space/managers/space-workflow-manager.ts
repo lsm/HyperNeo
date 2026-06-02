@@ -330,8 +330,10 @@ export class SpaceWorkflowManager {
       }
     }
 
-    const effectiveChannels = params.channels ?? existing.channels ?? [];
-    const effectiveGates = params.gates ?? existing.gates ?? [];
+    const effectiveChannels =
+      params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);
+    const effectiveGates =
+      params.gates === undefined ? (existing.gates ?? []) : (params.gates ?? []);
     this.validateCodexApprovalAgainstScriptedGates(
       effectiveNodes,
       effectiveChannels,

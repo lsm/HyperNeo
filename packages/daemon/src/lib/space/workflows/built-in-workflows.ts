@@ -1636,9 +1636,9 @@ function migrateCodexFeatureToNodeToggle(
 
   const migratedGates = gates.map((gate) => {
     if (!gate.features?.codex_review_bot) return gate;
-    // Preserve legacy feature on gates with custom scripts since dynamic
-    // injection would be blocked and the node flag cannot replace it.
-    if (gate.script) return gate;
+    // Preserve legacy feature on gates that cannot be replaced by dynamic
+    // approval-gate injection.
+    if (gate.script || !codexGateIds.has(gate.id)) return gate;
     const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
     return {
       ...gate,

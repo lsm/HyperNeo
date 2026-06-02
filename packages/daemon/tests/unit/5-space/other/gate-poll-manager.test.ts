@@ -204,6 +204,28 @@ describe('GatePollManager', () => {
       expect(manager.isPollActive('run-1', 'gate-2')).toBe(true);
     });
 
+    test('starts dynamic codex polls for wildcard channel concrete sources', () => {
+      const gate: Gate = {
+        id: 'wildcard-codex-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const workflow = makeWorkflow(
+        [gate],
+        [{ id: 'ch-1', from: '*', to: 'Reviewer', gateId: gate.id }]
+      );
+      workflow.nodes = workflow.nodes.map((node) =>
+        node.name === 'Coder' ? { ...node, requireCodexApproval: true } : node
+      );
+
+      manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
+
+      expect(manager.activePollCount).toBe(1);
+      expect(manager.isPollActive('run-1', gate.id, 'Coder')).toBe(true);
+    });
+
     test('enforces minimum interval (still starts with clamped value)', () => {
       const workflow = makeWorkflowWithPoll({ intervalMs: 5000 }); // Below minimum
       manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());

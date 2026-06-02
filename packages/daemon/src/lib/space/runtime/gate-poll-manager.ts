@@ -273,15 +273,14 @@ function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
 
     // Wildcard channels need special handling: resolveTargetNodeName cannot
     // target the literal '*' source, so expand dynamically-injected polls to
-    // concrete node names.
+    // concrete node names. Native polls remain gate-scoped and may still use
+    // '*' only after proving the poll exists without source-scoped injection.
     if (channel.from === '*') {
-      const poll = getEffectiveGatePoll(gate, workflow, '*');
-      if (!poll) continue;
-
       if (hasNativePoll) {
-        if (nativeSeen.has(gate.id)) continue;
+        const nativePoll = getEffectiveGatePoll(gate, undefined);
+        if (!nativePoll || nativeSeen.has(gate.id)) continue;
         nativeSeen.add(gate.id);
-        result.push({ gate, poll, sourceName: '*' });
+        result.push({ gate, poll: nativePoll, sourceName: '*' });
       } else {
         for (const node of workflow.nodes) {
           const nodePoll = getEffectiveGatePoll(gate, workflow, node.name);
