@@ -469,6 +469,38 @@ describe('ScopeDetailPanel', () => {
     });
   });
 
+  it('debounces rapid completed-task threshold edits', async () => {
+    setupRequests(makeScope({ policy: { automation: { completedTaskThreshold: 7 } } }));
+    renderPanel();
+
+    await screen.findByRole('heading', { name: 'Review quality scope' });
+    mockRequest.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+        target: { value: '12' },
+      });
+      fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+        target: { value: '15' },
+      });
+
+      expect(mockRequest).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(mockRequest).toHaveBeenCalledWith('evolution.scope.update', {
+          id: 'scope-1',
+          params: {
+            policyPatch: {
+              automation: { completedTaskThreshold: 15 },
+            },
+          },
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows default completed-task automation threshold', async () => {
     renderPanel();
 

@@ -18,6 +18,11 @@ import { Logger } from '../logger';
 
 const log = new Logger('goal-automation-execute');
 const MAX_ACTIVE_REVIEW_REQUEUES = 60;
+const activeAutomationLocks = new Set<string>();
+
+function automationLockKey(payload: GoalAutomationExecutePayload): string {
+  return `${payload.goalId}:${payload.scopeId}:${payload.triggerKind}`;
+}
 
 export interface GoalAutomationExternalEventSnapshot {
   source: string;
@@ -124,57 +129,68 @@ export async function handleGoalAutomationExecute(
     if (findActiveCompletedTaskReviewTask(deps, scope.id, payload)) {
       return requeueActiveReview(deps, payload, dueEvidence.length);
     }
+    const lock = automationLockKey(payload);
+    if (activeAutomationLocks.has(lock)) {
+      return requeueActiveReview(deps, payload, dueEvidence.length);
+    }
+    activeAutomationLocks.add(lock);
   }
 
-  const episodeEvidence = triggerEvidence
-    ? uniqueEvidence([...evidence, triggerEvidence])
-    : evidence;
-  const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
-  if (existingAutomation) {
-    advanceCursor(
-      deps,
-      payload,
-      evidence,
-      existingAutomation.reviewTask,
-      existingAutomation.episodeId
-    );
+  try {
+    const episodeEvidence = triggerEvidence
+      ? uniqueEvidence([...evidence, triggerEvidence])
+      : evidence;
+    const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
+    if (existingAutomation) {
+      advanceCursor(
+        deps,
+        payload,
+        evidence,
+        existingAutomation.reviewTask,
+        existingAutomation.episodeId
+      );
+      return {
+        goalId: goal.id,
+        scopeId: scope.id,
+        episodeId: existingAutomation.episodeId,
+        reviewTaskId: existingAutomation.reviewTask.id,
+        evidenceCount: evidence.length,
+        skipped: false,
+      };
+    }
+
+    const episodeResult = await deps.episodeService.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: episodeEvidence.map((item) => item.id),
+      confirmLowConfidence: true,
+    });
+    const writeResult = runWriteTransaction(deps, () => {
+      const reviewTask = createReviewTask(
+        deps,
+        goal.id,
+        scope.id,
+        episodeResult.episode.id,
+        episodeEvidence,
+        payload
+      );
+      advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
+      return reviewTask;
+    });
+    const reviewTask = writeResult;
+    emitTaskCreated(deps, reviewTask);
     return {
       goalId: goal.id,
       scopeId: scope.id,
-      episodeId: existingAutomation.episodeId,
-      reviewTaskId: existingAutomation.reviewTask.id,
+      episodeId: episodeResult.episode.id,
+      reviewTaskId: reviewTask.id,
       evidenceCount: evidence.length,
       skipped: false,
     };
+  } finally {
+    if (payload.triggerKind === 'completed_task_threshold') {
+      activeAutomationLocks.delete(automationLockKey(payload));
+    }
   }
-
-  const episodeResult = await deps.episodeService.createFromEvidence({
-    scopeId: scope.id,
-    evidenceIds: episodeEvidence.map((item) => item.id),
-    confirmLowConfidence: true,
-  });
-  const writeResult = runWriteTransaction(deps, () => {
-    const reviewTask = createReviewTask(
-      deps,
-      goal.id,
-      scope.id,
-      episodeResult.episode.id,
-      episodeEvidence,
-      payload
-    );
-    advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
-    return reviewTask;
-  });
-  const reviewTask = writeResult;
-  emitTaskCreated(deps, reviewTask);
-  return {
-    goalId: goal.id,
-    scopeId: scope.id,
-    episodeId: episodeResult.episode.id,
-    reviewTaskId: reviewTask.id,
-    evidenceCount: evidence.length,
-    skipped: false,
-  };
 }
 
 function newestCursor<

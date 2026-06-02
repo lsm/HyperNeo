@@ -1563,6 +1563,7 @@ export function ScopeDetail({
   const judgeModelRequestVersion = useRef(0);
   const completedTaskAutomationRequestVersion = useRef(0);
   const judgeModelScopeId = useRef(scope.id);
+  const automationDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const goal = getGoal(scope, goals);
 
   useEffect(() => {
@@ -1573,6 +1574,10 @@ export function ScopeDetail({
     setSavingJudgeModel(false);
     setSavingCompletedTaskAutomation(false);
     setSettingsError(null);
+    if (automationDebounceRef.current) {
+      clearTimeout(automationDebounceRef.current);
+      automationDebounceRef.current = null;
+    }
   }, [scope.id]);
 
   const handleJudgeModelChange = async (
@@ -1617,11 +1622,10 @@ export function ScopeDetail({
     }
   };
 
-  const handleCompletedTaskAutomationChange = async (updates: {
-    enabled?: boolean;
-    threshold?: number;
-  }) => {
-    const version = ++completedTaskAutomationRequestVersion.current;
+  const runCompletedTaskAutomationUpdate = async (
+    version: number,
+    updates: { enabled?: boolean; threshold?: number }
+  ) => {
     const currentAutomation = scope.policy.automation ?? {};
     const patch: Partial<typeof currentAutomation> = {};
     if (updates.enabled !== undefined) {
@@ -1665,6 +1669,26 @@ export function ScopeDetail({
         setSavingCompletedTaskAutomation(false);
       }
     }
+  };
+
+  const handleCompletedTaskAutomationChange = (updates: {
+    enabled?: boolean;
+    threshold?: number;
+  }) => {
+    const version = ++completedTaskAutomationRequestVersion.current;
+    if (automationDebounceRef.current) {
+      clearTimeout(automationDebounceRef.current);
+      automationDebounceRef.current = null;
+    }
+    if (updates.threshold !== undefined) {
+      setSavingCompletedTaskAutomation(true);
+      setSettingsError(null);
+      automationDebounceRef.current = setTimeout(() => {
+        runCompletedTaskAutomationUpdate(version, updates);
+      }, 300);
+      return;
+    }
+    void runCompletedTaskAutomationUpdate(version, updates);
   };
 
   const completedTaskAutomation = scope.policy.automation ?? {};

@@ -1427,6 +1427,96 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
+  it('serializes concurrent completed-task automation jobs for the same scope', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Serialize jobs', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Serialize jobs',
+      objective: 'Avoid overlapping episodes',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const first = taskRepo.createTask({ spaceId, title: 'First task', goalId: goal.id });
+    taskRepo.updateTask(first.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: first.id,
+      summary: 'First result',
+      createdAt: 10,
+    });
+    const second = taskRepo.createTask({ spaceId, title: 'Second task', goalId: goal.id });
+    taskRepo.updateTask(second.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: second.id,
+      summary: 'Second result',
+      createdAt: 20,
+    });
+    const deps = {
+      goalRepo,
+      taskRepo,
+      evolutionRepo,
+      cursorRepo,
+      jobQueue,
+      episodeService: {
+        createFromEvidence: async ({ evidenceIds }: { evidenceIds: string[] }) => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return {
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Serialized retrospective',
+              evidenceIds,
+              outcomeSummary: 'Serialized outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          };
+        },
+      },
+    };
+
+    const [result1, result2] = await Promise.all([
+      handleGoalAutomationExecute(
+        createAutomationJob(
+          {
+            goalId: goal.id,
+            scopeId: scope.id,
+            triggerKind: 'completed_task_threshold',
+            triggerKey: 'threshold:1',
+            reason: 'task_completed',
+            taskId: first.id,
+          },
+          'job-serialize-1'
+        ),
+        deps
+      ),
+      handleGoalAutomationExecute(
+        createAutomationJob(
+          {
+            goalId: goal.id,
+            scopeId: scope.id,
+            triggerKind: 'completed_task_threshold',
+            triggerKey: 'threshold:2',
+            reason: 'task_completed',
+            taskId: second.id,
+          },
+          'job-serialize-2'
+        ),
+        deps
+      ),
+    ]);
+
+    const successes = [result1, result2].filter((r) => !r.skipped);
+    expect(successes).toHaveLength(1);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+    const requeued = [result1, result2].find((r) => r.requeued);
+    expect(requeued).toBeDefined();
+  });
+
   it('deduplicates pending active-review requeues when payload omits external event id', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Dedupe requeue', type: 'recurring' });
     const scope = evolutionRepo.createScope({
