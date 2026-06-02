@@ -1139,5 +1139,41 @@ describe('OpenAI Chat Completions bridge server', () => {
       // must not contain a text block
       expect(text).not.toContain('"type":"text"');
     });
+
+    it('merges side-channel thinking config into the request when SDK omits it', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+        thinkingSupported: true,
+      });
+      servers.push(server);
+      server.setSessionThinkingConfig?.('sess-42', {
+        type: 'enabled',
+        budget_tokens: 8000,
+      });
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer custom-endpoint:sess-42',
+        },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(capturedRequest.reasoning_effort).toBe('medium');
+    });
   });
 });

@@ -44,6 +44,8 @@ const logger = new Logger('openai-chat-bridge-server');
 
 export type OpenAIChatBridgeServer = {
   port: number;
+  /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
+  setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   stop(): void;
 };
 
@@ -741,6 +743,10 @@ export function createOpenAIChatBridgeServer(
   const streamUsageSupported = config.streamUsageSupported ?? false;
   const modelContextWindow = config.modelContextWindow;
 
+  // Per-session thinking config injected by the daemon when the Anthropic SDK client
+  // (Claude Code CLI) omits the thinking field from request bodies.
+  const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
+
   const server = Bun.serve({
     // Bind to loopback so other local users cannot probe the ephemeral port
     // and reach this bridge with the configured upstream API key. The SDK
@@ -750,6 +756,10 @@ export function createOpenAIChatBridgeServer(
     idleTimeout: 0,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
+      const authHeader = req.headers.get('Authorization') ?? '';
+      const sessionId = authHeader.startsWith('Bearer custom-endpoint:')
+        ? authHeader.slice('Bearer custom-endpoint:'.length)
+        : 'default';
 
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
 
@@ -798,6 +808,14 @@ export function createOpenAIChatBridgeServer(
           'invalid_request_error',
           'Only streaming responses are supported'
         );
+      }
+
+      // The Claude Code CLI handles thinking internally and does not include the
+      // thinking field in Anthropic Messages API requests. Merge the per-session
+      // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
+      const sessionThinkingEntry = sessionThinkingConfigs.get(sessionId);
+      if (sessionThinkingEntry?.thinking && !body.thinking) {
+        body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 
       const chatRequest = buildChatRequest(
@@ -866,7 +884,13 @@ export function createOpenAIChatBridgeServer(
 
   return {
     port,
-    stop: () => server.stop(true),
+    setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
+      sessionThinkingConfigs.set(sessionId, { thinking });
+    },
+    stop: () => {
+      sessionThinkingConfigs.clear();
+      server.stop(true);
+    },
   };
 }
 
