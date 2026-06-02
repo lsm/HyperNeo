@@ -2,6 +2,24 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.36.0] - 2026-06-02
+
+Auto-fetch model list from custom endpoints, refresh models on provider changes, Forge task-result backfill, Codex auth reliability fixes, and OpenAI bridge reasoning-content forwarding. 6 commits since v0.35.0.
+
+### Added
+
+- **Auto-fetch model list from custom endpoints**: Custom OpenAI-compatible endpoints now expose their available models via `/v1/models` discovery. Fetched models are merged into the unified provider registry with real-time UI updates
+- **Refresh model list immediately when providers change**: Adding, updating, or removing a provider triggers an immediate model-list refresh so the UI stays in sync without manual reload
+- **Forge task-result backfill**: Terminal task transitions now backfill `task.result` from `reportedSummary` when the result field is empty, ensuring downstream workflow nodes receive actionable output
+
+### Fixed
+
+- **Codex auth stale token refresh**: When OAuth token refresh fails definitively (invalid/revoked token), credentials are now cleared and the user is prompted to re-authenticate instead of receiving repeated 401s
+- **Codex provider re-add after removal**: Built-in providers can now be re-added after deletion; `registerBuiltInProvider` restores the live registry entry on login and sync
+- **Codex logout flow**: ProviderCredentialManager no longer mutates `auth_type` on logout, so the Login button remains visible after sign-out
+- **Forward reasoning_content from OpenAI Chat Completions bridge**: The OpenAI Chat Completions bridge now correctly forwards `reasoning_content` through the response stream
+- **Propagate thinking config to Codex bridge via side-channel**: Thinking configuration is now correctly propagated to the Codex bridge through a dedicated side-channel
+
 ## [0.35.0] - 2026-05-29
 
 Unified provider registry with CRUD RPCs and credential store, rich markdown rendering with KaTeX and Mermaid, persisted Space agent handles, compacted Space workflow prompts, unified Providers settings UI, Codex thumbs-up review gate, test-quality audit, and composer draft race fix. 10 commits since v0.34.0.
