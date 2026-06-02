@@ -17,6 +17,7 @@ const { mockCreateProvider, mockLoginProvider, mockToastError, mockToastSuccess 
 vi.mock('../../../lib/api-helpers.ts', () => ({
   createProvider: (params: unknown, creds?: unknown) => mockCreateProvider(params, creds),
   loginProvider: (providerId: string) => mockLoginProvider(providerId),
+  listCustomEndpointModels: vi.fn(),
 }));
 
 vi.mock('../../../lib/toast.ts', () => ({

@@ -5,6 +5,7 @@
  * Extracted from CustomEndpointsSettings so it can be reused by AddProviderModal.
  */
 
+import { useEffect } from 'preact/hooks';
 import type {
   CustomEndpointConfig,
   CustomEndpointModel,
@@ -78,6 +79,8 @@ export interface EditorState {
    * on subsequent `addModel` clicks.
    */
   presetCapabilities?: Partial<CustomEndpointModelCapabilities>;
+  /** IDs of fetched models the user has checked for addition. */
+  selectedFetchedModelIds?: string[];
 }
 
 export function presetToEditor(preset: CustomEndpointPreset): EditorState {
@@ -370,6 +373,11 @@ export interface EditorModalProps {
   saving: boolean;
   onTest: () => void;
   testing: boolean;
+  onFetchModels: () => void;
+  fetchingModels: boolean;
+  fetchedModels: Array<{ id: string; name?: string }> | null;
+  fetchModelsError: string | null;
+  fetchedAt: number | null;
 }
 
 export function EditorModal({
@@ -381,6 +389,11 @@ export function EditorModal({
   saving,
   onTest,
   testing,
+  onFetchModels,
+  fetchingModels,
+  fetchedModels,
+  fetchModelsError,
+  fetchedAt,
 }: EditorModalProps) {
   const update = (patch: Partial<EditorState>) => onChange({ ...state, ...patch });
   const updateModel = (index: number, next: ModelDraft) => {
@@ -403,6 +416,40 @@ export function EditorModal({
     state.id.trim() &&
     existingIds.includes(state.id.trim().toLowerCase());
   const validationError = validateEditor(state);
+
+  useEffect(() => {
+    if (fetchedModels !== null && state.selectedFetchedModelIds?.length) {
+      update({ selectedFetchedModelIds: [] });
+    }
+  }, [fetchedModels]);
+
+  const existingModelIds = new Set(state.models.map((m) => m.id.trim()));
+  const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
+
+  const toggleFetchedModel = (id: string) => {
+    const current = new Set(state.selectedFetchedModelIds ?? []);
+    if (current.has(id)) current.delete(id);
+    else current.add(id);
+    update({ selectedFetchedModelIds: [...current] });
+  };
+
+  const addSelectedFetchedModels = () => {
+    const selected = new Set(state.selectedFetchedModelIds ?? []);
+    const toAdd =
+      fetchedModels?.filter((m) => selected.has(m.id) && !existingModelIds.has(m.id)) ?? [];
+    if (toAdd.length === 0) return;
+    const newDrafts = toAdd.map((m) =>
+      makeModelDraft(state.type, {
+        id: m.id,
+        name: m.name,
+        capabilities: state.presetCapabilities,
+      })
+    );
+    update({
+      models: [...state.models, ...newDrafts],
+      selectedFetchedModelIds: [],
+    });
+  };
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -536,10 +583,65 @@ export function EditorModal({
           <div class="space-y-2">
             <div class="flex items-center justify-between">
               <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Models</h4>
-              <Button size="xs" variant="secondary" onClick={addModel}>
-                Add model
-              </Button>
+              <div class="flex items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={onFetchModels}
+                  loading={fetchingModels}
+                  disabled={!state.baseUrl.trim() || fetchingModels}
+                >
+                  Fetch models
+                </Button>
+                <Button size="xs" variant="secondary" onClick={addModel}>
+                  Add model
+                </Button>
+              </div>
             </div>
+
+            {fetchModelsError && <p class="text-xs text-red-400">{fetchModelsError}</p>}
+
+            {fetchedModels && (
+              <div class="rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-2.5 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-gray-300">
+                    {fetchedModels.length} model{fetchedModels.length === 1 ? '' : 's'} found
+                    {fetchedAt && (
+                      <span class="text-gray-500 ml-1">
+                        · fetched {new Date(fetchedAt).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </span>
+                  {selectableFetched.length > 0 && (
+                    <Button size="xs" variant="primary" onClick={addSelectedFetchedModels}>
+                      Add selected
+                    </Button>
+                  )}
+                </div>
+                {selectableFetched.length === 0 ? (
+                  <p class="text-xs text-gray-500 italic">All fetched models are already added.</p>
+                ) : (
+                  <div class="max-h-40 overflow-y-auto space-y-1">
+                    {selectableFetched.map((m) => (
+                      <label
+                        key={m.id}
+                        class="flex items-center gap-2 text-xs text-gray-200 cursor-pointer hover:bg-white/5 rounded px-1 py-0.5"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(state.selectedFetchedModelIds ?? []).includes(m.id)}
+                          onChange={() => toggleFetchedModel(m.id)}
+                          class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                        />
+                        <span class="font-mono">{m.id}</span>
+                        {m.name && m.name !== m.id && <span class="text-gray-500">{m.name}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {state.models.length === 0 ? (
               <p class="text-xs text-gray-500 italic">
                 No models yet — add at least one to save the endpoint.
