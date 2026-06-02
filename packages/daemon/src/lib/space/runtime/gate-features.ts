@@ -71,9 +71,62 @@ function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow):
   return false;
 }
 
+/**
+ * Returns the minimum custom poll interval (ms) among source nodes that both
+ * require Codex approval and set an explicit interval. Falls back to the
+ * default constant when no source node overrides it.
+ */
+function getMinCodexPollIntervalMs(gateId: string, workflow: SpaceWorkflow): number {
+  let min: number | undefined;
+  for (const channel of workflow.channels ?? []) {
+    if (channel.gateId !== gateId) continue;
+    if (channel.from === '*') {
+      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
+        for (const node of workflow.nodes) {
+          if (node.codexPollIntervalMs) {
+            min =
+              min === undefined
+                ? node.codexPollIntervalMs
+                : Math.min(min, node.codexPollIntervalMs);
+          }
+        }
+      }
+      continue;
+    }
+    const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
+    if (nodeByName) {
+      if (nodeByName.requireCodexApproval && nodeByName.codexPollIntervalMs) {
+        min =
+          min === undefined
+            ? nodeByName.codexPollIntervalMs
+            : Math.min(min, nodeByName.codexPollIntervalMs);
+      }
+      continue;
+    }
+    for (const node of workflow.nodes) {
+      try {
+        const agents = resolveNodeAgents(node);
+        if (
+          agents.some((a) => a.name === channel.from) &&
+          node.requireCodexApproval &&
+          node.codexPollIntervalMs
+        ) {
+          min =
+            min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
+        }
+      } catch {
+        // skip malformed nodes
+      }
+    }
+  }
+  return min ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
+}
+
 export const CODEX_REVIEW_BOT_FEATURE = 'codex_review_bot';
 export const CODEX_REVIEW_BOT_TIMEOUT_SECONDS = 600;
-export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = 60_000;
+export const CODEX_REVIEW_BOT_POLL_INTERVAL_MS = Number(
+  process.env.NEOKAI_CODEX_POLL_INTERVAL_MS || '300000'
+);
 
 const CODEX_REVIEW_BOT_SCRIPT = [
   'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
@@ -246,9 +299,9 @@ export function getCodexReviewBotGateScript(): GateScript {
   };
 }
 
-export function getCodexReviewBotGatePoll(): GatePoll {
+export function getCodexReviewBotGatePoll(intervalMs?: number): GatePoll {
   return {
-    intervalMs: CODEX_REVIEW_BOT_POLL_INTERVAL_MS,
+    intervalMs: intervalMs ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS,
     target: 'from',
     script: CODEX_REVIEW_BOT_POLL_SCRIPT,
     messageTemplate: 'codex[bot] reaction status update:\n{{output}}',
@@ -309,12 +362,16 @@ function maybeInjectCodexFeature(
     if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
       const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
       if (codexDef) {
+        const intervalMs = getMinCodexPollIntervalMs(gate.id, workflow);
         // Preserve an existing custom poll by injecting only the script half
         // of the Codex feature when gate.poll is already present.
         if (gate.poll) {
           definitions.push({ script: codexDef.script });
         } else {
-          definitions.push(codexDef);
+          definitions.push({
+            script: codexDef.script,
+            poll: () => getCodexReviewBotGatePoll(intervalMs),
+          });
         }
       }
     }

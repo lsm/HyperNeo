@@ -1797,6 +1797,11 @@ export interface WorkflowNode {
    * also require a codex[bot] +1 reaction before opening. Defaults to false.
    */
   requireCodexApproval?: boolean;
+  /**
+   * Custom poll interval (ms) for the codex review bot when
+   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
+   */
+  codexPollIntervalMs?: number;
 }
 
 /**
@@ -1817,6 +1822,11 @@ export interface WorkflowNodeInput {
   postApproval?: PostApprovalRoute;
   /** Require codex[bot] +1 on approval gates for channels from this node. */
   requireCodexApproval?: boolean;
+  /**
+   * Custom poll interval (ms) for the codex review bot when
+   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
+   */
+  codexPollIntervalMs?: number;
 }
 
 /**
@@ -2266,6 +2276,11 @@ export interface ExportedWorkflowNode {
   postApproval?: PostApprovalRoute;
   /** Require codex[bot] +1 on approval gates for channels from this node. */
   requireCodexApproval?: boolean;
+  /**
+   * Custom poll interval (ms) for the codex review bot when
+   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
+   */
+  codexPollIntervalMs?: number;
 }
 
 /**

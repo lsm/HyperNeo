@@ -1118,6 +1118,57 @@ export function NodeConfigPanel({
             When enabled, approval gates on channels from this node also require a codex[bot] +1
             reaction before opening.
           </p>
+          {step.requireCodexApproval && (
+            <div class="mt-3 space-y-1.5">
+              <label class="text-[10px] uppercase tracking-wider text-gray-400">
+                Poll Interval
+              </label>
+              <div class="flex gap-1.5">
+                {[
+                  { label: '30s', ms: 30_000 },
+                  { label: '1m', ms: 60_000 },
+                  { label: '5m', ms: 300_000 },
+                  { label: '10m', ms: 600_000 },
+                  { label: '30m', ms: 1_800_000 },
+                ].map((preset) => {
+                  const active = (step.codexPollIntervalMs ?? 300_000) === preset.ms;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() =>
+                        onUpdate({
+                          ...step,
+                          codexPollIntervalMs: preset.ms,
+                        })
+                      }
+                      class={`rounded border px-2 py-1 text-[11px] transition-colors ${
+                        active
+                          ? 'border-blue-500 bg-blue-500/10 text-blue-200'
+                          : 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                type="number"
+                min={10}
+                value={Math.round((step.codexPollIntervalMs ?? 300_000) / 1000)}
+                onInput={(e) => {
+                  const val = Number((e.currentTarget as HTMLInputElement).value);
+                  if (isNaN(val)) return;
+                  onUpdate({
+                    ...step,
+                    codexPollIntervalMs: Math.max(10, val) * 1000,
+                  });
+                }}
+                class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          )}
         </div>
 
         <div class="rounded-lg border border-white/10 bg-dark-850 p-3">

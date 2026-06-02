@@ -1484,7 +1484,10 @@ export interface SeedBuiltInWorkflowsResult {
  */
 function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval' | 'requireCodexApproval'>[],
+  templateNodes: Pick<
+    WorkflowNode,
+    'name' | 'agents' | 'postApproval' | 'requireCodexApproval' | 'codexPollIntervalMs'
+  >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
@@ -1521,6 +1524,9 @@ function mergeNodeStructuralFieldsFromTemplate(
       requireCodexApproval: templateNode
         ? templateNode.requireCodexApproval
         : node.requireCodexApproval,
+      codexPollIntervalMs: templateNode
+        ? templateNode.codexPollIntervalMs
+        : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateGuards = templateAgentsByKey.get(key);

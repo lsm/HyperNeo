@@ -64,6 +64,8 @@ export interface WorkflowTemplateStep {
   postApproval?: PostApprovalRoute;
   /** Require codex[bot] approval on outgoing approval gates from this node. */
   requireCodexApproval?: boolean;
+  /** Custom poll interval (ms) for the codex review bot. */
+  codexPollIntervalMs?: number;
 }
 
 export interface WorkflowTemplateAgentSlot {
@@ -203,6 +205,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
         })),
         postApproval: postApproval ? { ...postApproval } : undefined,
         requireCodexApproval: node.requireCodexApproval,
+        codexPollIntervalMs: node.codexPollIntervalMs,
       };
     }
 
@@ -215,6 +218,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       systemPrompt: extractInstructionText(primary?.customPrompt),
       postApproval: postApproval ? { ...postApproval } : undefined,
       requireCodexApproval: node.requireCodexApproval,
+      codexPollIntervalMs: node.codexPollIntervalMs,
     };
   });
 
@@ -284,6 +288,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
         customPrompt: step.systemPrompt?.trim() ? { value: step.systemPrompt.trim() } : undefined,
         postApproval: step.postApproval ? { ...step.postApproval } : undefined,
         requireCodexApproval: step.requireCodexApproval,
+        codexPollIntervalMs: step.codexPollIntervalMs,
       };
     }
 
@@ -323,6 +328,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
       customPrompt: undefined,
       postApproval: step.postApproval ? { ...step.postApproval } : undefined,
       requireCodexApproval: step.requireCodexApproval,
+      codexPollIntervalMs: step.codexPollIntervalMs,
     };
   });
 }

@@ -111,6 +111,7 @@ function buildTemplateUpdateParams(
       agents: resolvedAgents,
       ...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
       ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
+      ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
     };
   });
 

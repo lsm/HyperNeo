@@ -63,6 +63,11 @@ interface WorkflowFingerprint {
    */
   nodeCodexFlags: string[];
   /**
+   * Node-level Codex poll intervals, sorted. Format: `<nodeName>|<ms>`.
+   * Empty string when absent. Detects changes to custom poll intervals.
+   */
+  nodeCodexPollIntervals: string[];
+  /**
    * Legacy workflow-level post-approval route. Kept in the fingerprint so
    * clearing old template-level routes also triggers a re-stamp.
    */
@@ -184,6 +189,12 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     .map((n) => `${n.name}|true`)
     .sort();
 
+  // Serialize node-level Codex poll intervals.
+  const nodeCodexPollIntervals = workflow.nodes
+    .filter((n) => n.codexPollIntervalMs)
+    .map((n) => `${n.name}|${n.codexPollIntervalMs}`)
+    .sort();
+
   // Serialize legacy workflow-level post-approval route.
   const legacyPostApproval = workflow.postApproval
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
@@ -199,6 +210,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
     nodeCodexFlags,
+    nodeCodexPollIntervals,
     legacyPostApproval,
   };
 }

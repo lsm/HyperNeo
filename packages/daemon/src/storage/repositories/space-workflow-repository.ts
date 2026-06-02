@@ -80,6 +80,8 @@ interface NodeConfigJson {
   postApproval?: PostApprovalRoute;
   /** Require codex[bot] +1 on approval gates for channels from this node. */
   requireCodexApproval?: boolean;
+  /** Custom poll interval (ms) for the codex review bot. */
+  codexPollIntervalMs?: number;
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -144,6 +146,7 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     agents,
     ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
     ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
+    ...(cfg.codexPollIntervalMs ? { codexPollIntervalMs: cfg.codexPollIntervalMs } : {}),
   };
 }
 
@@ -487,6 +490,7 @@ export class SpaceWorkflowRepository {
         agents: node.agents,
         ...(node.postApproval ? { postApproval: node.postApproval } : {}),
         ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
+        ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
       };
       const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
       if (result.changes === 0) {
@@ -689,6 +693,9 @@ export class SpaceWorkflowRepository {
     }
     if (input.requireCodexApproval) {
       nodeCfg.requireCodexApproval = true;
+    }
+    if (input.codexPollIntervalMs) {
+      nodeCfg.codexPollIntervalMs = input.codexPollIntervalMs;
     }
 
     return nodeCfg;
