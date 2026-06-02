@@ -304,7 +304,15 @@ function maybeInjectCodexFeature(
   ) {
     if (doesAnySourceNodeRequireCodex(gate.id, workflow)) {
       const codexDef = gateFeatureRegistry.get(CODEX_REVIEW_BOT_FEATURE);
-      if (codexDef) definitions.push(codexDef);
+      if (codexDef) {
+        // Preserve an existing custom poll by injecting only the script half
+        // of the Codex feature when gate.poll is already present.
+        if (gate.poll) {
+          definitions.push({ script: codexDef.script });
+        } else {
+          definitions.push(codexDef);
+        }
+      }
     }
   }
 }
