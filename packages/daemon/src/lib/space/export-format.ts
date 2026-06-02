@@ -141,6 +141,7 @@ const exportedWorkflowNodeSchema = z.object({
     })
     .optional(),
   requireCodexApproval: z.boolean().optional(),
+  codexPollIntervalMs: z.number().int().positive().optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -323,6 +324,8 @@ export function exportWorkflow(
     if (node.postApproval !== undefined) exported.postApproval = node.postApproval;
     if (node.requireCodexApproval !== undefined)
       exported.requireCodexApproval = node.requireCodexApproval;
+    if (node.codexPollIntervalMs !== undefined)
+      exported.codexPollIntervalMs = node.codexPollIntervalMs;
 
     return exported;
   });

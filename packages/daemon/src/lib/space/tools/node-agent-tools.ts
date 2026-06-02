@@ -193,28 +193,34 @@ async function evaluateTerminalGateFeatures(
   if (currentNodeId && workflow.channels) {
     const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
+      const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
+      const currentNodeAgentNames = new Set<string>();
+      if (currentNode) {
+        try {
+          for (const a of resolveNodeAgents(currentNode)) {
+            currentNodeAgentNames.add(a.name);
+          }
+        } catch {
+          // skip malformed node
+        }
+      }
       const incomingChannels = workflow.channels.filter((ch) => {
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        return toList.includes(currentNodeName) || toList.includes('*');
+        if (toList.includes(currentNodeName) || toList.includes('*')) return true;
+        return currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t));
       });
       const includeIncoming = incomingChannels.length === 1;
-      const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
       relevantGateIds = new Set(
         workflow.channels
           .filter((ch) => {
             if (ch.from === currentNodeName || ch.from === '*') return true;
-            // Also match agent slot names within the current node
-            if (currentNode) {
-              try {
-                const agents = resolveNodeAgents(currentNode);
-                if (agents.some((a) => a.name === ch.from)) return true;
-              } catch {
-                // skip malformed node
-              }
-            }
+            if (currentNodeAgentNames.has(ch.from)) return true;
             if (!includeIncoming) return false;
             const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-            return toList.includes(currentNodeName) || toList.includes('*');
+            if (toList.includes(currentNodeName) || toList.includes('*')) return true;
+            return (
+              currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t))
+            );
           })
           .map((ch) => ch.gateId)
           .filter((id): id is string => !!id)
