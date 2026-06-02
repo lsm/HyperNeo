@@ -30,7 +30,7 @@ import type {
   WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents } from '@neokai/shared';
 import { Logger } from '../../logger';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
@@ -1555,9 +1555,24 @@ function migrateCodexFeatureToNodeToggle(
     if (channel.gateId && codexGateIds.has(channel.gateId)) {
       if (channel.from === '*') {
         for (const node of nodes) nodesToFlag.add(node.id);
-      } else {
-        const node = nodes.find((n) => n.name === channel.from);
-        if (node) nodesToFlag.add(node.id);
+        continue;
+      }
+      // Match by node name first
+      const nodeByName = nodes.find((n) => n.name === channel.from);
+      if (nodeByName) {
+        nodesToFlag.add(nodeByName.id);
+        continue;
+      }
+      // Fall back to agent-name matching
+      for (const node of nodes) {
+        try {
+          const agents = resolveNodeAgents(node);
+          if (agents.some((a) => a.name === channel.from)) {
+            nodesToFlag.add(node.id);
+          }
+        } catch {
+          // skip malformed nodes
+        }
       }
     }
   }

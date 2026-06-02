@@ -42,7 +42,11 @@ function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow):
     if (channel.from === '*') {
       // Wildcard channels only get Codex when ALL nodes opt in, so one
       // flagged node cannot force Codex on unrelated unflagged nodes.
-      return workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval);
+      if (workflow.nodes.length > 0 && workflow.nodes.every((n) => n.requireCodexApproval)) {
+        return true;
+      }
+      // Not all nodes opted in — keep scanning other channels for this gate.
+      continue;
     }
     // Match by node name — if found, use ONLY this node's flag
     const nodeByName = workflow.nodes.find((n) => n.name === channel.from);
