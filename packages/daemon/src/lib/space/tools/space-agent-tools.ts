@@ -471,14 +471,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.longHorizonAgentRepo;
   }
 
-  function requireLongHorizonAgentInSpace(agentId: string) {
-    const repo = requireLongHorizonAgentRepo();
-    const existing = repo.getById(agentId);
-    if (existing) {
-      if (existing.spaceId !== spaceId) throw new Error(`Long-horizon agent not found: ${agentId}`);
-      return existing;
-    }
+  function getLongHorizonAgentInSpace(agentId: string) {
+    const existing = requireLongHorizonAgentRepo().getById(agentId);
+    return existing?.spaceId === spaceId ? existing : null;
+  }
 
+  function ensureLongHorizonAgentInSpace(agentId: string) {
+    const existing = getLongHorizonAgentInSpace(agentId);
+    if (existing) return existing;
+    const repo = requireLongHorizonAgentRepo();
     const spaceAgent = spaceAgentManager.getById(agentId);
     if (!spaceAgent || spaceAgent.spaceId !== spaceId) {
       throw new Error(`Long-horizon agent not found: ${agentId}`);
@@ -499,10 +500,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
   function sourceFromTopicPattern(topicPattern: string): string {
     return topicPattern.split('/')[0] ?? '';
-  }
-
-  function filterJsonFromLabel(label?: string): string {
-    return JSON.stringify(label ? { label } : {});
   }
 
   function requireSpaceAgentInSpace(agentId: string): SpaceAgent {
@@ -841,7 +838,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       label?: string;
     }): Promise<ToolResult> {
       try {
-        requireLongHorizonAgentInSpace(args.agent_id);
+        ensureLongHorizonAgentInSpace(args.agent_id);
         const validation = validateGlobPattern(args.topic_pattern);
         if (!validation.valid) {
           return jsonResult({ success: false, error: validation.reason ?? 'invalid pattern' });
@@ -873,24 +870,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       label?: string;
     }): Promise<ToolResult> {
       try {
-        requireLongHorizonAgentInSpace(args.agent_id);
+        const agent = getLongHorizonAgentInSpace(args.agent_id);
+        if (!agent) return jsonResult({ success: true });
         const repo = requireLongHorizonAgentRepo();
         const source = sourceFromTopicPattern(args.topic_pattern);
-        const filterJson = filterJsonFromLabel(args.label);
         const subscription = repo.getSubscriptionByRoute(
           spaceId,
           args.agent_id,
           source,
-          args.topic_pattern,
-          filterJson
+          args.topic_pattern
         );
-        repo.deleteSubscriptionByRoute(
-          spaceId,
-          args.agent_id,
-          source,
-          args.topic_pattern,
-          filterJson
-        );
+        repo.deleteSubscriptionByRoute(spaceId, args.agent_id, source, args.topic_pattern);
         if (subscription) runtime.removeLongHorizonSubscription(spaceId, subscription.id);
         logAudit('unsubscribe_agent_event', args);
         return jsonResult({ success: true });
@@ -902,7 +892,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async list_agent_event_subscriptions(args: { agent_id: string }): Promise<ToolResult> {
       try {
-        requireLongHorizonAgentInSpace(args.agent_id);
+        const agent = getLongHorizonAgentInSpace(args.agent_id);
+        if (!agent) return jsonResult({ success: true, subscriptions: [] });
         const subscriptions = requireLongHorizonAgentRepo().listSubscriptions(args.agent_id);
         return jsonResult({ success: true, subscriptions });
       } catch (err) {

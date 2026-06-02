@@ -494,6 +494,21 @@ function legacyGitHubTopic(topic: string): string | null {
   return `${source}/${owner}/${repo}/${resource}.${entityAction.slice(dotIndex + 1)}`;
 }
 
+function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
+  const trimmedSource = source.trim();
+  const trimmedTopic = topic.trim();
+  if (!trimmedSource || trimmedTopic.startsWith(`${trimmedSource}/`)) return trimmedTopic;
+  if (trimmedSource === 'github' && !trimmedTopic.startsWith('*/*/')) {
+    return `${trimmedSource}/*/*/${trimmedTopic}`;
+  }
+  return `${trimmedSource}/${trimmedTopic}`;
+}
+
+function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
+  const prefix = 'long_horizon:';
+  return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
+}
+
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
   return status === 'in_progress' || status === 'blocked';
 }
@@ -960,14 +975,15 @@ export class SpaceRuntime {
     }
     const agent = repo.getById(subscription.agentId);
     if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return { success: true };
-    const validation = validateGlobPattern(subscription.topic);
+    const pattern = composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
+    const validation = validateGlobPattern(pattern);
     if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
-    this.topicTrie.insert(subscription.topic, {
+    this.topicTrie.insert(pattern, {
       kind: 'long_horizon_agent',
       spaceId: subscription.spaceId,
       agentId: subscription.agentId,
       source: subscription.source,
-      topic: subscription.topic,
+      topic: pattern,
       subscriptionId: subscription.id,
     });
     return { success: true };
@@ -3382,9 +3398,52 @@ export class SpaceRuntime {
     if (!store) return;
 
     for (const delivery of store.listPendingDeliveries()) {
-      const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
+      const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
+      if (longHorizonSpaceId) {
+        const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+        const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
+        const agent = subscription
+          ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
+          : null;
+        const target = subscription
+          ? {
+              kind: 'long_horizon_agent' as const,
+              spaceId: longHorizonSpaceId,
+              agentId: subscription.agentId,
+              source: subscription.source,
+              topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
+              subscriptionId: subscription.id,
+            }
+          : null;
+        if (
+          !subscription ||
+          subscription.spaceId !== longHorizonSpaceId ||
+          subscription.status !== 'active' ||
+          !agent ||
+          agent.spaceId !== longHorizonSpaceId ||
+          agent.status !== 'active' ||
+          !target ||
+          !this.lookupSubscriptionTargets(eventPayload.topic).some(
+            (match) =>
+              isLongHorizonSubscriptionTarget(match) &&
+              match.spaceId === target.spaceId &&
+              match.subscriptionId === target.subscriptionId
+          )
+        ) {
+          store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+          continue;
+        }
+        void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
+        continue;
+      }
+
+      const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
       const target = {
         workflowRunId: delivery.workflowRunId,
         taskId: delivery.taskId,

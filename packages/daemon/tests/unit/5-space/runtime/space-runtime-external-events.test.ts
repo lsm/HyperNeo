@@ -272,6 +272,47 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveries[0]!.deliveryKey);
   });
 
+  test('rehydrates relative long-horizon agent subscriptions and matches full event topics', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-relative-events',
+      spaceId: SPACE_ID,
+      handle: 'relative-watcher',
+      displayName: 'Relative Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'pull_request/*.review_*',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('skips inactive long-horizon agent subscriptions during rehydration', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({
@@ -1829,6 +1870,61 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById('evt-arrived-while-stopped')?.state).toBe('delivered');
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-stop-start-sweep');
+  });
+
+  test('requeues persisted pending long-horizon deliveries during runtime rehydrate', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-pending-retry',
+      spaceId: SPACE_ID,
+      handle: 'pending-retry',
+      displayName: 'Pending Retry',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    const event = makeEvent({ id: 'evt-lh-pending-retry' });
+    eventStore.store(event);
+    const deliveryKey = `lh:${subscription.id}:${event.id}`;
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: `long_horizon:${SPACE_ID}`,
+      taskId: subscription.id,
+      nodeId: agent.id,
+      agentName: agent.id,
+    });
+    eventStore.markDeliveryFailed(event.id, deliveryKey, {
+      terminal: false,
+      reason: 'long-horizon agent unavailable',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+    expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveryKey);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('requeues persisted pending deliveries during runtime rehydrate', async () => {

@@ -298,17 +298,30 @@ export class SpaceLongHorizonAgentRepository {
     params: CreateSpaceLongHorizonAgentSubscriptionParams
   ): SpaceLongHorizonAgentEventSubscription {
     this.requireAgentInSpace(params.agentId, params.spaceId);
-    const id = generateUUID();
     const now = Date.now();
     const filterJson = JSON.stringify(params.filter ?? {});
+    const existing = this.getSubscriptionByRoute(
+      params.spaceId,
+      params.agentId,
+      params.source,
+      params.topic
+    );
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE space_long_horizon_agent_event_subscriptions
+             SET filter_json = ?, status = ?, updated_at = ?
+             WHERE id = ?`
+        )
+        .run(filterJson, params.status ?? 'active', now, existing.id);
+      return this.getSubscription(existing.id) as SpaceLongHorizonAgentEventSubscription;
+    }
+    const id = generateUUID();
     this.db
       .prepare(
         `INSERT INTO space_long_horizon_agent_event_subscriptions (
-						id, space_id, agent_id, source, topic, filter_json, status, created_at, updated_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-					ON CONFLICT(space_id, agent_id, source, topic, filter_json) DO UPDATE SET
-						status = excluded.status,
-						updated_at = excluded.updated_at`
+              id, space_id, agent_id, source, topic, filter_json, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -321,13 +334,7 @@ export class SpaceLongHorizonAgentRepository {
         now,
         now
       );
-    return this.getSubscriptionByRoute(
-      params.spaceId,
-      params.agentId,
-      params.source,
-      params.topic,
-      filterJson
-    ) as SpaceLongHorizonAgentEventSubscription;
+    return this.getSubscription(id) as SpaceLongHorizonAgentEventSubscription;
   }
 
   getSubscription(id: string): SpaceLongHorizonAgentEventSubscription | null {
@@ -341,15 +348,16 @@ export class SpaceLongHorizonAgentRepository {
     spaceId: string,
     agentId: string,
     source: string,
-    topic: string,
-    filterJson = '{}'
+    topic: string
   ): SpaceLongHorizonAgentEventSubscription | null {
     const row = this.db
       .prepare(
         `SELECT * FROM space_long_horizon_agent_event_subscriptions
-				 WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ? AND filter_json = ?`
+           WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ?
+           ORDER BY created_at ASC
+           LIMIT 1`
       )
-      .get(spaceId, agentId, source, topic, filterJson) as Record<string, unknown> | undefined;
+      .get(spaceId, agentId, source, topic) as Record<string, unknown> | undefined;
     return row ? rowToSubscription(row) : null;
   }
 
@@ -376,19 +384,13 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToSubscription);
   }
 
-  deleteSubscriptionByRoute(
-    spaceId: string,
-    agentId: string,
-    source: string,
-    topic: string,
-    filterJson = '{}'
-  ): void {
+  deleteSubscriptionByRoute(spaceId: string, agentId: string, source: string, topic: string): void {
     this.db
       .prepare(
         `DELETE FROM space_long_horizon_agent_event_subscriptions
-				 WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ? AND filter_json = ?`
+           WHERE space_id = ? AND agent_id = ? AND source = ? AND topic = ?`
       )
-      .run(spaceId, agentId, source, topic, filterJson);
+      .run(spaceId, agentId, source, topic);
   }
 
   private requireAgent(agentId: string): SpaceLongHorizonAgent {

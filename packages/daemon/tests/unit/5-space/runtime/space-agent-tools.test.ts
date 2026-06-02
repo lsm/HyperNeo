@@ -571,12 +571,28 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(subscriptions.subscriptions[0].topic).toBe('github/*/*/pull_request/*');
     expect(subscriptions.subscriptions[0].filter).toEqual({ label: 'PR activity' });
 
+    const relabeled = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: longHorizonAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+          label: 'PR triage',
+        })
+      ).content[0].text
+    );
+    expect(relabeled.success).toBe(true);
+    const afterRelabel = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
+    );
+    expect(afterRelabel.subscriptions).toHaveLength(1);
+    expect(afterRelabel.subscriptions[0].filter).toEqual({ label: 'PR triage' });
+
     const removed = JSON.parse(
       (
         await handlers.unsubscribe_agent_event({
           agent_id: longHorizonAgent.id,
           topic_pattern: 'github/*/*/pull_request/*',
-          label: 'PR activity',
         })
       ).content[0].text
     );
@@ -586,6 +602,25 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         .text
     );
     expect(afterUnsubscribe.subscriptions).toEqual([]);
+
+    const legacyAgent = JSON.parse(
+      (await handlers.create_agent({ name: 'Legacy list-only agent' })).content[0].text
+    ).agent;
+    const listedLegacy = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: legacyAgent.id })).content[0].text
+    );
+    expect(listedLegacy).toEqual({ success: true, subscriptions: [] });
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
+    const unsubscribedLegacy = JSON.parse(
+      (
+        await handlers.unsubscribe_agent_event({
+          agent_id: legacyAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(unsubscribedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
 
     expect(
       JSON.parse(

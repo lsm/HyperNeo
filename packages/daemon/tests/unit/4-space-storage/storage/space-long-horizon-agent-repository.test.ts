@@ -255,11 +255,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
         id: created.id,
         agentId: agent.id,
         topic: 'github/lsm/neokai/pull_request/*.review_submitted',
-        status: 'active',
-      }),
-      expect.objectContaining({
-        agentId: agent.id,
         filter: { label: 'triage' },
+        status: 'active',
       }),
     ]);
 
@@ -267,11 +264,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
       'space-1',
       agent.id,
       'github',
-      'github/lsm/neokai/pull_request/*.review_submitted',
-      JSON.stringify({ label: 'reviews' })
+      'github/lsm/neokai/pull_request/*.review_submitted'
     );
-    expect(repo.listSubscriptions(agent.id)).toEqual([
-      expect.objectContaining({ filter: { label: 'triage' } }),
-    ]);
+    expect(repo.listSubscriptions(agent.id)).toEqual([]);
   });
 });
