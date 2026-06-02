@@ -2620,6 +2620,90 @@ describe('handleGoalAutomationExecute', () => {
     expect(cursor?.lastEvidenceId).toBe(taskEvidence.id);
   });
 
+  it('preserves intervening evidence between cap and trigger in episode', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Intervening evidence', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Intervening evidence',
+      objective: 'Keep cursor contiguous',
+      policy: { automation: { completedTaskThreshold: 1, maxEvidencePerEpisode: 2 } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: 'old-1',
+      summary: 'Old note 1',
+      createdAt: 1,
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: 'old-2',
+      summary: 'Old note 2',
+      createdAt: 2,
+    });
+    const intervening = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: 'intervening',
+      summary: 'Intervening note',
+      createdAt: 3,
+    });
+    const task = taskRepo.createTask({ spaceId, title: 'Triggering task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Triggering result',
+      createdAt: 4,
+    });
+    let episodeEvidenceIds: string[] = [];
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: task.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => {
+            episodeEvidenceIds = evidenceIds;
+            return {
+              episode: evolutionRepo.createEpisode({
+                scopeId: scope.id,
+                title: 'Intervening retrospective',
+                evidenceIds,
+                outcomeSummary: 'Preserved intervening evidence',
+                findings: [],
+              }),
+              proposals: [],
+              lessons: [],
+            };
+          },
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(episodeEvidenceIds).toHaveLength(4);
+    expect(episodeEvidenceIds).toContain(intervening.id);
+    expect(episodeEvidenceIds).toContain(taskEvidence.id);
+    const cursor = cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1');
+    expect(cursor?.lastEvidenceCreatedAt).toBe(taskEvidence.createdAt);
+    expect(cursor?.lastEvidenceId).toBe(taskEvidence.id);
+  });
+
   it('requires task_result kind when matching triggering task evidence', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Trigger kind filter', type: 'recurring' });
     const scope = evolutionRepo.createScope({

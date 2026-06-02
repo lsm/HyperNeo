@@ -137,9 +137,15 @@ export async function handleGoalAutomationExecute(
   }
 
   try {
-    const episodeEvidence = triggerEvidence
-      ? uniqueEvidence([...evidence, triggerEvidence])
-      : evidence;
+    let episodeEvidence = evidence;
+    if (triggerEvidence) {
+      const triggerIndex = dueEvidence.findIndex((item) => item.id === triggerEvidence.id);
+      if (triggerIndex >= maxEvidence) {
+        episodeEvidence = dueEvidence.slice(0, triggerIndex + 1);
+      } else {
+        episodeEvidence = uniqueEvidence([...evidence, triggerEvidence]);
+      }
+    }
     const cursorEvidence =
       payload.triggerKind === 'completed_task_threshold' && triggerEvidence
         ? episodeEvidence
@@ -158,7 +164,7 @@ export async function handleGoalAutomationExecute(
         scopeId: scope.id,
         episodeId: existingAutomation.episodeId,
         reviewTaskId: existingAutomation.reviewTask.id,
-        evidenceCount: evidence.length,
+        evidenceCount: episodeEvidence.length,
         skipped: false,
       };
     }
