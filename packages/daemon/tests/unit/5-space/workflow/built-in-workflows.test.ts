@@ -2116,7 +2116,15 @@ describe('seedBuiltInWorkflows()', () => {
           }
     );
 
-    manager.updateWorkflow(workflow.id, { gates: gateWithCustomScript });
+    // Clear requireCodexApproval on the Review node because dynamic injection
+    // is blocked for scripted gates; keeping the toggle would fail validation.
+    const nodesWithoutCodex = workflow.nodes.map((node) =>
+      node.name === 'Review' ? { ...node, requireCodexApproval: undefined } : node
+    );
+    manager.updateWorkflow(workflow.id, {
+      gates: gateWithCustomScript,
+      nodes: nodesWithoutCodex,
+    });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'pre-custom-script-hash',
       workflow.id

@@ -273,6 +273,8 @@ export class SpaceWorkflowManager {
               name: n.name,
               agents: n.agents,
               postApproval: n.postApproval,
+              requireCodexApproval: n.requireCodexApproval,
+              codexPollIntervalMs: n.codexPollIntervalMs,
             })
           )
         : existing.nodes.map(
@@ -281,6 +283,8 @@ export class SpaceWorkflowManager {
               name: n.name,
               agents: n.agents,
               postApproval: n.postApproval,
+              requireCodexApproval: n.requireCodexApproval,
+              codexPollIntervalMs: n.codexPollIntervalMs,
             })
           );
 
