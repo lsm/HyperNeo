@@ -1,6 +1,6 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@neokai/shared';
-import type { Job } from '../../storage/repositories/job-queue-repository';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
@@ -13,9 +13,17 @@ import {
   readCompletedTaskThreshold,
   selectEvidenceAfterCursor,
 } from '../space/goals/goal-automation-service';
+import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants';
 import { Logger } from '../logger';
 
 const log = new Logger('goal-automation-execute');
+const MAX_ACTIVE_REVIEW_REQUEUES = 60;
+const EXTENDED_REQUEUE_DELAY_MS = 300_000;
+const activeAutomationLocks = new Set<string>();
+
+function automationLockKey(payload: GoalAutomationExecutePayload): string {
+  return `${payload.goalId}:${payload.scopeId}:${payload.triggerKind}`;
+}
 
 export interface GoalAutomationExternalEventSnapshot {
   source: string;
@@ -37,6 +45,7 @@ export interface GoalAutomationExecutePayload extends Record<string, unknown> {
   scheduleId?: string;
   externalEventId?: string;
   externalEvent?: GoalAutomationExternalEventSnapshot;
+  activeReviewRequeueCount?: number;
 }
 
 export interface GoalAutomationExecuteDeps {
@@ -49,6 +58,7 @@ export interface GoalAutomationExecuteDeps {
   taskCreatedEventHub?: {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
+  jobQueue?: Pick<JobQueueRepository, 'enqueueUniquePending'>;
 }
 
 export interface GoalAutomationExecuteResult extends Record<string, unknown> {
@@ -63,7 +73,10 @@ export interface GoalAutomationExecuteResult extends Record<string, unknown> {
     | 'inactive_goal'
     | 'missing_scope'
     | 'no_evidence'
-    | 'below_threshold';
+    | 'below_threshold'
+    | 'active_review'
+    | 'disabled';
+  requeued?: boolean;
 }
 
 export async function handleGoalAutomationExecute(
@@ -81,7 +94,13 @@ export async function handleGoalAutomationExecute(
   if (payload.externalEvent) {
     ensureExternalEventEvidence(deps, payload, scope.id);
   }
-  const cursor = deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
+  const cursor =
+    payload.triggerKind === 'completed_task_threshold'
+      ? newestCursor(
+          deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey),
+          deps.cursorRepo.getLatestForTriggerKind(goal.id, scope.id, 'completed_task_threshold')
+        )
+      : deps.cursorRepo.get(goal.id, scope.id, payload.triggerKind, payload.triggerKey);
   const policy = readAutomationPolicyForScope(scope);
   const maxEvidence = readMaxEvidence(policy.maxEvidencePerEpisode);
   const dueEvidence = selectEvidenceAfterCursor(
@@ -96,6 +115,9 @@ export async function handleGoalAutomationExecute(
     return skipped(payload, 'no_evidence');
   }
   if (payload.triggerKind === 'completed_task_threshold') {
+    if (goal.type !== 'recurring' && policy.completedTaskThreshold === undefined) {
+      return skipped(payload, 'disabled');
+    }
     const threshold = readCompletedTaskThreshold(policy);
     const completedTaskIds = new Set(
       dueEvidence
@@ -105,65 +127,119 @@ export async function handleGoalAutomationExecute(
     if (!threshold || completedTaskIds.size < threshold) {
       return skipped(payload, 'below_threshold', dueEvidence.length);
     }
+    if (findActiveCompletedTaskReviewTask(deps, scope.id, payload)) {
+      return requeueActiveReview(deps, payload, dueEvidence.length);
+    }
+    const lock = automationLockKey(payload);
+    if (activeAutomationLocks.has(lock)) {
+      return requeueActiveReview(deps, payload, dueEvidence.length);
+    }
+    activeAutomationLocks.add(lock);
   }
 
-  const episodeEvidence = triggerEvidence
-    ? uniqueEvidence([...evidence, triggerEvidence])
-    : evidence;
-  const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
-  if (existingAutomation) {
-    advanceCursor(
-      deps,
-      payload,
-      evidence,
-      existingAutomation.reviewTask,
-      existingAutomation.episodeId
-    );
+  try {
+    let episodeEvidence = evidence;
+    if (triggerEvidence && payload.triggerKind === 'completed_task_threshold') {
+      const triggerIndex = dueEvidence.findIndex((item) => item.id === triggerEvidence.id);
+      if (triggerIndex >= maxEvidence) {
+        episodeEvidence = dueEvidence.slice(0, triggerIndex + 1);
+      } else {
+        episodeEvidence = uniqueEvidence([...evidence, triggerEvidence]);
+      }
+    } else if (triggerEvidence && payload.triggerKind === 'external_event') {
+      episodeEvidence = uniqueEvidence([...evidence, triggerEvidence]);
+    }
+    const cursorEvidence =
+      triggerEvidence && payload.triggerKind === 'completed_task_threshold'
+        ? episodeEvidence
+        : evidence;
+    const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
+    if (existingAutomation) {
+      advanceCursor(
+        deps,
+        payload,
+        cursorEvidence,
+        existingAutomation.reviewTask,
+        existingAutomation.episodeId
+      );
+      return {
+        goalId: goal.id,
+        scopeId: scope.id,
+        episodeId: existingAutomation.episodeId,
+        reviewTaskId: existingAutomation.reviewTask.id,
+        evidenceCount: episodeEvidence.length,
+        skipped: false,
+      };
+    }
+
+    const episodeResult = await deps.episodeService.createFromEvidence({
+      scopeId: scope.id,
+      evidenceIds: episodeEvidence.map((item) => item.id),
+      confirmLowConfidence: true,
+    });
+    const writeResult = runWriteTransaction(deps, () => {
+      const reviewTask = createReviewTask(
+        deps,
+        goal.id,
+        scope.id,
+        episodeResult.episode.id,
+        episodeEvidence,
+        payload
+      );
+      advanceCursor(deps, payload, cursorEvidence, reviewTask, episodeResult.episode.id);
+      return reviewTask;
+    });
+    const reviewTask = writeResult;
+    emitTaskCreated(deps, reviewTask);
     return {
       goalId: goal.id,
       scopeId: scope.id,
-      episodeId: existingAutomation.episodeId,
-      reviewTaskId: existingAutomation.reviewTask.id,
+      episodeId: episodeResult.episode.id,
+      reviewTaskId: reviewTask.id,
       evidenceCount: evidence.length,
       skipped: false,
     };
+  } finally {
+    if (payload.triggerKind === 'completed_task_threshold') {
+      activeAutomationLocks.delete(automationLockKey(payload));
+    }
   }
+}
 
-  const episodeResult = await deps.episodeService.createFromEvidence({
-    scopeId: scope.id,
-    evidenceIds: episodeEvidence.map((item) => item.id),
-    confirmLowConfidence: true,
-  });
-  const writeResult = runWriteTransaction(deps, () => {
-    const reviewTask = createReviewTask(
-      deps,
-      goal.id,
-      scope.id,
-      episodeResult.episode.id,
-      episodeEvidence,
-      payload
-    );
-    advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
-    return reviewTask;
-  });
-  const reviewTask = writeResult;
-  emitTaskCreated(deps, reviewTask);
-  return {
-    goalId: goal.id,
-    scopeId: scope.id,
-    episodeId: episodeResult.episode.id,
-    reviewTaskId: reviewTask.id,
-    evidenceCount: evidence.length,
-    skipped: false,
-  };
+function newestCursor<
+  T extends {
+    lastEvidenceCreatedAt: number | null;
+    lastEvidenceId: string | null;
+    updatedAt: number;
+  },
+>(first: T | null, second: T | null): T | null {
+  if (!first) return second;
+  if (!second) return first;
+  const firstEvidence = first.lastEvidenceCreatedAt ?? 0;
+  const secondEvidence = second.lastEvidenceCreatedAt ?? 0;
+  if (firstEvidence !== secondEvidence) return firstEvidence > secondEvidence ? first : second;
+  const firstEvidenceId = first.lastEvidenceId ?? '';
+  const secondEvidenceId = second.lastEvidenceId ?? '';
+  if (firstEvidenceId !== secondEvidenceId) {
+    return firstEvidenceId.localeCompare(secondEvidenceId) >= 0 ? first : second;
+  }
+  return first.updatedAt >= second.updatedAt ? first : second;
 }
 
 function findTriggerEvidence(
   dueEvidence: EvidenceRef[],
   payload: GoalAutomationExecutePayload
 ): EvidenceRef | null {
-  if (payload.triggerKind !== 'external_event' || !payload.externalEventId) return null;
-  return dueEvidence.find((item) => item.sourceId === payload.externalEventId) ?? null;
+  if (payload.triggerKind === 'external_event' && payload.externalEventId) {
+    return dueEvidence.find((item) => item.sourceId === payload.externalEventId) ?? null;
+  }
+  if (payload.triggerKind === 'completed_task_threshold' && payload.taskId) {
+    return (
+      dueEvidence.find((item) => item.kind === 'task_result' && item.sourceId === payload.taskId) ??
+      null
+    );
+  }
+  return null;
 }
 
 function uniqueEvidence(evidence: EvidenceRef[]): EvidenceRef[] {
@@ -241,6 +317,27 @@ function createReviewTask(
   });
 }
 
+function findActiveCompletedTaskReviewTask(
+  deps: GoalAutomationExecuteDeps,
+  scopeId: string,
+  _payload: GoalAutomationExecutePayload
+): SpaceTask | null {
+  const scope = deps.evolutionRepo.getScope(scopeId);
+  if (!scope) return null;
+  return (
+    deps.taskRepo.listBySpace(scope.spaceId, true).find((task) => {
+      if (task.evolutionScopeId !== scopeId) return false;
+      if (!task.labels.includes('automation')) return false;
+      if (!task.labels.some((label) => label.startsWith('automation:completed_task_threshold:'))) {
+        return false;
+      }
+      return ['draft', 'open', 'in_progress', 'review', 'approved', 'blocked'].includes(
+        task.status
+      );
+    }) ?? null
+  );
+}
+
 function findExistingAutomationReviewTask(
   deps: GoalAutomationExecuteDeps,
   scopeId: string,
@@ -253,18 +350,30 @@ function findExistingAutomationReviewTask(
   // Only reuse a task if it was created in the current automation run
   // (after the cursor's lastFiredAt). This prevents cross-tick dedup
   // while still protecting against retry duplication within a tick.
-  const cursor = deps.cursorRepo.get(
-    payload.goalId,
-    scopeId,
-    payload.triggerKind,
-    payload.triggerKey
-  );
+  const cursor =
+    payload.triggerKind === 'completed_task_threshold'
+      ? newestCursor(
+          deps.cursorRepo.get(payload.goalId, scopeId, payload.triggerKind, payload.triggerKey),
+          deps.cursorRepo.getLatestForTriggerKind(
+            payload.goalId,
+            scopeId,
+            'completed_task_threshold'
+          )
+        )
+      : deps.cursorRepo.get(payload.goalId, scopeId, payload.triggerKind, payload.triggerKey);
   const afterTimestamp = cursor?.lastFiredAt ?? 0;
   const task = deps.taskRepo.listBySpace(scope.spaceId, true).find((item) => {
     if (item.evolutionScopeId !== scopeId) return false;
     if (!item.labels.includes('automation') || !item.labels.includes(token)) return false;
-    // For self-nag, only match tasks created after the last cursor fire.
-    if (payload.triggerKind === 'self_nag' && item.createdAt <= afterTimestamp) return false;
+    // For self-nag and completed_task_threshold, only match tasks created
+    // after the last cursor fire. This prevents reusing terminal review
+    // tasks when the same trigger fires again for newer evidence.
+    if (
+      (payload.triggerKind === 'self_nag' || payload.triggerKind === 'completed_task_threshold') &&
+      item.createdAt <= afterTimestamp
+    ) {
+      return false;
+    }
     return true;
   });
   if (!task) return null;
@@ -345,6 +454,7 @@ function validatePayload(payload: Record<string, unknown>): GoalAutomationExecut
     scheduleId: optionalString(payload.scheduleId),
     externalEventId: optionalString(payload.externalEventId),
     externalEvent: normalizeExternalEvent(payload.externalEvent),
+    activeReviewRequeueCount: optionalPositiveInteger(payload.activeReviewRequeueCount),
   };
 }
 
@@ -381,9 +491,56 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[]): T {
   return value as T;
 }
 
+function optionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function readMaxEvidence(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 12;
   return Math.max(1, Math.min(50, Math.floor(value)));
+}
+
+function requeueActiveReview(
+  deps: GoalAutomationExecuteDeps,
+  payload: GoalAutomationExecutePayload,
+  evidenceCount: number
+): GoalAutomationExecuteResult {
+  const requeueCount = readActiveReviewRequeueCount(payload);
+  const requeuePayload = {
+    ...payload,
+    activeReviewRequeueCount: requeueCount + 1,
+  };
+  const delay = requeueCount >= MAX_ACTIVE_REVIEW_REQUEUES ? EXTENDED_REQUEUE_DELAY_MS : 60_000;
+  deps.jobQueue?.enqueueUniquePending({
+    queue: GOAL_AUTOMATION_EXECUTE,
+    payload: requeuePayload,
+    matchPayload: uniqueJobMatchPayload(payload),
+    activeStatuses: ['pending'],
+    maxRetries: 2,
+    runAt: Date.now() + delay,
+  });
+  return {
+    ...skipped(payload, 'active_review', evidenceCount),
+    requeued: !!deps.jobQueue,
+  };
+}
+
+function readActiveReviewRequeueCount(payload: GoalAutomationExecutePayload): number {
+  const value = payload.activeReviewRequeueCount;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
+  const matchPayload: Record<string, unknown> = {
+    goalId: payload.goalId,
+    scopeId: payload.scopeId,
+    triggerKind: payload.triggerKind,
+    triggerKey: payload.triggerKey,
+  };
+  if (payload.externalEventId !== undefined) {
+    matchPayload.externalEventId = payload.externalEventId;
+  }
+  return matchPayload;
 }
 
 function skipped(

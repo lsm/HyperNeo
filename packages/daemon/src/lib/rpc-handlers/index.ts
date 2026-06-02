@@ -122,6 +122,7 @@ import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
+import { mergeEvolutionPolicy } from '../space/evolution-scope-service';
 import {
   isHttpExtension,
   isRpcExtension,
@@ -129,11 +130,30 @@ import {
 } from '../external-events/extension-manager';
 import type { ExternalEventExtensionContext } from '../external-events/types';
 
+function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
+  const automation = policy?.automation;
+  if (
+    automation !== undefined &&
+    (typeof automation !== 'object' || Array.isArray(automation) || automation === null)
+  ) {
+    throw new Error('Automation policy must be an object');
+  }
+  const threshold = automation?.completedTaskThreshold;
+  if (threshold !== undefined && (!Number.isInteger(threshold) || threshold <= 0)) {
+    throw new Error('Completed-task automation threshold must be a positive integer');
+  }
+}
+
 export function validateGoalAutomationSelfNagPolicy(params: {
   policy?: EvolutionScope['policy'];
 }): void {
+  validateCompletedTaskThreshold(params.policy);
+  const enabled = params.policy?.automation?.completedTaskAutomationEnabled;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new Error('completedTaskAutomationEnabled must be a boolean');
+  }
   const policy = readAutomationPolicyForScope({
-    policy: params.policy,
+    policy: params.policy ?? {},
   } as EvolutionScope);
   const expression = policy.selfNagCronExpression;
   if (!expression) return;
@@ -708,6 +728,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionRepo: deps.db.evolution,
       cursorRepo: deps.db.goalAutomationCursors,
       episodeService: evolutionEpisodeService,
+      jobQueue: deps.jobQueue,
       taskCreatedEventHub: {
         publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
       },
@@ -719,7 +740,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
     beforeScopeUpdate: (existing, params) => {
       validateGoalAutomationSelfNagPolicy({
-        policy: params.policy ? { ...existing.policy, ...params.policy } : existing.policy,
+        policy: params.policyPatch
+          ? mergeEvolutionPolicy(existing.policy, params.policyPatch)
+          : params.policy
+            ? { ...existing.policy, ...params.policy }
+            : existing.policy,
       });
     },
     onScopeSaved: (scope) => {

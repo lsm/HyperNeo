@@ -46,6 +46,7 @@ export interface GoalForgeAutomationEventSubscription {
 
 export interface GoalForgeAutomationPolicy {
   completedTaskThreshold?: number;
+  completedTaskAutomationEnabled?: boolean;
   selfNagCronExpression?: string;
   selfNagTimezone?: string;
   eventSubscriptions?: GoalForgeAutomationEventSubscription[];
@@ -101,6 +102,7 @@ export interface UpdateEvolutionScopeParams {
   parentScopeId?: string | null;
   metricDefinitions?: MetricDefinition[];
   policy?: EvolutionPolicy;
+  policyPatch?: EvolutionPolicy;
 }
 
 export interface EvidenceRef {
