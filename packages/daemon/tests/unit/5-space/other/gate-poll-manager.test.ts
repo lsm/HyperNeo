@@ -945,7 +945,7 @@ describe('resolveTargetNodeName', () => {
     expect(resolveTargetNodeName('gate-1', workflow, 'from', 'coder')).toBe('Coder');
   });
 
-  test('resolves agent-name source before colliding node name', () => {
+  test('resolves node-name source before colliding agent name', () => {
     const channel: WorkflowChannel = {
       id: 'ch-1',
       from: 'Reviewer',
@@ -959,7 +959,7 @@ describe('resolveTargetNodeName', () => {
       agents: [{ agentId: 'agent-1', name: 'Reviewer' }],
     };
 
-    expect(resolveTargetNodeName('gate-1', workflow, 'from', 'Reviewer')).toBe('ReviewSource');
+    expect(resolveTargetNodeName('gate-1', workflow, 'from', 'Reviewer')).toBe('Reviewer');
   });
 
   test('resolves wildcard source to concrete node name for target=from', () => {

@@ -36,17 +36,21 @@ function getEnabledGateFeatureDefinitions(gate: Gate): GateFeatureDefinition[] {
  * `gateId` has `requireCodexApproval: true`. Used to dynamically inject the
  * codex review bot gate feature at runtime based on node-level config.
  */
-function findNodeBySourceName(workflow: SpaceWorkflow, sourceName: string) {
+function findNodesBySourceName(workflow: SpaceWorkflow, sourceName: string) {
+  const matches: typeof workflow.nodes = [];
   for (const node of workflow.nodes) {
+    if (node.name === sourceName) matches.push(node);
+  }
+  for (const node of workflow.nodes) {
+    if (matches.includes(node)) continue;
     try {
       const agents = resolveNodeAgents(node);
-      if (agents.some((a) => a.name === sourceName)) return node;
+      if (agents.some((a) => a.name === sourceName)) matches.push(node);
     } catch {
       // skip malformed nodes
     }
   }
-
-  return workflow.nodes.find((n) => n.name === sourceName);
+  return matches;
 }
 
 function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow): boolean {
@@ -57,8 +61,9 @@ function doesAnySourceNodeRequireCodex(gateId: string, workflow: SpaceWorkflow):
       continue;
     }
 
-    const node = findNodeBySourceName(workflow, channel.from);
-    if (node?.requireCodexApproval) return true;
+    if (findNodesBySourceName(workflow, channel.from).some((node) => node.requireCodexApproval)) {
+      return true;
+    }
   }
   return false;
 }
@@ -78,8 +83,7 @@ function doesSpecificSourceNodeRequireCodex(
     if (channel.gateId !== gateId) continue;
     if (channel.from !== sourceName && channel.from !== '*') continue;
 
-    const node = findNodeBySourceName(workflow, sourceName);
-    return !!node?.requireCodexApproval;
+    return findNodesBySourceName(workflow, sourceName).some((node) => node.requireCodexApproval);
   }
   return false;
 }
@@ -103,9 +107,11 @@ function getMinCodexPollIntervalMs(gateId: string, workflow: SpaceWorkflow): num
       continue;
     }
 
-    const node = findNodeBySourceName(workflow, channel.from);
-    if (node?.requireCodexApproval && node.codexPollIntervalMs) {
-      min = min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
+    for (const node of findNodesBySourceName(workflow, channel.from)) {
+      if (node.requireCodexApproval && node.codexPollIntervalMs) {
+        min =
+          min === undefined ? node.codexPollIntervalMs : Math.min(min, node.codexPollIntervalMs);
+      }
     }
   }
   return min ?? CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
@@ -125,10 +131,10 @@ function getSpecificCodexPollIntervalMs(
     if (channel.gateId !== gateId) continue;
     if (channel.from !== sourceName && channel.from !== '*') continue;
 
-    const node = findNodeBySourceName(workflow, sourceName);
-    if (node?.requireCodexApproval && node.codexPollIntervalMs) {
-      return node.codexPollIntervalMs;
-    }
+    const intervals = findNodesBySourceName(workflow, sourceName)
+      .filter((node) => node.requireCodexApproval && node.codexPollIntervalMs)
+      .map((node) => node.codexPollIntervalMs!);
+    if (intervals.length > 0) return Math.min(...intervals);
   }
   return CODEX_REVIEW_BOT_POLL_INTERVAL_MS;
 }

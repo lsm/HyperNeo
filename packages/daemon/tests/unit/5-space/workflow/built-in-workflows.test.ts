@@ -37,6 +37,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import {
   CODING_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
+  mergeNodeStructuralFieldsFromTemplate,
   getBuiltInGateScript,
   getBuiltInWorkflows,
   mergeGateStructuralFieldsFromTemplate,
@@ -2243,6 +2244,24 @@ describe('seedBuiltInWorkflows()', () => {
     expect(gate.features?.codex_review_bot).toBe(true);
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate clears removed template Codex approval flags', () => {
+    const existingNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review' ? { ...node, requireCodexApproval: true } : node
+    );
+    const templateNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review' ? { ...node, requireCodexApproval: undefined } : node
+    );
+
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      templateNodes,
+      resolveAgentId
+    );
+
+    const reviewNode = result.find((node) => node.name === 'Review')!;
+    expect(reviewNode.requireCodexApproval).toBeUndefined();
+  });
+
   test('re-stamp preserves migrated codex gate when source node is unflagged', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
@@ -3697,7 +3716,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(resolveCodexPollIntervalMs(30000)).toBe(30000);
   });
 
-  test('dynamic Codex injection resolves agent source before colliding node name', () => {
+  test('dynamic Codex injection handles node and agent source name collision', () => {
     const gate = {
       id: 'agent-source-gate',
       fields: [
@@ -3710,38 +3729,39 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       ],
       resetOnCycle: false,
     };
-    const effectiveGate = getEffectiveGate(
-      gate,
-      {
-        id: 'wf-agent-source-collision',
-        spaceId: 'space-1',
-        name: 'Agent Source Collision',
-        tags: [],
-        nodes: [
-          {
-            id: 'node-source',
-            name: 'SourceNode',
-            requireCodexApproval: true,
-            agents: [{ agentId: 'agent-coder', name: 'Reviewer' }],
-          },
-          {
-            id: 'node-collision',
-            name: 'Reviewer',
-            agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
-          },
-        ],
-        channels: [{ id: 'ch-agent-source', from: 'Reviewer', to: 'reviewer', gateId: gate.id }],
-        gates: [gate],
-        startNodeId: 'node-source',
-        endNodeId: 'node-collision',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        completionAutonomyLevel: 3,
-      },
-      'Reviewer'
-    );
+    const workflow = {
+      id: 'wf-agent-source-collision',
+      spaceId: 'space-1',
+      name: 'Agent Source Collision',
+      tags: [],
+      nodes: [
+        {
+          id: 'node-source',
+          name: 'SourceNode',
+          agents: [{ agentId: 'agent-coder', name: 'Reviewer' }],
+        },
+        {
+          id: 'node-collision',
+          name: 'Reviewer',
+          requireCodexApproval: true,
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      channels: [{ id: 'ch-node-source', from: 'Reviewer', to: 'reviewer', gateId: gate.id }],
+      gates: [gate],
+      startNodeId: 'node-source',
+      endNodeId: 'node-collision',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      completionAutonomyLevel: 3,
+    };
 
-    expect(effectiveGate.script?.source).toContain('codex[bot]');
+    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain('codex[bot]');
+
+    workflow.nodes[0] = { ...workflow.nodes[0], requireCodexApproval: true };
+    workflow.nodes[1] = { ...workflow.nodes[1], requireCodexApproval: undefined };
+
+    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain('codex[bot]');
   });
 
   test('codex feature script and poll override custom script and poll consistently', () => {
