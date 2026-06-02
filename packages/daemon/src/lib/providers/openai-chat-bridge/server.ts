@@ -25,6 +25,7 @@ import {
   type AnthropicContentBlockToolUse,
   type AnthropicRequest,
   contentBlockStartTextSSE,
+  contentBlockStartThinkingSSE,
   contentBlockStartToolUseSSE,
   contentBlockStopSSE,
   errorSSE,
@@ -33,6 +34,7 @@ import {
   messageStartSSE,
   messageStopSSE,
   textDeltaSSE,
+  thinkingDeltaSSE,
 } from '../provider-anthropic-compat/translator.js';
 import { estimateAnthropicInputTokens } from '../provider-anthropic-compat/token-estimator.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
@@ -42,6 +44,8 @@ const logger = new Logger('openai-chat-bridge-server');
 
 export type OpenAIChatBridgeServer = {
   port: number;
+  /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
+  setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   stop(): void;
 };
 
@@ -132,6 +136,7 @@ type OpenAIChatStreamChoice = {
   delta?: {
     role?: string;
     content?: string | null;
+    reasoning_content?: string | null;
     tool_calls?: Array<{
       index?: number;
       id?: string;
@@ -172,10 +177,6 @@ function mapUpstreamStatus(status: number): AnthropicErrorType {
   if (status === 429) return 'rate_limit_error';
   if (status >= 500) return 'api_error';
   return 'invalid_request_error';
-}
-
-function estimateOutputTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 function genMessageId(): string {
@@ -521,8 +522,11 @@ async function streamChatToAnthropic(params: {
   let started = false;
   let textOpen = false;
   let textBlockIndex = -1;
+  let thinkingOpen = false;
+  let thinkingBlockIndex = -1;
   let nextBlockIndex = 0;
   let heuristicOutputText = '';
+  let heuristicOutputThinking = '';
   let finalPromptTokens: number | undefined;
   let finalCompletionTokens: number | undefined;
   let finishReason: string | null = null;
@@ -556,9 +560,26 @@ async function streamChatToAnthropic(params: {
     textOpen = false;
   };
 
+  const startThinkingBlock = () => {
+    if (thinkingOpen) return;
+    ensureStarted();
+    closeTextBlock();
+    thinkingBlockIndex = nextBlockIndex++;
+    send(contentBlockStartThinkingSSE(thinkingBlockIndex));
+    thinkingOpen = true;
+  };
+
+  const closeThinkingBlock = () => {
+    if (!thinkingOpen) return;
+    send(contentBlockStopSSE(thinkingBlockIndex));
+    thinkingOpen = false;
+    thinkingBlockIndex = -1;
+  };
+
   const openToolCall = (call: PendingToolCall) => {
     if (call.opened) return;
     ensureStarted();
+    closeThinkingBlock();
     closeTextBlock();
     call.blockIndex = nextBlockIndex++;
     send(contentBlockStartToolUseSSE(call.blockIndex, call.id, call.name));
@@ -594,8 +615,15 @@ async function streamChatToAnthropic(params: {
       const delta = choice.delta;
       if (!delta) continue;
 
+      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+        startThinkingBlock();
+        send(thinkingDeltaSSE(thinkingBlockIndex, delta.reasoning_content));
+        heuristicOutputThinking += delta.reasoning_content;
+      }
+
       if (typeof delta.content === 'string' && delta.content.length > 0) {
         ensureStarted();
+        closeThinkingBlock();
         if (!textOpen) {
           textBlockIndex = nextBlockIndex++;
           send(contentBlockStartTextSSE(textBlockIndex));
@@ -666,6 +694,7 @@ async function streamChatToAnthropic(params: {
       if (call.opened && !emittedIds.has(call.id)) finishToolCall(call);
     }
 
+    closeThinkingBlock();
     closeTextBlock();
 
     const stopReason: 'tool_use' | 'max_tokens' | 'end_turn' =
@@ -675,10 +704,14 @@ async function streamChatToAnthropic(params: {
           ? 'max_tokens'
           : 'end_turn';
 
+    const textTokens =
+      heuristicOutputText.length > 0 ? Math.ceil(heuristicOutputText.length / 4) : 0;
+    const thinkingTokens =
+      heuristicOutputThinking.length > 0 ? Math.ceil(heuristicOutputThinking.length / 4) : 0;
     send(
       messageDeltaSSE(stopReason, {
         inputTokens: finalPromptTokens ?? inputTokens,
-        outputTokens: finalCompletionTokens ?? estimateOutputTokens(heuristicOutputText),
+        outputTokens: finalCompletionTokens ?? Math.max(1, textTokens + thinkingTokens),
         modelContextWindow,
       })
     );
@@ -710,6 +743,10 @@ export function createOpenAIChatBridgeServer(
   const streamUsageSupported = config.streamUsageSupported ?? false;
   const modelContextWindow = config.modelContextWindow;
 
+  // Per-session thinking config injected by the daemon when the Anthropic SDK client
+  // (Claude Code CLI) omits the thinking field from request bodies.
+  const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
+
   const server = Bun.serve({
     // Bind to loopback so other local users cannot probe the ephemeral port
     // and reach this bridge with the configured upstream API key. The SDK
@@ -719,6 +756,10 @@ export function createOpenAIChatBridgeServer(
     idleTimeout: 0,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
+      const authHeader = req.headers.get('Authorization') ?? '';
+      const sessionId = authHeader.startsWith('Bearer custom-endpoint:')
+        ? authHeader.slice('Bearer custom-endpoint:'.length)
+        : 'default';
 
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
 
@@ -767,6 +808,14 @@ export function createOpenAIChatBridgeServer(
           'invalid_request_error',
           'Only streaming responses are supported'
         );
+      }
+
+      // The Claude Code CLI handles thinking internally and does not include the
+      // thinking field in Anthropic Messages API requests. Merge the per-session
+      // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
+      const sessionThinkingEntry = sessionThinkingConfigs.get(sessionId);
+      if (sessionThinkingEntry?.thinking && !body.thinking) {
+        body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 
       const chatRequest = buildChatRequest(
@@ -835,7 +884,13 @@ export function createOpenAIChatBridgeServer(
 
   return {
     port,
-    stop: () => server.stop(true),
+    setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
+      sessionThinkingConfigs.set(sessionId, { thinking });
+    },
+    stop: () => {
+      sessionThinkingConfigs.clear();
+      server.stop(true);
+    },
   };
 }
 

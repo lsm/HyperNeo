@@ -981,4 +981,199 @@ describe('OpenAI Chat Completions bridge server', () => {
       expect(text).not.toContain('non-SSE');
     });
   });
+
+  describe('reasoning_content translation', () => {
+    it('streams reasoning_content as Anthropic thinking blocks before text', async () => {
+      const fetchMock = mock(async () => {
+        const body = sseBody([
+          { choices: [{ index: 0, delta: { reasoning_content: 'Let' } }] },
+          { choices: [{ index: 0, delta: { reasoning_content: ' me think' } }] },
+          { choices: [{ index: 0, delta: { content: 'Hello' } }] },
+          { choices: [{ index: 0, delta: { content: ' world' } }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        ]);
+        return new Response(body, { status: 200 });
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      const text = await response.text();
+      // thinking block opens first
+      expect(text).toContain('"type":"thinking"');
+      expect(text).toContain('"thinking":"Let"');
+      expect(text).toContain('"thinking":" me think"');
+      // text block follows
+      expect(text).toContain('"text":"Hello"');
+      expect(text).toContain('"text":" world"');
+      expect(text).toContain('"stop_reason":"end_turn"');
+      expect(text).toContain('event: message_stop');
+    });
+
+    it('counts reasoning tokens in heuristic output when no usage chunk', async () => {
+      const fetchMock = mock(async () => {
+        const body = sseBody([
+          { choices: [{ index: 0, delta: { reasoning_content: 'reasoning' } }] },
+          { choices: [{ index: 0, delta: { content: 'text' } }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        ]);
+        return new Response(body, { status: 200 });
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      const text = await response.text();
+      const match = text.match(/event: message_delta\s*\ndata:.*?"output_tokens":(\d+)/);
+      expect(match).not.toBeNull();
+      const outputTokens = Number(match![1]);
+      // reasoning (9 chars) => ceil(9/4)=3, text (4 chars) => ceil(4/4)=1, total 4.
+      expect(outputTokens).toBe(4);
+    });
+
+    it('closes thinking block before tool_use when reasoning is followed by tool_calls', async () => {
+      const fetchMock = mock(async () => {
+        const body = sseBody([
+          { choices: [{ index: 0, delta: { reasoning_content: 'plan' } }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_plan',
+                      type: 'function',
+                      function: { name: 'act', arguments: '{}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+        ]);
+        return new Response(body, { status: 200 });
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+          tools: [{ name: 'act', description: '', input_schema: { type: 'object' } }],
+        }),
+      });
+      const text = await response.text();
+      // thinking opens, then closes before tool_use
+      expect(text).toContain('"type":"thinking"');
+      expect(text).toContain('"type":"tool_use"');
+      expect(text).toContain('"name":"act"');
+      expect(text).toContain('"stop_reason":"tool_use"');
+      // ensure the thinking block is stopped before the tool_use block starts
+      const thinkingStopPos = text.indexOf('event: content_block_stop');
+      const toolUseStartPos = text.indexOf('"type":"tool_use"');
+      expect(thinkingStopPos).toBeGreaterThan(-1);
+      expect(toolUseStartPos).toBeGreaterThan(-1);
+      expect(thinkingStopPos).toBeLessThan(toolUseStartPos);
+    });
+
+    it('handles a reasoning-only stream with no content delta', async () => {
+      const fetchMock = mock(async () => {
+        const body = sseBody([
+          { choices: [{ index: 0, delta: { reasoning_content: 'Only reasoning' } }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        ]);
+        return new Response(body, { status: 200 });
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      const text = await response.text();
+      expect(text).toContain('"type":"thinking"');
+      expect(text).toContain('"thinking":"Only reasoning"');
+      expect(text).toContain('"stop_reason":"end_turn"');
+      expect(text).toContain('event: message_stop');
+      // must not contain a text block
+      expect(text).not.toContain('"type":"text"');
+    });
+
+    it('merges side-channel thinking config into the request when SDK omits it', async () => {
+      let capturedRequest: Record<string, unknown> = {};
+      const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+        capturedRequest = JSON.parse(String(init?.body));
+        return new Response(
+          sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+          { status: 200 }
+        );
+      });
+      const server = createOpenAIChatBridgeServer({
+        baseUrl: 'http://upstream.test',
+        fetchImpl: fetchMock as typeof fetch,
+        thinkingSupported: true,
+      });
+      servers.push(server);
+      server.setSessionThinkingConfig?.('sess-42', {
+        type: 'enabled',
+        budget_tokens: 8000,
+      });
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer custom-endpoint:sess-42',
+        },
+        body: JSON.stringify({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(capturedRequest.reasoning_effort).toBe('medium');
+    });
+  });
 });
