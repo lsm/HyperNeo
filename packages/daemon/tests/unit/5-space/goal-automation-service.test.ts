@@ -168,6 +168,61 @@ describe('GoalAutomationService', () => {
     });
   });
 
+  it('deduplicates pending completed-task jobs without external event id', () => {
+    const goal = goalRepo.create({ spaceId, title: 'Dedupe enqueue', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Dedupe enqueue',
+      objective: 'Avoid duplicate pending jobs',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const first = taskRepo.createTask({ spaceId, title: 'First task', goalId: goal.id });
+    taskRepo.updateTask(first.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: first.id,
+      summary: 'First result',
+      createdAt: 10,
+    });
+    jobQueue.enqueueUniquePending({
+      queue: GOAL_AUTOMATION_EXECUTE,
+      payload: {
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: first.id,
+      },
+      matchPayload: {
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+      },
+      activeStatuses: ['pending'],
+    });
+
+    const second = taskRepo.createTask({ spaceId, title: 'Second task', goalId: goal.id });
+    taskRepo.updateTask(second.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: second.id,
+      summary: 'Second result',
+      createdAt: 20,
+    });
+    const result = service.onTaskCompleted(second.id);
+
+    expect(result.enqueued).toBe(true);
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      1
+    );
+  });
+
   it('counts all due task evidence when threshold exceeds episode evidence cap', () => {
     const goal = goalRepo.create({ spaceId, title: 'Large batch', type: 'recurring' });
     const scope = evolutionRepo.createScope({

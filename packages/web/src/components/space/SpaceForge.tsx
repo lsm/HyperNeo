@@ -1793,7 +1793,7 @@ export function ScopeDetail({
                     min="1"
                     step="1"
                     value={completedTaskThreshold}
-                    disabled={savingCompletedTaskAutomation}
+                    disabled={!completedTaskAutomationEnabled || savingCompletedTaskAutomation}
                     onChange={(event) =>
                       handleCompletedTaskAutomationChange({
                         threshold: Number((event.currentTarget as HTMLInputElement).value),

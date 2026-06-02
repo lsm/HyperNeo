@@ -335,13 +335,16 @@ function filterMatches(
 }
 
 function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
-  return {
+  const matchPayload: Record<string, unknown> = {
     goalId: payload.goalId,
     scopeId: payload.scopeId,
     triggerKind: payload.triggerKind,
     triggerKey: payload.triggerKey,
-    externalEventId: payload.externalEventId ?? null,
   };
+  if (payload.externalEventId !== undefined) {
+    matchPayload.externalEventId = payload.externalEventId;
+  }
+  return matchPayload;
 }
 
 function isActiveGoal(goal: SpaceGoal | null): goal is SpaceGoal {

@@ -493,6 +493,9 @@ describe('ScopeDetailPanel', () => {
     expect(
       (screen.getByTestId('scope-completed-task-threshold-input') as HTMLInputElement).value
     ).toBe('10');
+    expect(
+      (screen.getByTestId('scope-completed-task-threshold-input') as HTMLInputElement).disabled
+    ).toBe(true);
   });
 
   it('clears completed-task automation saving state on invalid input', async () => {
