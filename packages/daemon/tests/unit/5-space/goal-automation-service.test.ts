@@ -2615,6 +2615,82 @@ describe('handleGoalAutomationExecute', () => {
     expect(result.skipped).toBe(false);
     expect(episodeEvidenceIds).toHaveLength(3);
     expect(episodeEvidenceIds).toContain(taskEvidence.id);
+    const cursor = cursorRepo.get(goal.id, scope.id, 'completed_task_threshold', 'threshold:1');
+    expect(cursor?.lastEvidenceCreatedAt).toBe(taskEvidence.createdAt);
+    expect(cursor?.lastEvidenceId).toBe(taskEvidence.id);
+  });
+
+  it('requires task_result kind when matching triggering task evidence', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Trigger kind filter', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Trigger kind filter',
+      objective: 'Match only task_result',
+      policy: { automation: { completedTaskThreshold: 1, maxEvidencePerEpisode: 2 } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: 'old-1',
+      summary: 'Old note 1',
+      createdAt: 1,
+    });
+    const task = taskRepo.createTask({ spaceId, title: 'Triggering task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: task.id,
+      summary: 'Older non-task evidence with same sourceId',
+      createdAt: 2,
+    });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Actual task result',
+      createdAt: 3,
+    });
+    let episodeEvidenceIds: string[] = [];
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: task.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => {
+            episodeEvidenceIds = evidenceIds;
+            return {
+              episode: evolutionRepo.createEpisode({
+                scopeId: scope.id,
+                title: 'Kind filter retrospective',
+                evidenceIds,
+                outcomeSummary: 'Matched task_result only',
+                findings: [],
+              }),
+              proposals: [],
+              lessons: [],
+            };
+          },
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(episodeEvidenceIds).toHaveLength(3);
+    expect(episodeEvidenceIds).toContain(taskEvidence.id);
   });
 
   it('deduplicates external event evidence across retries', async () => {

@@ -140,12 +140,16 @@ export async function handleGoalAutomationExecute(
     const episodeEvidence = triggerEvidence
       ? uniqueEvidence([...evidence, triggerEvidence])
       : evidence;
+    const cursorEvidence =
+      payload.triggerKind === 'completed_task_threshold' && triggerEvidence
+        ? episodeEvidence
+        : evidence;
     const existingAutomation = findExistingAutomationReviewTask(deps, scope.id, payload);
     if (existingAutomation) {
       advanceCursor(
         deps,
         payload,
-        evidence,
+        cursorEvidence,
         existingAutomation.reviewTask,
         existingAutomation.episodeId
       );
@@ -173,7 +177,7 @@ export async function handleGoalAutomationExecute(
         episodeEvidence,
         payload
       );
-      advanceCursor(deps, payload, evidence, reviewTask, episodeResult.episode.id);
+      advanceCursor(deps, payload, cursorEvidence, reviewTask, episodeResult.episode.id);
       return reviewTask;
     });
     const reviewTask = writeResult;
@@ -221,7 +225,10 @@ function findTriggerEvidence(
     return dueEvidence.find((item) => item.sourceId === payload.externalEventId) ?? null;
   }
   if (payload.triggerKind === 'completed_task_threshold' && payload.taskId) {
-    return dueEvidence.find((item) => item.sourceId === payload.taskId) ?? null;
+    return (
+      dueEvidence.find((item) => item.kind === 'task_result' && item.sourceId === payload.taskId) ??
+      null
+    );
   }
   return null;
 }
