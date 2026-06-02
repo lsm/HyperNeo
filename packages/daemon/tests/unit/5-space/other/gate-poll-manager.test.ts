@@ -98,13 +98,15 @@ async function triggerTick(
   poll: GatePoll,
   workspacePath: string,
   context: PollScriptContext,
-  targetNodeId: string
+  targetNodeId: string,
+  sourceName: string = 'Coder'
 ): Promise<void> {
   // Access the private method via the instance
   return (manager as Record<string, unknown>).executePollTick.call(
     manager,
     runId,
     gateId,
+    sourceName,
     poll,
     workspacePath,
     context,
@@ -1500,7 +1502,7 @@ describe('GatePollManager mid-run config pickup', () => {
       string,
       { targetNodeId: string }
     >;
-    const ap = activePolls.get('run-1:gate-1');
+    const ap = activePolls.get('run-1:gate-1:Reviewer');
     expect(ap?.targetNodeId).toBe('node-1');
   });
 });

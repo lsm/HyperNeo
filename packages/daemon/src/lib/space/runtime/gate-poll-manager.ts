@@ -104,14 +104,21 @@ export function extractPrContext(prUrl: string): {
 /**
  * Resolves the target node name for a polled gate by finding the channel
  * that references this gate.
+ *
+ * When `sourceName` is provided, the channel must also match that source so
+ * per-source polls resolve the correct target node.
  */
 export function resolveTargetNodeName(
   gateId: string,
   workflow: SpaceWorkflow,
-  target: 'from' | 'to'
+  target: 'from' | 'to',
+  sourceName?: string
 ): string | null {
   const channels = workflow.channels ?? [];
-  const channel = channels.find((ch) => ch.gateId === gateId);
+  const channel =
+    sourceName !== undefined
+      ? channels.find((ch) => ch.gateId === gateId && ch.from === sourceName)
+      : channels.find((ch) => ch.gateId === gateId);
   if (!channel) {
     return null;
   }
@@ -214,12 +221,25 @@ export interface PollGateDataResolver {
 interface PolledGate {
   gate: Gate;
   poll: GatePoll;
+  /** The channel `from` value that caused this poll (for source-scoped Codex). */
+  sourceName: string;
 }
 
 function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
-  return (workflow.gates ?? [])
-    .map((gate) => ({ gate, poll: getEffectiveGatePoll(gate, workflow) }))
-    .filter((entry): entry is PolledGate => !!entry.poll);
+  const seen = new Set<string>();
+  const result: PolledGate[] = [];
+  for (const channel of workflow.channels ?? []) {
+    if (!channel.gateId) continue;
+    const gate = workflow.gates?.find((g) => g.id === channel.gateId);
+    if (!gate) continue;
+    const poll = getEffectiveGatePoll(gate, workflow, channel.from);
+    if (!poll) continue;
+    const key = `${gate.id}:${channel.from}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ gate, poll, sourceName: channel.from });
+  }
+  return result;
 }
 
 interface ActivePoll {
@@ -314,8 +334,8 @@ export class GatePollManager {
       return;
     }
 
-    for (const { gate, poll } of polledGates) {
-      const key = `${runId}:${gate.id}`;
+    for (const { gate, poll, sourceName } of polledGates) {
+      const key = `${runId}:${gate.id}:${sourceName}`;
 
       // Validate interval — skip polls with malformed intervalMs (e.g. NaN, string)
       if (
@@ -332,11 +352,11 @@ export class GatePollManager {
       // Enforce minimum interval
       const intervalMs = Math.max(poll.intervalMs, MIN_POLL_INTERVAL_MS);
 
-      // Resolve target node
-      const targetNodeName = resolveTargetNodeName(gate.id, workflow, poll.target);
+      // Resolve target node scoped to the channel source
+      const targetNodeName = resolveTargetNodeName(gate.id, workflow, poll.target, sourceName);
       if (!targetNodeName) {
         log.warn(
-          `GatePollManager: skipping poll for gate "${gate.id}" — no channel references this gate`
+          `GatePollManager: skipping poll for gate "${gate.id}" — no channel references this gate (source=${sourceName})`
         );
         continue;
       }
@@ -352,19 +372,21 @@ export class GatePollManager {
 
       log.info(
         `GatePollManager: starting poll for gate "${gate.id}" on run "${runId}" ` +
-          `(interval=${intervalMs}ms, target=${poll.target}:${targetNodeName})`
+          `(interval=${intervalMs}ms, target=${poll.target}:${targetNodeName}, source=${sourceName})`
       );
 
-      // Capture runId and gateId for the closure — these are immutable.
+      // Capture runId, gateId and sourceName for the closure — these are immutable.
       const capturedRunId = runId;
       const capturedGateId = gate.id;
+      const capturedSourceName = sourceName;
 
       const timer = setInterval(async () => {
-        const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}`);
+        const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}:${capturedSourceName}`);
         if (!ap || !ap.active) return;
         await this.executePollTick(
           capturedRunId,
           capturedGateId,
+          capturedSourceName,
           ap.pollConfig,
           ap.workspacePath,
           ap.context,
@@ -435,9 +457,18 @@ export class GatePollManager {
 
   /**
    * Returns whether a specific gate poll is active (for testing).
+   * When `sourceName` is omitted, returns true if any source-scoped poll
+   * for the gate is active.
    */
-  isPollActive(runId: string, gateId: string): boolean {
-    return this.activePolls.has(`${runId}:${gateId}`);
+  isPollActive(runId: string, gateId: string, sourceName?: string): boolean {
+    if (sourceName !== undefined) {
+      return this.activePolls.has(`${runId}:${gateId}:${sourceName}`);
+    }
+    const prefix = `${runId}:${gateId}:`;
+    for (const key of this.activePolls.keys()) {
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
   }
 
   /**
@@ -509,11 +540,11 @@ export class GatePollManager {
     // Update the cached workflow in runContexts
     ctx.workflow = latestWorkflow;
 
-    const latestPolledGateIds = new Set<string>();
+    const latestPolledKeys = new Set<string>();
 
     // Start or update polls for gates that now have poll config
-    for (const { gate, poll } of getPolledGates(latestWorkflow)) {
-      const key = `${runId}:${gate.id}`;
+    for (const { gate, poll, sourceName } of getPolledGates(latestWorkflow)) {
+      const key = `${runId}:${gate.id}:${sourceName}`;
       const existing = this.activePolls.get(key);
 
       // Validate interval
@@ -530,11 +561,16 @@ export class GatePollManager {
 
       const intervalMs = Math.max(poll.intervalMs, MIN_POLL_INTERVAL_MS);
 
-      // Resolve target node
-      const targetNodeName = resolveTargetNodeName(gate.id, latestWorkflow, poll.target);
+      // Resolve target node scoped to the channel source
+      const targetNodeName = resolveTargetNodeName(
+        gate.id,
+        latestWorkflow,
+        poll.target,
+        sourceName
+      );
       if (!targetNodeName) {
         log.warn(
-          `GatePollManager.refreshPolls: skipping gate "${gate.id}" — no channel references this gate`
+          `GatePollManager.refreshPolls: skipping gate "${gate.id}" — no channel references this gate (source=${sourceName})`
         );
         continue;
       }
@@ -547,11 +583,11 @@ export class GatePollManager {
       }
 
       // Only mark as successfully polled after validation passes
-      latestPolledGateIds.add(gate.id);
+      latestPolledKeys.add(`${gate.id}:${sourceName}`);
       if (!existing) {
-        // NEW: poll was added to this gate — start a new timer
+        // NEW: poll was added to this gate/source — start a new timer
         log.info(
-          `GatePollManager.refreshPolls: starting new poll for gate "${gate.id}" on run "${runId}" (poll was added mid-run)`
+          `GatePollManager.refreshPolls: starting new poll for gate "${gate.id}" on run "${runId}" source=${sourceName} (poll was added mid-run)`
         );
 
         // Reuse context from another active poll for the same run so polls
@@ -561,13 +597,17 @@ export class GatePollManager {
 
         const capturedRunId = runId;
         const capturedGateId = gate.id;
+        const capturedSourceName = sourceName;
 
         const timer = setInterval(async () => {
-          const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}`);
+          const ap = this.activePolls.get(
+            `${capturedRunId}:${capturedGateId}:${capturedSourceName}`
+          );
           if (!ap || !ap.active) return;
           await this.executePollTick(
             capturedRunId,
             capturedGateId,
+            capturedSourceName,
             ap.pollConfig,
             ap.workspacePath,
             ap.context,
@@ -612,7 +652,7 @@ export class GatePollManager {
 
         if (configChanged) {
           log.info(
-            `GatePollManager.refreshPolls: updating poll for gate "${gate.id}" on run "${runId}" (config changed mid-run)`
+            `GatePollManager.refreshPolls: updating poll for gate "${gate.id}" on run "${runId}" source=${sourceName} (config changed mid-run)`
           );
 
           // If interval changed, we need to recreate the timer
@@ -630,13 +670,17 @@ export class GatePollManager {
 
             const capturedRunId = runId;
             const capturedGateId = gate.id;
+            const capturedSourceName = sourceName;
 
             const timer = setInterval(async () => {
-              const ap = this.activePolls.get(`${capturedRunId}:${capturedGateId}`);
+              const ap = this.activePolls.get(
+                `${capturedRunId}:${capturedGateId}:${capturedSourceName}`
+              );
               if (!ap || !ap.active) return;
               await this.executePollTick(
                 capturedRunId,
                 capturedGateId,
+                capturedSourceName,
                 ap.pollConfig,
                 ap.workspacePath,
                 ap.context,
@@ -655,14 +699,15 @@ export class GatePollManager {
       }
     }
 
-    // Stop polls for gates that no longer have poll config
+    // Stop polls for gate/sources that no longer have poll config
     const prefix = `${runId}:`;
     for (const [key, ap] of this.activePolls) {
       if (!key.startsWith(prefix)) continue;
-      const gateId = key.slice(prefix.length);
-      if (!latestPolledGateIds.has(gateId)) {
+      const suffix = key.slice(prefix.length);
+      if (!latestPolledKeys.has(suffix)) {
+        const gateId = suffix.split(':')[0];
         log.info(
-          `GatePollManager.refreshPolls: stopping poll for gate "${gateId}" on run "${runId}" (poll was removed mid-run)`
+          `GatePollManager.refreshPolls: stopping poll for gate "${gateId}" on run "${runId}" suffix=${suffix} (poll was removed mid-run)`
         );
         ap.active = false;
         clearInterval(ap.timer);
@@ -705,12 +750,13 @@ export class GatePollManager {
   private async executePollTick(
     runId: string,
     gateId: string,
+    sourceName: string,
     poll: GatePoll,
     workspacePath: string,
     context: PollScriptContext,
     targetNodeId: string
   ): Promise<void> {
-    const key = `${runId}:${gateId}`;
+    const key = `${runId}:${gateId}:${sourceName}`;
     const activePoll = this.activePolls.get(key);
     if (!activePoll) {
       // Poll was stopped between timer fire and execution
@@ -797,7 +843,7 @@ export class GatePollManager {
       );
     } finally {
       // Always clear inFlight so the next tick can execute
-      const ap = this.activePolls.get(`${runId}:${gateId}`);
+      const ap = this.activePolls.get(key);
       if (ap) ap.inFlight = false;
     }
   }

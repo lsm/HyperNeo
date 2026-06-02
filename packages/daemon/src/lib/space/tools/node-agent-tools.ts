@@ -189,10 +189,10 @@ async function evaluateTerminalGateFeatures(
   // (to current node) are only included when there is exactly one incoming
   // channel total, so we do not falsely treat an unrelated incoming gate as the
   // traversed path when multiple paths converge on a shared terminal node.
-  // Maps gateId → the channel `from` value that matched, so source-scoped Codex
-  // injection uses the actual sender name (node name or agent slot) rather than
-  // the current node name.
-  const relevantGateSources = new Map<string, string>();
+  // Maps gateId → all channel `from` values that matched, so source-scoped Codex
+  // injection uses the actual sender names (node name or agent slot) rather than
+  // the current node name. Multiple sources for the same gate are all evaluated.
+  const relevantGateSources = new Map<string, Set<string>>();
   if (currentNodeId && workflow.channels) {
     const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
@@ -226,36 +226,40 @@ async function evaluateTerminalGateFeatures(
             (currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t)));
         }
         if (isOutgoing || isIncoming) {
-          relevantGateSources.set(ch.gateId, ch.from);
+          const set = relevantGateSources.get(ch.gateId) ?? new Set<string>();
+          set.add(ch.from);
+          relevantGateSources.set(ch.gateId, set);
         }
       }
     }
   }
 
   for (const gate of workflow.gates ?? []) {
-    if (relevantGateSources.size > 0 && !relevantGateSources.has(gate.id)) continue;
-    const sourceName = relevantGateSources.get(gate.id);
-    if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
-    const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
-    if (!effectiveGate.script) continue;
+    const sources = relevantGateSources.get(gate.id);
+    if (relevantGateSources.size > 0 && !sources) continue;
+    for (const sourceName of sources ?? [undefined]) {
+      if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
+      const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
+      if (!effectiveGate.script) continue;
 
-    const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
-    const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
-    const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
-      ...scriptContext,
-      gateId: gate.id,
-      gateData: data,
-      gateDataUpdatedIso: gateDataRecord
-        ? new Date(gateDataRecord.updatedAt).toISOString()
-        : undefined,
-      prUrl: freshPrUrl || scriptContext.prUrl,
-    });
-    if (!result.open) {
-      return jsonResult({
-        success: false,
-        error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+      const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
+      const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
+      const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
+        ...scriptContext,
         gateId: gate.id,
+        gateData: data,
+        gateDataUpdatedIso: gateDataRecord
+          ? new Date(gateDataRecord.updatedAt).toISOString()
+          : undefined,
+        prUrl: freshPrUrl || scriptContext.prUrl,
       });
+      if (!result.open) {
+        return jsonResult({
+          success: false,
+          error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+          gateId: gate.id,
+        });
+      }
     }
   }
 

@@ -1521,12 +1521,14 @@ function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
-      requireCodexApproval: templateNode
-        ? templateNode.requireCodexApproval
-        : node.requireCodexApproval,
-      codexPollIntervalMs: templateNode
-        ? templateNode.codexPollIntervalMs
-        : node.codexPollIntervalMs,
+      requireCodexApproval:
+        templateNode && templateNode.requireCodexApproval !== undefined
+          ? templateNode.requireCodexApproval
+          : node.requireCodexApproval,
+      codexPollIntervalMs:
+        templateNode && templateNode.codexPollIntervalMs !== undefined
+          ? templateNode.codexPollIntervalMs
+          : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateGuards = templateAgentsByKey.get(key);
