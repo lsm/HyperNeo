@@ -68,7 +68,8 @@ export interface GoalAutomationExecuteResult extends Record<string, unknown> {
     | 'missing_scope'
     | 'no_evidence'
     | 'below_threshold'
-    | 'active_review';
+    | 'active_review'
+    | 'disabled';
   requeued?: boolean;
 }
 
@@ -108,6 +109,9 @@ export async function handleGoalAutomationExecute(
     return skipped(payload, 'no_evidence');
   }
   if (payload.triggerKind === 'completed_task_threshold') {
+    if (goal.type !== 'recurring' && policy.completedTaskThreshold === undefined) {
+      return skipped(payload, 'disabled');
+    }
     const threshold = readCompletedTaskThreshold(policy);
     const completedTaskIds = new Set(
       dueEvidence

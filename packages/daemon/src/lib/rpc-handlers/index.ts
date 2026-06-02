@@ -131,7 +131,14 @@ import {
 import type { ExternalEventExtensionContext } from '../external-events/types';
 
 function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
-  const threshold = policy?.automation?.completedTaskThreshold;
+  const automation = policy?.automation;
+  if (
+    automation !== undefined &&
+    (typeof automation !== 'object' || Array.isArray(automation) || automation === null)
+  ) {
+    throw new Error('Automation policy must be an object');
+  }
+  const threshold = automation?.completedTaskThreshold;
   if (threshold !== undefined && (!Number.isInteger(threshold) || threshold <= 0)) {
     throw new Error('Completed-task automation threshold must be a positive integer');
   }

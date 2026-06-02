@@ -981,6 +981,24 @@ describe('GoalAutomationService', () => {
     ).not.toThrow();
   });
 
+  it('rejects non-object automation policies', () => {
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: null as never },
+      })
+    ).toThrow('Automation policy must be an object');
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: ['array'] as never },
+      })
+    ).toThrow('Automation policy must be an object');
+    expect(() =>
+      validateGoalAutomationSelfNagPolicy({
+        policy: { automation: { completedTaskThreshold: 5 } },
+      })
+    ).not.toThrow();
+  });
+
   it('rejects invalid automation policy patches before scope save', () => {
     const existingPolicy = {
       automation: { completedTaskThreshold: 7, selfNagCronExpression: '0 * * * *' },
@@ -1357,6 +1375,56 @@ describe('handleGoalAutomationExecute', () => {
       lastEpisodeId: result.episodeId,
     });
     expect(cursor?.metadata.evidenceIds).toEqual([evidence.id]);
+  });
+
+  it('skips completed-task execution for non-recurring goals without explicit threshold', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'One-shot goal', type: 'one_shot' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'One-shot goal',
+      objective: 'Do not run default threshold',
+      policy: {},
+    });
+    const task = taskRepo.createTask({ spaceId, title: 'Completed task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done', result: 'Finished' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Completed task result',
+      createdAt: 40,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:10',
+        reason: 'task_completed',
+        taskId: task.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not create episode for non-recurring default');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'disabled',
+      evidenceCount: 0,
+    });
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
   it('deduplicates pending active-review requeues when payload omits external event id', async () => {

@@ -319,7 +319,12 @@ export class EvolutionScopeService {
     const task = this.deps.taskRepo.getTask(params.taskId);
     if (!task) throw new Error(`Task not found: ${params.taskId}`);
     if (task.status !== 'done') return { scope: null, evidence: [] };
-    if (task.labels.includes('automation')) return { scope: null, evidence: [] };
+    if (
+      task.labels.includes('automation') &&
+      task.labels.some((label) => label.startsWith('automation:'))
+    ) {
+      return { scope: null, evidence: [] };
+    }
 
     const scope = this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
     if (!scope || scope.spaceId !== task.spaceId) return { scope: null, evidence: [] };
