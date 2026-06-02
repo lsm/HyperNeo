@@ -1638,9 +1638,11 @@ export function ScopeDetail({
       patch.completedTaskThreshold = updates.threshold;
     }
     const threshold =
-      patch.completedTaskThreshold ??
-      currentAutomation.completedTaskThreshold ??
-      DEFAULT_COMPLETED_TASK_THRESHOLD;
+      patch.completedTaskThreshold !== undefined
+        ? patch.completedTaskThreshold
+        : currentAutomation.completedTaskThreshold !== undefined
+          ? currentAutomation.completedTaskThreshold
+          : DEFAULT_COMPLETED_TASK_THRESHOLD;
     if (!Number.isInteger(threshold) || threshold <= 0) {
       setSavingCompletedTaskAutomation(false);
       setSettingsError('Completed-task threshold must be a positive integer');
@@ -1681,7 +1683,6 @@ export function ScopeDetail({
       automationDebounceRef.current = null;
     }
     if (updates.threshold !== undefined) {
-      setSavingCompletedTaskAutomation(true);
       setSettingsError(null);
       automationDebounceRef.current = setTimeout(() => {
         runCompletedTaskAutomationUpdate(version, updates);

@@ -1682,6 +1682,79 @@ describe('handleGoalAutomationExecute', () => {
     });
   });
 
+  it('defers when active review shares the same automation token', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Same token defer', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Same token defer',
+      objective: 'Avoid reusing same-token review for new evidence',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const firstTask = taskRepo.createTask({ spaceId, title: 'First done', goalId: goal.id });
+    taskRepo.updateTask(firstTask.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: firstTask.id,
+      summary: 'First done',
+      createdAt: 10,
+    });
+    const activeReview = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Same token defer',
+      goalId: goal.id,
+      evolutionScopeId: scope.id,
+      description: 'Episode: episode-active',
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:run',
+      ],
+    });
+    taskRepo.updateTask(activeReview.id, { status: 'in_progress' });
+    const secondTask = taskRepo.createTask({ spaceId, title: 'Second done', goalId: goal.id });
+    taskRepo.updateTask(secondTask.id, { status: 'done' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: secondTask.id,
+      summary: 'Second done',
+      createdAt: 20,
+    });
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: secondTask.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        jobQueue,
+        episodeService: {
+          createFromEvidence: async () => {
+            throw new Error('should not create episode while same-token active review exists');
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'active_review',
+      evidenceCount: 2,
+      requeued: true,
+    });
+  });
+
   it('caps active-review requeues', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Cap requeue', type: 'recurring' });
     const scope = evolutionRepo.createScope({
@@ -2469,6 +2542,79 @@ describe('handleGoalAutomationExecute', () => {
       .find((item) => item.sourceId === 'fresh-event');
     expect(freshEvidence).toBeDefined();
     expect(episodeEvidenceIds).toContain(freshEvidence?.id as string);
+  });
+
+  it('includes triggering task result even when maxEvidence caps older evidence', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Capped task results', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Capped task results',
+      objective: 'Include triggering task',
+      policy: { automation: { completedTaskThreshold: 1, maxEvidencePerEpisode: 2 } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: 'old-1',
+      summary: 'Old note 1',
+      createdAt: 1,
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: 'old-2',
+      summary: 'Old note 2',
+      createdAt: 2,
+    });
+    const task = taskRepo.createTask({ spaceId, title: 'Triggering task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done' });
+    const taskEvidence = evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Triggering result',
+      createdAt: 3,
+    });
+    let episodeEvidenceIds: string[] = [];
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'completed_task_threshold',
+        triggerKey: 'threshold:1',
+        reason: 'task_completed',
+        taskId: task.id,
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => {
+            episodeEvidenceIds = evidenceIds;
+            return {
+              episode: evolutionRepo.createEpisode({
+                scopeId: scope.id,
+                title: 'Capped task retrospective',
+                evidenceIds,
+                outcomeSummary: 'Included triggering task',
+                findings: [],
+              }),
+              proposals: [],
+              lessons: [],
+            };
+          },
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(episodeEvidenceIds).toHaveLength(3);
+    expect(episodeEvidenceIds).toContain(taskEvidence.id);
   });
 
   it('deduplicates external event evidence across retries', async () => {

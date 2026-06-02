@@ -217,8 +217,13 @@ function findTriggerEvidence(
   dueEvidence: EvidenceRef[],
   payload: GoalAutomationExecutePayload
 ): EvidenceRef | null {
-  if (payload.triggerKind !== 'external_event' || !payload.externalEventId) return null;
-  return dueEvidence.find((item) => item.sourceId === payload.externalEventId) ?? null;
+  if (payload.triggerKind === 'external_event' && payload.externalEventId) {
+    return dueEvidence.find((item) => item.sourceId === payload.externalEventId) ?? null;
+  }
+  if (payload.triggerKind === 'completed_task_threshold' && payload.taskId) {
+    return dueEvidence.find((item) => item.sourceId === payload.taskId) ?? null;
+  }
+  return null;
 }
 
 function uniqueEvidence(evidence: EvidenceRef[]): EvidenceRef[] {
@@ -299,11 +304,10 @@ function createReviewTask(
 function findActiveCompletedTaskReviewTask(
   deps: GoalAutomationExecuteDeps,
   scopeId: string,
-  payload: GoalAutomationExecutePayload
+  _payload: GoalAutomationExecutePayload
 ): SpaceTask | null {
   const scope = deps.evolutionRepo.getScope(scopeId);
   if (!scope) return null;
-  const currentToken = automationTriggerToken(payload);
   return (
     deps.taskRepo.listBySpace(scope.spaceId, true).find((task) => {
       if (task.evolutionScopeId !== scopeId) return false;
@@ -311,7 +315,6 @@ function findActiveCompletedTaskReviewTask(
       if (!task.labels.some((label) => label.startsWith('automation:completed_task_threshold:'))) {
         return false;
       }
-      if (task.labels.includes(currentToken)) return false;
       return ['draft', 'open', 'in_progress', 'review', 'approved', 'blocked'].includes(
         task.status
       );

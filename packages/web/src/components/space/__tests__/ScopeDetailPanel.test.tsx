@@ -484,6 +484,9 @@ describe('ScopeDetailPanel', () => {
         target: { value: '15' },
       });
 
+      expect(
+        (screen.getByTestId('scope-completed-task-threshold-input') as HTMLInputElement).disabled
+      ).toBe(false);
       expect(mockRequest).not.toHaveBeenCalled();
       vi.advanceTimersByTime(300);
       await waitFor(() =>
@@ -530,45 +533,27 @@ describe('ScopeDetailPanel', () => {
   });
 
   it('clears completed-task automation saving state on invalid input', async () => {
-    let resolveFirst: (value: { scope: EvolutionScope }) => void = () => undefined;
-    mockRequest.mockImplementation(async (method: string, data?: unknown) => {
-      if (method === 'evolution.scope.get') {
-        return { scope: makeScope({ policy: { automation: { completedTaskThreshold: 7 } } }) };
-      }
-      if (method === 'evolution.evidence.list') return { evidence: [makeEvidence()] };
-      if (method === 'evolution.metricSnapshot.list') return { snapshots: [makeSnapshot()] };
-      if (method === 'evolution.review.get') {
-        return { episodes: [makeEpisode()], lessons: [makeLesson()], proposals: [makeProposal()] };
-      }
-      if (method === 'evolution.scope.update') {
-        const payload = data as { params: { policyPatch: EvolutionScope['policy'] } };
-        if (payload.params.policyPatch.automation?.completedTaskThreshold === 12) {
-          return new Promise((resolve) => {
-            resolveFirst = resolve;
-          });
-        }
-        return { scope: makeScope({ policy: payload.params.policyPatch }) };
-      }
-      throw new Error(`Unexpected RPC ${method}`);
-    });
+    setupRequests(makeScope({ policy: { automation: { completedTaskThreshold: 7 } } }));
     renderPanel();
 
     await screen.findByRole('heading', { name: 'Review quality scope' });
-    fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
-      target: { value: '12' },
-    });
-    expect(await screen.findByText('Saving…')).toBeTruthy();
-    fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
-      target: { value: '0' },
-    });
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByTestId('scope-completed-task-threshold-input'), {
+        target: { value: '0' },
+      });
 
-    await waitFor(() => expect(screen.queryByText('Saving…')).toBeNull());
-    expect(screen.getByText('Completed-task threshold must be a positive integer')).toBeTruthy();
-    expect(
-      (screen.getByLabelText('Enable count-based episode drafts') as HTMLInputElement).disabled
-    ).toBe(false);
-
-    resolveFirst({ scope: makeScope({ policy: { automation: { completedTaskThreshold: 12 } } }) });
+      vi.advanceTimersByTime(300);
+      await waitFor(() =>
+        expect(screen.getByText('Completed-task threshold must be a positive integer')).toBeTruthy()
+      );
+      expect(screen.queryByText('Saving…')).toBeNull();
+      expect(
+        (screen.getByLabelText('Enable count-based episode drafts') as HTMLInputElement).disabled
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ignores stale completed-task automation update responses', async () => {
