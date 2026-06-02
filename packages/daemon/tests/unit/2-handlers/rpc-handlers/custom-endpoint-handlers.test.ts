@@ -453,6 +453,47 @@ describe('Custom Endpoint RPC handlers', () => {
       expect(capturedUrl).toBe('http://localhost:1234/v1/models');
     });
 
+    it('derives model from Azure deployment URL without probing', async () => {
+      let fetchCalled = false;
+      global.fetch = mock(async () => {
+        fetchCalled = true;
+        return { ok: true, json: async () => ({ data: [] }) };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        {
+          baseUrl:
+            'https://my-resource.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview',
+        },
+        {}
+      )) as { models: Array<{ id: string }>; fromCache: boolean };
+      expect(result.models).toHaveLength(1);
+      expect(result.models[0].id).toBe('gpt-4o');
+      expect(result.fromCache).toBe(false);
+      expect(fetchCalled).toBe(false);
+    });
+
+    it('derives model from Azure deployment baseUrl without chat suffix', async () => {
+      let fetchCalled = false;
+      global.fetch = mock(async () => {
+        fetchCalled = true;
+        return { ok: true, json: async () => ({ data: [] }) };
+      }) as unknown as typeof fetch;
+
+      const handler = hubData.handlers.get('customEndpoints.listModels')!;
+      const result = (await handler(
+        {
+          baseUrl:
+            'https://my-resource.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview',
+        },
+        {}
+      )) as { models: Array<{ id: string }> };
+      expect(result.models).toHaveLength(1);
+      expect(result.models[0].id).toBe('gpt-4o');
+      expect(fetchCalled).toBe(false);
+    });
+
     it('strips /api/chat from ollama baseUrl before appending', async () => {
       let capturedUrl = '';
       global.fetch = mock(async (url: unknown) => {

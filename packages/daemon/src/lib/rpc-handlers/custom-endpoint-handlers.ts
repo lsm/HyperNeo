@@ -59,6 +59,19 @@ function cacheKey(params: {
  * in the bridge servers so a user-pasted `.../v1` or `.../v1/models` doesn't
  * produce a double-suffixed path like `.../v1/v1/models`.
  */
+/**
+ * Detect Azure OpenAI-style URLs (`…/openai/deployments/{name}/…`) and
+ * return the deployment name as the only available model. Azure does not
+ * expose a `/v1/models` equivalent, so we derive the model from the URL
+ * path rather than probing a non-existent endpoint.
+ */
+function extractAzureDeploymentModel(baseUrl: string): { id: string } | null {
+  const parsed = new URL(baseUrl.trim());
+  const match = parsed.pathname.match(/\/openai\/deployments\/([^/]+)/i);
+  if (!match) return null;
+  return { id: decodeURIComponent(match[1]) };
+}
+
 function buildModelListUrl(baseUrl: string, type: string): string {
   const trimmed = baseUrl.trim();
   const parsed = new URL(trimmed);
@@ -395,6 +408,13 @@ export function registerCustomEndpointHandlers(
       const cached = modelListCache.get(key);
       if (cached && Date.now() - cached.fetchedAt < MODEL_LIST_CACHE_TTL_MS) {
         return { models: cached.models, fromCache: true };
+      }
+
+      const azureModel = extractAzureDeploymentModel(data.baseUrl);
+      if (azureModel) {
+        const models = [azureModel];
+        modelListCache.set(key, { models, fetchedAt: Date.now() });
+        return { models, fromCache: false };
       }
 
       const models = await fetchModelsFromEndpoint(data);
