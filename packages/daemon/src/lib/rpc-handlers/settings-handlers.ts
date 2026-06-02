@@ -79,8 +79,17 @@ export function registerSettingsHandlers(
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
         if (touchesCustomEndpoints) {
+          const { filterDisabledCustomEndpoints, syncCustomEndpointsToProviderTable } =
+            await import('./custom-endpoint-handlers.js');
+          // Update provider rows for ALL endpoints (including disabled) so
+          // re-enablement picks up the latest config instead of a stale one.
+          syncCustomEndpointsToProviderTable(db, data.updates.customEndpoints ?? []);
+          const endpointsToSync = filterDisabledCustomEndpoints(
+            data.updates.customEndpoints ?? [],
+            db
+          );
           const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-          await syncCustomEndpointProviders(data.updates.customEndpoints);
+          await syncCustomEndpointProviders(endpointsToSync);
           // Stale model cache would still list removed custom models and
           // miss newly added ones until the TTL expires.
           const { clearModelsCache } = await import('../model-service');
@@ -91,6 +100,9 @@ export function registerSettingsHandlers(
           namespaceId: 'global',
           settings: updated,
         });
+        if (touchesCustomEndpoints || data.updates.providerModelAllowlists !== undefined) {
+          internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+        }
 
         // Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
@@ -135,8 +147,18 @@ export function registerSettingsHandlers(
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
       if (customEndpointsProvided) {
+        const { filterDisabledCustomEndpoints, syncCustomEndpointsToProviderTable } = await import(
+          './custom-endpoint-handlers.js'
+        );
+        // Update provider rows for ALL endpoints (including disabled) so
+        // re-enablement picks up the latest config instead of a stale one.
+        syncCustomEndpointsToProviderTable(db, data.settings.customEndpoints ?? []);
+        const endpointsToSync = filterDisabledCustomEndpoints(
+          data.settings.customEndpoints ?? [],
+          db
+        );
         const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-        await syncCustomEndpointProviders(data.settings.customEndpoints);
+        await syncCustomEndpointProviders(endpointsToSync);
         const { clearModelsCache } = await import('../model-service');
         clearModelsCache();
       }
@@ -145,6 +167,9 @@ export function registerSettingsHandlers(
         namespaceId: 'global',
         settings: settingsToPersist,
       });
+      if (customEndpointsProvided || data.settings.providerModelAllowlists !== undefined) {
+        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+      }
       return { success: true };
     };
     // Always serialise through the customEndpoints lock — even when the

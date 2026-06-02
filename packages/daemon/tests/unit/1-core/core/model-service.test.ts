@@ -1079,12 +1079,18 @@ describe('Model Service', () => {
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
       registry.register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register({
         id: 'empty-provider',
         getModels: async () => [],
         isAvailable: async () => true,
       } as ProviderLike);
 
-      // With no providers returning models, refreshModels should restore fallbacks.
+      // With no providers returning models, refreshModels should restore fallbacks
+      // for providers that are still registered.
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 

@@ -124,10 +124,14 @@ function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
   // Key by "provider:id" so same-id models from different providers
   // are preserved as distinct entries rather than last-writer-wins.
   const modelMap = new Map<string, ModelInfo>();
+  const registry = getProviderRegistry();
 
-  // Add fallback models first
+  // Add fallback models only when their provider is still registered.
+  // This prevents disabled/deleted providers from leaving ghost entries.
   for (const model of FALLBACK_MODELS) {
-    modelMap.set(`${model.provider}:${model.id}`, model);
+    if (registry.has(model.provider)) {
+      modelMap.set(`${model.provider}:${model.id}`, model);
+    }
   }
 
   // Provider models override fallbacks with same (provider, id)
@@ -339,8 +343,11 @@ export async function initializeModels(): Promise<void> {
       throw new Error('No models returned from providers');
     }
   } catch {
-    // Failed to load models - use well-known Anthropic models as fallback
-    modelsCache.set(cacheKey, FALLBACK_MODELS);
+    // Failed to load models - use well-known Anthropic models as fallback,
+    // but only for providers that are still registered.
+    const registry = getProviderRegistry();
+    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+    modelsCache.set(cacheKey, filteredFallbacks);
     cacheTimestamps.set(cacheKey, Date.now());
   }
 }
@@ -453,7 +460,9 @@ export async function refreshModels(): Promise<void> {
       } else if (!previousModels || previousModels.length === 0) {
         // Cache was cleared or was already empty — restore fallback models
         // so the UI and model resolution paths always have a baseline catalog.
-        modelsCache.set(cacheKey, FALLBACK_MODELS);
+        const registry = getProviderRegistry();
+        const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+        modelsCache.set(cacheKey, filteredFallbacks);
         cacheTimestamps.set(cacheKey, Date.now());
       }
     } finally {
