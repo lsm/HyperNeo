@@ -374,6 +374,20 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
     }
   }, [loadModelInfo, isConnected]);
 
+  // Reload model list when providers change (added/removed/updated).
+  // Include connectionState so we re-subscribe after the WebSocket connects
+  // following a fresh page load where the hook rendered before the hub was ready.
+  useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadModelInfo();
+    });
+    return () => {
+      unsub();
+    };
+  }, [loadModelInfo, connectionState.value]);
+
   const switchModel = useCallback(
     async (model: ModelInfo) => {
       if (!model.provider) {

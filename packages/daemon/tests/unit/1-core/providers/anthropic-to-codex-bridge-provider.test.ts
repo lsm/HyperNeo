@@ -945,4 +945,109 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
   });
+
+  describe('setSessionThinkingConfig', () => {
+    function mockUpstreamFetch(capturedRef: { body?: Record<string, unknown> }) {
+      const originalFetch = globalThis.fetch.bind(globalThis);
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if (
+          typeof url === 'string' &&
+          (url.includes('api.openai.com') || url.includes('chatgpt.com'))
+        ) {
+          capturedRef.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return new Response(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            })}\n\n`,
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+        return originalFetch(url, init);
+      });
+      return fetchSpy;
+    }
+
+    it('propagates thinking config to the active bridge server via side-channel', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-123' });
+
+      p.setSessionThinkingConfig('sess-123', 'think32k');
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+
+    it('finds env-var-keyed bridge (cachedBridgeAuth is unset)', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-env-key' });
+      const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-env' });
+
+      p.setSessionThinkingConfig('sess-env', 'think16k');
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+
+    it('is a no-op when no bridge server is active', () => {
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      expect(() => p.setSessionThinkingConfig('sess-456', 'think16k')).not.toThrow();
+    });
+
+    it('clears config when thinking level is off or undefined', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-789' });
+
+      p.setSessionThinkingConfig('sess-789', 'think32k');
+      p.setSessionThinkingConfig('sess-789', 'off');
+      p.setSessionThinkingConfig('sess-789', undefined);
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toBeUndefined();
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+  });
 });

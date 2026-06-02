@@ -2569,4 +2569,122 @@ describe('openai-responses-bridge server', () => {
     // stop() should clear the timer without throwing or leaking
     expect(() => server?.stop()).not.toThrow();
   });
+
+  it('merges session thinking config when the request omits thinking', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    server.setSessionThinkingConfig?.('session-a', {
+      type: 'enabled',
+      budget_tokens: 31999,
+    });
+
+    const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'Think deeply.' }],
+        // no thinking field
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
+  });
+
+  it('does not override request thinking when session config is also present', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    server.setSessionThinkingConfig?.('session-b', {
+      type: 'enabled',
+      budget_tokens: 32000,
+    });
+
+    const resp = await fetch(`${server.baseUrlForSession?.('session-b')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'Think lightly.' }],
+        thinking: { type: 'enabled', budget_tokens: 8000 },
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    // Request-level 8k tokens should win over session-level 32k tokens
+    expect(capturedBody?.reasoning).toEqual({ effort: 'low', summary: 'auto' });
+  });
+
+  it('clears session thinking config when undefined is passed', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    server.setSessionThinkingConfig?.('session-c', {
+      type: 'enabled',
+      budget_tokens: 16000,
+    });
+    server.setSessionThinkingConfig?.('session-c', undefined);
+
+    const resp = await fetch(`${server.baseUrlForSession?.('session-c')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'No thinking.' }],
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.reasoning).toBeUndefined();
+  });
 });

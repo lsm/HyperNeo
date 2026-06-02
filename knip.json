@@ -45,6 +45,7 @@
     "packages/daemon/src/lib/provider-service.ts": ["exports"],
     "packages/daemon/src/lib/providers/openai-chat-bridge/server.ts": ["exports"],
     "packages/daemon/src/lib/providers/openai-responses-bridge/server.ts": ["exports"],
+    "packages/daemon/src/lib/rpc-handlers/custom-endpoint-handlers.ts": ["exports"],
     "packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/agent-template-hash.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/custom-agent.ts": ["exports"],
