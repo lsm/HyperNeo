@@ -146,6 +146,27 @@ function removeEndpointFromProviderTable(db: Database | undefined, endpointId: s
   }
 }
 
+/**
+ * Sync the full custom endpoint list to the providers table.
+ * Disabled endpoints are still updated so re-enablement uses the latest config.
+ */
+export function syncCustomEndpointsToProviderTable(
+  db: Database,
+  endpoints: CustomEndpointConfig[]
+): void {
+  if (!db?.providers?.listProviders) return;
+  const allProviderIds = new Set(endpoints.map((e) => customProviderIdFor(e.id)));
+  for (const endpoint of endpoints) {
+    syncEndpointToProviderTable(db, endpoint);
+  }
+  // Remove any provider records for endpoints that no longer exist.
+  for (const record of db.providers.listProviders()) {
+    if (record.kind === 'custom_endpoint' && !allProviderIds.has(record.providerId)) {
+      db.providers.deleteProvider(record.id);
+    }
+  }
+}
+
 async function persistAndSync(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
@@ -176,16 +197,7 @@ async function persistAndSync(
   // Compat: sync the full list to the providers table so the unified registry
   // stays in sync with the legacy customEndpoints JSON blob.
   if (db) {
-    const allProviderIds = new Set(endpoints.map((e) => customProviderIdFor(e.id)));
-    for (const endpoint of endpoints) {
-      syncEndpointToProviderTable(db, endpoint);
-    }
-    // Remove any provider records for endpoints that no longer exist.
-    for (const record of db.providers.listProviders()) {
-      if (record.kind === 'custom_endpoint' && !allProviderIds.has(record.providerId)) {
-        db.providers.deleteProvider(record.id);
-      }
-    }
+    syncCustomEndpointsToProviderTable(db, endpoints);
   }
 }
 

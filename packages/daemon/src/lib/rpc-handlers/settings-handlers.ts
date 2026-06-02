@@ -79,7 +79,11 @@ export function registerSettingsHandlers(
           await syncProviderModelAllowlists(data.updates.providerModelAllowlists);
         }
         if (touchesCustomEndpoints) {
-          const { filterDisabledCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+          const { filterDisabledCustomEndpoints, syncCustomEndpointsToProviderTable } =
+            await import('./custom-endpoint-handlers.js');
+          // Update provider rows for ALL endpoints (including disabled) so
+          // re-enablement picks up the latest config instead of a stale one.
+          syncCustomEndpointsToProviderTable(db, data.updates.customEndpoints ?? []);
           const endpointsToSync = filterDisabledCustomEndpoints(
             data.updates.customEndpoints ?? [],
             db
@@ -143,7 +147,12 @@ export function registerSettingsHandlers(
         await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
       }
       if (customEndpointsProvided) {
-        const { filterDisabledCustomEndpoints } = await import('./custom-endpoint-handlers.js');
+        const { filterDisabledCustomEndpoints, syncCustomEndpointsToProviderTable } = await import(
+          './custom-endpoint-handlers.js'
+        );
+        // Update provider rows for ALL endpoints (including disabled) so
+        // re-enablement picks up the latest config instead of a stale one.
+        syncCustomEndpointsToProviderTable(db, data.settings.customEndpoints ?? []);
         const endpointsToSync = filterDisabledCustomEndpoints(
           data.settings.customEndpoints ?? [],
           db
