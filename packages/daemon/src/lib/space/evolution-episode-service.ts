@@ -516,7 +516,12 @@ ${JSON.stringify(
     status: task.status,
     reportedStatus: task.reportedStatus,
     reportedSummary: truncate(task.reportedSummary ?? '', MAX_TEXT),
-    result: truncate(task.result ?? '', MAX_TEXT),
+    result: truncate(
+      task.result ??
+        (task.status === 'done' || task.status === 'blocked' ? task.reportedSummary : '') ??
+        '',
+      MAX_TEXT
+    ),
   })),
   null,
   2
@@ -537,7 +542,12 @@ ${JSON.stringify(
       title: task.title,
       status: task.status,
       reportedSummary: truncate(task.reportedSummary ?? '', 500),
-      result: truncate(task.result ?? '', 500),
+      result: truncate(
+        task.result ??
+          (task.status === 'done' || task.status === 'blocked' ? task.reportedSummary : '') ??
+          '',
+        500
+      ),
     })),
     artifacts: artifacts.map((artifact) => ({
       nodeId: artifact.nodeId,

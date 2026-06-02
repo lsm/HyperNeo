@@ -125,6 +125,84 @@ describe('SpaceTaskManager', () => {
       expect(done.result).toBe('Already done');
     });
 
+    it('backfills result from reportedSummary when transitioning to done without explicit result', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, { reportedSummary: 'Work completed via agent report' });
+      const done = await manager.setTaskStatus(task.id, 'done');
+      expect(done.status).toBe('done');
+      expect(done.result).toBe('Work completed via agent report');
+    });
+
+    it('does not overwrite existing result with reportedSummary on done transition', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, {
+        result: 'PR #42 merged',
+        reportedSummary: 'Agent reported completion',
+      });
+      const done = await manager.setTaskStatus(task.id, 'done');
+      expect(done.status).toBe('done');
+      expect(done.result).toBe('PR #42 merged');
+    });
+
+    it('backfills result from reportedSummary when transitioning to blocked without explicit result', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, { reportedSummary: 'Blocked waiting for dependency' });
+      const blocked = await manager.setTaskStatus(task.id, 'blocked');
+      expect(blocked.status).toBe('blocked');
+      expect(blocked.result).toBe('Blocked waiting for dependency');
+    });
+
+    it('backfills result from incoming reportedSummary when existing reportedSummary is null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      const done = await manager.setTaskStatus(task.id, 'done', {
+        reportedSummary: 'Completed via incoming summary',
+      });
+      expect(done.status).toBe('done');
+      expect(done.result).toBe('Completed via incoming summary');
+      expect(done.reportedSummary).toBe('Completed via incoming summary');
+    });
+
+    it('does not backfill result when reportedSummary is explicitly null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, { reportedSummary: 'Stale summary' });
+      const done = await manager.setTaskStatus(task.id, 'done', {
+        reportedSummary: null,
+      });
+      expect(done.status).toBe('done');
+      expect(done.result).toBeNull();
+      expect(done.reportedSummary).toBeNull();
+    });
+
+    it('does not backfill result when result is explicitly null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.updateTask(task.id, { reportedSummary: 'Stale summary' });
+      const done = await manager.setTaskStatus(task.id, 'done', {
+        result: null,
+      });
+      expect(done.status).toBe('done');
+      expect(done.result).toBeNull();
+    });
+
+    it('clears reportedSummary on review → in_progress (human rejection)', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.submitTaskForReview(task.id, {
+        submittedByNodeId: null,
+        reason: 'ready',
+      });
+      await manager.updateTask(task.id, { reportedSummary: 'Old review summary' });
+      const reopened = await manager.setTaskStatus(task.id, 'in_progress');
+      expect(reopened.status).toBe('in_progress');
+      expect(reopened.reportedSummary).toBeNull();
+      expect(reopened.result).toBeNull();
+    });
+
     it('transitions open -> blocked (blocker found before start)', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       const blocked = await manager.setTaskStatus(task.id, 'blocked', {
