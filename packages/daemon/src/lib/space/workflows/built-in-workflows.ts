@@ -1634,11 +1634,18 @@ function migrateCodexFeatureToNodeToggle(
       })
     : nodes;
 
+  const migratedGateIdsToStrip = new Set<string>();
+  for (const gateId of codexGateIds) {
+    const sources = collectSourceNodes(new Set([gateId]));
+    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
+    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
+  }
+
   const migratedGates = gates.map((gate) => {
     if (!gate.features?.codex_review_bot) return gate;
     // Preserve legacy feature on gates that cannot be replaced by dynamic
     // approval-gate injection.
-    if (gate.script || !codexGateIds.has(gate.id)) return gate;
+    if (gate.script || !migratedGateIdsToStrip.has(gate.id)) return gate;
     const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
     return {
       ...gate,

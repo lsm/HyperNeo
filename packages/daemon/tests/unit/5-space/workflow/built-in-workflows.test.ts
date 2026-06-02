@@ -2242,6 +2242,49 @@ describe('seedBuiltInWorkflows()', () => {
     expect(gate.features?.codex_review_bot).toBe(true);
   });
 
+  test('re-stamp preserves migrated codex gate when source node is unflagged', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const reviewApprovalGate = workflow.gates!.find((gate) => gate.id === 'review-approval-gate')!;
+    const scriptedReviewGate = {
+      ...reviewApprovalGate,
+      id: 'scripted-review-gate',
+      features: undefined,
+      script: { interpreter: 'bash' as const, source: 'echo custom', timeoutMs: 10000 },
+    };
+
+    repo.updateWorkflow(workflow.id, {
+      gates: workflow
+        .gates!.map((gate) =>
+          gate.id === 'review-approval-gate'
+            ? { ...gate, features: { codex_review_bot: true } }
+            : gate
+        )
+        .concat(scriptedReviewGate),
+      channels: workflow.channels!.concat({
+        id: 'scripted-review-channel',
+        from: 'Review',
+        to: 'Coding',
+        gateId: 'scripted-review-gate',
+      }),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-unflagged-codex-source-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const reviewNode = after.nodes.find((node) => node.name === 'Review')!;
+    const migratedGate = after.gates!.find((gate) => gate.id === 'review-approval-gate')!;
+    expect(reviewNode.requireCodexApproval).toBeUndefined();
+    expect(migratedGate.features?.codex_review_bot).toBe(true);
+  });
+
   test('mergeGateStructuralFieldsFromTemplate clears non-codex features when template removes them', () => {
     const existingGates = [{ id: 'g1', fields: [], features: { some_other_feature: true } }];
     const templateGates = [{ id: 'g1', fields: [] }];
