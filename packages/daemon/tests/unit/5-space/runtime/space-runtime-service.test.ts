@@ -755,6 +755,88 @@ describe('SpaceRuntimeService', () => {
       );
     });
 
+    test('long-horizon event sessions preserve converted agent tool restrictions', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({
+          id: sessionId,
+          metadata: {},
+          config: {},
+        })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'restricted-agent',
+          displayName: 'Restricted Agent',
+          templateKey: 'migration.legacy_space_agent',
+          status: 'active',
+          sessionId: null,
+          instructions: 'Use limited tools.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          toolPermissions: { tools: ['Read', 'Edit'] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+      });
+
+      const result = await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      expect(sessionManager.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            sdkToolsPreset: ['Read', 'Edit'],
+            allowedTools: ['Read', 'Edit'],
+            disallowedTools: expect.arrayContaining(['Bash']),
+            agent: 'restricted-agent',
+            agents: {
+              'restricted-agent': expect.objectContaining({
+                disallowedTools: expect.arrayContaining(['Bash']),
+                prompt: 'Use limited tools.',
+              }),
+            },
+          }),
+        })
+      );
+      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'delivery-1',
+        'event payload'
+      );
+    });
+
     test('session.reset re-provisions reset long-term Space agents before query replay', async () => {
       const agentSession = makeSession();
       const sessionManager = makeSessionManager(agentSession);

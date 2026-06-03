@@ -495,6 +495,14 @@ export class SpaceRuntimeService {
     let session = await sessionManager.getSessionAsync(sessionId);
     if (!session) {
       try {
+        const storedTools = Array.isArray(agent.toolPermissions.tools)
+          ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
+          : [];
+        const customTools = storedTools.length > 0 ? storedTools : undefined;
+        const customDisallowedBuiltins = customTools
+          ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
+          : [];
+        const agentKey = sanitizeLongTermAgentKey(agent.displayName);
         await sessionManager.createSession({
           sessionId,
           workspacePath: space.workspacePath,
@@ -510,6 +518,24 @@ export class SpaceRuntimeService {
               append: agent.instructions,
             },
             features: LONG_TERM_AGENT_SESSION_FEATURES,
+            ...(customTools
+              ? {
+                  sdkToolsPreset: customTools,
+                  allowedTools: customTools,
+                  disallowedTools: customDisallowedBuiltins,
+                }
+              : {}),
+            agent: customTools ? agentKey : undefined,
+            agents: customTools
+              ? {
+                  [agentKey]: {
+                    description: `Long-horizon Space agent: ${agent.displayName}`,
+                    disallowedTools: customDisallowedBuiltins,
+                    model: 'inherit',
+                    prompt: agent.instructions,
+                  } satisfies AgentDefinition,
+                }
+              : undefined,
             settingSources: space.settingSources,
           },
         });

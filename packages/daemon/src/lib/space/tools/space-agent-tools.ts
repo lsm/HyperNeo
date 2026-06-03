@@ -490,11 +490,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       spaceId,
       handle: spaceAgent.handle ?? spaceAgent.name,
       displayName: spaceAgent.name,
-      status: 'active',
+      status:
+        spaceAgent.status === 'archived'
+          ? 'archived'
+          : spaceAgent.status === 'paused'
+            ? 'paused'
+            : 'active',
       instructions: spaceAgent.customPrompt ?? '',
       model: spaceAgent.model,
       thinkingLevel: spaceAgent.thinkingLevel,
-      toolPermissions: {},
+      toolPermissions:
+        spaceAgent.tools && spaceAgent.tools.length > 0 ? { tools: spaceAgent.tools } : undefined,
     });
   }
 

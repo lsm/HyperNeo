@@ -10429,6 +10429,15 @@ export function runMigration151(db: BunDatabase): void {
   if (!hasLegacy) return;
 
   const now = Date.now();
+  const hasSpaceAgentStatus = tableHasColumn(db, 'space_agents', 'status');
+  const hasSpaceAgentCustomPrompt = tableHasColumn(db, 'space_agents', 'custom_prompt');
+  const statusExpr = hasSpaceAgentStatus
+    ? `COALESCE(NULLIF(space_agents.status, ''), 'active')`
+    : `'active'`;
+  const instructionsExpr = hasSpaceAgentCustomPrompt
+    ? `COALESCE(space_agents.custom_prompt, space_agents.instructions, space_agents.system_prompt, '')`
+    : `COALESCE(space_agents.instructions, space_agents.system_prompt, '')`;
+
   db.prepare(
     `INSERT OR IGNORE INTO space_long_horizon_agents (
       id, space_id, handle, display_name, template_key, status, session_id,
@@ -10440,13 +10449,16 @@ export function runMigration151(db: BunDatabase): void {
       COALESCE(space_agents.handle, space_agents.name, legacy.agent_id),
       COALESCE(space_agents.name, space_agents.handle, legacy.agent_id),
       'migration.legacy_space_agent',
-      'active',
+      ${statusExpr},
       NULL,
-      COALESCE(space_agents.instructions, space_agents.system_prompt, ''),
+      ${instructionsExpr},
       NULL,
       space_agents.model,
       NULL,
-      COALESCE(space_agents.tools, '[]'),
+      CASE
+        WHEN space_agents.tools IS NULL OR space_agents.tools = '' OR space_agents.tools = '[]' THEN '{}'
+        ELSE json_object('tools', json(space_agents.tools))
+      END,
       COALESCE(space_agents.created_at, legacy.created_at, ?),
       ?
     FROM space_agent_event_subscriptions legacy

@@ -611,7 +611,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(listedLegacy).toEqual({ success: true, subscriptions: [] });
     expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
-    const unsubscribedLegacy = JSON.parse(
+    const unsubscribedUnconvertedLegacy = JSON.parse(
       (
         await handlers.unsubscribe_agent_event({
           agent_id: legacyAgent.id,
@@ -619,9 +619,45 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         })
       ).content[0].text
     );
-    expect(unsubscribedLegacy.success).toBe(true);
+    expect(unsubscribedUnconvertedLegacy.success).toBe(true);
     expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
-
+    const subscribedLegacy = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: legacyAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(subscribedLegacy.success).toBe(true);
+    ctx.agentManager.update(legacyAgent.id, {
+      status: 'paused',
+      customPrompt: 'Converted agent prompt',
+      tools: ['Read', 'Edit'],
+    });
+    ctx.longHorizonAgentRepo.deleteSubscriptionByRoute(
+      ctx.spaceId,
+      legacyAgent.id,
+      'github',
+      'github/*/*/pull_request/*'
+    );
+    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(legacyAgent.id);
+    const resubscribedLegacy = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: legacyAgent.id,
+          topic_pattern: 'github/*/*/issues/*',
+        })
+      ).content[0].text
+    );
+    expect(resubscribedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+      expect.objectContaining({
+        status: 'paused',
+        instructions: 'Converted agent prompt',
+        toolPermissions: { tools: ['Read', 'Edit'] },
+      })
+    );
     expect(
       JSON.parse(
         (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))

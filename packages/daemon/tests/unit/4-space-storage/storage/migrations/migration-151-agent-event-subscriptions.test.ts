@@ -19,6 +19,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
         handle TEXT,
         instructions TEXT,
         system_prompt TEXT,
+        custom_prompt TEXT,
+        status TEXT,
         model TEXT,
         tools TEXT,
         created_at INTEGER
@@ -62,12 +64,24 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
     `);
     db.prepare(`INSERT INTO spaces (id) VALUES (?)`).run('space-1');
     db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, model, tools, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run('lh-agent-1', 'space-1', 'Existing LH', 'existing-lh', '', '', null, '[]', 100);
+      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'lh-agent-1',
+      'space-1',
+      'Existing LH',
+      'existing-lh',
+      '',
+      '',
+      null,
+      'active',
+      null,
+      '[]',
+      100
+    );
     db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, model, tools, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'legacy-agent-1',
       'space-1',
@@ -75,6 +89,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       'legacy-agent',
       'Legacy instructions',
       '',
+      'Canonical custom prompt',
+      'paused',
       'claude-sonnet-4',
       '["Read"]',
       101
@@ -142,7 +158,7 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
     expect(
       db
         .prepare(
-          `SELECT id, handle, display_name, template_key, instructions, model, tool_permissions_json
+          `SELECT id, handle, display_name, template_key, status, instructions, model, tool_permissions_json
            FROM space_long_horizon_agents
            WHERE id = ?`
         )
@@ -152,9 +168,10 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       handle: 'legacy-agent',
       display_name: 'Legacy Agent',
       template_key: 'migration.legacy_space_agent',
-      instructions: 'Legacy instructions',
+      status: 'paused',
+      instructions: 'Canonical custom prompt',
       model: 'claude-sonnet-4',
-      tool_permissions_json: '["Read"]',
+      tool_permissions_json: '{"tools":["Read"]}',
     });
   });
 
