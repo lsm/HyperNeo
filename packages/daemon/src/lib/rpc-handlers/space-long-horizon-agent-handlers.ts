@@ -32,18 +32,35 @@ function rejectSlashSeparatedGitHubAction(topic: string): never {
   );
 }
 
+function splitDottedGitHubResource(segment: string): { resource: string; action: string } | null {
+  const dotIndex = segment.indexOf('.');
+  if (dotIndex <= 0 || dotIndex === segment.length - 1) return null;
+  return { resource: segment.slice(0, dotIndex), action: segment.slice(dotIndex + 1) };
+}
+
 function composeGitHubSubscriptionPattern(source: string, topic: string): string {
   const segments = topic.split('/');
-  if (segments[0] === source && segments.length === 5) return topic;
   if (segments[0] === source && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
+  if (segments[0] === source && segments.length === 5) return topic;
+  if (segments[0] === source && segments.length === 4) {
+    const dotted = splitDottedGitHubResource(segments[3] ?? '');
+    if (dotted)
+      return `${source}/${segments[1]}/${segments[2]}/${dotted.resource}/*.${dotted.action}`;
+    return `${topic}/*`;
+  }
   if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
   if (segments.length === 4) return `${source}/${topic}`;
-  if (segments.length === 3) return `${source}/${topic}/*`;
-  if (segments.length === 1 && topic.includes('.')) {
-    const dotIndex = topic.indexOf('.');
-    return `${source}/*/*/${topic.slice(0, dotIndex)}/*.${topic.slice(dotIndex + 1)}`;
+  if (segments.length === 3) {
+    const dotted = splitDottedGitHubResource(segments[2] ?? '');
+    if (dotted)
+      return `${source}/${segments[0]}/${segments[1]}/${dotted.resource}/*.${dotted.action}`;
+    return `${source}/${topic}/*`;
   }
-  if (segments.length === 1) return `${source}/*/*/${topic}/*`;
+  if (segments.length === 1) {
+    const dotted = splitDottedGitHubResource(topic);
+    if (dotted) return `${source}/*/*/${dotted.resource}/*.${dotted.action}`;
+    return `${source}/*/*/${topic}/*`;
+  }
   return `${source}/*/*/${topic}`;
 }
 
@@ -93,9 +110,13 @@ function assertNoDuplicateLongHorizonSubscriptionPattern(
 ): void {
   const duplicate = repo.listSubscriptions(agentId).find((subscription) => {
     if (subscription.id === currentSubscriptionId) return false;
-    return (
-      composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic) === pattern
-    );
+    try {
+      return (
+        composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic) === pattern
+      );
+    } catch {
+      return false;
+    }
   });
   if (duplicate) {
     throw new Error(

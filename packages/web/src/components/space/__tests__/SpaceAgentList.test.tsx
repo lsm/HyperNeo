@@ -558,6 +558,26 @@ describe('SpaceAgentList', () => {
     );
   });
 
+  it('refreshes active long-horizon rows when opening subscriptions', async () => {
+    mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
+    mockLongHorizonAgents.value = [
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' }),
+    ];
+    mockUpdateLongHorizonAgent.mockResolvedValue(
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' })
+    );
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
+      'space-agent-coder',
+      expect.objectContaining({ status: 'active' })
+    );
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
+  });
+
   it('reactivates inactive long-horizon rows when opening subscriptions', async () => {
     mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
     mockLongHorizonAgents.value = [

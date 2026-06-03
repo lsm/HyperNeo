@@ -623,12 +623,10 @@ export function SpaceAgentList() {
         toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
       };
       if (longHorizonAgent) {
-        if (longHorizonAgent.status !== 'active') {
-          longHorizonAgent = await spaceStore.updateLongHorizonAgent(longHorizonAgent.id, {
-            ...agentConfig,
-            status: 'active',
-          });
-        }
+        longHorizonAgent = await spaceStore.updateLongHorizonAgent(longHorizonAgent.id, {
+          ...agentConfig,
+          status: 'active',
+        });
       } else {
         longHorizonAgent = await spaceStore.createLongHorizonAgent({
           id: agent.id,
