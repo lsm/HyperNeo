@@ -2244,6 +2244,36 @@ describe('seedBuiltInWorkflows()', () => {
     expect(gate.features?.codex_review_bot).toBe(true);
   });
 
+  test('re-stamp preserves codex_review_bot on custom-polled approval gates', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const gatesWithCustomPollCodex = workflow.gates!.map((gate) =>
+      gate.id !== 'review-approval-gate'
+        ? gate
+        : {
+            ...gate,
+            features: { codex_review_bot: true },
+            poll: { intervalMs: 30_000, target: 'from' as const, script: 'echo custom poll' },
+          }
+    );
+
+    repo.updateWorkflow(workflow.id, { gates: gatesWithCustomPollCodex });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-custom-polled-codex-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
+    expect(gate.features?.codex_review_bot).toBe(true);
+    expect(gate.poll?.script).toBe('echo custom poll');
+  });
+
   test('mergeNodeStructuralFieldsFromTemplate clears removed template Codex approval flags', () => {
     const existingNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
       node.name === 'Review' ? { ...node, requireCodexApproval: true } : node

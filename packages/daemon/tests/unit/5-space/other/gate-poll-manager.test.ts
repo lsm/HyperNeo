@@ -242,6 +242,7 @@ describe('GatePollManager', () => {
         ...workflow.nodes[0],
         name: 'ReviewSource',
         requireCodexApproval: true,
+        codexPollIntervalMs: 60_000,
         agents: [{ agentId: 'agent-1', name: 'Reviewer' }],
       };
       workflow.nodes[1] = {
@@ -255,6 +256,11 @@ describe('GatePollManager', () => {
 
       expect(manager.activePollCount).toBe(1);
       expect(manager.isPollActive('run-1', gate.id, 'ReviewSource')).toBe(true);
+      const activePolls = (manager as Record<string, unknown>).activePolls as Map<
+        string,
+        { pollConfig: GatePoll }
+      >;
+      expect(activePolls.get(`run-1:${gate.id}:ReviewSource`)?.pollConfig.intervalMs).toBe(60_000);
     });
 
     test('enforces minimum interval (still starts with clamped value)', () => {

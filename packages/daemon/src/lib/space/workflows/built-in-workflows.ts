@@ -1643,7 +1643,7 @@ function migrateCodexFeatureToNodeToggle(
     if (!gate.features?.codex_review_bot) return gate;
     // Preserve legacy feature on gates that cannot be replaced by dynamic
     // approval-gate injection.
-    if (gate.script || !migratedGateIdsToStrip.has(gate.id)) return gate;
+    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
     const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
     return {
       ...gate,

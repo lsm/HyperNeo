@@ -133,7 +133,11 @@ function getSpecificCodexPollIntervalMs(
 ): number {
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId !== gateId) continue;
-    if (channel.from !== sourceName && channel.from !== '*') continue;
+    const sourceMatches =
+      channel.from === '*' ||
+      channel.from === sourceName ||
+      findNodesBySourceName(workflow, channel.from).some((node) => node.name === sourceName);
+    if (!sourceMatches) continue;
 
     const intervals = findNodesBySourceName(workflow, sourceName)
       .filter((node) => node.requireCodexApproval && node.codexPollIntervalMs)
