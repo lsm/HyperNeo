@@ -106,6 +106,7 @@ describe('Space long-horizon agent handlers', () => {
           agentId: 'agent-1',
           spaceId: 'space-1',
           status: 'paused',
+          handle: 'coder',
           provider: 'openrouter',
           settingSources: ['project'],
           toolPermissions: { tools: ['Read'] },
@@ -117,6 +118,7 @@ describe('Space long-horizon agent handlers', () => {
         'agent-1',
         expect.objectContaining({
           status: 'paused',
+          handle: 'coder',
           provider: 'openrouter',
           settingSources: ['project'],
           toolPermissions: { tools: ['Read'] },
@@ -296,6 +298,18 @@ describe('Space long-horizon agent handlers', () => {
         source: 'github',
         topic: 'owner/repo/pull_request.closed',
       });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/pull_request.closed',
+      });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/pull_request',
+      });
 
       repo.listSubscriptions = mock(() => [
         {
@@ -329,6 +343,56 @@ describe('Space long-horizon agent handlers', () => {
           agentId: 'agent-1',
           source: 'github',
           topic: 'pull_request',
+          filter: {},
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/*/*/pull_request/*',
+        })
+      ).rejects.toThrow(
+        'Subscription pattern duplicates existing subscription sub-existing: github/*/*/pull_request/*'
+      );
+
+      repo.listSubscriptions = mock(() => [
+        {
+          id: 'sub-existing',
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/pull_request.closed',
+          filter: {},
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/*/*/pull_request/*.closed',
+        })
+      ).rejects.toThrow(
+        'Subscription pattern duplicates existing subscription sub-existing: github/*/*/pull_request/*.closed'
+      );
+
+      repo.listSubscriptions = mock(() => [
+        {
+          id: 'sub-existing',
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/pull_request',
           filter: {},
           status: 'active',
           createdAt: 1,
@@ -505,6 +569,61 @@ describe('Space long-horizon agent handlers', () => {
         'space-1',
         'sub-1'
       );
+    });
+
+    it('allows status-only updates for wildcard-source subscriptions', async () => {
+      repo.getSubscription = mock(() => ({
+        id: 'sub-wildcard',
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: '*',
+        topic: '*/space/task.updated',
+        filter: {},
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+      })) as unknown as SpaceLongHorizonAgentRepository['getSubscription'];
+      repo.updateSubscription = mock((subscriptionId, params) => ({
+        id: subscriptionId,
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: '*',
+        topic: '*/space/task.updated',
+        filter: {},
+        status: params.status ?? 'active',
+        createdAt: 1,
+        updatedAt: 2,
+      })) as unknown as SpaceLongHorizonAgentRepository['updateSubscription'];
+
+      await call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
+        subscriptionId: 'sub-wildcard',
+        spaceId: 'space-1',
+        status: 'paused',
+      });
+
+      expect(repo.updateSubscription).toHaveBeenCalledWith('sub-wildcard', { status: 'paused' });
+    });
+
+    it('rejects topic edits for wildcard-source subscriptions', async () => {
+      repo.getSubscription = mock(() => ({
+        id: 'sub-wildcard',
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: '*',
+        topic: '*/space/task.updated',
+        filter: {},
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+      })) as unknown as SpaceLongHorizonAgentRepository['getSubscription'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
+          subscriptionId: 'sub-wildcard',
+          spaceId: 'space-1',
+          topic: '*/space/task.done',
+        })
+      ).rejects.toThrow('Source "*" must be lowercase');
     });
 
     it('deletes subscriptions and removes runtime target before deleting row', async () => {

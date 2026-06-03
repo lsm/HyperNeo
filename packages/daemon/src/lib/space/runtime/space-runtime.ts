@@ -516,6 +516,12 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
       return `${source}/${segments[1]}/${segments[2]}/${dotted.resource}/*.${dotted.action}`;
     return `${topic}/*`;
   }
+  if (segments[0] === source && segments.length === 2) {
+    const resource = segments[1] ?? '';
+    const dotted = splitDottedGitHubResource(resource);
+    if (dotted) return `${source}/*/*/${dotted.resource}/*.${dotted.action}`;
+    return `${source}/*/*/${resource}/*`;
+  }
   if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
   if (segments.length === 4) return `${source}/${topic}`;
   if (segments.length === 3) {

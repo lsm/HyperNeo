@@ -48,6 +48,12 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
       return `${source}/${segments[1]}/${segments[2]}/${dotted.resource}/*.${dotted.action}`;
     return `${topic}/*`;
   }
+  if (segments[0] === source && segments.length === 2) {
+    const resource = segments[1] ?? '';
+    const dotted = splitDottedGitHubResource(resource);
+    if (dotted) return `${source}/*/*/${dotted.resource}/*.${dotted.action}`;
+    return `${source}/*/*/${resource}/*`;
+  }
   if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
   if (segments.length === 4) return `${source}/${topic}`;
   if (segments.length === 3) {
@@ -91,9 +97,15 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   return `${trimmedSource}/${trimmedTopic}`;
 }
 
-function validateLongHorizonSubscriptionPattern(source: string, topic: string): string {
-  const sourceValidation = validateSource(source);
-  if (!sourceValidation.valid) throw new Error(sourceValidation.reason ?? 'invalid source');
+function validateLongHorizonSubscriptionPattern(
+  source: string,
+  topic: string,
+  options: { allowWildcardSource?: boolean } = {}
+): string {
+  if (source !== '*' || !options.allowWildcardSource) {
+    const sourceValidation = validateSource(source);
+    if (!sourceValidation.valid) throw new Error(sourceValidation.reason ?? 'invalid source');
+  }
   const pattern = composeLongHorizonSubscriptionPattern(source, topic);
   const validation = validateGlobPattern(pattern);
   if (!validation.valid) throw new Error(validation.reason ?? 'invalid pattern');
@@ -195,6 +207,7 @@ export function setupSpaceLongHorizonAgentHandlers(
     const params = data as {
       agentId: string;
       spaceId?: string;
+      handle?: string;
       displayName?: string;
       instructions?: string;
       autonomyLevel?: number | null;
@@ -213,6 +226,7 @@ export function setupSpaceLongHorizonAgentHandlers(
         throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     }
     const agent = repo.update(params.agentId, {
+      handle: params.handle,
       displayName: params.displayName,
       instructions: params.instructions,
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
@@ -352,7 +366,9 @@ export function setupSpaceLongHorizonAgentHandlers(
     }
     const source = params.source?.trim() ?? existing.source;
     const topic = params.topic?.trim() ?? existing.topic;
-    const pattern = validateLongHorizonSubscriptionPattern(source, topic);
+    const pattern = validateLongHorizonSubscriptionPattern(source, topic, {
+      allowWildcardSource: params.source === undefined && params.topic === undefined,
+    });
     assertNoDuplicateLongHorizonSubscriptionPattern(
       repo,
       existing.agentId,
