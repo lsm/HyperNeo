@@ -38,6 +38,10 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
     const segments = trimmedTopic.split('/');
     if (trimmedTopic.startsWith('*/*/') || segments.length >= 4)
       return `${trimmedSource}/${trimmedTopic}`;
+    if (segments.length === 1 && trimmedTopic.includes('.')) {
+      const dotIndex = trimmedTopic.indexOf('.');
+      return `${trimmedSource}/*/*/${trimmedTopic.slice(0, dotIndex)}/*.${trimmedTopic.slice(dotIndex + 1)}`;
+    }
     return `${trimmedSource}/*/*/${trimmedTopic}`;
   }
   return `${trimmedSource}/${trimmedTopic}`;
@@ -149,6 +153,9 @@ export function setupSpaceLongHorizonAgentHandlers(
       autonomyLevel?: number | null;
       model?: string | null;
       thinkingLevel?: string | null;
+      provider?: string | null;
+      settingSources?: SpaceLongHorizonAgent['settingSources'];
+      toolPermissions?: Record<string, unknown> | null;
       status?: string;
     };
     if (!params.agentId) throw new Error('agentId is required');
@@ -164,6 +171,9 @@ export function setupSpaceLongHorizonAgentHandlers(
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
       model: params.model,
       thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+      provider: params.provider,
+      settingSources: params.settingSources,
+      toolPermissions: params.toolPermissions,
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);

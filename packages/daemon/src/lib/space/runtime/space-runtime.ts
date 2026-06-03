@@ -510,6 +510,10 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
     const segments = trimmedTopic.split('/');
     if (trimmedTopic.startsWith('*/*/') || segments.length >= 4)
       return `${trimmedSource}/${trimmedTopic}`;
+    if (segments.length === 1 && trimmedTopic.includes('.')) {
+      const dotIndex = trimmedTopic.indexOf('.');
+      return `${trimmedSource}/*/*/${trimmedTopic.slice(0, dotIndex)}/*.${trimmedTopic.slice(dotIndex + 1)}`;
+    }
     return `${trimmedSource}/*/*/${trimmedTopic}`;
   }
   return `${trimmedSource}/${trimmedTopic}`;
