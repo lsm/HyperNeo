@@ -13,7 +13,7 @@
  * renderer that genuinely needs the unbounded history (e.g. the verbose feed).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/preact';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +75,7 @@ import { useSpaceTaskMessages } from '../useSpaceTaskMessages';
 
 describe('useSpaceTaskMessages', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     mockRequest.mockReset();
     mockOnEvent.mockReset();
     mockGetHub.mockReset();
@@ -89,6 +90,10 @@ describe('useSpaceTaskMessages', () => {
         eventHandlers[method] = (eventHandlers[method] ?? []).filter((h) => h !== handler);
       };
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('subscribes to compact messages and active-turn queries by default', () => {
@@ -294,6 +299,61 @@ describe('useSpaceTaskMessages', () => {
         });
       });
       expect(result.current.isLoading).toBe(false);
+    });
+
+    it('retries a reconnect subscribe when the server acks without a snapshot', async () => {
+      vi.useFakeTimers();
+      let connectionHandler: ((state: string) => void) | null = null;
+      mockGetHub.mockReturnValue({
+        request: mockRequest,
+        onConnection: vi.fn((handler: (state: string) => void) => {
+          connectionHandler = handler;
+          return () => {};
+        }),
+      });
+
+      const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
+      const firstSubId = lastMessageSubscribeSubId();
+      act(() => {
+        fireEvent('liveQuery.snapshot', {
+          subscriptionId: firstSubId,
+          rows: [{ id: 'msg-1', taskId: 'task-1', createdAt: 1 }],
+          version: 1,
+        });
+      });
+
+      act(() => {
+        connectionHandler?.('connected');
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(result.current.isLoading).toBe(true);
+      expect(subscribeCalls()).toHaveLength(4);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(subscribeCalls()).toHaveLength(6);
+
+      act(() => {
+        fireEvent('liveQuery.snapshot', {
+          subscriptionId: firstSubId,
+          rows: [{ id: 'msg-1', taskId: 'task-1', createdAt: 1 }],
+          version: 2,
+        });
+      });
+      expect(result.current.isLoading).toBe(false);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(subscribeCalls()).toHaveLength(6);
     });
   });
 });

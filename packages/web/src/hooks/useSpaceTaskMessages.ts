@@ -74,6 +74,8 @@ function nextActiveTurnSubId(taskId: string): string {
   return `space-task-active-turn-${taskId}-${_activeTurnSubCounter}`;
 }
 
+const SNAPSHOT_RETRY_DELAY_MS = 2000;
+
 function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[] {
   return [...rows].sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
@@ -175,6 +177,9 @@ export function useSpaceTaskMessages(
     const shouldSubscribeActiveTurn = variant === 'compact';
     activeSubIdRef.current = subscriptionId;
     activeTurnSubIdRef.current = shouldSubscribeActiveTurn ? activeTurnSubscriptionId : null;
+    const snapshotRetryTimers = new Set<ReturnType<typeof setTimeout>>();
+    let sawSnapshot = false;
+    let subscribeGeneration = 0;
     // Clear stale rows from a previous subscription synchronously. The
     // empty-state UI is still suppressed because `loadedForTaskId` is now
     // out of sync with `taskId`, so consumers see the loading state.
@@ -184,6 +189,7 @@ export function useSpaceTaskMessages(
 
     const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId === activeSubIdRef.current) {
+        sawSnapshot = true;
         setRows(sortRows((event.rows as SpaceTaskThreadMessageRow[]) ?? []));
         setLoadedForTaskId(taskId);
         return;
@@ -206,11 +212,27 @@ export function useSpaceTaskMessages(
     const subscribe = () => {
       const hub = getHub();
       if (!hub) return;
+      sawSnapshot = false;
+      subscribeGeneration += 1;
+      const generation = subscribeGeneration;
       hub
         .request('liveQuery.subscribe', {
           queryName,
           params: [taskId],
           subscriptionId,
+        })
+        .then(() => {
+          const retryTimer = setTimeout(() => {
+            snapshotRetryTimers.delete(retryTimer);
+            if (
+              activeSubIdRef.current === subscriptionId &&
+              generation === subscribeGeneration &&
+              !sawSnapshot
+            ) {
+              subscribe();
+            }
+          }, SNAPSHOT_RETRY_DELAY_MS);
+          snapshotRetryTimers.add(retryTimer);
         })
         .catch(() => {
           // Release the loading gate on subscribe failure so consumers can
@@ -245,6 +267,8 @@ export function useSpaceTaskMessages(
     subscribe();
 
     return () => {
+      for (const timer of snapshotRetryTimers) clearTimeout(timer);
+      snapshotRetryTimers.clear();
       unsubSnapshot();
       unsubDelta();
       unsubReconnect?.();
