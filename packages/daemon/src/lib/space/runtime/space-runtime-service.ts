@@ -16,6 +16,7 @@ import type {
   Session,
   Space,
   SpaceAgent,
+  SpaceLongHorizonAgent,
   SpaceTask,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -44,6 +45,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
+import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -82,6 +84,8 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
   archive: false,
   sessionInfo: false,
 } as const;
+
+const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
 
 const CLAUDE_CODE_BUILTIN_TOOLS = [
   ...KNOWN_TOOLS,
@@ -483,6 +487,75 @@ export class SpaceRuntimeService {
     return id;
   }
 
+  private buildLongHorizonAgentSessionConfig(
+    space: Space,
+    agent: SpaceLongHorizonAgent
+  ): Partial<Session['config']> {
+    const storedTools = Array.isArray(agent.toolPermissions.tools)
+      ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
+      : [];
+    const customTools = storedTools.length > 0 ? storedTools : undefined;
+    const customDisallowedBuiltins = customTools
+      ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
+      : [];
+    const agentKey = sanitizeLongTermAgentKey(agent.displayName);
+
+    return {
+      model: agent.model ?? space.defaultModel ?? DEFAULT_LONG_HORIZON_AGENT_MODEL,
+      thinkingLevel: agent.thinkingLevel ?? undefined,
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: agent.instructions,
+      },
+      features: LONG_TERM_AGENT_SESSION_FEATURES,
+      sdkToolsPreset: customTools,
+      allowedTools: customTools,
+      disallowedTools: customTools ? customDisallowedBuiltins : undefined,
+      agent: customTools ? agentKey : undefined,
+      agents: customTools
+        ? {
+            [agentKey]: {
+              description: `Long-horizon Space agent: ${agent.displayName}`,
+              disallowedTools: customDisallowedBuiltins,
+              model: 'inherit',
+              prompt: agent.instructions,
+            } satisfies AgentDefinition,
+          }
+        : undefined,
+      settingSources: space.settingSources,
+    };
+  }
+
+  private async refreshLongHorizonAgentSessionConfig(
+    session: AgentSession,
+    config: Partial<Session['config']>
+  ): Promise<void> {
+    const currentConfig = session.getSessionData().config;
+    const updates: Partial<Session['config']> = {
+      model: config.model,
+      thinkingLevel: config.thinkingLevel,
+      systemPrompt: config.systemPrompt,
+      features: config.features,
+      sdkToolsPreset: config.sdkToolsPreset,
+      allowedTools: config.allowedTools,
+      disallowedTools: config.disallowedTools,
+      agent: config.agent,
+      agents: config.agents,
+      settingSources: config.settingSources,
+    };
+    const changed = Object.entries(updates).some(
+      ([key, value]) =>
+        JSON.stringify(currentConfig[key as keyof Session['config']]) !== JSON.stringify(value)
+    );
+    if (!changed) return;
+    await session.updateConfig(updates);
+    const result = await session.resetQuery({ restartQuery: true });
+    if (!result.success) {
+      throw new Error(result.error ?? 'Failed to refresh long-horizon agent session');
+    }
+  }
+
   private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
     const sessionManager = this.config.sessionManager;
     const repo = this.config.longHorizonAgentRepo;
@@ -492,52 +565,17 @@ export class SpaceRuntimeService {
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
+    const config = this.buildLongHorizonAgentSessionConfig(space, agent);
     let session = await sessionManager.getSessionAsync(sessionId);
     if (!session) {
       try {
-        const storedTools = Array.isArray(agent.toolPermissions.tools)
-          ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
-          : [];
-        const customTools = storedTools.length > 0 ? storedTools : undefined;
-        const customDisallowedBuiltins = customTools
-          ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
-          : [];
-        const agentKey = sanitizeLongTermAgentKey(agent.displayName);
         await sessionManager.createSession({
           sessionId,
           workspacePath: space.workspacePath,
           title: agent.displayName,
           spaceId: space.id,
           worktreeMode: 'direct',
-          config: {
-            model: agent.model ?? space.defaultModel,
-            thinkingLevel: agent.thinkingLevel ?? undefined,
-            systemPrompt: {
-              type: 'preset',
-              preset: 'claude_code',
-              append: agent.instructions,
-            },
-            features: LONG_TERM_AGENT_SESSION_FEATURES,
-            ...(customTools
-              ? {
-                  sdkToolsPreset: customTools,
-                  allowedTools: customTools,
-                  disallowedTools: customDisallowedBuiltins,
-                }
-              : {}),
-            agent: customTools ? agentKey : undefined,
-            agents: customTools
-              ? {
-                  [agentKey]: {
-                    description: `Long-horizon Space agent: ${agent.displayName}`,
-                    disallowedTools: customDisallowedBuiltins,
-                    model: 'inherit',
-                    prompt: agent.instructions,
-                  } satisfies AgentDefinition,
-                }
-              : undefined,
-            settingSources: space.settingSources,
-          },
+          config,
         });
       } catch (err) {
         session = await sessionManager.getSessionAsync(sessionId);
@@ -545,6 +583,8 @@ export class SpaceRuntimeService {
       }
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
+    } else {
+      await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
     if (agent.sessionId !== sessionId) repo.update(agent.id, { sessionId });
     const currentMetadata = session.getSessionData().metadata;

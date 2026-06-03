@@ -462,6 +462,9 @@ describe('SpaceRuntimeService', () => {
         setRuntimeMcpServers: mock(() => {}),
         mergeRuntimeMcpServers: mock(() => {}),
         setRuntimeSystemPrompt: mock(() => {}),
+        updateConfig: mock(async () => {}),
+        resetQuery: mock(async () => ({ success: true })),
+        getSessionData: mock(() => ({ id: 'session-1', metadata: {}, config: {} }) as Session),
       } as unknown as AgentSession;
     }
 
@@ -832,6 +835,91 @@ describe('SpaceRuntimeService', () => {
         })
       );
       expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'delivery-1',
+        'event payload'
+      );
+    });
+
+    test('long-horizon event sessions refresh existing config before delivery', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const sessionData = {
+        id: sessionId,
+        metadata: {},
+        config: {
+          model: 'claude-old',
+          systemPrompt: {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+            append: 'Old instructions.',
+          },
+          sdkToolsPreset: ['Read'],
+          allowedTools: ['Read'],
+          disallowedTools: ['Edit'],
+        },
+      } as Session;
+      const existingSession = {
+        ...makeSession(),
+        getSessionData: mock(() => sessionData),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(existingSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'restricted-agent',
+          displayName: 'Restricted Agent',
+          templateKey: 'migration.legacy_space_agent',
+          status: 'active',
+          sessionId,
+          instructions: 'Use updated tools.',
+          autonomyLevel: null,
+          model: 'claude-new',
+          thinkingLevel: null,
+          toolPermissions: { tools: ['Read', 'Edit'] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+      });
+
+      const result = await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      expect(existingSession.updateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'claude-new',
+          systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
+          sdkToolsPreset: ['Read', 'Edit'],
+          allowedTools: ['Read', 'Edit'],
+          disallowedTools: expect.arrayContaining(['Bash']),
+          agent: 'restricted-agent',
+          agents: {
+            'restricted-agent': expect.objectContaining({ prompt: 'Use updated tools.' }),
+          },
+        })
+      );
+      expect(existingSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+      expect(existingSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
         'delivery-1',
         'event payload'
       );
