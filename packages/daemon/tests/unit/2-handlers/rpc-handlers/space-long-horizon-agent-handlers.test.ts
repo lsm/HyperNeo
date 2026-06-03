@@ -386,6 +386,17 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow(
         'Subscription pattern duplicates existing subscription sub-existing: github/*/*/pull_request/*'
       );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/*/*/pull_request/*',
+          filter: { label: 'Duplicate label' },
+        })
+      ).rejects.toThrow(
+        'Subscription pattern duplicates existing subscription sub-existing: github/*/*/pull_request/*'
+      );
     });
 
     it('updates subscriptions and refreshes runtime target', async () => {

@@ -93,7 +93,6 @@ function assertNoDuplicateLongHorizonSubscriptionPattern(
 ): void {
   const duplicate = repo.listSubscriptions(agentId).find((subscription) => {
     if (subscription.id === currentSubscriptionId) return false;
-    if (subscription.source === source && subscription.topic === topic) return false;
     return (
       composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic) === pattern
     );
