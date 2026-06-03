@@ -267,6 +267,29 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
+    it('rejects GitHub entity patterns without dotted actions', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/42',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/pull_request/42" must use dotted entity actions like "pull_request/42.opened"'
+      );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/owner/repo/pull_request/42',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "github/owner/repo/pull_request/42" must use dotted entity actions like "pull_request/42.opened"'
+      );
+    });
+
     it('expands GitHub resource shorthands with entity wildcards', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',
@@ -310,6 +333,16 @@ describe('Space long-horizon agent handlers', () => {
         source: 'github',
         topic: 'github/pull_request',
       });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/neokai/pull_request/*',
+      });
+
+      expect(repo.createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'github/neokai/pull_request/*' })
+      );
 
       repo.listSubscriptions = mock(() => [
         {
@@ -522,6 +555,33 @@ describe('Space long-horizon agent handlers', () => {
         })
       ).rejects.toThrow(
         'Subscription pattern duplicates existing subscription sub-existing: github/*/*/pull_request/*'
+      );
+    });
+
+    it('rejects case-only duplicate event patterns', async () => {
+      repo.listSubscriptions = mock(() => [
+        {
+          id: 'sub-existing',
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/*',
+          filter: {},
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'Owner/Repo/pull_request/*',
+        })
+      ).rejects.toThrow(
+        'Subscription pattern duplicates existing subscription sub-existing: github/Owner/Repo/pull_request/*'
       );
     });
 

@@ -38,11 +38,26 @@ function splitDottedGitHubResource(segment: string): { resource: string; action:
   return { resource: segment.slice(0, dotIndex), action: segment.slice(dotIndex + 1) };
 }
 
+function rejectGitHubEntityPatternWithoutAction(topic: string): never {
+  throw new Error(
+    `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.opened"`
+  );
+}
+
+function ensureGitHubEntityAction(topic: string, entityAction: string): void {
+  if (entityAction !== '*' && !entityAction.includes('.')) {
+    rejectGitHubEntityPatternWithoutAction(topic);
+  }
+}
+
 function composeGitHubSubscriptionPattern(source: string, topic: string): string {
   const segments = topic.split('/');
   if (segments[0] === source && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
-  if (segments[0] === source && segments.length === 5) return topic;
-  if (segments[0] === source && segments.length === 4) {
+  if (segments[0] === source && segments.length === 5) {
+    ensureGitHubEntityAction(topic, segments[4] ?? '');
+    return topic;
+  }
+  if (segments[0] === source && segments.length === 4 && segments[2] !== 'pull_request') {
     const dotted = splitDottedGitHubResource(segments[3] ?? '');
     if (dotted)
       return `${source}/${segments[1]}/${segments[2]}/${dotted.resource}/*.${dotted.action}`;
@@ -55,7 +70,10 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
     return `${source}/*/*/${resource}/*`;
   }
   if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
-  if (segments.length === 4) return `${source}/${topic}`;
+  if (segments.length === 4) {
+    ensureGitHubEntityAction(topic, segments[3] ?? '');
+    return `${source}/${topic}`;
+  }
   if (segments.length === 3) {
     const dotted = splitDottedGitHubResource(segments[2] ?? '');
     if (dotted)
@@ -124,7 +142,10 @@ function assertNoDuplicateLongHorizonSubscriptionPattern(
     if (subscription.id === currentSubscriptionId) return false;
     try {
       return (
-        composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic) === pattern
+        composeLongHorizonSubscriptionPattern(
+          subscription.source,
+          subscription.topic
+        ).toLowerCase() === pattern.toLowerCase()
       );
     } catch {
       return false;
