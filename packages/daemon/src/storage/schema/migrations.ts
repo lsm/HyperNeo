@@ -10446,7 +10446,17 @@ export function runMigration151(db: BunDatabase): void {
     SELECT
       legacy.agent_id,
       legacy.space_id,
-      COALESCE(space_agents.handle, space_agents.name, legacy.agent_id),
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM space_long_horizon_agents existing
+          WHERE existing.space_id = legacy.space_id
+            AND existing.id != legacy.agent_id
+            AND existing.status != 'archived'
+            AND existing.handle = COALESCE(space_agents.handle, space_agents.name, legacy.agent_id)
+        ) THEN COALESCE(space_agents.handle, space_agents.name, legacy.agent_id) || '-' || legacy.agent_id
+        ELSE COALESCE(space_agents.handle, space_agents.name, legacy.agent_id)
+      END,
       COALESCE(space_agents.name, space_agents.handle, legacy.agent_id),
       'migration.legacy_space_agent',
       ${statusExpr},

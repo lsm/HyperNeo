@@ -41,6 +41,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      CREATE UNIQUE INDEX idx_space_long_horizon_agents_handle
+        ON space_long_horizon_agents(space_id, handle) WHERE status != 'archived';
       CREATE TABLE space_agent_event_subscriptions (
         space_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
@@ -96,6 +98,22 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       101
     );
     db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'conflict-agent-1',
+      'space-1',
+      'Conflicting Agent',
+      'existing-lh',
+      '',
+      '',
+      'Conflict prompt',
+      'active',
+      null,
+      '[]',
+      102
+    );
+    db.prepare(
       `INSERT INTO space_long_horizon_agents (
         id, space_id, handle, display_name, status, instructions, tool_permissions_json, created_at, updated_at
        ) VALUES (?, ?, ?, ?, 'active', '', '{}', ?, ?)`
@@ -121,6 +139,10 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       `INSERT INTO space_agent_event_subscriptions (space_id, agent_id, topic_pattern, label, created_at)
        VALUES (?, ?, ?, ?, ?)`
     ).run('space-1', 'legacy-agent-1', 'github/lsm/neokai/issues/*.opened', null, 123);
+    db.prepare(
+      `INSERT INTO space_agent_event_subscriptions (space_id, agent_id, topic_pattern, label, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run('space-1', 'conflict-agent-1', 'github/lsm/neokai/issues/*.closed', null, 124);
 
     runMigration151(db);
 
@@ -138,6 +160,14 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
         )
         .all()
     ).toEqual([
+      {
+        agent_id: 'conflict-agent-1',
+        source: 'github',
+        topic: 'github/lsm/neokai/issues/*.closed',
+        filter_json: '{}',
+        status: 'active',
+        created_at: 124,
+      },
       {
         agent_id: 'legacy-agent-1',
         source: 'github',
@@ -172,6 +202,19 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       instructions: 'Canonical custom prompt',
       model: 'claude-sonnet-4',
       tool_permissions_json: '{"tools":["Read"]}',
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT id, handle, instructions
+           FROM space_long_horizon_agents
+           WHERE id = ?`
+        )
+        .get('conflict-agent-1')
+    ).toEqual({
+      id: 'conflict-agent-1',
+      handle: 'existing-lh-conflict-agent-1',
+      instructions: 'Conflict prompt',
     });
   });
 

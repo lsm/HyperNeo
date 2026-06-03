@@ -989,6 +989,22 @@ export class SpaceRuntime {
     return { success: true };
   }
 
+  refreshLongHorizonAgentSubscriptions(
+    spaceId: string,
+    agentId: string
+  ): { success: boolean; error?: string } {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return { success: false, error: 'Long-horizon agent repository unavailable.' };
+    const subscriptions = repo
+      .listSubscriptions(agentId)
+      .filter((subscription) => subscription.spaceId === spaceId);
+    for (const subscription of subscriptions) {
+      const result = this.refreshLongHorizonSubscription(spaceId, subscription.id);
+      if (!result.success) return result;
+    }
+    return { success: true };
+  }
+
   removeLongHorizonSubscription(spaceId: string, subscriptionId: string): void {
     this.topicTrie.remove(
       (target) =>

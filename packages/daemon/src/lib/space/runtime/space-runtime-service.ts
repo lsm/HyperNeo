@@ -1688,6 +1688,13 @@ export class SpaceRuntimeService {
     return this.runtime;
   }
 
+  refreshLongHorizonAgentSubscriptions(
+    spaceId: string,
+    agentId: string
+  ): { success: boolean; error?: string } {
+    return this.runtime.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
+  }
+
   /**
    * Release the runtime for a given space.
    *

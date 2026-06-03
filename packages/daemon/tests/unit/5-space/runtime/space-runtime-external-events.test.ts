@@ -354,6 +354,58 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
+  test('refreshes trie entries after long-horizon agent status changes', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-status-refresh',
+      spaceId: SPACE_ID,
+      handle: 'status-refresh-watcher',
+      displayName: 'Status Refresh Watcher',
+      status: 'disabled',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await eventService.publish(makeEvent({ id: 'evt-before-reactivate' }));
+    expect(longHorizonMessages).toHaveLength(0);
+
+    repo.update(agent.id, { status: 'active' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+    await eventService.publish(makeEvent({ id: 'evt-after-reactivate' }));
+    expect(longHorizonMessages).toHaveLength(1);
+
+    repo.update(agent.id, { status: 'paused' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+    await eventService.publish(makeEvent({ id: 'evt-after-pause' }));
+    expect(longHorizonMessages).toHaveLength(1);
+  });
+
   test('keeps long-horizon events pending until every matched delivery succeeds', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const first = repo.create({

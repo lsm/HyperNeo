@@ -15,11 +15,13 @@ import type { MessageHub, SpaceLongHorizonAgent } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
 import type { SpaceManager } from '../space/managers/space-manager';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 
 export function setupSpaceLongHorizonAgentHandlers(
   messageHub: MessageHub,
   spaceManager: SpaceManager,
-  repo: SpaceLongHorizonAgentRepository
+  repo: SpaceLongHorizonAgentRepository,
+  runtimeService?: Pick<SpaceRuntimeService, 'refreshLongHorizonAgentSubscriptions'>
 ): void {
   messageHub.onRequest('spaceLongHorizonAgent.listBuiltInTemplates', async (data) => {
     const params = data as { spaceId: string };
@@ -94,6 +96,10 @@ export function setupSpaceLongHorizonAgentHandlers(
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (runtimeService) {
+      const refresh = runtimeService.refreshLongHorizonAgentSubscriptions(agent.spaceId, agent.id);
+      if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+    }
     return { agent };
   });
 

@@ -658,6 +658,31 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         toolPermissions: { tools: ['Read', 'Edit'] },
       })
     );
+    const updatedConvertedLegacy = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: legacyAgent.id,
+          status: 'active',
+          custom_prompt: 'Updated converted prompt',
+          tools: ['Read'],
+        })
+      ).content[0].text
+    );
+    expect(updatedConvertedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+      expect.objectContaining({
+        status: 'active',
+        instructions: 'Updated converted prompt',
+        toolPermissions: { tools: ['Read'] },
+      })
+    );
+    const pausedConvertedLegacy = JSON.parse(
+      (await handlers.pause_agent({ agent_id: legacyAgent.id })).content[0].text
+    );
+    expect(pausedConvertedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+      expect.objectContaining({ status: 'paused' })
+    );
     expect(
       JSON.parse(
         (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))

@@ -476,6 +476,37 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return existing?.spaceId === spaceId ? existing : null;
   }
 
+  function longHorizonStatusFromSpaceAgent(agent: SpaceAgent) {
+    return agent.status === 'archived'
+      ? 'archived'
+      : agent.status === 'paused'
+        ? 'paused'
+        : 'active';
+  }
+
+  function longHorizonToolPermissionsFromSpaceAgent(agent: SpaceAgent) {
+    return agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {};
+  }
+
+  function syncConvertedLongHorizonAgent(spaceAgent: SpaceAgent) {
+    const repo = requireLongHorizonAgentRepo();
+    const existing = repo.getById(spaceAgent.id);
+    if (!existing || existing.spaceId !== spaceId) return null;
+    return repo.update(spaceAgent.id, {
+      displayName: spaceAgent.name,
+      status: longHorizonStatusFromSpaceAgent(spaceAgent),
+      instructions: spaceAgent.customPrompt ?? '',
+      model: spaceAgent.model,
+      thinkingLevel: spaceAgent.thinkingLevel,
+      toolPermissions: longHorizonToolPermissionsFromSpaceAgent(spaceAgent),
+    });
+  }
+
+  function refreshConvertedLongHorizonSubscriptions(agentId: string) {
+    const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
+    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
+
   function ensureLongHorizonAgentInSpace(agentId: string) {
     const existing = getLongHorizonAgentInSpace(agentId);
     if (existing) return existing;
@@ -490,17 +521,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       spaceId,
       handle: spaceAgent.handle ?? spaceAgent.name,
       displayName: spaceAgent.name,
-      status:
-        spaceAgent.status === 'archived'
-          ? 'archived'
-          : spaceAgent.status === 'paused'
-            ? 'paused'
-            : 'active',
+      status: longHorizonStatusFromSpaceAgent(spaceAgent),
       instructions: spaceAgent.customPrompt ?? '',
       model: spaceAgent.model,
       thinkingLevel: spaceAgent.thinkingLevel,
-      toolPermissions:
-        spaceAgent.tools && spaceAgent.tools.length > 0 ? { tools: spaceAgent.tools } : undefined,
+      toolPermissions: longHorizonToolPermissionsFromSpaceAgent(spaceAgent),
     });
   }
 
@@ -691,6 +716,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         normalizeSpaceAgentUpdateArgs(args)
       );
       if (!result.ok) return jsonResult({ success: false, error: result.error });
+      const synced = syncConvertedLongHorizonAgent(result.value);
+      if (synced) refreshConvertedLongHorizonSubscriptions(result.value.id);
       logAudit('update_agent', { agent_id: args.agent_id, status: args.status });
       emitSpaceAgentUpdated(result.value);
       return jsonResult({ success: true, agent: result.value });
