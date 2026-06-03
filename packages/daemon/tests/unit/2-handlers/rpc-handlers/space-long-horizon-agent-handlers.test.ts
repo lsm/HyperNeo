@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub } from '@neokai/shared';
 import { setupSpaceLongHorizonAgentHandlers } from '../../../../src/lib/rpc-handlers/space-long-horizon-agent-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -37,10 +38,74 @@ async function call<T>(
 
 describe('Space long-horizon agent handlers', () => {
   let hubData: ReturnType<typeof createMockMessageHub>;
+  let repo: SpaceLongHorizonAgentRepository;
+  let runtimeService: {
+    refreshLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
+    removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
+  };
 
   beforeEach(() => {
     hubData = createMockMessageHub();
-    setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager());
+    repo = {
+      ensureCoordinator: mock(() => {}),
+      listBySpaceId: mock(() => []),
+      create: mock((params) => ({ id: 'agent-new', ...params, spaceId: params.spaceId })),
+      getById: mock(() => ({ id: 'agent-1', spaceId: 'space-1' })),
+      update: mock((agentId, params) => ({ id: agentId, spaceId: 'space-1', ...params })),
+      delete: mock(() => {}),
+      listReminders: mock(() => []),
+      createReminder: mock(() => ({})),
+      deleteReminder: mock(() => {}),
+    } as unknown as SpaceLongHorizonAgentRepository;
+    runtimeService = {
+      refreshLongHorizonAgentSubscriptions: mock(() => ({ success: true })),
+      removeLongHorizonAgentSubscriptions: mock(() => {}),
+    };
+    setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo, runtimeService);
+  });
+
+  describe('spaceLongHorizonAgent.update', () => {
+    it('refreshes durable subscriptions after status updates', async () => {
+      const result = await call<{ agent: { id: string; status: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.update',
+        {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          status: 'paused',
+        }
+      );
+
+      expect(result.agent).toEqual(expect.objectContaining({ id: 'agent-1', status: 'paused' }));
+      expect(repo.update).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ status: 'paused' })
+      );
+      expect(runtimeService.refreshLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
+        'space-1',
+        'agent-1'
+      );
+    });
+  });
+
+  describe('spaceLongHorizonAgent.delete', () => {
+    it('removes runtime subscriptions before deleting the agent row', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.delete',
+        {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+        }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(runtimeService.removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
+        'space-1',
+        'agent-1'
+      );
+      expect(repo.delete).toHaveBeenCalledWith('agent-1');
+    });
   });
 
   describe('spaceLongHorizonAgent.listBuiltInTemplates', () => {

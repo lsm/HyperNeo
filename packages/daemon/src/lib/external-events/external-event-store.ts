@@ -167,12 +167,19 @@ export class ExternalEventStore {
     return row ? rowToRecord(row) : null;
   }
 
+  markEventDelivered(eventId: string): void {
+    const event = this.getById(eventId);
+    if (!event || TERMINAL_EVENT_STATES.has(event.state)) return;
+    this.setEventState(eventId, 'delivered');
+  }
+
   /**
    * Mark the source event terminal `delivered` if **every** expected delivery
    * row is in state `delivered`. No-op if the source event is already
    * terminal, or if any delivery is non-terminal or terminal-failed.
    *
-   * This is the only path that can promote a source event to `delivered`.
+   * Workflow delivery rows use this path; sources without per-workflow delivery
+   * rows can call `markEventDelivered` after direct delivery succeeds.
    */
   markEventDeliveredIfAllDeliveriesDelivered(eventId: string): void {
     const event = this.getById(eventId);

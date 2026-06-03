@@ -15,6 +15,7 @@ import {
 } from '../../../../src/lib/space/runtime/space-runtime';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
@@ -128,6 +129,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   let eventStore: ExternalEventStore;
   let eventService: ExternalEventService;
   let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
+  let longHorizonMessages: Array<{ agentId: string; message: string; idempotencyKey?: string }>;
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
 
@@ -195,6 +197,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     eventStore = new ExternalEventStore(db);
     eventService = new ExternalEventService(eventStore, bus);
     injected = [];
+    longHorizonMessages = [];
     commandBus.register('agent.message.inject', async (command) => {
       injected.push({
         sessionId: command.sessionId,
@@ -216,7 +219,288 @@ describe('SpaceRuntime external event subscriptions', () => {
       commandBus,
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
     });
+  });
+
+  test('rehydrates long-horizon agent subscriptions and delivers matching events', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-events',
+      spaceId: SPACE_ID,
+      handle: 'watcher',
+      displayName: 'Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+    expect(JSON.parse(longHorizonMessages[0]!.message).eventId).toBe(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    const deliveries = eventStore.listDeliveries(event.id);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]!.state).toBe('delivered');
+    expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveries[0]!.deliveryKey);
+  });
+
+  test('rehydrates relative long-horizon agent subscriptions and matches full event topics', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-relative-events',
+      spaceId: SPACE_ID,
+      handle: 'relative-watcher',
+      displayName: 'Relative Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'pull_request/*.review_*',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('skips inactive long-horizon agent subscriptions during rehydration', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-paused',
+      spaceId: SPACE_ID,
+      handle: 'paused-watcher',
+      displayName: 'Paused Watcher',
+      status: 'disabled',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(longHorizonMessages).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('refreshes trie entries after long-horizon agent status changes', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-status-refresh',
+      spaceId: SPACE_ID,
+      handle: 'status-refresh-watcher',
+      displayName: 'Status Refresh Watcher',
+      status: 'disabled',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await eventService.publish(makeEvent({ id: 'evt-before-reactivate' }));
+    expect(longHorizonMessages).toHaveLength(0);
+
+    repo.update(agent.id, { status: 'active' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+    await eventService.publish(makeEvent({ id: 'evt-after-reactivate' }));
+    expect(longHorizonMessages).toHaveLength(1);
+
+    repo.update(agent.id, { status: 'paused' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+    await eventService.publish(makeEvent({ id: 'evt-after-pause' }));
+    expect(longHorizonMessages).toHaveLength(1);
+  });
+
+  test('removes trie entries after long-horizon agent deletion', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-delete-refresh',
+      spaceId: SPACE_ID,
+      handle: 'delete-refresh-watcher',
+      displayName: 'Delete Refresh Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    runtime.removeLongHorizonAgentSubscriptions(SPACE_ID, agent.id);
+    repo.delete(agent.id);
+    await eventService.publish(makeEvent({ id: 'evt-after-delete' }));
+
+    expect(longHorizonMessages).toHaveLength(0);
+    expect(eventStore.getById('evt-after-delete')?.state).toBe('published');
+  });
+
+  test('keeps long-horizon events pending until every matched delivery succeeds', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const first = repo.create({
+      id: 'lh-agent-first',
+      spaceId: SPACE_ID,
+      handle: 'first-watcher',
+      displayName: 'First Watcher',
+    });
+    const second = repo.create({
+      id: 'lh-agent-second',
+      spaceId: SPACE_ID,
+      handle: 'second-watcher',
+      displayName: 'Second Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: first.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: second.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: agentId === first.id };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(longHorizonMessages).toHaveLength(2);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    const deliveries = eventStore.listDeliveries(event.id);
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries.map((delivery) => delivery.state).sort()).toEqual(['delivered', 'pending']);
+    await runtime.stop();
   });
 
   test('delivers matching events to a live node-agent session and marks delivery complete', async () => {
@@ -1679,6 +1963,61 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById('evt-arrived-while-stopped')?.state).toBe('delivered');
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-stop-start-sweep');
+  });
+
+  test('requeues persisted pending long-horizon deliveries during runtime rehydrate', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-pending-retry',
+      spaceId: SPACE_ID,
+      handle: 'pending-retry',
+      displayName: 'Pending Retry',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    const event = makeEvent({ id: 'evt-lh-pending-retry' });
+    eventStore.store(event);
+    const deliveryKey = `lh:${subscription.id}:${event.id}`;
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: `long_horizon:${SPACE_ID}`,
+      taskId: subscription.id,
+      nodeId: agent.id,
+      agentName: agent.id,
+    });
+    eventStore.markDeliveryFailed(event.id, deliveryKey, {
+      terminal: false,
+      reason: 'long-horizon agent unavailable',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+    expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveryKey);
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('requeues persisted pending deliveries during runtime rehydrate', async () => {

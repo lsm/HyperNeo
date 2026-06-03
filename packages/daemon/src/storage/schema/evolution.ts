@@ -238,22 +238,6 @@ function createSpaceAgentLongHorizonTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_agent_reminders_agent_status ` +
       `ON space_agent_reminders(space_id, agent_id, status, remind_at)`
   );
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS space_agent_event_subscriptions (
-			space_id TEXT NOT NULL,
-			agent_id TEXT NOT NULL,
-			topic_pattern TEXT NOT NULL,
-			label TEXT,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY (agent_id, topic_pattern),
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_space_agent_event_subscriptions_space ` +
-      `ON space_agent_event_subscriptions(space_id, topic_pattern)`
-  );
 }
 
 function hasTable(db: BunDatabase, tableName: string): boolean {
