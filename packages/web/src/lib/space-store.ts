@@ -2144,6 +2144,7 @@ class SpaceStore {
   // ========================================
 
   async createLongHorizonAgent(params: {
+    id?: string;
     handle: string;
     displayName?: string;
     templateKey?: string | null;
@@ -2151,6 +2152,7 @@ class SpaceStore {
     autonomyLevel?: number | null;
     model?: string | null;
     thinkingLevel?: string | null;
+    toolPermissions?: Record<string, unknown>;
   }): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');

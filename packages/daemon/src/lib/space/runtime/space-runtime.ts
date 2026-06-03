@@ -44,7 +44,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEvent } from '../../external-events/types';
-import { validateGlobPattern } from '../../external-events/topic-validator';
+import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -497,7 +497,12 @@ function legacyGitHubTopic(topic: string): string | null {
 function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const trimmedSource = source.trim();
   const trimmedTopic = topic.trim();
-  if (!trimmedSource || trimmedTopic.startsWith(`${trimmedSource}/`)) return trimmedTopic;
+  if (!trimmedSource) return trimmedTopic;
+  const topicSource = trimmedTopic.split('/')[0] ?? '';
+  if (topicSource === trimmedSource) return trimmedTopic;
+  if (validateSource(topicSource).valid) {
+    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
+  }
   if (trimmedSource === 'github') {
     const segments = trimmedTopic.split('/');
     if (trimmedTopic.startsWith('*/*/') || segments.length >= 4)
@@ -974,6 +979,9 @@ export class SpaceRuntime {
     );
     const subscription = repo.getSubscription(subscriptionId);
     if (!subscription || subscription.spaceId !== spaceId || subscription.status !== 'active') {
+      this.clearLongHorizonRetries(
+        (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+      );
       return { success: true };
     }
     const agent = repo.getById(subscription.agentId);
@@ -1015,6 +1023,9 @@ export class SpaceRuntime {
         target.spaceId === spaceId &&
         target.subscriptionId === subscriptionId
     );
+    this.clearLongHorizonRetries(
+      (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+    );
   }
 
   removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
@@ -1023,6 +1034,9 @@ export class SpaceRuntime {
         isLongHorizonSubscriptionTarget(target) &&
         target.spaceId === spaceId &&
         target.agentId === agentId
+    );
+    this.clearLongHorizonRetries(
+      (target) => target.spaceId === spaceId && target.agentId === agentId
     );
   }
 
@@ -1241,6 +1255,15 @@ export class SpaceRuntime {
       );
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
+    }
+  }
+
+  private clearLongHorizonRetries(
+    predicate: (target: LongHorizonSubscriptionTarget) => boolean
+  ): void {
+    for (const deliveryKey of Array.from(this.externalEventRetryTimers.keys())) {
+      const target = this.parseLongHorizonDeliveryKey(deliveryKey);
+      if (target && predicate(target)) this.clearExternalEventRetry(deliveryKey);
     }
   }
 
@@ -1897,6 +1920,33 @@ export class SpaceRuntime {
       target.agentId,
       target.subscriptionId,
     ]);
+  }
+
+  private parseLongHorizonDeliveryKey(deliveryKey: string): LongHorizonSubscriptionTarget | null {
+    try {
+      const parsed = JSON.parse(deliveryKey) as unknown;
+      if (!Array.isArray(parsed) || parsed.length !== 6 || parsed[0] !== 'long_horizon_agent') {
+        return null;
+      }
+      const [, , , spaceId, agentId, subscriptionId] = parsed;
+      if (
+        typeof spaceId !== 'string' ||
+        typeof agentId !== 'string' ||
+        typeof subscriptionId !== 'string'
+      ) {
+        return null;
+      }
+      return {
+        kind: 'long_horizon_agent',
+        spaceId,
+        agentId,
+        source: '',
+        topic: '',
+        subscriptionId,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private formatExternalEventMessage(event: ExternalEventPublishedPayload): string {

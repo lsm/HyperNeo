@@ -192,6 +192,17 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow('Source "gihub" is not registered');
     });
 
+    it('rejects full topics whose source differs from the source field', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'space/task.done',
+        })
+      ).rejects.toThrow('Topic source "space" does not match source "github"');
+    });
+
     it('accepts GitHub owner/repo topic shorthands without injecting owner/repo wildcards', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',

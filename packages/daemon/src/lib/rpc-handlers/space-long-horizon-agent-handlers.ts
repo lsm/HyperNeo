@@ -25,7 +25,12 @@ import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service
 function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const trimmedSource = source.trim();
   const trimmedTopic = topic.trim();
-  if (!trimmedSource || trimmedTopic.startsWith(`${trimmedSource}/`)) return trimmedTopic;
+  if (!trimmedSource) return trimmedTopic;
+  const topicSource = trimmedTopic.split('/')[0] ?? '';
+  if (topicSource === trimmedSource) return trimmedTopic;
+  if (validateSource(topicSource).valid) {
+    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
+  }
   if (trimmedSource === 'github') {
     const segments = trimmedTopic.split('/');
     if (trimmedTopic.startsWith('*/*/') || segments.length >= 4)
@@ -74,6 +79,7 @@ export function setupSpaceLongHorizonAgentHandlers(
 
   messageHub.onRequest('spaceLongHorizonAgent.create', async (data) => {
     const params = data as {
+      id?: string;
       spaceId: string;
       handle: string;
       displayName?: string;
@@ -82,12 +88,14 @@ export function setupSpaceLongHorizonAgentHandlers(
       autonomyLevel?: number | null;
       model?: string | null;
       thinkingLevel?: string | null;
+      toolPermissions?: Record<string, unknown>;
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.handle) throw new Error('handle is required');
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
     const agent = repo.create({
+      id: params.id,
       spaceId: params.spaceId,
       handle: params.handle,
       displayName: params.displayName,
@@ -96,6 +104,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
       model: params.model,
       thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+      toolPermissions: params.toolPermissions,
     });
     return { agent };
   });

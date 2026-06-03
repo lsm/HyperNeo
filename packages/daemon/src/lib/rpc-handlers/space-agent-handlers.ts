@@ -18,6 +18,7 @@ import type {
   SettingSource,
   SpaceAgent,
   SpaceAgentPromotionDraft,
+  SpaceLongHorizonAgent,
   ThinkingLevel,
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
@@ -67,6 +68,15 @@ function extractTools(session: Session): string[] | undefined {
   return KNOWN_TOOLS.filter((tool) => !disallowed.has(tool));
 }
 
+function findMatchingLongHorizonAgent(
+  repo: SpaceLongHorizonAgentRepository,
+  agent: SpaceAgent
+): SpaceLongHorizonAgent | null {
+  const byId = repo.getById(agent.id);
+  if (byId?.spaceId === agent.spaceId) return byId;
+  return repo.getByHandle(agent.spaceId, agent.handle);
+}
+
 function archiveMatchingLongHorizonAgent(
   db: Database,
   runtimeService: {
@@ -75,10 +85,24 @@ function archiveMatchingLongHorizonAgent(
   agent: SpaceAgent
 ): void {
   const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
-  const longHorizonAgent = repo.getByHandle(agent.spaceId, agent.handle);
+  const longHorizonAgent = findMatchingLongHorizonAgent(repo, agent);
   if (!longHorizonAgent) return;
   runtimeService.removeLongHorizonAgentSubscriptions(agent.spaceId, longHorizonAgent.id);
   repo.update(longHorizonAgent.id, { status: 'archived' });
+}
+
+function syncMatchingLongHorizonAgent(db: Database, agent: SpaceAgent): void {
+  const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+  const longHorizonAgent = findMatchingLongHorizonAgent(repo, agent);
+  if (!longHorizonAgent) return;
+  repo.update(longHorizonAgent.id, {
+    handle: agent.handle,
+    displayName: agent.name,
+    instructions: agent.customPrompt ?? agent.description ?? '',
+    model: agent.model ?? null,
+    thinkingLevel: agent.thinkingLevel ?? null,
+    toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
+  });
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {
@@ -332,6 +356,7 @@ export function setupSpaceAgentHandlers(
     });
 
     if (!result.ok) throw new Error(result.error);
+    syncMatchingLongHorizonAgent(db, result.value);
 
     internalEventBus
       .publish('spaceAgent.updated', {

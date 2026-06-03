@@ -602,11 +602,13 @@ export function SpaceAgentList() {
     if (!longHorizonAgent) {
       try {
         longHorizonAgent = await spaceStore.createLongHorizonAgent({
+          id: agent.id,
           handle: agent.handle,
           displayName: agent.name,
           instructions: agent.customPrompt ?? agent.description ?? '',
           model: agent.model ?? null,
           thinkingLevel: agent.thinkingLevel ?? null,
+          toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
         });
       } catch (err) {
         toast.error(

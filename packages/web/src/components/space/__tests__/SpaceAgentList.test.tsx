@@ -566,9 +566,16 @@ describe('SpaceAgentList', () => {
   });
 
   it('creates a long-horizon row before opening subscriptions for new specialists', async () => {
-    mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
+    mockAgents.value = [
+      makeAgent({
+        id: 'space-agent-coder',
+        name: 'Coder',
+        handle: 'coder',
+        tools: ['Read', 'Edit'],
+      }),
+    ];
     mockCreateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({ id: 'lh-coder', handle: 'coder', displayName: 'Coder' })
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', displayName: 'Coder' })
     );
 
     const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
@@ -576,9 +583,14 @@ describe('SpaceAgentList', () => {
 
     expect(await findByText('Event subscriptions')).toBeTruthy();
     expect(mockCreateLongHorizonAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ handle: 'coder', displayName: 'Coder' })
+      expect.objectContaining({
+        id: 'space-agent-coder',
+        handle: 'coder',
+        displayName: 'Coder',
+        toolPermissions: { tools: ['Read', 'Edit'] },
+      })
     );
-    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('lh-coder');
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
   });
 
   it('closes editor when cancel is clicked', () => {

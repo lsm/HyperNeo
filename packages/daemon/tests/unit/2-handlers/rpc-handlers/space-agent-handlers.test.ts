@@ -648,6 +648,28 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.customPrompt).toBe('New prompt');
     });
 
+    it('syncs matching long-horizon agent rows when handle and tools change', async () => {
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const longHorizonAgent = longHorizonRepo.create({
+        id: agentId,
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'original',
+        displayName: 'Original',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: agentId,
+        handle: 'renamed',
+        tools: ['Read', 'Edit'],
+      });
+
+      expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
+        expect.objectContaining({ handle: 'renamed', toolPermissions: { tools: ['Read', 'Edit'] } })
+      );
+    });
+
     it('emits spaceAgent.updated event', async () => {
       await call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'Updated' });
       await new Promise((r) => setTimeout(r, 0));
@@ -731,6 +753,7 @@ describe('Space Agent RPC Handlers', () => {
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
       const longHorizonAgent = longHorizonRepo.create({
+        id: agentId,
         spaceId: 'space-1',
         handle: visibleAgent?.handle ?? 'todelete',
         displayName: 'ToDelete',
