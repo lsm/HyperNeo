@@ -17,6 +17,7 @@ import { Database } from 'bun:sqlite';
 import type { MessageHub, SDKMessage, Session } from '@neokai/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -98,6 +99,7 @@ function createTestDatabaseFacade(db: Database) {
   const sessionRepo = new SessionRepository(db as any);
   const sdkMessageRepo = new SDKMessageRepository(db as any);
   return {
+    getDatabase: () => db,
     getSession: (id: string) => sessionRepo.getSession(id),
     getRenderableTextMessages: (sessionId: string, limit?: number) =>
       sdkMessageRepo.getRenderableTextMessages(sessionId, limit),
@@ -714,6 +716,29 @@ describe('Space Agent RPC Handlers', () => {
         id: agentId,
       });
       expect(result.success).toBe(true);
+    });
+
+    it('archives matching long-horizon agent rows before deleting specialists', async () => {
+      setupSpaceAgentHandlers(
+        hubData.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        { removeLongHorizonAgentSubscriptions: mock(() => {}) }
+      );
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const longHorizonAgent = longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'todelete',
+        displayName: 'ToDelete',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
+
+      expect(longHorizonRepo.getById(longHorizonAgent.id)?.status).toBe('archived');
     });
 
     it('emits spaceAgent.deleted event', async () => {

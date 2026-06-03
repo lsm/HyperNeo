@@ -17,7 +17,7 @@ import type {
   SpaceLongHorizonAgentEventSubscriptionStatus,
 } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import { validateGlobPattern } from '../external-events/topic-validator';
+import { validateGlobPattern, validateSource } from '../external-events/topic-validator';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
@@ -36,6 +36,8 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
 }
 
 function validateLongHorizonSubscriptionPattern(source: string, topic: string): void {
+  const sourceValidation = validateSource(source);
+  if (!sourceValidation.valid) throw new Error(sourceValidation.reason ?? 'invalid source');
   const validation = validateGlobPattern(composeLongHorizonSubscriptionPattern(source, topic));
   if (!validation.valid) throw new Error(validation.reason ?? 'invalid pattern');
 }

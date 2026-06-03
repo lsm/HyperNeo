@@ -181,6 +181,17 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
+    it('rejects unregistered subscription sources', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'gihub',
+          topic: 'lsm/neokai/pull_request/*',
+        })
+      ).rejects.toThrow('Source "gihub" is not registered');
+    });
+
     it('accepts GitHub owner/repo topic shorthands without injecting owner/repo wildcards', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',

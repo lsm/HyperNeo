@@ -468,6 +468,7 @@ export function SpaceAgentList() {
     const byId = new Map<string, SpaceLongHorizonAgent>();
     const byHandle = new Map<string, SpaceLongHorizonAgent>();
     for (const agent of longHorizonAgents) {
+      if (agent.status !== 'active') continue;
       byId.set(agent.id, agent);
       byHandle.set(agent.handle, agent);
     }

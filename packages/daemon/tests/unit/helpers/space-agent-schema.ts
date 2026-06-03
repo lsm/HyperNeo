@@ -66,6 +66,48 @@ export function createSpaceAgentSchema(db: Database): void {
   `);
 
   db.exec(`
+		CREATE TABLE space_long_horizon_agents (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			handle TEXT NOT NULL,
+			display_name TEXT NOT NULL,
+			template_key TEXT DEFAULT NULL,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'disabled', 'archived')),
+			session_id TEXT DEFAULT NULL,
+			instructions TEXT NOT NULL DEFAULT '',
+			autonomy_level INTEGER DEFAULT NULL
+				CHECK(autonomy_level IS NULL OR autonomy_level BETWEEN 1 AND 5),
+			model TEXT DEFAULT NULL,
+			thinking_level TEXT DEFAULT NULL,
+			tool_permissions_json TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_long_horizon_agents_handle ` +
+      `ON space_long_horizon_agents(space_id, handle) WHERE status != 'archived'`
+  );
+  db.exec(`
+		CREATE TABLE space_long_horizon_agent_event_subscriptions (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			source TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			filter_json TEXT NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'disabled')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+		)
+	`);
+
+  db.exec(`
 		CREATE TABLE sessions (
 			id TEXT PRIMARY KEY,
 			title TEXT NOT NULL,

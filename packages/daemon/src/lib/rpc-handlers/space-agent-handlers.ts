@@ -22,6 +22,7 @@ import type {
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { Database } from '../../storage';
+import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -64,6 +65,20 @@ function extractTools(session: Session): string[] | undefined {
 
   const disallowed = new Set(disallowedTools);
   return KNOWN_TOOLS.filter((tool) => !disallowed.has(tool));
+}
+
+function archiveMatchingLongHorizonAgent(
+  db: Database,
+  runtimeService: {
+    removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
+  },
+  agent: SpaceAgent
+): void {
+  const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+  const longHorizonAgent = repo.getByHandle(agent.spaceId, agent.handle);
+  if (!longHorizonAgent) return;
+  runtimeService.removeLongHorizonAgentSubscriptions(agent.spaceId, longHorizonAgent.id);
+  repo.update(longHorizonAgent.id, { status: 'archived' });
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {
@@ -143,7 +158,10 @@ export function setupSpaceAgentHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
-  db: Database
+  db: Database,
+  runtimeService?: {
+    removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
+  }
 ): void {
   // spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
   messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
@@ -399,6 +417,7 @@ export function setupSpaceAgentHandlers(
       const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
       throw new Error(`${result.error}${detailsMsg}`);
     }
+    if (runtimeService) archiveMatchingLongHorizonAgent(db, runtimeService, existing);
 
     // Await the event so subscribers (e.g. StateManager) see it before the
     // handler returns — consistent with how room.delete emits room.deleted.
