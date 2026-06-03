@@ -38,6 +38,7 @@ const {
   mockUpdateAgent,
   mockListSchedules,
   mockListLongHorizonAgentSubscriptions,
+  mockCreateLongHorizonAgent,
   mockCreateLongHorizonAgentSubscription,
   mockUpdateLongHorizonAgentSubscription,
   mockDeleteLongHorizonAgentSubscription,
@@ -50,6 +51,7 @@ const {
   mockUpdateAgent: vi.fn(),
   mockListSchedules: vi.fn(),
   mockListLongHorizonAgentSubscriptions: vi.fn(),
+  mockCreateLongHorizonAgent: vi.fn(),
   mockCreateLongHorizonAgentSubscription: vi.fn(),
   mockUpdateLongHorizonAgentSubscription: vi.fn(),
   mockDeleteLongHorizonAgentSubscription: vi.fn(),
@@ -78,6 +80,7 @@ vi.mock('../../../lib/space-store', () => ({
       createAgent: mockCreateAgent,
       updateAgent: mockUpdateAgent,
       listSchedules: mockListSchedules,
+      createLongHorizonAgent: mockCreateLongHorizonAgent,
       listLongHorizonAgentSubscriptions: mockListLongHorizonAgentSubscriptions,
       createLongHorizonAgentSubscription: mockCreateLongHorizonAgentSubscription,
       updateLongHorizonAgentSubscription: mockUpdateLongHorizonAgentSubscription,
@@ -319,6 +322,8 @@ describe('SpaceAgentList', () => {
     mockListSchedules.mockResolvedValue([]);
     mockListLongHorizonAgentSubscriptions.mockReset();
     mockListLongHorizonAgentSubscriptions.mockResolvedValue([]);
+    mockCreateLongHorizonAgent.mockReset();
+    mockCreateLongHorizonAgent.mockImplementation(async (params) => makeLongHorizonAgent(params));
     mockCreateLongHorizonAgentSubscription.mockReset();
     mockUpdateLongHorizonAgentSubscription.mockReset();
     mockDeleteLongHorizonAgentSubscription.mockReset();
@@ -542,6 +547,22 @@ describe('SpaceAgentList', () => {
     expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
       'space-lh-agent:coordinator:space-1'
     );
+  });
+
+  it('creates a long-horizon row before opening subscriptions for new specialists', async () => {
+    mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
+    mockCreateLongHorizonAgent.mockResolvedValue(
+      makeLongHorizonAgent({ id: 'lh-coder', handle: 'coder', displayName: 'Coder' })
+    );
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockCreateLongHorizonAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'coder', displayName: 'Coder' })
+    );
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('lh-coder');
   });
 
   it('closes editor when cancel is clicked', () => {

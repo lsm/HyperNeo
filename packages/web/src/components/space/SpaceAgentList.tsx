@@ -451,6 +451,8 @@ export function SpaceAgentList() {
   const [deleting, setDeleting] = useState(false);
 
   const [subscriptionEditorAgent, setSubscriptionEditorAgent] = useState<SpaceAgent | null>(null);
+  const [subscriptionEditorLongHorizonAgent, setSubscriptionEditorLongHorizonAgent] =
+    useState<SpaceLongHorizonAgent | null>(null);
   const [subscriptionsByAgentId, setSubscriptionsByAgentId] = useState<
     Record<string, SpaceLongHorizonAgentEventSubscription[]>
   >({});
@@ -594,13 +596,26 @@ export function SpaceAgentList() {
     navigateToSpaceAgent(spaceUrlId, agent.handle);
   };
 
-  const handleEditSubscriptions = (agent: SpaceAgent) => {
-    const longHorizonAgent = longHorizonAgentResolver(agent);
+  const handleEditSubscriptions = async (agent: SpaceAgent) => {
+    let longHorizonAgent = longHorizonAgentResolver(agent);
     if (!longHorizonAgent) {
-      toast.error('No long-horizon agent row found for this agent.');
-      return;
+      try {
+        longHorizonAgent = await spaceStore.createLongHorizonAgent({
+          handle: agent.handle,
+          displayName: agent.name,
+          instructions: agent.customPrompt ?? agent.description ?? '',
+          model: agent.model ?? null,
+          thinkingLevel: agent.thinkingLevel ?? null,
+        });
+      } catch (err) {
+        toast.error(
+          `Failed to create long-horizon agent row: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
     }
     setSubscriptionEditorAgent(agent);
+    setSubscriptionEditorLongHorizonAgent(longHorizonAgent);
     loadSubscriptions(longHorizonAgent.id).catch(() => {});
   };
 
@@ -645,7 +660,7 @@ export function SpaceAgentList() {
 
   const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
   const selectedLongHorizonAgent = subscriptionEditorAgent
-    ? longHorizonAgentResolver(subscriptionEditorAgent)
+    ? (longHorizonAgentResolver(subscriptionEditorAgent) ?? subscriptionEditorLongHorizonAgent)
     : null;
   const totalEventSubscriptions = Object.values(subscriptionsByAgentId).reduce(
     (total, subscriptions) => total + subscriptions.filter((s) => s.status === 'active').length,
@@ -813,7 +828,10 @@ export function SpaceAgentList() {
           agent={subscriptionEditorAgent}
           longHorizonAgent={selectedLongHorizonAgent}
           subscriptions={subscriptionsByAgentId[selectedLongHorizonAgent.id] ?? []}
-          onClose={() => setSubscriptionEditorAgent(null)}
+          onClose={() => {
+            setSubscriptionEditorAgent(null);
+            setSubscriptionEditorLongHorizonAgent(null);
+          }}
           onChanged={loadSubscriptions}
         />
       )}

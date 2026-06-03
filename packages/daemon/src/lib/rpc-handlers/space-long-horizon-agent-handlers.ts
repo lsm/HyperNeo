@@ -26,7 +26,10 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   const trimmedSource = source.trim();
   const trimmedTopic = topic.trim();
   if (!trimmedSource || trimmedTopic.startsWith(`${trimmedSource}/`)) return trimmedTopic;
-  if (trimmedSource === 'github' && !trimmedTopic.startsWith('*/*/')) {
+  if (trimmedSource === 'github') {
+    const segments = trimmedTopic.split('/');
+    if (trimmedTopic.startsWith('*/*/') || segments.length >= 4)
+      return `${trimmedSource}/${trimmedTopic}`;
     return `${trimmedSource}/*/*/${trimmedTopic}`;
   }
   return `${trimmedSource}/${trimmedTopic}`;

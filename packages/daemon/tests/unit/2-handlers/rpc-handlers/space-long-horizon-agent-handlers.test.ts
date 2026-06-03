@@ -181,6 +181,19 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
+    it('accepts GitHub owner/repo topic shorthands without injecting owner/repo wildcards', async () => {
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'lsm/neokai/pull_request/*',
+      });
+
+      expect(repo.createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'lsm/neokai/pull_request/*' })
+      );
+    });
+
     it('updates subscriptions and refreshes runtime target', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
         subscriptionId: 'sub-1',
