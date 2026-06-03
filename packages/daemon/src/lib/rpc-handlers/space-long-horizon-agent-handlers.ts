@@ -26,12 +26,44 @@ import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 
+function rejectSlashSeparatedGitHubAction(topic: string): never {
+  throw new Error(
+    `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.closed"`
+  );
+}
+
+function composeGitHubSubscriptionPattern(source: string, topic: string): string {
+  const segments = topic.split('/');
+  if (segments[0] === source) {
+    const unqualifiedSegments = segments.slice(1);
+    if (unqualifiedSegments.length === 5) rejectSlashSeparatedGitHubAction(topic);
+    if (unqualifiedSegments.length === 4) return topic;
+    if (unqualifiedSegments.length === 3) return `${source}/${topic}`;
+  }
+  if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
+  if (topic.startsWith('*/*/') || segments.length === 4) return `${source}/${topic}`;
+  if (segments.length === 1 && topic.includes('.')) {
+    const dotIndex = topic.indexOf('.');
+    return `${source}/*/*/${topic.slice(0, dotIndex)}/*.${topic.slice(dotIndex + 1)}`;
+  }
+  return `${source}/*/*/${topic}`;
+}
+
 function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const trimmedSource = source.trim();
   const trimmedTopic = topic.trim();
   if (!trimmedSource) return trimmedTopic;
   const topicSource = trimmedTopic.split('/')[0] ?? '';
-  if (topicSource === trimmedSource) return trimmedTopic;
+  if (trimmedSource === 'github') {
+    const segments = trimmedTopic.split('/');
+    const isOwnerRepoShorthand =
+      segments.length === 4 || (segments[0] === trimmedSource && segments.length === 4);
+    if (isOwnerRepoShorthand || topicSource === trimmedSource) {
+      return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
+    }
+  } else if (topicSource === trimmedSource) {
+    return trimmedTopic;
+  }
   const normalizedTopicSource = topicSource.toLowerCase();
   if (
     normalizedTopicSource === trimmedSource.toLowerCase() ||
@@ -39,16 +71,8 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   ) {
     throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
   }
-  if (trimmedSource === 'github') {
-    const segments = trimmedTopic.split('/');
-    if (trimmedTopic.startsWith('*/*/') || segments.length >= 4)
-      return `${trimmedSource}/${trimmedTopic}`;
-    if (segments.length === 1 && trimmedTopic.includes('.')) {
-      const dotIndex = trimmedTopic.indexOf('.');
-      return `${trimmedSource}/*/*/${trimmedTopic.slice(0, dotIndex)}/*.${trimmedTopic.slice(dotIndex + 1)}`;
-    }
-    return `${trimmedSource}/*/*/${trimmedTopic}`;
-  }
+  if (trimmedSource === 'github')
+    return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
   return `${trimmedSource}/${trimmedTopic}`;
 }
 

@@ -230,16 +230,38 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow('Topic source "Space" does not match source "github"');
     });
 
-    it('accepts GitHub owner/repo topic shorthands without injecting owner/repo wildcards', async () => {
+    it('accepts GitHub owner/repo topic shorthands before known-source prefix checks', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
-        topic: 'lsm/neokai/pull_request/*',
+        topic: 'space/neokai/pull_request/*',
+      });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/neokai/pull_request/*',
       });
 
       expect(repo.createSubscription).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: 'lsm/neokai/pull_request/*' })
+        expect.objectContaining({ topic: 'space/neokai/pull_request/*' })
+      );
+      expect(repo.createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'github/neokai/pull_request/*' })
+      );
+    });
+
+    it('rejects slash-separated GitHub entity actions', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/42/closed',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/pull_request/42/closed" must use dotted entity actions like "pull_request/42.closed"'
       );
     });
 
