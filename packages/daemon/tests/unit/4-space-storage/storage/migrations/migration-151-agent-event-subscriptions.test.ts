@@ -23,6 +23,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
         status TEXT,
         model TEXT,
         tools TEXT,
+        provider TEXT,
+        setting_sources TEXT,
         created_at INTEGER
       );
       CREATE TABLE space_long_horizon_agents (
@@ -37,6 +39,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
         autonomy_level INTEGER,
         model TEXT,
         thinking_level TEXT,
+        provider TEXT,
+        setting_sources TEXT,
         tool_permissions_json TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -66,8 +70,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
     `);
     db.prepare(`INSERT INTO spaces (id) VALUES (?)`).run('space-1');
     db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, provider, setting_sources, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'lh-agent-1',
       'space-1',
@@ -79,11 +83,13 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       'active',
       null,
       '[]',
+      null,
+      null,
       100
     );
     db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, provider, setting_sources, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'legacy-agent-1',
       'space-1',
@@ -95,11 +101,13 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       'paused',
       'claude-sonnet-4',
       '["Read"]',
+      'openrouter',
+      '["project"]',
       101
     );
     db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO space_agents (id, space_id, name, handle, instructions, system_prompt, custom_prompt, status, model, tools, provider, setting_sources, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       'conflict-agent-1',
       'space-1',
@@ -111,6 +119,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       'active',
       null,
       '[]',
+      null,
+      null,
       102
     );
     db.prepare(
@@ -188,7 +198,7 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
     expect(
       db
         .prepare(
-          `SELECT id, handle, display_name, template_key, status, instructions, model, tool_permissions_json
+          `SELECT id, handle, display_name, template_key, status, instructions, model, provider, setting_sources, tool_permissions_json
            FROM space_long_horizon_agents
            WHERE id = ?`
         )
@@ -201,6 +211,8 @@ describe('Migration 151: consolidate agent event subscriptions', () => {
       status: 'paused',
       instructions: 'Canonical custom prompt',
       model: 'claude-sonnet-4',
+      provider: 'openrouter',
+      setting_sources: '["project"]',
       tool_permissions_json: '{"tools":["Read"]}',
     });
     expect(

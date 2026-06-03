@@ -790,6 +790,8 @@ describe('SpaceRuntimeService', () => {
           autonomyLevel: null,
           model: null,
           thinkingLevel: null,
+          provider: 'openrouter',
+          settingSources: ['project'],
           toolPermissions: { tools: ['Read', 'Edit'] },
           createdAt: NOW,
           updatedAt: NOW,
@@ -821,6 +823,8 @@ describe('SpaceRuntimeService', () => {
       expect(sessionManager.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           config: expect.objectContaining({
+            provider: 'openrouter',
+            settingSources: ['project'],
             sdkToolsPreset: ['Read', 'Edit'],
             allowedTools: ['Read', 'Edit'],
             disallowedTools: expect.arrayContaining(['Bash']),
@@ -877,6 +881,8 @@ describe('SpaceRuntimeService', () => {
           autonomyLevel: null,
           model: 'claude-new',
           thinkingLevel: null,
+          provider: 'openrouter',
+          settingSources: ['project'],
           toolPermissions: { tools: ['Read', 'Edit'] },
           createdAt: NOW,
           updatedAt: NOW,
@@ -908,6 +914,8 @@ describe('SpaceRuntimeService', () => {
       expect(existingSession.updateConfig).toHaveBeenCalledWith(
         expect.objectContaining({
           model: 'claude-new',
+          provider: 'openrouter',
+          settingSources: ['project'],
           systemPrompt: expect.objectContaining({ append: 'Use updated tools.' }),
           sdkToolsPreset: ['Read', 'Edit'],
           allowedTools: ['Read', 'Edit'],

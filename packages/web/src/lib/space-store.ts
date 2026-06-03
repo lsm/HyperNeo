@@ -2152,6 +2152,8 @@ class SpaceStore {
     autonomyLevel?: number | null;
     model?: string | null;
     thinkingLevel?: string | null;
+    provider?: string | null;
+    settingSources?: SpaceLongHorizonAgent['settingSources'];
     toolPermissions?: Record<string, unknown>;
   }): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;

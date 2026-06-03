@@ -651,7 +651,7 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.customPrompt).toBe('New prompt');
     });
 
-    it('syncs matching long-horizon agent rows when handle and tools change', async () => {
+    it('syncs matching long-horizon agent rows when handle and policy change', async () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
@@ -665,11 +665,43 @@ describe('Space Agent RPC Handlers', () => {
       await call(hubData.handlers, 'spaceAgent.update', {
         id: agentId,
         handle: 'renamed',
+        provider: 'openrouter',
+        settingSources: ['project'],
         tools: ['Read', 'Edit'],
       });
 
       expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
-        expect.objectContaining({ handle: 'renamed', toolPermissions: { tools: ['Read', 'Edit'] } })
+        expect.objectContaining({
+          handle: 'renamed',
+          provider: 'openrouter',
+          settingSources: ['project'],
+          toolPermissions: { tools: ['Read', 'Edit'] },
+        })
+      );
+    });
+
+    it('syncs legacy long-horizon rows matched by the previous handle', async () => {
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const legacyAgent = longHorizonRepo.create({
+        id: 'legacy-lh-agent',
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'original',
+        displayName: 'Legacy Agent',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: agentId,
+        handle: 'renamed-legacy',
+        customPrompt: 'Updated legacy prompt',
+      });
+
+      expect(longHorizonRepo.getById(legacyAgent.id)).toEqual(
+        expect.objectContaining({
+          handle: 'renamed-legacy',
+          instructions: 'Updated legacy prompt',
+        })
       );
     });
 

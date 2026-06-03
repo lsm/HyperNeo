@@ -82,6 +82,8 @@ export interface SpaceLongHorizonAgent {
   autonomyLevel: SpaceAgentAutonomyLevel | null;
   model: string | null;
   thinkingLevel: ThinkingLevel | null;
+  provider: string | null;
+  settingSources: SettingSource[] | null;
   toolPermissions: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
@@ -99,6 +101,8 @@ export interface CreateSpaceLongHorizonAgentParams {
   autonomyLevel?: SpaceAgentAutonomyLevel | null;
   model?: string | null;
   thinkingLevel?: ThinkingLevel | null;
+  provider?: string | null;
+  settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown>;
 }
 
@@ -112,6 +116,8 @@ export interface UpdateSpaceLongHorizonAgentParams {
   autonomyLevel?: SpaceAgentAutonomyLevel | null;
   model?: string | null;
   thinkingLevel?: ThinkingLevel | null;
+  provider?: string | null;
+  settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown> | null;
 }
 

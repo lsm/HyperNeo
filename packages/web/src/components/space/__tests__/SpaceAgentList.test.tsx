@@ -281,6 +281,8 @@ function makeLongHorizonAgent(
     autonomyLevel: null,
     model: null,
     thinkingLevel: null,
+    provider: null,
+    settingSources: null,
     toolPermissions: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -572,6 +574,8 @@ describe('SpaceAgentList', () => {
         name: 'Coder',
         handle: 'coder',
         tools: ['Read', 'Edit'],
+        provider: 'openrouter',
+        settingSources: ['project'],
       }),
     ];
     mockCreateLongHorizonAgent.mockResolvedValue(
@@ -587,6 +591,8 @@ describe('SpaceAgentList', () => {
         id: 'space-agent-coder',
         handle: 'coder',
         displayName: 'Coder',
+        provider: 'openrouter',
+        settingSources: ['project'],
         toolPermissions: { tools: ['Read', 'Edit'] },
       })
     );

@@ -502,6 +502,7 @@ export class SpaceRuntimeService {
 
     return {
       model: agent.model ?? space.defaultModel ?? DEFAULT_LONG_HORIZON_AGENT_MODEL,
+      provider: (agent.provider ?? undefined) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel ?? undefined,
       systemPrompt: {
         type: 'preset',
@@ -523,7 +524,7 @@ export class SpaceRuntimeService {
             } satisfies AgentDefinition,
           }
         : undefined,
-      settingSources: space.settingSources,
+      settingSources: agent.settingSources ?? space.settingSources,
     };
   }
 
@@ -534,6 +535,7 @@ export class SpaceRuntimeService {
     const currentConfig = session.getSessionData().config;
     const updates: Partial<Session['config']> = {
       model: config.model,
+      provider: config.provider,
       thinkingLevel: config.thinkingLevel,
       systemPrompt: config.systemPrompt,
       features: config.features,

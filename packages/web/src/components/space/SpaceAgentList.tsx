@@ -608,6 +608,8 @@ export function SpaceAgentList() {
           instructions: agent.customPrompt ?? agent.description ?? '',
           model: agent.model ?? null,
           thinkingLevel: agent.thinkingLevel ?? null,
+          provider: agent.provider ?? null,
+          settingSources: agent.settingSources ?? null,
           toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
         });
       } catch (err) {

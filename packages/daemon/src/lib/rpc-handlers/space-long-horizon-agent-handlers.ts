@@ -115,6 +115,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       autonomyLevel?: number | null;
       model?: string | null;
       thinkingLevel?: string | null;
+      provider?: string | null;
+      settingSources?: SpaceLongHorizonAgent['settingSources'];
       toolPermissions?: Record<string, unknown>;
     };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -131,6 +133,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
       model: params.model,
       thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+      provider: params.provider,
+      settingSources: params.settingSources,
       toolPermissions: params.toolPermissions,
     });
     return { agent };

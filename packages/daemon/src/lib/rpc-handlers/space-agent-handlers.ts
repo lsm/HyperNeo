@@ -109,9 +109,15 @@ function archiveMatchingLongHorizonAgent(
   repo.update(longHorizonAgent.id, { status: 'archived' });
 }
 
-function syncMatchingLongHorizonAgent(db: Database, agent: SpaceAgent): void {
+function syncMatchingLongHorizonAgent(
+  db: Database,
+  agent: SpaceAgent,
+  previousAgent?: SpaceAgent | null
+): void {
   const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
-  const longHorizonAgent = findMatchingLongHorizonAgent(repo, agent);
+  const longHorizonAgent =
+    findMatchingLongHorizonAgent(repo, agent) ??
+    (previousAgent ? findMatchingLongHorizonAgent(repo, previousAgent) : null);
   if (!longHorizonAgent) return;
   repo.update(longHorizonAgent.id, {
     handle: getLongHorizonAgentHandle(agent),
@@ -119,6 +125,8 @@ function syncMatchingLongHorizonAgent(db: Database, agent: SpaceAgent): void {
     instructions: agent.customPrompt ?? agent.description ?? '',
     model: agent.model ?? null,
     thinkingLevel: agent.thinkingLevel ?? null,
+    provider: agent.provider ?? null,
+    settingSources: agent.settingSources ?? null,
     toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
   });
 }
@@ -360,6 +368,7 @@ export function setupSpaceAgentHandlers(
 
     if (!params.id) throw new Error('id is required');
 
+    const previousAgent = spaceAgentManager.getById(params.id);
     const { id, ...updateFields } = params;
     const result = await spaceAgentManager.update(id, {
       name: updateFields.name,
@@ -374,7 +383,7 @@ export function setupSpaceAgentHandlers(
     });
 
     if (!result.ok) throw new Error(result.error);
-    syncMatchingLongHorizonAgent(db, result.value);
+    syncMatchingLongHorizonAgent(db, result.value, previousAgent);
 
     internalEventBus
       .publish('spaceAgent.updated', {

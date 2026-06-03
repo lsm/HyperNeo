@@ -83,6 +83,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
       sessionId: 'space:lh:forge-steward',
       instructions: 'Watch Forge scopes.',
       autonomyLevel: 3,
+      provider: 'openrouter',
+      settingSources: ['project'],
       toolPermissions: { forge: { write: true } },
     });
 
@@ -94,6 +96,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
       sessionId: 'space:lh:forge-steward',
       instructions: 'Watch Forge scopes.',
       autonomyLevel: 3,
+      provider: 'openrouter',
+      settingSources: ['project'],
       toolPermissions: { forge: { write: true } },
     });
 
@@ -101,11 +105,15 @@ describe('SpaceLongHorizonAgentRepository', () => {
       repo.update(agent.id, {
         status: 'active',
         autonomyLevel: null,
+        provider: null,
+        settingSources: null,
         toolPermissions: null,
       })
     ).toMatchObject({
       status: 'active',
       autonomyLevel: null,
+      provider: null,
+      settingSources: null,
       toolPermissions: {},
     });
   });
