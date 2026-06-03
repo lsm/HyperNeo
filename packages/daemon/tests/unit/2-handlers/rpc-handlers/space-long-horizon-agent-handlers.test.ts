@@ -59,7 +59,7 @@ describe('Space long-horizon agent handlers', () => {
       createReminder: mock(() => ({})),
       deleteReminder: mock(() => {}),
       listSubscriptions: mock(() => []),
-      upsertSubscription: mock((params) => ({
+      createSubscription: mock((params) => ({
         id: 'sub-1',
         ...params,
         status: params.status ?? 'active',
@@ -167,7 +167,7 @@ describe('Space long-horizon agent handlers', () => {
       );
 
       expect(result.subscription.id).toBe('sub-1');
-      expect(repo.upsertSubscription).toHaveBeenCalledWith({
+      expect(repo.createSubscription).toHaveBeenCalledWith({
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',

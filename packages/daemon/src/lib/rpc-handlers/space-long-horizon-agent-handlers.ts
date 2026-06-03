@@ -211,7 +211,7 @@ export function setupSpaceLongHorizonAgentHandlers(
     const source = params.source.trim();
     const topic = params.topic.trim();
     validateLongHorizonSubscriptionPattern(source, topic);
-    const subscription = repo.upsertSubscription({
+    const subscription = repo.createSubscription({
       spaceId: params.spaceId,
       agentId: params.agentId,
       source,

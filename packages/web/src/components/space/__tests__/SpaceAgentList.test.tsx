@@ -19,11 +19,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceLongHorizonAgent, SpaceWorkflow } from '@neokai/shared';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockLongHorizonAgents: ReturnType<typeof signal<SpaceLongHorizonAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockGoals: ReturnType<typeof signal<any[]>>;
 let mockSchedules: ReturnType<typeof signal<any[]>>;
@@ -36,6 +37,10 @@ const {
   mockCreateAgent,
   mockUpdateAgent,
   mockListSchedules,
+  mockListLongHorizonAgentSubscriptions,
+  mockCreateLongHorizonAgentSubscription,
+  mockUpdateLongHorizonAgentSubscription,
+  mockDeleteLongHorizonAgentSubscription,
   mockOnceConnected,
   mockNavigateToSpaceGoals,
   mockNavigateToSpaceForge,
@@ -44,6 +49,10 @@ const {
   mockCreateAgent: vi.fn(),
   mockUpdateAgent: vi.fn(),
   mockListSchedules: vi.fn(),
+  mockListLongHorizonAgentSubscriptions: vi.fn(),
+  mockCreateLongHorizonAgentSubscription: vi.fn(),
+  mockUpdateLongHorizonAgentSubscription: vi.fn(),
+  mockDeleteLongHorizonAgentSubscription: vi.fn(),
   mockOnceConnected: vi.fn(),
   mockNavigateToSpaceGoals: vi.fn(),
   mockNavigateToSpaceForge: vi.fn(),
@@ -58,6 +67,7 @@ vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       agents: mockAgents,
+      longHorizonAgents: mockLongHorizonAgents,
       workflows: mockWorkflows,
       goals: mockGoals,
       schedules: mockSchedules,
@@ -68,6 +78,10 @@ vi.mock('../../../lib/space-store', () => ({
       createAgent: mockCreateAgent,
       updateAgent: mockUpdateAgent,
       listSchedules: mockListSchedules,
+      listLongHorizonAgentSubscriptions: mockListLongHorizonAgentSubscriptions,
+      createLongHorizonAgentSubscription: mockCreateLongHorizonAgentSubscription,
+      updateLongHorizonAgentSubscription: mockUpdateLongHorizonAgentSubscription,
+      deleteLongHorizonAgentSubscription: mockDeleteLongHorizonAgentSubscription,
     };
   },
 }));
@@ -217,6 +231,7 @@ vi.mock('../../ui/Modal', () => ({
 
 // Initialize signals before import
 mockAgents = signal<SpaceAgent[]>([]);
+mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockGoals = signal<any[]>([]);
 mockSchedules = signal<any[]>([]);
@@ -248,6 +263,28 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   };
 }
 
+function makeLongHorizonAgent(
+  overrides: Partial<SpaceLongHorizonAgent> = {}
+): SpaceLongHorizonAgent {
+  return {
+    id: 'lh-agent-1',
+    spaceId: 'space-1',
+    handle: 'my-coder',
+    displayName: 'My Coder',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    toolPermissions: {},
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    ...overrides,
+  };
+}
+
 function makeWorkflow(agentId: string): SpaceWorkflow {
   return {
     id: 'wf-1',
@@ -269,6 +306,7 @@ describe('SpaceAgentList', () => {
   beforeEach(() => {
     cleanup();
     mockAgents.value = [];
+    mockLongHorizonAgents.value = [];
     mockWorkflows.value = [];
     mockGoals.value = [];
     mockSchedules.value = [];
@@ -279,6 +317,11 @@ describe('SpaceAgentList', () => {
     mockUpdateAgent.mockReset();
     mockListSchedules.mockReset();
     mockListSchedules.mockResolvedValue([]);
+    mockListLongHorizonAgentSubscriptions.mockReset();
+    mockListLongHorizonAgentSubscriptions.mockResolvedValue([]);
+    mockCreateLongHorizonAgentSubscription.mockReset();
+    mockUpdateLongHorizonAgentSubscription.mockReset();
+    mockDeleteLongHorizonAgentSubscription.mockReset();
     mockOnceConnected.mockReset();
     mockOnceConnected.mockReturnValue(() => {});
     mockNavigateToSpaceGoals.mockReset();
@@ -451,7 +494,7 @@ describe('SpaceAgentList', () => {
     expect(container.textContent).toContain('reminders');
     expect(container.textContent).toContain('event subscriptions');
     expect(container.textContent).toContain('Per-Agent Forge scope policy coming soon.');
-    expect(container.textContent).toContain('Event subscriptions coming soon.');
+    expect(container.textContent).toContain('0 active event subscriptions');
     expect(queryByLabelText('Forge scope filter')).toBeNull();
     expect(queryByLabelText('Event subscription pattern')).toBeNull();
   });
@@ -472,6 +515,33 @@ describe('SpaceAgentList', () => {
     fireEvent.click(getByLabelText('Edit Coder'));
     expect(getByTestId('editor-mode').textContent).toBe('edit');
     expect(getByTestId('editor-agent-name').textContent).toBe('Coder');
+  });
+
+  it('opens event subscriptions using the matching long-horizon agent handle', async () => {
+    mockAgents.value = [
+      makeAgent({
+        id: 'space-agent-coordinator',
+        name: 'Coordinator',
+        handle: 'coordinator',
+        templateName: 'Coordinator',
+      }),
+    ];
+    mockLongHorizonAgents.value = [
+      makeLongHorizonAgent({
+        id: 'space-lh-agent:coordinator:space-1',
+        handle: 'coordinator',
+        displayName: 'Coordinator',
+        templateKey: 'coordinator.default',
+      }),
+    ];
+
+    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    fireEvent.click(getByLabelText('Edit event subscriptions for Coordinator'));
+
+    expect(await findByText('Event subscriptions')).toBeTruthy();
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
+      'space-lh-agent:coordinator:space-1'
+    );
   });
 
   it('closes editor when cancel is clicked', () => {

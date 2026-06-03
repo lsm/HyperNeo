@@ -462,10 +462,17 @@ export function SpaceAgentList() {
     .map((a) => `${a.id}:${a.updatedAt}`)
     .sort()
     .join('|');
-  const longHorizonAgentById = useMemo(() => {
-    const map = new Map<string, SpaceLongHorizonAgent>();
-    for (const agent of longHorizonAgents) map.set(agent.id, agent);
-    return map;
+  const longHorizonAgentResolver = useMemo(() => {
+    const byId = new Map<string, SpaceLongHorizonAgent>();
+    const byHandle = new Map<string, SpaceLongHorizonAgent>();
+    for (const agent of longHorizonAgents) {
+      byId.set(agent.id, agent);
+      byHandle.set(agent.handle, agent);
+    }
+    return (agent: SpaceAgent) => {
+      const handle = isCoordinatorAgent(agent) ? 'coordinator' : agent.handle;
+      return byId.get(agent.id) ?? byHandle.get(handle) ?? null;
+    };
   }, [longHorizonAgents]);
   const longHorizonAgentIds = longHorizonAgents
     .map((agent) => agent.id)
@@ -588,7 +595,7 @@ export function SpaceAgentList() {
   };
 
   const handleEditSubscriptions = (agent: SpaceAgent) => {
-    const longHorizonAgent = longHorizonAgentById.get(agent.id);
+    const longHorizonAgent = longHorizonAgentResolver(agent);
     if (!longHorizonAgent) {
       toast.error('No long-horizon agent row found for this agent.');
       return;
@@ -638,7 +645,7 @@ export function SpaceAgentList() {
 
   const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
   const selectedLongHorizonAgent = subscriptionEditorAgent
-    ? longHorizonAgentById.get(subscriptionEditorAgent.id)
+    ? longHorizonAgentResolver(subscriptionEditorAgent)
     : null;
   const totalEventSubscriptions = Object.values(subscriptionsByAgentId).reduce(
     (total, subscriptions) => total + subscriptions.filter((s) => s.status === 'active').length,
@@ -751,7 +758,7 @@ export function SpaceAgentList() {
           ) : (
             <div class="space-y-2">
               {visibleAgents.map((agent) => {
-                const longHorizonAgent = longHorizonAgentById.get(agent.id);
+                const longHorizonAgent = longHorizonAgentResolver(agent);
                 const subscriptions = longHorizonAgent
                   ? (subscriptionsByAgentId[longHorizonAgent.id] ?? [])
                   : [];
