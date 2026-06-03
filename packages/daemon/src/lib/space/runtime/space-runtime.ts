@@ -3103,7 +3103,8 @@ export class SpaceRuntime {
       this.pollManager.stopPolls(run.id);
       return;
     }
-    const pollGateCount = workflow.gates?.filter((gate) => getEffectiveGatePoll(gate)).length ?? 0;
+    const pollGateCount =
+      workflow.gates?.filter((gate) => getEffectiveGatePoll(gate, workflow)).length ?? 0;
     if (pollGateCount === 0) {
       log.info(
         `SpaceRuntime.ensurePollsForRun: stopping gate polls for run ${run.id} — workflow has no polled gates`
@@ -3711,7 +3712,13 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const gateResult = await this.evaluateRestartRecoveryChannelGate(run.id, workflow, channel);
+        const gateSourceName = channel.from === '*' ? sourceNode.name : channel.from;
+        const gateResult = await this.evaluateRestartRecoveryChannelGate(
+          run.id,
+          workflow,
+          channel,
+          gateSourceName
+        );
         if (!gateResult.open) {
           blockedGateReasons.push(
             gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
@@ -3876,7 +3883,8 @@ export class SpaceRuntime {
   private async evaluateRestartRecoveryChannelGate(
     runId: string,
     workflow: SpaceWorkflow,
-    channel: WorkflowChannel
+    channel: WorkflowChannel,
+    sourceName?: string
   ): Promise<{ open: boolean; reason?: string }> {
     if (!channel.gateId) return { open: true };
     const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
@@ -3891,7 +3899,7 @@ export class SpaceRuntime {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
       if (liveScript && storedGate.script) gate = { ...storedGate, script: liveScript };
     }
-    gate = getEffectiveGate(gate);
+    gate = getEffectiveGate(gate, workflow, sourceName ?? channel.from);
     const gateDataRepo = new GateDataRepository(this.config.db);
     const gateDataRecord = gateDataRepo.get(runId, gate.id);
     const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);
