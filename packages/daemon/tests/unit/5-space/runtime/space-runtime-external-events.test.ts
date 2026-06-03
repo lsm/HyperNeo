@@ -354,6 +354,45 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
+  test('skips invalid persisted long-horizon subscriptions during rehydration', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-invalid-pattern',
+      spaceId: SPACE_ID,
+      handle: 'invalid-pattern-watcher',
+      displayName: 'Invalid Pattern Watcher',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'space/task.done',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await expect(runtime.rehydrateExecutors()).resolves.toBeUndefined();
+    expect(runtime.refreshLongHorizonSubscription(SPACE_ID, subscription.id)).toEqual({
+      success: false,
+      error: 'Topic source "space" does not match source "github"',
+    });
+  });
+
   test('refreshes trie entries after long-horizon agent status changes', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({

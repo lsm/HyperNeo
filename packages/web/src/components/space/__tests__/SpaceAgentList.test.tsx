@@ -39,6 +39,7 @@ const {
   mockListSchedules,
   mockListLongHorizonAgentSubscriptions,
   mockCreateLongHorizonAgent,
+  mockUpdateLongHorizonAgent,
   mockCreateLongHorizonAgentSubscription,
   mockUpdateLongHorizonAgentSubscription,
   mockDeleteLongHorizonAgentSubscription,
@@ -52,6 +53,7 @@ const {
   mockListSchedules: vi.fn(),
   mockListLongHorizonAgentSubscriptions: vi.fn(),
   mockCreateLongHorizonAgent: vi.fn(),
+  mockUpdateLongHorizonAgent: vi.fn(),
   mockCreateLongHorizonAgentSubscription: vi.fn(),
   mockUpdateLongHorizonAgentSubscription: vi.fn(),
   mockDeleteLongHorizonAgentSubscription: vi.fn(),
@@ -81,6 +83,7 @@ vi.mock('../../../lib/space-store', () => ({
       updateAgent: mockUpdateAgent,
       listSchedules: mockListSchedules,
       createLongHorizonAgent: mockCreateLongHorizonAgent,
+      updateLongHorizonAgent: mockUpdateLongHorizonAgent,
       listLongHorizonAgentSubscriptions: mockListLongHorizonAgentSubscriptions,
       createLongHorizonAgentSubscription: mockCreateLongHorizonAgentSubscription,
       updateLongHorizonAgentSubscription: mockUpdateLongHorizonAgentSubscription,
@@ -326,6 +329,10 @@ describe('SpaceAgentList', () => {
     mockListLongHorizonAgentSubscriptions.mockResolvedValue([]);
     mockCreateLongHorizonAgent.mockReset();
     mockCreateLongHorizonAgent.mockImplementation(async (params) => makeLongHorizonAgent(params));
+    mockUpdateLongHorizonAgent.mockReset();
+    mockUpdateLongHorizonAgent.mockImplementation(async (id, params) =>
+      makeLongHorizonAgent({ id, ...params })
+    );
     mockCreateLongHorizonAgentSubscription.mockReset();
     mockUpdateLongHorizonAgentSubscription.mockReset();
     mockDeleteLongHorizonAgentSubscription.mockReset();
@@ -551,20 +558,25 @@ describe('SpaceAgentList', () => {
     );
   });
 
-  it('ignores archived long-horizon rows when opening subscriptions', async () => {
+  it('reactivates inactive long-horizon rows when opening subscriptions', async () => {
     mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
     mockLongHorizonAgents.value = [
-      makeLongHorizonAgent({ id: 'archived-coder', handle: 'coder', status: 'archived' }),
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' }),
     ];
-    mockCreateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({ id: 'active-coder', handle: 'coder', displayName: 'Coder' })
+    mockUpdateLongHorizonAgent.mockResolvedValue(
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' })
     );
 
     const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
     fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
 
     expect(await findByText('Event subscriptions')).toBeTruthy();
-    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('active-coder');
+    expect(mockCreateLongHorizonAgent).not.toHaveBeenCalled();
+    expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
+      'space-agent-coder',
+      expect.objectContaining({ status: 'active' })
+    );
+    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
   });
 
   it('creates a long-horizon row before opening subscriptions for new specialists', async () => {

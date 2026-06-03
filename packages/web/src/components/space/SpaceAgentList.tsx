@@ -465,16 +465,28 @@ export function SpaceAgentList() {
     .sort()
     .join('|');
   const longHorizonAgentResolver = useMemo(() => {
-    const byId = new Map<string, SpaceLongHorizonAgent>();
-    const byHandle = new Map<string, SpaceLongHorizonAgent>();
+    const activeById = new Map<string, SpaceLongHorizonAgent>();
+    const activeByHandle = new Map<string, SpaceLongHorizonAgent>();
+    const inactiveById = new Map<string, SpaceLongHorizonAgent>();
+    const inactiveByHandle = new Map<string, SpaceLongHorizonAgent>();
     for (const agent of longHorizonAgents) {
-      if (agent.status !== 'active') continue;
-      byId.set(agent.id, agent);
-      byHandle.set(agent.handle, agent);
+      if (agent.status === 'active') {
+        activeById.set(agent.id, agent);
+        activeByHandle.set(agent.handle, agent);
+      } else {
+        inactiveById.set(agent.id, agent);
+        inactiveByHandle.set(agent.handle, agent);
+      }
     }
     return (agent: SpaceAgent) => {
       const handle = isCoordinatorAgent(agent) ? 'coordinator' : agent.handle;
-      return byId.get(agent.id) ?? byHandle.get(handle) ?? null;
+      return (
+        activeById.get(agent.id) ??
+        activeByHandle.get(handle) ??
+        inactiveById.get(agent.id) ??
+        inactiveByHandle.get(handle) ??
+        null
+      );
     };
   }, [longHorizonAgents]);
   const longHorizonAgentIds = longHorizonAgents
@@ -599,25 +611,35 @@ export function SpaceAgentList() {
 
   const handleEditSubscriptions = async (agent: SpaceAgent) => {
     let longHorizonAgent = longHorizonAgentResolver(agent);
-    if (!longHorizonAgent) {
-      try {
+    try {
+      const agentConfig = {
+        handle: isCoordinatorAgent(agent) ? 'coordinator' : agent.handle,
+        displayName: agent.name,
+        instructions: agent.customPrompt ?? '',
+        model: agent.model ?? null,
+        thinkingLevel: agent.thinkingLevel ?? null,
+        provider: agent.provider ?? null,
+        settingSources: agent.settingSources ?? null,
+        toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
+      };
+      if (longHorizonAgent) {
+        if (longHorizonAgent.status !== 'active') {
+          longHorizonAgent = await spaceStore.updateLongHorizonAgent(longHorizonAgent.id, {
+            ...agentConfig,
+            status: 'active',
+          });
+        }
+      } else {
         longHorizonAgent = await spaceStore.createLongHorizonAgent({
           id: agent.id,
-          handle: agent.handle,
-          displayName: agent.name,
-          instructions: agent.customPrompt ?? '',
-          model: agent.model ?? null,
-          thinkingLevel: agent.thinkingLevel ?? null,
-          provider: agent.provider ?? null,
-          settingSources: agent.settingSources ?? null,
-          toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
+          ...agentConfig,
         });
-      } catch (err) {
-        toast.error(
-          `Failed to create long-horizon agent row: ${err instanceof Error ? err.message : String(err)}`
-        );
-        return;
       }
+    } catch (err) {
+      toast.error(
+        `Failed to prepare long-horizon agent row: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return;
     }
     setSubscriptionEditorAgent(agent);
     setSubscriptionEditorLongHorizonAgent(longHorizonAgent);

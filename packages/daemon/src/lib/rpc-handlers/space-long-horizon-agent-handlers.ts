@@ -34,18 +34,16 @@ function rejectSlashSeparatedGitHubAction(topic: string): never {
 
 function composeGitHubSubscriptionPattern(source: string, topic: string): string {
   const segments = topic.split('/');
-  if (segments[0] === source) {
-    const unqualifiedSegments = segments.slice(1);
-    if (unqualifiedSegments.length === 5) rejectSlashSeparatedGitHubAction(topic);
-    if (unqualifiedSegments.length === 4) return topic;
-    if (unqualifiedSegments.length === 3) return `${source}/${topic}`;
-  }
+  if (segments[0] === source && segments.length === 5) return topic;
+  if (segments[0] === source && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
   if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
-  if (topic.startsWith('*/*/') || segments.length === 4) return `${source}/${topic}`;
+  if (segments.length === 4) return `${source}/${topic}`;
+  if (segments.length === 3) return `${source}/${topic}/*`;
   if (segments.length === 1 && topic.includes('.')) {
     const dotIndex = topic.indexOf('.');
     return `${source}/*/*/${topic.slice(0, dotIndex)}/*.${topic.slice(dotIndex + 1)}`;
   }
+  if (segments.length === 1) return `${source}/*/*/${topic}/*`;
   return `${source}/*/*/${topic}`;
 }
 

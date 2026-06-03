@@ -844,6 +844,74 @@ describe('SpaceRuntimeService', () => {
       );
     });
 
+    test('long-horizon event sessions leave model unset for custom provider defaults', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({
+          id: sessionId,
+          metadata: {},
+          config: {},
+        })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'provider-default-agent',
+          displayName: 'Provider Default Agent',
+          templateKey: 'migration.legacy_space_agent',
+          status: 'active',
+          sessionId: null,
+          instructions: 'Use provider defaults.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: 'openrouter',
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+      });
+
+      await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      const createSessionArg = (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mock.calls[0]![0] as { config: Partial<Session['config']> };
+      expect(createSessionArg.config.provider).toBe('openrouter');
+      expect(createSessionArg.config.model).toBeUndefined();
+    });
+
     test('long-horizon event sessions refresh existing config before delivery', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const sessionData = {

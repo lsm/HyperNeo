@@ -501,7 +501,10 @@ export class SpaceRuntimeService {
     const agentKey = sanitizeLongTermAgentKey(agent.displayName);
 
     return {
-      model: agent.model ?? space.defaultModel ?? DEFAULT_LONG_HORIZON_AGENT_MODEL,
+      model:
+        agent.model ??
+        space.defaultModel ??
+        (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL),
       provider: (agent.provider ?? undefined) as Session['config']['provider'],
       thinkingLevel: agent.thinkingLevel ?? undefined,
       systemPrompt: {
