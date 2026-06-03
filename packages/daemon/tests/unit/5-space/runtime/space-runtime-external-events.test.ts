@@ -2105,6 +2105,58 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('marks invalid persisted pending long-horizon deliveries failed during rehydrate', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-invalid-pending',
+      spaceId: SPACE_ID,
+      handle: 'invalid-pending',
+      displayName: 'Invalid Pending',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'space/task.done',
+    });
+    const event = makeEvent({ id: 'evt-lh-invalid-pending' });
+    eventStore.store(event);
+    const deliveryKey = `lh:${subscription.id}:${event.id}`;
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: `long_horizon:${SPACE_ID}`,
+      taskId: subscription.id,
+      nodeId: agent.id,
+      agentName: agent.id,
+    });
+    eventStore.markDeliveryFailed(event.id, deliveryKey, {
+      terminal: false,
+      reason: 'long-horizon agent unavailable',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await expect(runtime.rehydrateExecutors()).resolves.toBeUndefined();
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('Topic source "space" does not match source "github"');
+    expect(longHorizonMessages).toHaveLength(0);
+  });
+
   test('requeues persisted pending deliveries during runtime rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();

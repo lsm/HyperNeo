@@ -3543,16 +3543,26 @@ export class SpaceRuntime {
         const agent = subscription
           ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
           : null;
-        const target = subscription
-          ? {
-              kind: 'long_horizon_agent' as const,
+        let target: LongHorizonSubscriptionTarget | null = null;
+        if (subscription) {
+          try {
+            target = {
+              kind: 'long_horizon_agent',
               spaceId: longHorizonSpaceId,
               agentId: subscription.agentId,
               source: subscription.source,
               topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
               subscriptionId: subscription.id,
-            }
-          : null;
+            };
+          } catch (err) {
+            store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+              terminal: true,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+            store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+            continue;
+          }
+        }
         if (
           !subscription ||
           subscription.spaceId !== longHorizonSpaceId ||
