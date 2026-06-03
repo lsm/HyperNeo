@@ -355,5 +355,54 @@ describe('useSpaceTaskMessages', () => {
 
       expect(subscribeCalls()).toHaveLength(6);
     });
+
+    it('releases loading after reconnect snapshot retries are exhausted', async () => {
+      vi.useFakeTimers();
+      let connectionHandler: ((state: string) => void) | null = null;
+      mockGetHub.mockReturnValue({
+        request: mockRequest,
+        onConnection: vi.fn((handler: (state: string) => void) => {
+          connectionHandler = handler;
+          return () => {};
+        }),
+      });
+
+      const { result } = renderHook(() => useSpaceTaskMessages('task-1'));
+      const firstSubId = lastMessageSubscribeSubId();
+      act(() => {
+        fireEvent('liveQuery.snapshot', {
+          subscriptionId: firstSubId,
+          rows: [{ id: 'msg-1', taskId: 'task-1', createdAt: 1 }],
+          version: 1,
+        });
+      });
+
+      act(() => {
+        connectionHandler?.('connected');
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(result.current.isLoading).toBe(true);
+
+      for (let i = 0; i < 5; i += 1) {
+        await act(async () => {
+          await Promise.resolve();
+          vi.advanceTimersByTime(2000);
+          await Promise.resolve();
+        });
+      }
+
+      expect(subscribeCalls()).toHaveLength(12);
+      expect(result.current.isLoading).toBe(false);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(subscribeCalls()).toHaveLength(12);
+    });
   });
 });

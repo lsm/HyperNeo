@@ -75,6 +75,7 @@ function nextActiveTurnSubId(taskId: string): string {
 }
 
 const SNAPSHOT_RETRY_DELAY_MS = 2000;
+const MAX_SNAPSHOT_RETRIES = 5;
 
 function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[] {
   return [...rows].sort((a, b) => {
@@ -179,6 +180,7 @@ export function useSpaceTaskMessages(
     activeTurnSubIdRef.current = shouldSubscribeActiveTurn ? activeTurnSubscriptionId : null;
     const snapshotRetryTimers = new Set<ReturnType<typeof setTimeout>>();
     let sawSnapshot = false;
+    let snapshotRetries = 0;
     let subscribeGeneration = 0;
     // Clear stale rows from a previous subscription synchronously. The
     // empty-state UI is still suppressed because `loadedForTaskId` is now
@@ -209,10 +211,13 @@ export function useSpaceTaskMessages(
       }
     });
 
-    const subscribe = () => {
+    const subscribe = (resetRetryCount = false) => {
       const hub = getHub();
       if (!hub) return;
       sawSnapshot = false;
+      if (resetRetryCount) {
+        snapshotRetries = 0;
+      }
       subscribeGeneration += 1;
       const generation = subscribeGeneration;
       hub
@@ -222,6 +227,13 @@ export function useSpaceTaskMessages(
           subscriptionId,
         })
         .then(() => {
+          if (snapshotRetries >= MAX_SNAPSHOT_RETRIES) {
+            if (activeSubIdRef.current === subscriptionId && !sawSnapshot) {
+              setLoadedForTaskId(taskId);
+            }
+            return;
+          }
+          snapshotRetries += 1;
           const retryTimer = setTimeout(() => {
             snapshotRetryTimers.delete(retryTimer);
             if (
@@ -261,10 +273,10 @@ export function useSpaceTaskMessages(
       if (state !== 'connected') return;
       if (activeSubIdRef.current !== subscriptionId) return;
       setLoadedForTaskId(null);
-      subscribe();
+      subscribe(true);
     });
 
-    subscribe();
+    subscribe(true);
 
     return () => {
       for (const timer of snapshotRetryTimers) clearTimeout(timer);
