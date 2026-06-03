@@ -4,6 +4,7 @@ import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
@@ -372,6 +373,39 @@ export class SpaceLongHorizonAgentRepository {
       )
       .all(agentId) as Record<string, unknown>[];
     return rows.map(rowToSubscription);
+  }
+
+  updateSubscription(
+    subscriptionId: string,
+    params: UpdateSpaceLongHorizonAgentSubscriptionParams
+  ): SpaceLongHorizonAgentEventSubscription | null {
+    const existing = this.getSubscription(subscriptionId);
+    if (!existing) return null;
+    const nextSource = params.source ?? existing.source;
+    const nextTopic = params.topic ?? existing.topic;
+    const nextFilter = params.filter ?? existing.filter;
+    const nextStatus = params.status ?? existing.status;
+    this.db
+      .prepare(
+        `UPDATE space_long_horizon_agent_event_subscriptions
+           SET source = ?, topic = ?, filter_json = ?, status = ?, updated_at = ?
+           WHERE id = ?`
+      )
+      .run(
+        nextSource,
+        nextTopic,
+        JSON.stringify(nextFilter),
+        nextStatus,
+        Date.now(),
+        subscriptionId
+      );
+    return this.getSubscription(subscriptionId);
+  }
+
+  deleteSubscription(subscriptionId: string): void {
+    this.db
+      .prepare(`DELETE FROM space_long_horizon_agent_event_subscriptions WHERE id = ?`)
+      .run(subscriptionId);
   }
 
   listActiveSubscriptionsBySpace(spaceId: string): SpaceLongHorizonAgentEventSubscription[] {

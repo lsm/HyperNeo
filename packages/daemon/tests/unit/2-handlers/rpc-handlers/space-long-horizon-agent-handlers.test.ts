@@ -41,6 +41,8 @@ describe('Space long-horizon agent handlers', () => {
   let repo: SpaceLongHorizonAgentRepository;
   let runtimeService: {
     refreshLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
+    refreshLongHorizonSubscription: ReturnType<typeof mock>;
+    removeLongHorizonSubscription: ReturnType<typeof mock>;
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
   };
 
@@ -56,9 +58,40 @@ describe('Space long-horizon agent handlers', () => {
       listReminders: mock(() => []),
       createReminder: mock(() => ({})),
       deleteReminder: mock(() => {}),
+      listSubscriptions: mock(() => []),
+      upsertSubscription: mock((params) => ({
+        id: 'sub-1',
+        ...params,
+        status: params.status ?? 'active',
+      })),
+      getSubscription: mock(() => ({
+        id: 'sub-1',
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/*/*/pull_request/*',
+        filter: {},
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+      updateSubscription: mock((subscriptionId, params) => ({
+        id: subscriptionId,
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: params.source ?? 'github',
+        topic: params.topic ?? 'github/*/*/pull_request/*',
+        filter: params.filter ?? {},
+        status: params.status ?? 'active',
+        createdAt: 1,
+        updatedAt: 2,
+      })),
+      deleteSubscription: mock(() => {}),
     } as unknown as SpaceLongHorizonAgentRepository;
     runtimeService = {
       refreshLongHorizonAgentSubscriptions: mock(() => ({ success: true })),
+      refreshLongHorizonSubscription: mock(() => ({ success: true })),
+      removeLongHorizonSubscription: mock(() => {}),
       removeLongHorizonAgentSubscriptions: mock(() => {}),
     };
     setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo, runtimeService);
@@ -105,6 +138,73 @@ describe('Space long-horizon agent handlers', () => {
         'agent-1'
       );
       expect(repo.delete).toHaveBeenCalledWith('agent-1');
+    });
+  });
+
+  describe('spaceLongHorizonAgent.subscriptions', () => {
+    it('lists subscriptions for an agent', async () => {
+      const result = await call<{ subscriptions: unknown[] }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.listSubscriptions',
+        { agentId: 'agent-1', spaceId: 'space-1' }
+      );
+
+      expect(result.subscriptions).toEqual([]);
+      expect(repo.listSubscriptions).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('creates subscriptions and refreshes runtime target', async () => {
+      const result = await call<{ subscription: { id: string; topic: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.createSubscription',
+        {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/*/*/pull_request/*',
+          filter: { label: 'PRs' },
+        }
+      );
+
+      expect(result.subscription.id).toBe('sub-1');
+      expect(repo.upsertSubscription).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/*/*/pull_request/*',
+        filter: { label: 'PRs' },
+        status: undefined,
+      });
+      expect(runtimeService.refreshLongHorizonSubscription).toHaveBeenCalledWith(
+        'space-1',
+        'sub-1'
+      );
+    });
+
+    it('updates subscriptions and refreshes runtime target', async () => {
+      await call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
+        subscriptionId: 'sub-1',
+        spaceId: 'space-1',
+        status: 'paused',
+      });
+
+      expect(repo.updateSubscription).toHaveBeenCalledWith('sub-1', { status: 'paused' });
+      expect(runtimeService.refreshLongHorizonSubscription).toHaveBeenCalledWith(
+        'space-1',
+        'sub-1'
+      );
+    });
+
+    it('deletes subscriptions and removes runtime target before deleting row', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.deleteSubscription',
+        { subscriptionId: 'sub-1', spaceId: 'space-1' }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(runtimeService.removeLongHorizonSubscription).toHaveBeenCalledWith('space-1', 'sub-1');
+      expect(repo.deleteSubscription).toHaveBeenCalledWith('sub-1');
     });
   });
 

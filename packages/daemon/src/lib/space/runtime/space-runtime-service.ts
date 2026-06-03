@@ -1695,6 +1695,17 @@ export class SpaceRuntimeService {
     return this.runtime.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
   }
 
+  refreshLongHorizonSubscription(
+    spaceId: string,
+    subscriptionId: string
+  ): { success: boolean; error?: string } {
+    return this.runtime.refreshLongHorizonSubscription(spaceId, subscriptionId);
+  }
+
+  removeLongHorizonSubscription(spaceId: string, subscriptionId: string): void {
+    this.runtime.removeLongHorizonSubscription(spaceId, subscriptionId);
+  }
+
   removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
     this.runtime.removeLongHorizonAgentSubscriptions(spaceId, agentId);
   }

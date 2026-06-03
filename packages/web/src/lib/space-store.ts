@@ -29,6 +29,7 @@ import type {
   CreateSpaceTaskParams,
   CreateSpaceWorkflowParams,
   CreateSpaceLongHorizonAgentReminderParams,
+  CreateSpaceLongHorizonAgentSubscriptionParams,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
   MessageImage,
@@ -43,6 +44,7 @@ import type {
   SpaceGoalEvent,
   SpaceGoalListParams,
   SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentEventSubscription,
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentTemplate,
   SpaceTask,
@@ -57,6 +59,7 @@ import type {
   TaskScheduleTriggerType,
   UpdateSpaceAgentParams,
   UpdateSpaceLongHorizonAgentParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceGoalParams,
   UpdateSpaceParams,
   UpdateSpaceTaskParams,
@@ -2216,6 +2219,54 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     await hub.request('spaceLongHorizonAgent.deleteReminder', { reminderId });
+  }
+
+  async listLongHorizonAgentSubscriptions(
+    agentId: string
+  ): Promise<SpaceLongHorizonAgentEventSubscription[]> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { subscriptions } = await hub.request<{
+      subscriptions: SpaceLongHorizonAgentEventSubscription[];
+    }>('spaceLongHorizonAgent.listSubscriptions', { agentId, spaceId });
+    return subscriptions ?? [];
+  }
+
+  async createLongHorizonAgentSubscription(
+    params: Omit<CreateSpaceLongHorizonAgentSubscriptionParams, 'spaceId'>
+  ): Promise<SpaceLongHorizonAgentEventSubscription> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { subscription } = await hub.request<{
+      subscription: SpaceLongHorizonAgentEventSubscription;
+    }>('spaceLongHorizonAgent.createSubscription', { spaceId, ...params });
+    return subscription;
+  }
+
+  async updateLongHorizonAgentSubscription(
+    subscriptionId: string,
+    params: UpdateSpaceLongHorizonAgentSubscriptionParams
+  ): Promise<SpaceLongHorizonAgentEventSubscription> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { subscription } = await hub.request<{
+      subscription: SpaceLongHorizonAgentEventSubscription;
+    }>('spaceLongHorizonAgent.updateSubscription', { subscriptionId, spaceId, ...params });
+    return subscription;
+  }
+
+  async deleteLongHorizonAgentSubscription(subscriptionId: string): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    await hub.request('spaceLongHorizonAgent.deleteSubscription', { subscriptionId, spaceId });
   }
 
   // ========================================

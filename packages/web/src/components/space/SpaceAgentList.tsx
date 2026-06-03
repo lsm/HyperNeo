@@ -6,8 +6,13 @@
  * reminders, and event subscriptions.
  */
 
-import { useEffect, useState } from 'preact/hooks';
-import type { AgentDriftReport, SpaceAgent } from '@neokai/shared';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import type {
+  AgentDriftReport,
+  SpaceAgent,
+  SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentEventSubscription,
+} from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { navigateToSpaceAgent, navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
@@ -22,10 +27,13 @@ interface AgentCardProps {
   syncing: boolean;
   managedGoalCount: number;
   reminderCount: number;
+  subscriptionCount: number;
+  subscriptionTopics: Array<{ id: string; topic: string }>;
   onEdit: (agent: SpaceAgent) => void;
   onDelete: (agent: SpaceAgent) => void;
   onSync: (agent: SpaceAgent) => void;
   onOpenDetail: (agent: SpaceAgent) => void;
+  onEditSubscriptions: (agent: SpaceAgent) => void;
 }
 
 function isCoordinatorAgent(agent: SpaceAgent): boolean {
@@ -44,16 +52,229 @@ function AgentStat({ label, value }: { label: string; value: string | number }) 
   );
 }
 
+function formatFilter(filter: Record<string, unknown>): string {
+  return Object.keys(filter).length === 0 ? 'No filter' : JSON.stringify(filter);
+}
+
+interface SubscriptionEditorProps {
+  agent: SpaceAgent;
+  longHorizonAgent: SpaceLongHorizonAgent;
+  subscriptions: SpaceLongHorizonAgentEventSubscription[];
+  onClose: () => void;
+  onChanged: (agentId: string) => Promise<void>;
+}
+
+function SubscriptionEditor({
+  agent,
+  longHorizonAgent,
+  subscriptions,
+  onClose,
+  onChanged,
+}: SubscriptionEditorProps) {
+  const [source, setSource] = useState('github');
+  const [topic, setTopic] = useState('github/*/*/pull_request/*');
+  const [label, setLabel] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    const trimmedSource = source.trim();
+    const trimmedTopic = topic.trim();
+    if (!trimmedSource) {
+      setError('Source is required');
+      return;
+    }
+    if (!trimmedTopic) {
+      setError('Topic pattern is required');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const filter = label.trim() ? { label: label.trim() } : {};
+      await spaceStore.createLongHorizonAgentSubscription({
+        agentId: longHorizonAgent.id,
+        source: trimmedSource,
+        topic: trimmedTopic,
+        filter,
+        status: 'active',
+      });
+      setTopic('github/*/*/pull_request/*');
+      setLabel('');
+      await onChanged(longHorizonAgent.id);
+      toast.success('Subscription added');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add subscription');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggle = async (subscription: SpaceLongHorizonAgentEventSubscription) => {
+    const nextStatus = subscription.status === 'active' ? 'paused' : 'active';
+    setBusyId(subscription.id);
+    setError(null);
+    try {
+      await spaceStore.updateLongHorizonAgentSubscription(subscription.id, { status: nextStatus });
+      await onChanged(longHorizonAgent.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update subscription');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (subscription: SpaceLongHorizonAgentEventSubscription) => {
+    setBusyId(subscription.id);
+    setError(null);
+    try {
+      await spaceStore.deleteLongHorizonAgentSubscription(subscription.id);
+      await onChanged(longHorizonAgent.id);
+      toast.success('Subscription deleted');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete subscription');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-end bg-black/50" onClick={onClose}>
+      <div
+        class="h-full w-full max-w-xl overflow-y-auto border-l border-white/10 bg-dark-900 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div class="border-b border-white/10 px-4 py-3">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-purple-300">
+                Event subscriptions
+              </p>
+              <h2 class="mt-1 text-sm font-semibold text-gray-100">{agent.name}</h2>
+              <p class="mt-0.5 font-mono text-xs text-gray-500">@{agent.handle}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              class="rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-white/5 hover:text-gray-200"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-4 px-4 py-4">
+          <section class="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+            <p class="text-xs font-medium text-gray-200">Add subscription</p>
+            <label class="mt-3 block text-xs text-gray-400">
+              Source
+              <input
+                value={source}
+                onInput={(event) => setSource(event.currentTarget.value)}
+                class="mt-1 w-full rounded border border-white/10 bg-dark-800 px-2 py-1.5 font-mono text-xs text-gray-100 outline-none focus:border-blue-500/60"
+                placeholder="github"
+              />
+            </label>
+            <label class="mt-3 block text-xs text-gray-400">
+              Topic pattern
+              <input
+                value={topic}
+                onInput={(event) => setTopic(event.currentTarget.value)}
+                class="mt-1 w-full rounded border border-white/10 bg-dark-800 px-2 py-1.5 font-mono text-xs text-gray-100 outline-none focus:border-blue-500/60"
+                placeholder="github/owner/repo/pull_request/*.review_*"
+              />
+            </label>
+            <label class="mt-3 block text-xs text-gray-400">
+              Label (optional)
+              <input
+                value={label}
+                onInput={(event) => setLabel(event.currentTarget.value)}
+                class="mt-1 w-full rounded border border-white/10 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 outline-none focus:border-blue-500/60"
+                placeholder="PR review comments"
+              />
+            </label>
+            <div class="mt-3 flex justify-end">
+              <Button size="sm" onClick={handleCreate} disabled={saving}>
+                {saving ? 'Adding…' : 'Add subscription'}
+              </Button>
+            </div>
+          </section>
+
+          {error && <p class="text-xs text-red-400">{error}</p>}
+
+          <section class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Current · {subscriptions.length}
+            </p>
+            {subscriptions.length === 0 ? (
+              <div class="rounded border border-white/10 bg-dark-800 px-3 py-4 text-xs text-gray-500">
+                No event subscriptions configured.
+              </div>
+            ) : (
+              subscriptions.map((subscription) => (
+                <div
+                  key={subscription.id}
+                  class="rounded-lg border border-white/10 bg-white/[0.025] p-3"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <p class="break-all font-mono text-xs text-gray-100">{subscription.topic}</p>
+                      <p class="mt-1 text-xs text-gray-500">
+                        Source: {subscription.source} · Filter: {formatFilter(subscription.filter)}
+                      </p>
+                    </div>
+                    <span
+                      class={`rounded px-1.5 py-0.5 text-xs ${
+                        subscription.status === 'active'
+                          ? 'bg-green-500/10 text-green-300'
+                          : 'bg-amber-500/10 text-amber-300'
+                      }`}
+                    >
+                      {subscription.status}
+                    </span>
+                  </div>
+                  <div class="mt-3 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggle(subscription)}
+                      disabled={busyId === subscription.id}
+                      class="rounded-md px-2 py-1 text-xs text-blue-300 hover:bg-white/5 hover:text-blue-200 disabled:opacity-50"
+                    >
+                      {subscription.status === 'active' ? 'Pause' : 'Resume'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(subscription)}
+                      disabled={busyId === subscription.id}
+                      class="rounded-md px-2 py-1 text-xs text-red-300 hover:bg-white/5 hover:text-red-200 disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentCard({
   agent,
   drifted,
   syncing,
   managedGoalCount,
   reminderCount,
+  subscriptionCount,
+  subscriptionTopics,
   onEdit,
   onDelete,
   onSync,
   onOpenDetail,
+  onEditSubscriptions,
 }: AgentCardProps) {
   const toolCount = agent.tools?.length ?? 0;
   const isCoordinator = isCoordinatorAgent(agent);
@@ -104,6 +325,19 @@ function AgentCard({
               </span>
             ))}
           </div>
+          {subscriptionTopics.length > 0 && (
+            <div class="mt-2 flex flex-wrap gap-1.5">
+              {subscriptionTopics.slice(0, 3).map((subscription) => (
+                <span
+                  key={subscription.id}
+                  class="max-w-full truncate rounded border border-blue-400/20 bg-blue-500/10 px-1.5 py-0.5 font-mono text-xs text-blue-200"
+                  title={subscription.topic}
+                >
+                  {subscription.topic}
+                </span>
+              ))}
+            </div>
+          )}
           {isCoordinator && (
             <div class="mt-3 grid gap-2 rounded-lg border border-purple-400/15 bg-black/10 p-3 sm:grid-cols-2">
               <div>
@@ -117,7 +351,7 @@ function AgentCard({
                 <p class="text-xs font-medium text-purple-100">Automation</p>
                 <div class="mt-2 flex flex-wrap gap-1.5">
                   <AgentStat label="reminders" value={reminderCount} />
-                  <AgentStat label="event subscriptions" value="Coming soon" />
+                  <AgentStat label="event subscriptions" value={subscriptionCount} />
                 </div>
               </div>
             </div>
@@ -135,6 +369,14 @@ function AgentCard({
               {syncing ? 'Syncing…' : 'Sync'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => onEditSubscriptions(agent)}
+            class="rounded-md px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-white/5 hover:text-blue-200"
+            aria-label={`Edit event subscriptions for ${agent.name}`}
+          >
+            Events
+          </button>
           <button
             type="button"
             onClick={() => onEdit(agent)}
@@ -200,12 +442,18 @@ export function SpaceAgentList() {
   const goals = spaceStore.goals.value;
   const schedules = spaceStore.schedules.value;
   const workflows = spaceStore.workflows.value;
+  const longHorizonAgents = spaceStore.longHorizonAgents.value;
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<SpaceAgent | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<SpaceAgent | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [subscriptionEditorAgent, setSubscriptionEditorAgent] = useState<SpaceAgent | null>(null);
+  const [subscriptionsByAgentId, setSubscriptionsByAgentId] = useState<
+    Record<string, SpaceLongHorizonAgentEventSubscription[]>
+  >({});
 
   const [driftedAgentIds, setDriftedAgentIds] = useState<Set<string>>(new Set());
   const [syncingAgentId, setSyncingAgentId] = useState<string | null>(null);
@@ -214,6 +462,49 @@ export function SpaceAgentList() {
     .map((a) => `${a.id}:${a.updatedAt}`)
     .sort()
     .join('|');
+  const longHorizonAgentById = useMemo(() => {
+    const map = new Map<string, SpaceLongHorizonAgent>();
+    for (const agent of longHorizonAgents) map.set(agent.id, agent);
+    return map;
+  }, [longHorizonAgents]);
+  const longHorizonAgentIds = longHorizonAgents
+    .map((agent) => agent.id)
+    .sort()
+    .join('|');
+
+  const loadSubscriptions = async (agentId: string) => {
+    const subscriptions = await spaceStore.listLongHorizonAgentSubscriptions(agentId);
+    setSubscriptionsByAgentId((current) => ({ ...current, [agentId]: subscriptions }));
+  };
+
+  useEffect(() => {
+    if (!spaceId || longHorizonAgents.length === 0) {
+      setSubscriptionsByAgentId({});
+      return;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      const entries = await Promise.all(
+        longHorizonAgents.map(
+          async (agent) =>
+            [agent.id, await spaceStore.listLongHorizonAgentSubscriptions(agent.id)] as const
+        )
+      );
+      if (!cancelled) setSubscriptionsByAgentId(Object.fromEntries(entries));
+    };
+    load().catch((err) => {
+      if (!cancelled) {
+        toast.error(
+          `Failed to load event subscriptions: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [spaceId, longHorizonAgentIds]);
 
   useEffect(() => {
     if (!spaceId) return;
@@ -296,6 +587,16 @@ export function SpaceAgentList() {
     navigateToSpaceAgent(spaceUrlId, agent.handle);
   };
 
+  const handleEditSubscriptions = (agent: SpaceAgent) => {
+    const longHorizonAgent = longHorizonAgentById.get(agent.id);
+    if (!longHorizonAgent) {
+      toast.error('No long-horizon agent row found for this agent.');
+      return;
+    }
+    setSubscriptionEditorAgent(agent);
+    loadSubscriptions(longHorizonAgent.id).catch(() => {});
+  };
+
   const handleCreate = () => {
     setEditingAgent(null);
     setEditorOpen(true);
@@ -336,6 +637,13 @@ export function SpaceAgentList() {
   };
 
   const existingAgentNames = agents.filter((a) => a.id !== editingAgent?.id).map((a) => a.name);
+  const selectedLongHorizonAgent = subscriptionEditorAgent
+    ? longHorizonAgentById.get(subscriptionEditorAgent.id)
+    : null;
+  const totalEventSubscriptions = Object.values(subscriptionsByAgentId).reduce(
+    (total, subscriptions) => total + subscriptions.filter((s) => s.status === 'active').length,
+    0
+  );
   const coordinator = agents.find(isCoordinatorAgent);
   const otherAgents = agents.filter((agent) => agent.id !== coordinator?.id);
   const visibleAgents = coordinator ? [coordinator, ...otherAgents] : agents;
@@ -417,11 +725,12 @@ export function SpaceAgentList() {
               <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">
                 Reminders and events
               </p>
-              <div class="mt-2 rounded border border-white/10 bg-dark-800 px-2 py-1.5 text-xs text-gray-500">
-                Event subscriptions coming soon.
+              <div class="mt-2 rounded border border-white/10 bg-dark-800 px-2 py-1.5 text-xs text-gray-300">
+                {totalEventSubscriptions} active event subscriptions
               </div>
               <p class="mt-1 text-xs text-gray-500">
-                {activeSchedules.length} active reminders · event subscriptions not yet configured
+                {activeSchedules.length} active reminders · event subscriptions configurable per
+                agent
               </p>
             </div>
           </div>
@@ -441,20 +750,33 @@ export function SpaceAgentList() {
             </div>
           ) : (
             <div class="space-y-2">
-              {visibleAgents.map((agent) => (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                  drifted={driftedAgentIds.has(agent.id)}
-                  syncing={syncingAgentId === agent.id}
-                  managedGoalCount={activeGoals.length}
-                  reminderCount={activeSchedules.length}
-                  onEdit={handleEdit}
-                  onDelete={handleDeleteClick}
-                  onSync={handleSync}
-                  onOpenDetail={handleOpenDetail}
-                />
-              ))}
+              {visibleAgents.map((agent) => {
+                const longHorizonAgent = longHorizonAgentById.get(agent.id);
+                const subscriptions = longHorizonAgent
+                  ? (subscriptionsByAgentId[longHorizonAgent.id] ?? [])
+                  : [];
+                const activeSubscriptions = subscriptions.filter((s) => s.status === 'active');
+                return (
+                  <AgentCard
+                    key={agent.id}
+                    agent={agent}
+                    drifted={driftedAgentIds.has(agent.id)}
+                    syncing={syncingAgentId === agent.id}
+                    managedGoalCount={activeGoals.length}
+                    reminderCount={activeSchedules.length}
+                    subscriptionCount={activeSubscriptions.length}
+                    subscriptionTopics={activeSubscriptions.map((s) => ({
+                      id: s.id,
+                      topic: s.topic,
+                    }))}
+                    onEdit={handleEdit}
+                    onDelete={handleDeleteClick}
+                    onSync={handleSync}
+                    onOpenDetail={handleOpenDetail}
+                    onEditSubscriptions={handleEditSubscriptions}
+                  />
+                );
+              })}
             </div>
           )}
 
@@ -476,6 +798,16 @@ export function SpaceAgentList() {
           existingAgentNames={existingAgentNames}
           onSave={handleEditorClose}
           onCancel={handleEditorClose}
+        />
+      )}
+
+      {subscriptionEditorAgent && selectedLongHorizonAgent && (
+        <SubscriptionEditor
+          agent={subscriptionEditorAgent}
+          longHorizonAgent={selectedLongHorizonAgent}
+          subscriptions={subscriptionsByAgentId[selectedLongHorizonAgent.id] ?? []}
+          onClose={() => setSubscriptionEditorAgent(null)}
+          onChanged={loadSubscriptions}
         />
       )}
 

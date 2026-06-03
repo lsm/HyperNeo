@@ -185,6 +185,13 @@ export interface CreateSpaceLongHorizonAgentSubscriptionParams {
   status?: SpaceLongHorizonAgentEventSubscriptionStatus;
 }
 
+export interface UpdateSpaceLongHorizonAgentSubscriptionParams {
+  source?: string;
+  topic?: string;
+  filter?: Record<string, unknown>;
+  status?: SpaceLongHorizonAgentEventSubscriptionStatus;
+}
+
 export const MIN_SPACE_CONCURRENT_TASKS = 1;
 export const MAX_SPACE_CONCURRENT_TASKS = 10;
 
