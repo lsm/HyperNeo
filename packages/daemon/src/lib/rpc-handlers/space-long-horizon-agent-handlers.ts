@@ -28,6 +28,9 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   if (!trimmedSource) return trimmedTopic;
   const topicSource = trimmedTopic.split('/')[0] ?? '';
   if (topicSource === trimmedSource) return trimmedTopic;
+  if (topicSource.toLowerCase() === trimmedSource.toLowerCase()) {
+    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
+  }
   if (validateSource(topicSource).valid) {
     throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
   }

@@ -203,6 +203,17 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow('Topic source "space" does not match source "github"');
     });
 
+    it('rejects full topics whose source casing differs from the source field', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'GitHub/lsm/neokai/pull_request/*',
+        })
+      ).rejects.toThrow('Topic source "GitHub" does not match source "github"');
+    });
+
     it('accepts GitHub owner/repo topic shorthands without injecting owner/repo wildcards', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',

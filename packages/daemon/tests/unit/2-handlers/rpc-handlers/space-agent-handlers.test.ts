@@ -808,10 +808,17 @@ describe('Space Agent RPC Handlers', () => {
       });
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
       const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+      const subscription = longHorizonRepo.createSubscription({
+        spaceId: 'space-1',
+        agentId: coordinator.id,
+        source: 'github',
+        topic: 'github/*/*/pull_request/*',
+      });
 
       await call(hubData.handlers, 'spaceAgent.delete', { id: created.agent.id });
 
       expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('archived');
+      expect(longHorizonRepo.getSubscription(subscription.id)?.status).toBe('disabled');
       expect(removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-1', coordinator.id);
     });
 
@@ -986,6 +993,40 @@ describe('Space Agent RPC Handlers', () => {
           agentId: created.value.id,
         })
       ).rejects.toThrow('Agent not found');
+    });
+
+    it('syncs matching long-horizon event agents after template sync', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+        templateName: 'Coder',
+        templateHash: 'stale',
+      });
+      if (!created.ok) throw new Error('create failed');
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const longHorizonAgent = longHorizonRepo.create({
+        id: created.value.id,
+        spaceId: 'space-1',
+        handle: created.value.handle,
+        displayName: created.value.name,
+        instructions: 'old',
+        toolPermissions: { tools: ['Read'] },
+      });
+
+      await call(hubData.handlers, 'spaceAgent.syncFromTemplate', {
+        spaceId: 'space-1',
+        agentId: created.value.id,
+      });
+
+      expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
+        expect.objectContaining({
+          instructions: expect.stringContaining('expert software engineer'),
+          toolPermissions: expect.objectContaining({ tools: expect.arrayContaining(['Edit']) }),
+        })
+      );
     });
 
     it('returns the updated agent and emits spaceAgent.updated', async () => {

@@ -103,6 +103,9 @@ function archiveMatchingLongHorizonAgent(
   const longHorizonAgent = findMatchingLongHorizonAgent(repo, agent);
   if (!longHorizonAgent) return;
   runtimeService.removeLongHorizonAgentSubscriptions(agent.spaceId, longHorizonAgent.id);
+  for (const subscription of repo.listSubscriptions(longHorizonAgent.id)) {
+    repo.updateSubscription(subscription.id, { status: 'disabled' });
+  }
   repo.update(longHorizonAgent.id, { status: 'archived' });
 }
 
@@ -426,6 +429,7 @@ export function setupSpaceAgentHandlers(
 
     const result = await spaceAgentManager.syncFromTemplate(params.agentId);
     if (!result.ok) throw new Error(result.error);
+    syncMatchingLongHorizonAgent(db, result.value);
 
     internalEventBus
       .publish('spaceAgent.updated', {
