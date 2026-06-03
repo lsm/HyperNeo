@@ -39,7 +39,10 @@ async function call<T>(
 describe('Space long-horizon agent handlers', () => {
   let hubData: ReturnType<typeof createMockMessageHub>;
   let repo: SpaceLongHorizonAgentRepository;
-  let runtimeService: { refreshLongHorizonAgentSubscriptions: ReturnType<typeof mock> };
+  let runtimeService: {
+    refreshLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
+    removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
+  };
 
   beforeEach(() => {
     hubData = createMockMessageHub();
@@ -56,6 +59,7 @@ describe('Space long-horizon agent handlers', () => {
     } as unknown as SpaceLongHorizonAgentRepository;
     runtimeService = {
       refreshLongHorizonAgentSubscriptions: mock(() => ({ success: true })),
+      removeLongHorizonAgentSubscriptions: mock(() => {}),
     };
     setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo, runtimeService);
   });
@@ -81,6 +85,26 @@ describe('Space long-horizon agent handlers', () => {
         'space-1',
         'agent-1'
       );
+    });
+  });
+
+  describe('spaceLongHorizonAgent.delete', () => {
+    it('removes runtime subscriptions before deleting the agent row', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.delete',
+        {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+        }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(runtimeService.removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
+        'space-1',
+        'agent-1'
+      );
+      expect(repo.delete).toHaveBeenCalledWith('agent-1');
     });
   });
 

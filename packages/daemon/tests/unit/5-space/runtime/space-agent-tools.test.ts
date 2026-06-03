@@ -606,6 +606,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const legacyAgent = JSON.parse(
       (await handlers.create_agent({ name: 'Legacy list-only agent' })).content[0].text
     ).agent;
+    ctx.longHorizonAgentRepo.create({
+      id: 'existing-lh-handle-conflict',
+      spaceId: ctx.spaceId,
+      handle: legacyAgent.handle ?? legacyAgent.name,
+      displayName: 'Existing handle conflict',
+    });
     const listedLegacy = JSON.parse(
       (await handlers.list_agent_event_subscriptions({ agent_id: legacyAgent.id })).content[0].text
     );
@@ -653,6 +659,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(resubscribedLegacy.success).toBe(true);
     expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
       expect.objectContaining({
+        handle: `${legacyAgent.handle ?? legacyAgent.name}-${legacyAgent.id}`,
         status: 'paused',
         instructions: 'Converted agent prompt',
         toolPermissions: { tools: ['Read', 'Edit'] },

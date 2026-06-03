@@ -488,6 +488,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {};
   }
 
+  function longHorizonHandleFromSpaceAgent(agent: SpaceAgent) {
+    const repo = requireLongHorizonAgentRepo();
+    const base = agent.handle ?? agent.name;
+    const candidates = [base, `${base}-${agent.id}`];
+    for (let suffix = 2; suffix <= 10; suffix += 1)
+      candidates.push(`${base}-${agent.id}-${suffix}`);
+    for (const candidate of candidates) {
+      const existing = repo.getByHandle(spaceId, candidate);
+      if (!existing || existing.id === agent.id) return candidate;
+    }
+    return `${base}-${agent.id}-${Date.now()}`;
+  }
+
   function syncConvertedLongHorizonAgent(spaceAgent: SpaceAgent) {
     const repo = requireLongHorizonAgentRepo();
     const existing = repo.getById(spaceAgent.id);
@@ -519,7 +532,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return repo.create({
       id: spaceAgent.id,
       spaceId,
-      handle: spaceAgent.handle ?? spaceAgent.name,
+      handle: longHorizonHandleFromSpaceAgent(spaceAgent),
       displayName: spaceAgent.name,
       status: longHorizonStatusFromSpaceAgent(spaceAgent),
       instructions: spaceAgent.customPrompt ?? '',

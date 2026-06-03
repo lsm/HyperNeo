@@ -1695,6 +1695,10 @@ export class SpaceRuntimeService {
     return this.runtime.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
   }
 
+  removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
+    this.runtime.removeLongHorizonAgentSubscriptions(spaceId, agentId);
+  }
+
   /**
    * Release the runtime for a given space.
    *

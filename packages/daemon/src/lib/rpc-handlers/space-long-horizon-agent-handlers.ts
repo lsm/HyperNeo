@@ -21,7 +21,10 @@ export function setupSpaceLongHorizonAgentHandlers(
   messageHub: MessageHub,
   spaceManager: SpaceManager,
   repo: SpaceLongHorizonAgentRepository,
-  runtimeService?: Pick<SpaceRuntimeService, 'refreshLongHorizonAgentSubscriptions'>
+  runtimeService?: Pick<
+    SpaceRuntimeService,
+    'refreshLongHorizonAgentSubscriptions' | 'removeLongHorizonAgentSubscriptions'
+  >
 ): void {
   messageHub.onRequest('spaceLongHorizonAgent.listBuiltInTemplates', async (data) => {
     const params = data as { spaceId: string };
@@ -110,6 +113,7 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
     if (params.spaceId && existing.spaceId !== params.spaceId)
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
     repo.delete(params.agentId);
     return { success: true };
   });

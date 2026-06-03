@@ -1014,6 +1014,15 @@ export class SpaceRuntime {
     );
   }
 
+  removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isLongHorizonSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.agentId === agentId
+    );
+  }
+
   unregisterSubscription(
     workflowRunId: string,
     taskId: string,

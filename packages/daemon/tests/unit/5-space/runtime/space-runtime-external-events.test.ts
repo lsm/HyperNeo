@@ -406,6 +406,47 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(longHorizonMessages).toHaveLength(1);
   });
 
+  test('removes trie entries after long-horizon agent deletion', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-delete-refresh',
+      spaceId: SPACE_ID,
+      handle: 'delete-refresh-watcher',
+      displayName: 'Delete Refresh Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    runtime.removeLongHorizonAgentSubscriptions(SPACE_ID, agent.id);
+    repo.delete(agent.id);
+    await eventService.publish(makeEvent({ id: 'evt-after-delete' }));
+
+    expect(longHorizonMessages).toHaveLength(0);
+    expect(eventStore.getById('evt-after-delete')?.state).toBe('published');
+  });
+
   test('keeps long-horizon events pending until every matched delivery succeeds', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const first = repo.create({
