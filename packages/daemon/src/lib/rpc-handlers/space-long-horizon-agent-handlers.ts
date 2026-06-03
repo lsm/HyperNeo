@@ -40,11 +40,35 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   return `${trimmedSource}/${trimmedTopic}`;
 }
 
-function validateLongHorizonSubscriptionPattern(source: string, topic: string): void {
+function validateLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const sourceValidation = validateSource(source);
   if (!sourceValidation.valid) throw new Error(sourceValidation.reason ?? 'invalid source');
-  const validation = validateGlobPattern(composeLongHorizonSubscriptionPattern(source, topic));
+  const pattern = composeLongHorizonSubscriptionPattern(source, topic);
+  const validation = validateGlobPattern(pattern);
   if (!validation.valid) throw new Error(validation.reason ?? 'invalid pattern');
+  return pattern;
+}
+
+function assertNoDuplicateLongHorizonSubscriptionPattern(
+  repo: SpaceLongHorizonAgentRepository,
+  agentId: string,
+  source: string,
+  topic: string,
+  pattern: string,
+  currentSubscriptionId?: string
+): void {
+  const duplicate = repo.listSubscriptions(agentId).find((subscription) => {
+    if (subscription.id === currentSubscriptionId) return false;
+    if (subscription.source === source && subscription.topic === topic) return false;
+    return (
+      composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic) === pattern
+    );
+  });
+  if (duplicate) {
+    throw new Error(
+      `Subscription pattern duplicates existing subscription ${duplicate.id}: ${pattern}`
+    );
+  }
 }
 
 export function setupSpaceLongHorizonAgentHandlers(
@@ -224,7 +248,8 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.topic?.trim()) throw new Error('topic is required');
     const source = params.source.trim();
     const topic = params.topic.trim();
-    validateLongHorizonSubscriptionPattern(source, topic);
+    const pattern = validateLongHorizonSubscriptionPattern(source, topic);
+    assertNoDuplicateLongHorizonSubscriptionPattern(repo, params.agentId, source, topic, pattern);
     const subscription = repo.createSubscription({
       spaceId: params.spaceId,
       agentId: params.agentId,
@@ -263,7 +288,15 @@ export function setupSpaceLongHorizonAgentHandlers(
     }
     const source = params.source?.trim() ?? existing.source;
     const topic = params.topic?.trim() ?? existing.topic;
-    validateLongHorizonSubscriptionPattern(source, topic);
+    const pattern = validateLongHorizonSubscriptionPattern(source, topic);
+    assertNoDuplicateLongHorizonSubscriptionPattern(
+      repo,
+      existing.agentId,
+      source,
+      topic,
+      pattern,
+      existing.id
+    );
     const subscription = repo.updateSubscription(params.subscriptionId, {
       ...(params.source !== undefined ? { source } : {}),
       ...(params.topic !== undefined ? { topic } : {}),

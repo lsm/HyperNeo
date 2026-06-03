@@ -17,7 +17,10 @@ import { Database } from 'bun:sqlite';
 import type { MessageHub, SDKMessage, Session } from '@neokai/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import {
+  coordinatorLongHorizonAgentId,
+  SpaceLongHorizonAgentRepository,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -670,6 +673,30 @@ describe('Space Agent RPC Handlers', () => {
       );
     });
 
+    it('syncs seeded coordinator long-horizon rows using normalized handle', async () => {
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Coordinator',
+        handle: 'space-coordinator',
+      });
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: created.agent.id,
+        customPrompt: 'Updated coordinator prompt',
+        tools: ['Read'],
+      });
+
+      expect(longHorizonRepo.getById(coordinator.id)).toEqual(
+        expect.objectContaining({
+          handle: 'coordinator',
+          instructions: 'Updated coordinator prompt',
+          toolPermissions: { tools: ['Read'] },
+        })
+      );
+    });
+
     it('emits spaceAgent.updated event', async () => {
       await call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'Updated' });
       await new Promise((r) => setTimeout(r, 0));
@@ -762,6 +789,30 @@ describe('Space Agent RPC Handlers', () => {
       await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
       expect(longHorizonRepo.getById(longHorizonAgent.id)?.status).toBe('archived');
+    });
+
+    it('archives seeded coordinator long-horizon rows using normalized handle', async () => {
+      const removeLongHorizonAgentSubscriptions = mock(() => {});
+      setupSpaceAgentHandlers(
+        hubData.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        { removeLongHorizonAgentSubscriptions }
+      );
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Coordinator',
+        handle: 'space-coordinator',
+      });
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+
+      await call(hubData.handlers, 'spaceAgent.delete', { id: created.agent.id });
+
+      expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('archived');
+      expect(removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-1', coordinator.id);
     });
 
     it('emits spaceAgent.deleted event', async () => {

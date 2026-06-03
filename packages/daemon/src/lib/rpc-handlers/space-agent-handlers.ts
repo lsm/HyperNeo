@@ -23,7 +23,10 @@ import type {
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { Database } from '../../storage';
-import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import {
+  coordinatorLongHorizonAgentId,
+  SpaceLongHorizonAgentRepository,
+} from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -68,13 +71,25 @@ function extractTools(session: Session): string[] | undefined {
   return KNOWN_TOOLS.filter((tool) => !disallowed.has(tool));
 }
 
+function isCoordinatorAgent(agent: SpaceAgent): boolean {
+  return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
+}
+
+function getLongHorizonAgentHandle(agent: SpaceAgent): string {
+  return isCoordinatorAgent(agent) ? 'coordinator' : agent.handle;
+}
+
 function findMatchingLongHorizonAgent(
   repo: SpaceLongHorizonAgentRepository,
   agent: SpaceAgent
 ): SpaceLongHorizonAgent | null {
   const byId = repo.getById(agent.id);
   if (byId?.spaceId === agent.spaceId) return byId;
-  return repo.getByHandle(agent.spaceId, agent.handle);
+  if (isCoordinatorAgent(agent)) {
+    const coordinator = repo.getById(coordinatorLongHorizonAgentId(agent.spaceId));
+    if (coordinator) return coordinator;
+  }
+  return repo.getByHandle(agent.spaceId, getLongHorizonAgentHandle(agent));
 }
 
 function archiveMatchingLongHorizonAgent(
@@ -96,7 +111,7 @@ function syncMatchingLongHorizonAgent(db: Database, agent: SpaceAgent): void {
   const longHorizonAgent = findMatchingLongHorizonAgent(repo, agent);
   if (!longHorizonAgent) return;
   repo.update(longHorizonAgent.id, {
-    handle: agent.handle,
+    handle: getLongHorizonAgentHandle(agent),
     displayName: agent.name,
     instructions: agent.customPrompt ?? agent.description ?? '',
     model: agent.model ?? null,

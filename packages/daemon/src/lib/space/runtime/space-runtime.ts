@@ -985,7 +985,12 @@ export class SpaceRuntime {
       return { success: true };
     }
     const agent = repo.getById(subscription.agentId);
-    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return { success: true };
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
+      this.clearLongHorizonRetries(
+        (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+      );
+      return { success: true };
+    }
     const pattern = composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
     const validation = validateGlobPattern(pattern);
     if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
