@@ -21,6 +21,8 @@ import {
   type DeliveryFailure,
   type DeliveryTarget,
   type ExternalEvent,
+  type ExternalEventDeliveryLogFilters,
+  type ExternalEventDeliveryLogRecord,
   type ExternalEventDeliveryRecord,
   type ExternalEventDeliveryState,
   type ExternalEventRecord,
@@ -59,6 +61,23 @@ interface ExternalEventDeliveryRow {
   failure_reason: string | null;
   delivered_at: number | null;
   updated_at: number;
+}
+
+interface ExternalEventDeliveryLogRow extends ExternalEventDeliveryRow {
+  id: string;
+  space_id: string;
+  source: string;
+  topic: string;
+  dedupe_key: string;
+  occurred_at: number;
+  ingested_at: number;
+  source_event_id: string | null;
+  summary: string;
+  external_url: string | null;
+  payload_json: string;
+  event_state: ExternalEventState;
+  event_created_at: number;
+  event_updated_at: number;
 }
 
 export class ExternalEventValidationError extends Error {
@@ -453,6 +472,54 @@ export class ExternalEventStore {
     return rows.map(deliveryRowToRecord);
   }
 
+  /** List per-subscription deliveries with source-event metadata for UI diagnostics. */
+  listDeliveryLog(filters: ExternalEventDeliveryLogFilters): ExternalEventDeliveryLogRecord[] {
+    if (!filters.spaceId || filters.spaceId.trim().length === 0) {
+      throw new ExternalEventValidationError('listDeliveryLog: spaceId is required');
+    }
+    if (filters.limit !== undefined && (!Number.isInteger(filters.limit) || filters.limit <= 0)) {
+      throw new ExternalEventValidationError('listDeliveryLog: limit must be a positive integer');
+    }
+    if (filters.offset !== undefined && (!Number.isInteger(filters.offset) || filters.offset < 0)) {
+      throw new ExternalEventValidationError(
+        'listDeliveryLog: offset must be a non-negative integer'
+      );
+    }
+
+    const clauses = ['e.space_id = ?'];
+    const params: Array<string | number> = [filters.spaceId];
+    if (filters.status) {
+      clauses.push('d.state = ?');
+      params.push(filters.status);
+    }
+    if (filters.eventId) {
+      clauses.push('d.event_id = ?');
+      params.push(filters.eventId);
+    }
+    if (filters.agentName) {
+      clauses.push('d.agent_name = ?');
+      params.push(filters.agentName);
+    }
+
+    params.push(Math.min(filters.limit ?? 100, 500), filters.offset ?? 0);
+    const rows = this.db
+      .prepare(
+        `SELECT
+           d.event_id, d.delivery_key, d.workflow_run_id, d.task_id, d.node_id, d.agent_name,
+           d.state, d.failure_reason, d.delivered_at, d.updated_at,
+           e.id, e.space_id, e.source, e.topic, e.dedupe_key, e.occurred_at, e.ingested_at,
+           e.source_event_id, e.summary, e.external_url, e.payload_json,
+           e.state AS event_state, e.created_at AS event_created_at, e.updated_at AS event_updated_at
+         FROM space_external_event_deliveries d
+         INNER JOIN space_external_events e ON e.id = d.event_id
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY d.updated_at DESC, d.delivery_key
+         LIMIT ? OFFSET ?`
+      )
+      .all(...params) as ExternalEventDeliveryLogRow[];
+    return rows.map(deliveryLogRowToRecord);
+  }
+
   /** List published source events that have no registered delivery rows. */
   listPublishedEventsWithoutDeliveries(): ExternalEventRecord[] {
     const rows = this.db
@@ -609,5 +676,31 @@ function deliveryRowToRecord(row: ExternalEventDeliveryRow): ExternalEventDelive
     failureReason: row.failure_reason,
     deliveredAt: row.delivered_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function deliveryLogRowToRecord(row: ExternalEventDeliveryLogRow): ExternalEventDeliveryLogRecord {
+  const eventRecord = rowToRecord({
+    id: row.id,
+    space_id: row.space_id,
+    source: row.source,
+    topic: row.topic,
+    dedupe_key: row.dedupe_key,
+    occurred_at: row.occurred_at,
+    ingested_at: row.ingested_at,
+    source_event_id: row.source_event_id,
+    summary: row.summary,
+    external_url: row.external_url,
+    payload_json: row.payload_json,
+    state: row.event_state,
+    created_at: row.event_created_at,
+    updated_at: row.event_updated_at,
+  });
+  return {
+    ...deliveryRowToRecord(row),
+    event: eventRecord.event,
+    eventState: eventRecord.state,
+    eventCreatedAt: eventRecord.createdAt,
+    eventUpdatedAt: eventRecord.updatedAt,
   };
 }

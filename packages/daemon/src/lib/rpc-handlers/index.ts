@@ -128,7 +128,15 @@ import {
   isRpcExtension,
   type ExternalEventExtensionManager,
 } from '../external-events/extension-manager';
-import type { ExternalEventExtensionContext } from '../external-events/types';
+import type {
+  ExternalEventDeliveryState,
+  ExternalEventExtensionContext,
+} from '../external-events/types';
+const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
+  'pending',
+  'delivered',
+  'failed',
+];
 
 function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
   const automation = policy?.automation;
@@ -338,6 +346,32 @@ export interface RPCHandlerDependencies {
 const log = new Logger('rpc-handlers');
 
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
+  deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
+    const params = (data ?? {}) as {
+      spaceId?: string;
+      status?: ExternalEventDeliveryState;
+      eventId?: string;
+      agentName?: string;
+      limit?: number;
+      offset?: number;
+    };
+    if (!params.spaceId || typeof params.spaceId !== 'string') {
+      throw new Error('spaceId is required');
+    }
+    if (params.status && !EXTERNAL_EVENT_DELIVERY_STATES.includes(params.status)) {
+      throw new Error(`Invalid delivery status: ${params.status}`);
+    }
+    const deliveries = deps.externalEventStore.listDeliveryLog({
+      spaceId: params.spaceId,
+      status: params.status,
+      eventId: params.eventId,
+      agentName: params.agentName,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return { deliveries };
+  });
+
   deps.messageHub.onRequest('externalEvents.extensions.list', async () => {
     const extensions = [];
     for (const extension of deps.externalEventExtensionManager.getAll()) {
