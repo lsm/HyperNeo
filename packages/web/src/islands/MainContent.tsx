@@ -340,9 +340,11 @@ export default function MainContent() {
 
   // Compute a stable key that changes when the major content view changes.
   // This drives the animate-fadeIn-200 transition wrapper below.
+  // Use spaceRouteId (the URL-facing identifier) rather than the canonical UUID
+  // so slug resolution doesn't trigger an unnecessary remount.
   let contentKey: string;
-  if (spaceId) {
-    contentKey = `space-${spaceId}-${spaceViewMode}`;
+  if (spaceRouteId) {
+    contentKey = `space-${spaceRouteId}-${spaceViewMode}`;
   } else if (navSection === 'spaces') {
     contentKey = 'spaces';
   } else if (sessionExists) {
