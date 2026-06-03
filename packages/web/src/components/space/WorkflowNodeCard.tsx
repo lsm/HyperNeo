@@ -45,6 +45,10 @@ export interface NodeDraft {
   channels?: WorkflowChannel[];
   /** Optional post-approval route scoped to this node. */
   postApproval?: import('@neokai/shared').PostApprovalRoute;
+  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  requireCodexApproval?: boolean;
+  /** Custom poll interval (ms) for the codex review bot. */
+  codexPollIntervalMs?: number;
 }
 
 // ============================================================================

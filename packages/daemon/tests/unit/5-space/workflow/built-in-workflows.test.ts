@@ -27,12 +27,17 @@ import {
 } from '../../../../src/lib/space/export-format.ts';
 import { evaluateFields, validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
-import { getEffectiveGate } from '../../../../src/lib/space/runtime/gate-features.ts';
+import {
+  getEffectiveGate,
+  isApprovalGate,
+  resolveCodexPollIntervalMs,
+} from '../../../../src/lib/space/runtime/gate-features.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   CODING_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
+  mergeNodeStructuralFieldsFromTemplate,
   getBuiltInGateScript,
   getBuiltInWorkflows,
   mergeGateStructuralFieldsFromTemplate,
@@ -73,6 +78,21 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, custom_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', null, ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
+}
+
+/**
+ * Helper that returns the effective gate for FULLSTACK_QA_LOOP_WORKFLOW's
+ * review-approval-gate with the Review node configured to require codex approval.
+ * Used by tests that exercise the codex review bot script/poll.
+ */
+function getFullstackReviewApprovalGateWithCodex() {
+  const rawGate = FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+  return getEffectiveGate(rawGate, {
+    ...FULLSTACK_QA_LOOP_WORKFLOW,
+    nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((n) =>
+      n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
+    ),
+  });
 }
 
 /** Valid builtin roles — 'leader' must NOT appear in any template step. */
@@ -1208,7 +1228,8 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     expect(gate.fields[0].type).toBe('map');
     expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
     expect(gate.fields[0].writers).toEqual(['Plan Review']);
-    expect(gate.features?.codex_review_bot).toBe(true);
+    // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
+    expect(gate.features?.codex_review_bot).toBeUndefined();
     expect(gate.resetOnCycle).toBe(true);
   });
 
@@ -1473,6 +1494,7 @@ describe('getBuiltInWorkflows()', () => {
 
 describe('seedBuiltInWorkflows()', () => {
   let db: BunDatabase;
+  let repo: SpaceWorkflowRepository;
   let manager: SpaceWorkflowManager;
   const SPACE_ID = 'seed-test-space';
 
@@ -1506,7 +1528,7 @@ describe('seedBuiltInWorkflows()', () => {
     seedAgent(db, REVIEWER_ID, SPACE_ID, 'Reviewer');
     seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
-    const repo = new SpaceWorkflowRepository(db);
+    repo = new SpaceWorkflowRepository(db);
     // No agentLookup — seeder bypasses lookup by passing real IDs directly
     manager = new SpaceWorkflowManager(repo);
   });
@@ -2081,7 +2103,8 @@ describe('seedBuiltInWorkflows()', () => {
     const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
     expect(approvedField.writers).toEqual(['Review', 'reviewer']);
     expect(approvedField.check).toEqual({ op: '==', value: true });
-    expect(gate.features?.codex_review_bot).toBe(true);
+    // Template no longer hardcodes codex as a gate feature; it is opt-in via node config.
+    expect(gate.features?.codex_review_bot).toBeUndefined();
   });
 
   test('re-stamp does not copy features onto gates with custom script', () => {
@@ -2099,7 +2122,10 @@ describe('seedBuiltInWorkflows()', () => {
           }
     );
 
-    manager.updateWorkflow(workflow.id, { gates: gateWithCustomScript });
+    // Simulate a legacy/customized row that predates scripted-gate validation:
+    // the Review node still has requireCodexApproval, but restamp must unflag it
+    // in the same update that validates the custom scripted approval gate.
+    repo.updateWorkflow(workflow.id, { gates: gateWithCustomScript });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'pre-custom-script-hash',
       workflow.id
@@ -2112,6 +2138,46 @@ describe('seedBuiltInWorkflows()', () => {
     const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
     expect(gate.script?.source).toBe('echo custom');
     expect(gate.features).toBeUndefined();
+    expect(
+      after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval
+    ).toBeUndefined();
+  });
+
+  test('workflow validation rejects partial wildcard opt-in on scripted approval gates', () => {
+    expect(() =>
+      manager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Partial Wildcard Scripted Approval',
+        description: '',
+        nodes: [
+          {
+            id: 'node-coder',
+            name: 'Coding',
+            agents: [{ agentId: CODER_ID, name: 'coder' }],
+            requireCodexApproval: true,
+          },
+          {
+            id: 'node-reviewer',
+            name: 'Review',
+            agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }],
+          },
+        ],
+        startNodeId: 'node-coder',
+        endNodeId: 'node-reviewer',
+        channels: [{ id: 'ch-wildcard', from: '*', to: 'Review', gateId: 'approval-gate' }],
+        gates: [
+          {
+            id: 'approval-gate',
+            fields: [
+              { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+            ],
+            script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
+            resetOnCycle: false,
+          },
+        ],
+        completionAutonomyLevel: 3,
+      })
+    ).toThrow(/wildcard channel/);
   });
 
   test('re-stamp does not copy features onto gates with custom poll', () => {
@@ -2144,8 +2210,133 @@ describe('seedBuiltInWorkflows()', () => {
     expect(gate.features).toBeUndefined();
   });
 
-  test('mergeGateStructuralFieldsFromTemplate clears features when template removes them', () => {
+  test('mergeGateStructuralFieldsFromTemplate preserves codex_review_bot when template removes it', () => {
     const existingGates = [{ id: 'g1', fields: [], features: { codex_review_bot: true } }];
+    const templateGates = [{ id: 'g1', fields: [] }];
+
+    const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
+    expect(result).toHaveLength(1);
+    // Backward-compat: existing codex_review_bot is preserved during transition
+    // to node-level config so pre-existing workflows keep working.
+    expect(result![0].features).toEqual({ codex_review_bot: true });
+  });
+
+  test('re-stamp preserves codex_review_bot on non-approval gates', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const gatesWithNonApprovalCodex = workflow.gates!.map((gate) =>
+      gate.id !== 'code-pr-gate' ? gate : { ...gate, features: { codex_review_bot: true } }
+    );
+
+    repo.updateWorkflow(workflow.id, { gates: gatesWithNonApprovalCodex });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-non-approval-codex-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const gate = after.gates!.find((g) => g.id === 'code-pr-gate')!;
+    expect(gate.features?.codex_review_bot).toBe(true);
+  });
+
+  test('re-stamp preserves codex_review_bot on custom-polled approval gates', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const gatesWithCustomPollCodex = workflow.gates!.map((gate) =>
+      gate.id !== 'review-approval-gate'
+        ? gate
+        : {
+            ...gate,
+            features: { codex_review_bot: true },
+            poll: { intervalMs: 30_000, target: 'from' as const, script: 'echo custom poll' },
+          }
+    );
+
+    repo.updateWorkflow(workflow.id, { gates: gatesWithCustomPollCodex });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-custom-polled-codex-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
+    expect(gate.features?.codex_review_bot).toBe(true);
+    expect(gate.poll?.script).toBe('echo custom poll');
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate clears removed template Codex approval flags', () => {
+    const existingNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review' ? { ...node, requireCodexApproval: true } : node
+    );
+    const templateNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
+      node.name === 'Review' ? { ...node, requireCodexApproval: undefined } : node
+    );
+
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      templateNodes,
+      resolveAgentId
+    );
+
+    const reviewNode = result.find((node) => node.name === 'Review')!;
+    expect(reviewNode.requireCodexApproval).toBeUndefined();
+  });
+
+  test('re-stamp preserves migrated codex gate when source node is unflagged', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const reviewApprovalGate = workflow.gates!.find((gate) => gate.id === 'review-approval-gate')!;
+    const scriptedReviewGate = {
+      ...reviewApprovalGate,
+      id: 'scripted-review-gate',
+      features: undefined,
+      script: { interpreter: 'bash' as const, source: 'echo custom', timeoutMs: 10000 },
+    };
+
+    repo.updateWorkflow(workflow.id, {
+      gates: workflow
+        .gates!.map((gate) =>
+          gate.id === 'review-approval-gate'
+            ? { ...gate, features: { codex_review_bot: true } }
+            : gate
+        )
+        .concat(scriptedReviewGate),
+      channels: workflow.channels!.concat({
+        id: 'scripted-review-channel',
+        from: 'Review',
+        to: 'Coding',
+        gateId: 'scripted-review-gate',
+      }),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-unflagged-codex-source-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const reviewNode = after.nodes.find((node) => node.name === 'Review')!;
+    const migratedGate = after.gates!.find((gate) => gate.id === 'review-approval-gate')!;
+    expect(reviewNode.requireCodexApproval).toBeUndefined();
+    expect(migratedGate.features?.codex_review_bot).toBe(true);
+  });
+
+  test('mergeGateStructuralFieldsFromTemplate clears non-codex features when template removes them', () => {
+    const existingGates = [{ id: 'g1', fields: [], features: { some_other_feature: true } }];
     const templateGates = [{ id: 'g1', fields: [] }];
 
     const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
@@ -2658,7 +2849,8 @@ describe('seedBuiltInWorkflows()', () => {
     expect(approvalsField.type).toBe('map');
     expect(approvalsField.writers).toEqual(['Plan Review']);
     expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
-    expect(gate.features?.codex_review_bot).toBe(true);
+    // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
+    expect(gate.features?.codex_review_bot).toBeUndefined();
   });
 
   test('seeded plan-approval-gate preserves map-count check with min=4', () => {
@@ -3457,11 +3649,12 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(approvalField.type).toBe('boolean');
     expect(approvalField.writers).toEqual(['Review', 'reviewer']);
     expect(approvalField.check).toEqual({ op: '==', value: true });
-    expect(gate.features?.codex_review_bot).toBe(true);
+    // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
+    expect(gate.features?.codex_review_bot).toBeUndefined();
     expect(gate.script).toBeUndefined();
     expect(gate.poll).toBeUndefined();
 
-    const effectiveGate = getEffectiveGate(gate);
+    const effectiveGate = getFullstackReviewApprovalGateWithCodex();
     expect(effectiveGate.script?.source).toContain('codex[bot]');
     expect(effectiveGate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
     expect(effectiveGate.script?.source).toContain('--paginate');
@@ -3476,7 +3669,129 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(effectiveGate.script?.source).toContain('head_sha');
     expect(effectiveGate.script?.source).toContain('^https://([^/]+)/');
     expect(effectiveGate.script?.source).not.toContain('github\\.com');
-    expect(effectiveGate.poll?.intervalMs).toBe(60_000);
+    expect(effectiveGate.poll?.intervalMs).toBe(300_000);
+  });
+
+  test('dynamic codex injection honors wildcard source node opt-in', () => {
+    const gate = {
+      id: 'wildcard-approval-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const effectiveGate = getEffectiveGate(
+      gate,
+      {
+        id: 'wf-wildcard-codex',
+        spaceId: 'space-1',
+        name: 'Wildcard Codex Workflow',
+        tags: [],
+        nodes: [
+          { id: 'node-coder', name: 'Coder', agents: [], requireCodexApproval: true },
+          { id: 'node-reviewer', name: 'Reviewer', agents: [] },
+        ],
+        startNodeId: 'node-coder',
+        endNodeId: 'node-reviewer',
+        channels: [{ id: 'ch-1', from: '*', to: 'Reviewer', gateId: gate.id }],
+        gates: [gate],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        completionAutonomyLevel: 3,
+      },
+      'Coder'
+    );
+
+    expect(effectiveGate.script?.source).toContain('codex[bot]');
+  });
+
+  test('isApprovalGate recognizes vote-map approvals by check semantics', () => {
+    expect(
+      isApprovalGate({
+        id: 'semantic-approval-gate',
+        fields: [
+          {
+            name: 'votes',
+            type: 'map',
+            writers: [],
+            check: { op: 'count', match: 'approved', min: 1 },
+          },
+        ],
+        resetOnCycle: false,
+      })
+    ).toBe(true);
+  });
+
+  test('isApprovalGate recognizes boolean approval checks independent of field name', () => {
+    expect(
+      isApprovalGate({
+        id: 'semantic-boolean-approval-gate',
+        fields: [
+          {
+            name: 'signoff',
+            type: 'boolean',
+            writers: [],
+            check: { op: '==', value: true },
+          },
+        ],
+        resetOnCycle: false,
+      })
+    ).toBe(true);
+  });
+
+  test('invalid Codex poll interval env values fall back to default', () => {
+    expect(resolveCodexPollIntervalMs(undefined)).toBe(300000);
+    expect(resolveCodexPollIntervalMs('5m')).toBe(300000);
+    expect(resolveCodexPollIntervalMs('0')).toBe(300000);
+    expect(resolveCodexPollIntervalMs(30000)).toBe(30000);
+  });
+
+  test('dynamic Codex injection handles node and agent source name collision', () => {
+    const gate = {
+      id: 'agent-source-gate',
+      fields: [
+        {
+          name: 'signoff',
+          type: 'boolean' as const,
+          writers: [],
+          check: { op: '==', value: true },
+        },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = {
+      id: 'wf-agent-source-collision',
+      spaceId: 'space-1',
+      name: 'Agent Source Collision',
+      tags: [],
+      nodes: [
+        {
+          id: 'node-source',
+          name: 'SourceNode',
+          agents: [{ agentId: 'agent-coder', name: 'Reviewer' }],
+        },
+        {
+          id: 'node-collision',
+          name: 'Reviewer',
+          requireCodexApproval: true,
+          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
+        },
+      ],
+      channels: [{ id: 'ch-node-source', from: 'Reviewer', to: 'reviewer', gateId: gate.id }],
+      gates: [gate],
+      startNodeId: 'node-source',
+      endNodeId: 'node-collision',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      completionAutonomyLevel: 3,
+    };
+
+    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain('codex[bot]');
+
+    workflow.nodes[0] = { ...workflow.nodes[0], requireCodexApproval: true };
+    workflow.nodes[1] = { ...workflow.nodes[1], requireCodexApproval: undefined };
+
+    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain('codex[bot]');
   });
 
   test('codex feature script and poll override custom script and poll consistently', () => {
@@ -3495,9 +3810,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks without codex thumbs-up', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-blocked-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3538,9 +3851,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes with codex thumbs-up', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-passed-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3553,7 +3864,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\n' '[{"user":{"login":"codex[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
+          `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
           '  exit 0',
           'fi',
           'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
@@ -3589,9 +3900,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate still blocks before gate-data timeout even when workflow is old', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-fresh-approval-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3635,9 +3944,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate passes after codex timeout', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3681,7 +3988,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
         pr_url: prUrl,
         codex_bot_reaction: 'timeout',
         head_sha: 'sha-timeout',
-        codex_bot_warning: 'codex[bot] +1 reaction missing after timeout; allowing gate',
+        codex_bot_warning: 'codex review bot +1 reaction missing after timeout; allowing gate',
       });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
@@ -3689,9 +3996,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate returns +1 even when timeout has elapsed', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-plus-one-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3743,9 +4048,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate blocks +1 from before cycle_start_at', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-stale-plus-one-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3792,9 +4095,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW review-approval-gate outputs head_sha on success', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-head-sha-output-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3840,9 +4141,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('codex script accepts GitHub Enterprise PR URLs', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-gh-enterprise-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3892,9 +4191,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('codex script fails closed when gh api reactions fetch fails', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-pipefail-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3935,9 +4232,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('codex timeout does not trigger when only workflowStartIso is old', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-gate-timeout-suppressed-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3982,9 +4277,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
   });
 
   test('codex poll script exits 0 with pending status when no reaction exists', async () => {
-    const gate = getEffectiveGate(
-      FULLSTACK_QA_LOOP_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!
-    );
+    const gate = getFullstackReviewApprovalGateWithCodex();
     const workspace = mkdtempSync(join(tmpdir(), 'neokai-codex-poll-pending-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
