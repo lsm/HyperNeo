@@ -576,6 +576,8 @@ describe('SpaceAgentList', () => {
         tools: ['Read', 'Edit'],
         provider: 'openrouter',
         settingSources: ['project'],
+        description: 'Short UI summary only',
+        customPrompt: 'Use Coder prompt.',
       }),
     ];
     mockCreateLongHorizonAgent.mockResolvedValue(
@@ -591,6 +593,7 @@ describe('SpaceAgentList', () => {
         id: 'space-agent-coder',
         handle: 'coder',
         displayName: 'Coder',
+        instructions: 'Use Coder prompt.',
         provider: 'openrouter',
         settingSources: ['project'],
         toolPermissions: { tools: ['Read', 'Edit'] },

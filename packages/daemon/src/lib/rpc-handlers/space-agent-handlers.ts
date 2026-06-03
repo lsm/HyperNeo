@@ -109,6 +109,23 @@ function archiveMatchingLongHorizonAgent(
   repo.update(longHorizonAgent.id, { status: 'archived' });
 }
 
+function assertCanSyncMatchingLongHorizonAgent(
+  db: Database,
+  previousAgent: SpaceAgent,
+  nextHandle: string
+): void {
+  const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+  const longHorizonAgent = findMatchingLongHorizonAgent(repo, previousAgent);
+  if (!longHorizonAgent) return;
+  const targetHandle = isCoordinatorAgent(previousAgent) ? 'coordinator' : nextHandle;
+  const handleOwner = repo.getByHandle(previousAgent.spaceId, targetHandle);
+  if (handleOwner && handleOwner.id !== longHorizonAgent.id) {
+    throw new Error(
+      `Long-horizon agent handle "${targetHandle}" is already used by ${handleOwner.id}`
+    );
+  }
+}
+
 function syncMatchingLongHorizonAgent(
   db: Database,
   agent: SpaceAgent,
@@ -122,7 +139,7 @@ function syncMatchingLongHorizonAgent(
   repo.update(longHorizonAgent.id, {
     handle: getLongHorizonAgentHandle(agent),
     displayName: agent.name,
-    instructions: agent.customPrompt ?? agent.description ?? '',
+    instructions: agent.customPrompt ?? '',
     model: agent.model ?? null,
     thinkingLevel: agent.thinkingLevel ?? null,
     provider: agent.provider ?? null,
@@ -370,6 +387,9 @@ export function setupSpaceAgentHandlers(
 
     const previousAgent = spaceAgentManager.getById(params.id);
     const { id, ...updateFields } = params;
+    if (previousAgent && updateFields.handle !== undefined) {
+      assertCanSyncMatchingLongHorizonAgent(db, previousAgent, updateFields.handle);
+    }
     const result = await spaceAgentManager.update(id, {
       name: updateFields.name,
       handle: updateFields.handle,

@@ -44,7 +44,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEvent } from '../../external-events/types';
-import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
+import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -500,10 +500,11 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   if (!trimmedSource) return trimmedTopic;
   const topicSource = trimmedTopic.split('/')[0] ?? '';
   if (topicSource === trimmedSource) return trimmedTopic;
-  if (topicSource.toLowerCase() === trimmedSource.toLowerCase()) {
-    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
-  }
-  if (validateSource(topicSource).valid) {
+  const normalizedTopicSource = topicSource.toLowerCase();
+  if (
+    normalizedTopicSource === trimmedSource.toLowerCase() ||
+    KNOWN_SOURCES.has(normalizedTopicSource)
+  ) {
     throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
   }
   if (trimmedSource === 'github') {

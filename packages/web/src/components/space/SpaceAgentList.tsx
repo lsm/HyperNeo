@@ -605,7 +605,7 @@ export function SpaceAgentList() {
           id: agent.id,
           handle: agent.handle,
           displayName: agent.name,
-          instructions: agent.customPrompt ?? agent.description ?? '',
+          instructions: agent.customPrompt ?? '',
           model: agent.model ?? null,
           thinkingLevel: agent.thinkingLevel ?? null,
           provider: agent.provider ?? null,

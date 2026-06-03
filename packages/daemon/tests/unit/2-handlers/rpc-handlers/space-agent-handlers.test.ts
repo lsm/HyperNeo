@@ -665,6 +665,7 @@ describe('Space Agent RPC Handlers', () => {
       await call(hubData.handlers, 'spaceAgent.update', {
         id: agentId,
         handle: 'renamed',
+        description: 'Short UI summary only',
         provider: 'openrouter',
         settingSources: ['project'],
         tools: ['Read', 'Edit'],
@@ -673,11 +674,44 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
         expect.objectContaining({
           handle: 'renamed',
+          instructions: '',
           provider: 'openrouter',
           settingSources: ['project'],
           toolPermissions: { tools: ['Read', 'Edit'] },
         })
       );
+    });
+
+    it('rejects handle changes that would break event-agent sync before mutating the agent', async () => {
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      longHorizonRepo.create({
+        id: agentId,
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'original',
+        displayName: 'Original',
+      });
+      longHorizonRepo.create({
+        id: 'standalone-lh-agent',
+        spaceId: 'space-1',
+        handle: 'taken-handle',
+        displayName: 'Standalone Agent',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: agentId,
+          handle: 'taken-handle',
+        })
+      ).rejects.toThrow(
+        'Long-horizon agent handle "taken-handle" is already used by standalone-lh-agent'
+      );
+
+      expect(manager.getById(agentId)).toEqual(
+        expect.objectContaining({ handle: visibleAgent?.handle })
+      );
+      expect(daemonData.publishMock).not.toHaveBeenCalled();
     });
 
     it('syncs legacy long-horizon rows matched by the previous handle', async () => {

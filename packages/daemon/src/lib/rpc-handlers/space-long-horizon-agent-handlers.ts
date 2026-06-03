@@ -17,7 +17,11 @@ import type {
   SpaceLongHorizonAgentEventSubscriptionStatus,
 } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import { validateGlobPattern, validateSource } from '../external-events/topic-validator';
+import {
+  KNOWN_SOURCES,
+  validateGlobPattern,
+  validateSource,
+} from '../external-events/topic-validator';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
@@ -28,10 +32,11 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   if (!trimmedSource) return trimmedTopic;
   const topicSource = trimmedTopic.split('/')[0] ?? '';
   if (topicSource === trimmedSource) return trimmedTopic;
-  if (topicSource.toLowerCase() === trimmedSource.toLowerCase()) {
-    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
-  }
-  if (validateSource(topicSource).valid) {
+  const normalizedTopicSource = topicSource.toLowerCase();
+  if (
+    normalizedTopicSource === trimmedSource.toLowerCase() ||
+    KNOWN_SOURCES.has(normalizedTopicSource)
+  ) {
     throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
   }
   if (trimmedSource === 'github') {
