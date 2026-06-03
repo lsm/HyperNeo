@@ -655,8 +655,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     deps.db
   );
-  setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager, longHorizonAgentRepo);
-
   setupSpaceWorkflowHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -846,6 +844,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
   });
+
+  setupSpaceLongHorizonAgentHandlers(
+    deps.messageHub,
+    deps.spaceManager,
+    longHorizonAgentRepo,
+    spaceRuntimeService
+  );
 
   // Register Space RPC handlers now that spaceRuntimeService exists.
   // spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()

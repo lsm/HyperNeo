@@ -686,6 +686,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 150: Create providers table for unified provider registry.
   runMigration150(db);
+
+  // Migration 151: Consolidate agent event subscriptions into long-horizon table.
+  runMigration151(db);
 }
 
 /**
@@ -10412,4 +10415,86 @@ function runMigration150(db: BunDatabase): void {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
+}
+
+/**
+ * Migration 151 — Consolidate legacy agent event subscriptions.
+ */
+export function runMigration151(db: BunDatabase): void {
+  const hasLegacy = db
+    .prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_event_subscriptions'`
+    )
+    .get();
+  if (!hasLegacy) return;
+
+  const now = Date.now();
+  const hasSpaceAgentStatus = tableHasColumn(db, 'space_agents', 'status');
+  const hasSpaceAgentCustomPrompt = tableHasColumn(db, 'space_agents', 'custom_prompt');
+  const statusExpr = hasSpaceAgentStatus
+    ? `COALESCE(NULLIF(space_agents.status, ''), 'active')`
+    : `'active'`;
+  const instructionsExpr = hasSpaceAgentCustomPrompt
+    ? `COALESCE(space_agents.custom_prompt, space_agents.instructions, space_agents.system_prompt, '')`
+    : `COALESCE(space_agents.instructions, space_agents.system_prompt, '')`;
+
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agents (
+      id, space_id, handle, display_name, template_key, status, session_id,
+      instructions, autonomy_level, model, thinking_level, tool_permissions_json, created_at, updated_at
+    )
+    SELECT
+      legacy.agent_id,
+      legacy.space_id,
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM space_long_horizon_agents existing
+          WHERE existing.space_id = legacy.space_id
+            AND existing.id != legacy.agent_id
+            AND existing.status != 'archived'
+            AND existing.handle = COALESCE(space_agents.handle, space_agents.name, legacy.agent_id)
+        ) THEN COALESCE(space_agents.handle, space_agents.name, legacy.agent_id) || '-' || legacy.agent_id
+        ELSE COALESCE(space_agents.handle, space_agents.name, legacy.agent_id)
+      END,
+      COALESCE(space_agents.name, space_agents.handle, legacy.agent_id),
+      'migration.legacy_space_agent',
+      ${statusExpr},
+      NULL,
+      ${instructionsExpr},
+      NULL,
+      space_agents.model,
+      NULL,
+      CASE
+        WHEN space_agents.tools IS NULL OR space_agents.tools = '' OR space_agents.tools = '[]' THEN '{}'
+        ELSE json_object('tools', json(space_agents.tools))
+      END,
+      COALESCE(space_agents.created_at, legacy.created_at, ?),
+      ?
+    FROM space_agent_event_subscriptions legacy
+    LEFT JOIN space_agents ON space_agents.id = legacy.agent_id AND space_agents.space_id = legacy.space_id
+    GROUP BY legacy.space_id, legacy.agent_id`
+  ).run(now, now);
+
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agent_event_subscriptions (
+      id, space_id, agent_id, source, topic, filter_json, status, created_at, updated_at
+    )
+    SELECT
+      'm151:' || legacy.space_id || ':' || legacy.agent_id || ':' || legacy.topic_pattern || ':' || COALESCE(legacy.label, ''),
+      legacy.space_id,
+      legacy.agent_id,
+      substr(legacy.topic_pattern, 1, instr(legacy.topic_pattern || '/', '/') - 1),
+      legacy.topic_pattern,
+      CASE
+        WHEN legacy.label IS NULL OR legacy.label = '' THEN '{}'
+        ELSE json_object('label', legacy.label)
+      END,
+      'active',
+      legacy.created_at,
+      ?
+    FROM space_agent_event_subscriptions legacy
+    JOIN space_long_horizon_agents agents ON agents.id = legacy.agent_id AND agents.space_id = legacy.space_id`
+  ).run(now);
+  db.exec(`DROP TABLE IF EXISTS space_agent_event_subscriptions`);
 }

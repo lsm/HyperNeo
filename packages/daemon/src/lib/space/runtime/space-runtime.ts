@@ -54,6 +54,7 @@ import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../../logger';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -98,6 +99,8 @@ import {
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
+import type { SpaceActorRegistryAdapter } from '../actor-registry';
+import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
 import { isPermanentSpawnError } from './workflow-node-execution-validation';
@@ -130,6 +133,8 @@ export interface SpaceRuntimeConfig {
   spaceManager: SpaceManager;
   /** Agent manager for resolving agents */
   spaceAgentManager: SpaceAgentManager;
+  /** Long-horizon agent repository for durable external-event subscriptions. */
+  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   /** Workflow manager for loading workflow definitions */
   spaceWorkflowManager: SpaceWorkflowManager;
   /** Workflow run repository for run CRUD and status updates */
@@ -238,6 +243,17 @@ export interface SpaceRuntimeConfig {
   goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
   /** Optional Forge scope service for automatic terminal task evidence capture. */
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+  /** Optional actor registry for long-horizon external-event delivery. */
+  actorRegistry?: SpaceActorRegistryAdapter;
+  /** Optional durable inbox for inactive long-horizon external-event delivery. */
+  spaceAgentInboxRepo?: SpaceAgentInboxRepository;
+  /** Optional direct long-horizon event delivery hook supplied by SpaceRuntimeService. */
+  deliverLongHorizonExternalEvent?: (args: {
+    spaceId: string;
+    agentId: string;
+    message: string;
+    idempotencyKey: string;
+  }) => Promise<{ delivered: boolean }>;
 }
 
 interface StartWorkflowRunOptions {
@@ -262,7 +278,8 @@ interface ExecutorMeta {
   workspacePath: string;
 }
 
-interface SubscriptionTarget {
+interface WorkflowSubscriptionTarget {
+  kind?: 'workflow';
   workflowRunId: string;
   taskId: string;
   nodeId: string;
@@ -270,6 +287,29 @@ interface SubscriptionTarget {
   topic?: string;
   subscriptionKind?: 'static' | 'dynamic';
   sessionId?: string;
+}
+
+interface LongHorizonSubscriptionTarget {
+  kind: 'long_horizon_agent';
+  spaceId: string;
+  agentId: string;
+  source: string;
+  topic: string;
+  subscriptionId: string;
+}
+
+type SubscriptionTarget = WorkflowSubscriptionTarget | LongHorizonSubscriptionTarget;
+
+function isWorkflowSubscriptionTarget(
+  target: SubscriptionTarget
+): target is WorkflowSubscriptionTarget {
+  return target.kind !== 'long_horizon_agent';
+}
+
+function isLongHorizonSubscriptionTarget(
+  target: SubscriptionTarget
+): target is LongHorizonSubscriptionTarget {
+  return target.kind === 'long_horizon_agent';
 }
 
 interface PendingExternalEvent {
@@ -280,7 +320,7 @@ interface PendingExternalEvent {
 }
 
 interface ExternalEventDigestItem {
-  target: SubscriptionTarget;
+  target: WorkflowSubscriptionTarget;
   event: ExternalEventPublishedPayload;
   deliveryKey: string;
   deliveryMode: 'immediate' | 'defer';
@@ -454,13 +494,28 @@ function legacyGitHubTopic(topic: string): string | null {
   return `${source}/${owner}/${repo}/${resource}.${entityAction.slice(dotIndex + 1)}`;
 }
 
+function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
+  const trimmedSource = source.trim();
+  const trimmedTopic = topic.trim();
+  if (!trimmedSource || trimmedTopic.startsWith(`${trimmedSource}/`)) return trimmedTopic;
+  if (trimmedSource === 'github' && !trimmedTopic.startsWith('*/*/')) {
+    return `${trimmedSource}/*/*/${trimmedTopic}`;
+  }
+  return `${trimmedSource}/${trimmedTopic}`;
+}
+
+function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
+  const prefix = 'long_horizon:';
+  return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
+}
+
 function isExternallyDeliverableRun(status: SpaceWorkflowRun['status']): boolean {
   return status === 'in_progress' || status === 'blocked';
 }
 
 function parseSubscriptionQueueKey(
   key: string
-): Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
+): Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
   try {
     const parsed = JSON.parse(key) as unknown;
     if (!Array.isArray(parsed) || parsed.length !== 4) return null;
@@ -803,7 +858,10 @@ export class SpaceRuntime {
     options: { clearQueuedDeliveries?: boolean } = {}
   ): void {
     this.topicTrie.remove(
-      (target) => target.workflowRunId === workflowRunId && target.subscriptionKind !== 'dynamic'
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.subscriptionKind !== 'dynamic'
     );
     if (options.clearQueuedDeliveries) {
       this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
@@ -867,6 +925,7 @@ export class SpaceRuntime {
     const subscriptionKind = options.subscriptionKind ?? 'dynamic';
     this.topicTrie.remove(
       (target) =>
+        isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.taskId === taskId &&
         target.nodeId === nodeId &&
@@ -876,6 +935,7 @@ export class SpaceRuntime {
     );
     const existingInterests = this.topicTrie.count(
       (target) =>
+        isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.nodeId === nodeId &&
         target.agentName === agentName
@@ -897,6 +957,72 @@ export class SpaceRuntime {
     return { success: true };
   }
 
+  refreshLongHorizonSubscription(
+    spaceId: string,
+    subscriptionId: string
+  ): { success: boolean; error?: string } {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return { success: false, error: 'Long-horizon agent repository unavailable.' };
+    this.topicTrie.remove(
+      (target) =>
+        isLongHorizonSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.subscriptionId === subscriptionId
+    );
+    const subscription = repo.getSubscription(subscriptionId);
+    if (!subscription || subscription.spaceId !== spaceId || subscription.status !== 'active') {
+      return { success: true };
+    }
+    const agent = repo.getById(subscription.agentId);
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return { success: true };
+    const pattern = composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
+    const validation = validateGlobPattern(pattern);
+    if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
+    this.topicTrie.insert(pattern, {
+      kind: 'long_horizon_agent',
+      spaceId: subscription.spaceId,
+      agentId: subscription.agentId,
+      source: subscription.source,
+      topic: pattern,
+      subscriptionId: subscription.id,
+    });
+    return { success: true };
+  }
+
+  refreshLongHorizonAgentSubscriptions(
+    spaceId: string,
+    agentId: string
+  ): { success: boolean; error?: string } {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return { success: false, error: 'Long-horizon agent repository unavailable.' };
+    const subscriptions = repo
+      .listSubscriptions(agentId)
+      .filter((subscription) => subscription.spaceId === spaceId);
+    for (const subscription of subscriptions) {
+      const result = this.refreshLongHorizonSubscription(spaceId, subscription.id);
+      if (!result.success) return result;
+    }
+    return { success: true };
+  }
+
+  removeLongHorizonSubscription(spaceId: string, subscriptionId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isLongHorizonSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.subscriptionId === subscriptionId
+    );
+  }
+
+  removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
+    this.topicTrie.remove(
+      (target) =>
+        isLongHorizonSubscriptionTarget(target) &&
+        target.spaceId === spaceId &&
+        target.agentId === agentId
+    );
+  }
+
   unregisterSubscription(
     workflowRunId: string,
     taskId: string,
@@ -913,6 +1039,7 @@ export class SpaceRuntime {
     const normalized = trimmed.toLowerCase();
     this.topicTrie.remove(
       (target) =>
+        isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.taskId === taskId &&
         target.nodeId === nodeId &&
@@ -931,6 +1058,7 @@ export class SpaceRuntime {
   ): void {
     this.topicTrie.remove(
       (target) =>
+        isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.taskId === taskId &&
         target.nodeId === nodeId &&
@@ -943,11 +1071,13 @@ export class SpaceRuntime {
   }
 
   clearRunInterests(workflowRunId: string): void {
-    this.topicTrie.remove((target) => target.workflowRunId === workflowRunId);
+    this.topicTrie.remove(
+      (target) => isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
+    );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
 
-  flushPendingNodeQueue(target: SubscriptionTarget): void {
+  flushPendingNodeQueue(target: WorkflowSubscriptionTarget): void {
     if (!target.sessionId) return;
     const targetWithExecution = this.resolveSubscriptionTarget(target);
     const key = this.buildQueueKey(target);
@@ -976,6 +1106,7 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return;
     const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
+      if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
       const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
       if (!run || run.spaceId !== payload.spaceId) return false;
       if (run.status === 'blocked') return this.hasActiveExecutionForRun(run.id);
@@ -989,22 +1120,53 @@ export class SpaceRuntime {
       return;
     }
 
-    const deliveries = new Map<string, { target: SubscriptionTarget; deliveryKey: string }>();
+    const workflowDeliveries = new Map<
+      string,
+      { target: WorkflowSubscriptionTarget; deliveryKey: string }
+    >();
+    const longHorizonDeliveries = new Map<
+      string,
+      { target: LongHorizonSubscriptionTarget; deliveryKey: string }
+    >();
     for (const match of matches) {
       try {
+        if (isLongHorizonSubscriptionTarget(match)) {
+          const deliveryKey = this.buildLongHorizonDeliveryKey(match, payload);
+          store.registerExpectedDelivery(payload.eventId, deliveryKey, {
+            workflowRunId: `long_horizon:${match.spaceId}`,
+            taskId: match.subscriptionId,
+            nodeId: match.agentId,
+            agentName: match.agentId,
+          });
+          longHorizonDeliveries.set(deliveryKey, { target: match, deliveryKey });
+          continue;
+        }
         const target = this.resolveSubscriptionTarget(match);
         const deliveryKey = this.buildDeliveryKey(target, payload);
         store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
-        deliveries.set(deliveryKey, { target, deliveryKey });
+        workflowDeliveries.set(deliveryKey, { target, deliveryKey });
       } catch (err) {
+        const targetDescription = isLongHorizonSubscriptionTarget(match)
+          ? `${match.spaceId}/${match.agentId}`
+          : `${match.workflowRunId}/${match.nodeId}/${match.agentName}`;
         log.warn(
           `SpaceRuntime: failed to register external event ${payload.eventId} for ` +
-            `${match.workflowRunId}/${match.nodeId}/${match.agentName}: ${formatCommandError(err)}`
+            `${targetDescription}: ${formatCommandError(err)}`
         );
       }
     }
 
-    for (const { target, deliveryKey } of deliveries.values()) {
+    for (const { target, deliveryKey } of longHorizonDeliveries.values()) {
+      if (
+        store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
+        this.externalEventDeliveriesInFlight.has(deliveryKey)
+      ) {
+        continue;
+      }
+      await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
+    }
+
+    for (const { target, deliveryKey } of workflowDeliveries.values()) {
       try {
         if (
           store.isDeliveryTerminal(payload.eventId, deliveryKey) ||
@@ -1040,8 +1202,80 @@ export class SpaceRuntime {
     }
   }
 
+  private async deliverToLongHorizonAgent(
+    target: LongHorizonSubscriptionTarget,
+    event: ExternalEventPublishedPayload,
+    deliveryKey: string
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    this.externalEventDeliveriesInFlight.add(deliveryKey);
+    try {
+      if (!this.config.deliverLongHorizonExternalEvent) {
+        throw new Error('long-horizon event delivery unavailable');
+      }
+      const result = await this.config.deliverLongHorizonExternalEvent({
+        spaceId: target.spaceId,
+        agentId: target.agentId,
+        message: this.formatExternalEventMessage(event),
+        idempotencyKey: deliveryKey,
+      });
+      if (!result.delivered) throw new Error('long-horizon agent unavailable');
+      this.clearExternalEventRetry(deliveryKey);
+      store.markDeliveryDelivered(event.eventId, deliveryKey);
+      store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
+      store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+    } catch (err) {
+      const failureReason = err instanceof Error ? err.message : String(err);
+      store.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: false,
+        reason: failureReason,
+      });
+      this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
+      log.warn(
+        `SpaceRuntime: failed to deliver external event ${event.eventId} to long-horizon agent ` +
+          `${target.agentId}: ${failureReason}`
+      );
+    } finally {
+      this.externalEventDeliveriesInFlight.delete(deliveryKey);
+    }
+  }
+
+  private scheduleLongHorizonEventRetry(
+    target: LongHorizonSubscriptionTarget,
+    event: ExternalEventPublishedPayload,
+    deliveryKey: string,
+    failureReason: string
+  ): void {
+    if (this.externalEventRetryTimers.has(deliveryKey)) return;
+    const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
+    this.externalEventRetryCounts.set(deliveryKey, attempts);
+    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: true,
+        reason: failureReason,
+      });
+      this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
+      this.clearExternalEventRetry(deliveryKey);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.externalEventRetryTimers.delete(deliveryKey);
+      if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
+        this.clearExternalEventRetry(deliveryKey);
+        return;
+      }
+      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
+        this.scheduleLongHorizonEventRetry(target, event, deliveryKey, failureReason);
+        return;
+      }
+      void this.deliverToLongHorizonAgent(target, event, deliveryKey);
+    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    this.externalEventRetryTimers.set(deliveryKey, timer);
+  }
+
   private async enqueueDeliverableExternalEvent(
-    target: SubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     deliveryMode: 'immediate' | 'defer',
@@ -1178,7 +1412,7 @@ export class SpaceRuntime {
     }
   }
 
-  private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): SubscriptionTarget {
+  private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): WorkflowSubscriptionTarget {
     const target = item.target;
     const resolved = this.resolveSubscriptionTarget({
       workflowRunId: target.workflowRunId,
@@ -1191,7 +1425,7 @@ export class SpaceRuntime {
   }
 
   private async deliverToSession(
-    target: SubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     deliveryMode: 'immediate' | 'defer'
@@ -1273,7 +1507,7 @@ export class SpaceRuntime {
   }
 
   private queueForRetry(
-    target: SubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     deliveryMode: 'immediate' | 'defer',
@@ -1292,7 +1526,7 @@ export class SpaceRuntime {
   }
 
   private scheduleExternalEventRetry(
-    target: SubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     deliveryMode: 'immediate' | 'defer',
@@ -1388,7 +1622,7 @@ export class SpaceRuntime {
   }
 
   private getQueuedDelivery(
-    target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
     deliveryKey: string
   ): PendingExternalEvent | undefined {
     return this.pendingExternalEventQueue
@@ -1396,7 +1630,7 @@ export class SpaceRuntime {
       ?.find((item) => item.deliveryKey === deliveryKey);
   }
 
-  private clearQueuedDelivery(target: SubscriptionTarget, deliveryKey: string): void {
+  private clearQueuedDelivery(target: WorkflowSubscriptionTarget, deliveryKey: string): void {
     this.clearQueuedDeliveryByKey(this.buildQueueKey(target), deliveryKey);
   }
 
@@ -1425,7 +1659,7 @@ export class SpaceRuntime {
   }
 
   private queueForPendingNode(
-    target: SubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     deliveryMode: 'immediate' | 'defer' = 'immediate',
@@ -1476,7 +1710,7 @@ export class SpaceRuntime {
   }
 
   private failQueuedDeliveriesForTarget(
-    target: Omit<SubscriptionTarget, 'sessionId'>,
+    target: Omit<WorkflowSubscriptionTarget, 'sessionId'>,
     reason: string
   ): void {
     const key = this.buildQueueKey(target);
@@ -1510,12 +1744,14 @@ export class SpaceRuntime {
     }
   }
 
-  private resolveSubscriptionTarget(target: SubscriptionTarget): SubscriptionTarget {
+  private resolveSubscriptionTarget(
+    target: WorkflowSubscriptionTarget
+  ): WorkflowSubscriptionTarget {
     const current = this.getCurrentQueueableOrActiveExecution(target);
     return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
   }
 
-  private isPending(target: SubscriptionTarget): boolean {
+  private isPending(target: WorkflowSubscriptionTarget): boolean {
     const current = this.getCurrentQueueableOrActiveExecution(target);
     return current?.status === 'pending' || current?.status === 'waiting_rebind';
   }
@@ -1534,7 +1770,7 @@ export class SpaceRuntime {
   }
 
   private getCurrentQueueableOrActiveExecution(
-    target: SubscriptionTarget
+    target: WorkflowSubscriptionTarget
   ): NodeExecution | undefined {
     return this.config.nodeExecutionRepo
       .listByNode(target.workflowRunId, target.nodeId)
@@ -1559,7 +1795,7 @@ export class SpaceRuntime {
    * due to other nodes.
    */
   private hasTerminalExecutionForTarget(
-    target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): boolean {
     return this.config.nodeExecutionRepo
       .listByNode(target.workflowRunId, target.nodeId)
@@ -1571,7 +1807,7 @@ export class SpaceRuntime {
   }
 
   private buildQueueKey(
-    target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): string {
     return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
   }
@@ -1627,13 +1863,13 @@ export class SpaceRuntime {
     );
   }
 
-  private buildRateLimitKey(target: SubscriptionTarget): string {
+  private buildRateLimitKey(target: WorkflowSubscriptionTarget): string {
     const executionId = this.getCurrentQueueableOrActiveExecution(target)?.id;
     return executionId ?? `${target.workflowRunId}:${target.nodeId}:${target.agentName}`;
   }
 
   private buildDeliveryKey(
-    target: SubscriptionTarget,
+    target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload
   ): string {
     return JSON.stringify([
@@ -1643,6 +1879,20 @@ export class SpaceRuntime {
       target.nodeId,
       target.agentName,
       target.workflowRunId,
+    ]);
+  }
+
+  private buildLongHorizonDeliveryKey(
+    target: LongHorizonSubscriptionTarget,
+    event: ExternalEventPublishedPayload
+  ): string {
+    return JSON.stringify([
+      'long_horizon_agent',
+      event.source,
+      event.dedupeKey,
+      target.spaceId,
+      target.agentId,
+      target.subscriptionId,
     ]);
   }
 
@@ -3174,9 +3424,52 @@ export class SpaceRuntime {
     if (!store) return;
 
     for (const delivery of store.listPendingDeliveries()) {
-      const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
+      const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
+      if (longHorizonSpaceId) {
+        const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+        const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
+        const agent = subscription
+          ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
+          : null;
+        const target = subscription
+          ? {
+              kind: 'long_horizon_agent' as const,
+              spaceId: longHorizonSpaceId,
+              agentId: subscription.agentId,
+              source: subscription.source,
+              topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
+              subscriptionId: subscription.id,
+            }
+          : null;
+        if (
+          !subscription ||
+          subscription.spaceId !== longHorizonSpaceId ||
+          subscription.status !== 'active' ||
+          !agent ||
+          agent.spaceId !== longHorizonSpaceId ||
+          agent.status !== 'active' ||
+          !target ||
+          !this.lookupSubscriptionTargets(eventPayload.topic).some(
+            (match) =>
+              isLongHorizonSubscriptionTarget(match) &&
+              match.spaceId === target.spaceId &&
+              match.subscriptionId === target.subscriptionId
+          )
+        ) {
+          store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+          continue;
+        }
+        void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
+        continue;
+      }
+
+      const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
       const target = {
         workflowRunId: delivery.workflowRunId,
         taskId: delivery.taskId,
@@ -3249,12 +3542,30 @@ export class SpaceRuntime {
     }
   }
 
+  private rehydrateLongHorizonSubscriptions(spaceId: string): void {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return;
+    this.topicTrie.remove(
+      (target) => isLongHorizonSubscriptionTarget(target) && target.spaceId === spaceId
+    );
+    for (const subscription of repo.listActiveSubscriptionsBySpace(spaceId)) {
+      const result = this.refreshLongHorizonSubscription(spaceId, subscription.id);
+      if (!result.success) {
+        log.warn(
+          `SpaceRuntime: skipping invalid long-horizon subscription ${subscription.id}: ` +
+            (result.error ?? 'invalid pattern')
+        );
+      }
+    }
+  }
+
   private isTargetStillSubscribed(
-    target: Pick<SubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
     topic: string
   ): boolean {
     return this.lookupSubscriptionTargets(topic).some(
       (match) =>
+        isWorkflowSubscriptionTarget(match) &&
         match.workflowRunId === target.workflowRunId &&
         match.taskId === target.taskId &&
         match.nodeId === target.nodeId &&
@@ -3320,6 +3631,7 @@ export class SpaceRuntime {
           await this.ensurePollsForRun(run, space);
         }
       }
+      this.rehydrateLongHorizonSubscriptions(space.id);
     }
 
     this.requeuePersistedPendingDeliveries();
