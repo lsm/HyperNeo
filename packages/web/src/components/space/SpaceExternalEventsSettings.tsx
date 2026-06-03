@@ -116,6 +116,7 @@ export function SpaceExternalEventsSettings({
   const [selectedDelivery, setSelectedDelivery] =
     useState<SpaceExternalEventDeliveryLogRecord | null>(null);
   const refreshTokenRef = useRef(0);
+  const deliveryRefreshTokenRef = useRef(0);
   const spaceIdRef = useRef(spaceId);
   spaceIdRef.current = spaceId;
 
@@ -129,27 +130,32 @@ export function SpaceExternalEventsSettings({
 
   async function refreshDeliveries(): Promise<void> {
     const refreshToken = refreshTokenRef.current;
+    const deliveryRefreshToken = deliveryRefreshTokenRef.current + 1;
+    deliveryRefreshTokenRef.current = deliveryRefreshToken;
     const refreshSpaceId = spaceIdRef.current;
+    const statusFilter = deliveryStatus;
+    const agentFilter = deliveryAgent.trim() || undefined;
     const isCurrentRefresh = () =>
-      refreshTokenRef.current === refreshToken && refreshSpaceId === spaceIdRef.current;
+      refreshTokenRef.current === refreshToken &&
+      deliveryRefreshTokenRef.current === deliveryRefreshToken &&
+      refreshSpaceId === spaceIdRef.current;
     try {
       setDeliveryLoading(true);
       const rows = await spaceStore.listExternalEventDeliveries({
         spaceId: refreshSpaceId,
-        status: deliveryStatus,
-        agentName: deliveryAgent.trim() || undefined,
+        status: statusFilter,
+        agentName: agentFilter,
       });
       if (!isCurrentRefresh()) return;
       setDeliveries(rows);
-      if (
-        selectedDelivery &&
-        !rows.some((row) => row.deliveryKey === selectedDelivery.deliveryKey)
-      ) {
-        setSelectedDelivery(null);
-      }
+      setSelectedDelivery((current) => {
+        if (!current) return null;
+        return rows.find((row) => row.deliveryKey === current.deliveryKey) ?? null;
+      });
     } catch (err) {
       if (!isCurrentRefresh()) return;
       setDeliveries([]);
+      setSelectedDelivery(null);
       toast.error(
         `Failed to load event deliveries: ${err instanceof Error ? err.message : String(err)}`
       );
