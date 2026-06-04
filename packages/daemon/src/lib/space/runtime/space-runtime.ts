@@ -585,8 +585,10 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
   }
   if (resourceSegments.length === 1) {
     if (firstDottedResource) {
+      ensureGitHubEventResource(topic, firstDottedResource.resource);
       return `${source}/*/*/${firstDottedResource.resource}/*.${firstDottedResource.action}`;
     }
+    ensureGitHubEventResource(topic, firstResourceSegment);
     return `${source}/*/*/${firstResourceSegment}/*`;
   }
   return `${source}/*/*/${topic}`;
@@ -885,6 +887,7 @@ export class SpaceRuntime {
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
+  private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
@@ -1087,8 +1090,10 @@ export class SpaceRuntime {
         target.spaceId === spaceId &&
         target.subscriptionId === subscriptionId
     );
+    const previousPattern = this.longHorizonSubscriptionPatterns.get(subscriptionId);
     const subscription = repo.getSubscription(subscriptionId);
     if (!subscription || subscription.spaceId !== spaceId || subscription.status !== 'active') {
+      this.longHorizonSubscriptionPatterns.delete(subscriptionId);
       this.clearLongHorizonRetries(
         (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
       );
@@ -1096,6 +1101,7 @@ export class SpaceRuntime {
     }
     const agent = repo.getById(subscription.agentId);
     if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
+      this.longHorizonSubscriptionPatterns.delete(subscriptionId);
       this.clearLongHorizonRetries(
         (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
       );
@@ -1109,6 +1115,12 @@ export class SpaceRuntime {
     }
     const validation = validateGlobPattern(pattern);
     if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
+    if (previousPattern && previousPattern.toLowerCase() !== pattern.toLowerCase()) {
+      this.clearLongHorizonRetries(
+        (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+      );
+    }
+    this.longHorizonSubscriptionPatterns.set(subscriptionId, pattern);
     this.topicTrie.insert(pattern, {
       kind: 'long_horizon_agent',
       spaceId: subscription.spaceId,
@@ -1151,18 +1163,21 @@ export class SpaceRuntime {
         target.spaceId === spaceId &&
         target.subscriptionId === subscriptionId
     );
+    this.longHorizonSubscriptionPatterns.delete(subscriptionId);
     this.clearLongHorizonRetries(
       (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
     );
   }
 
   removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
-    this.topicTrie.remove(
-      (target) =>
+    this.topicTrie.remove((target) => {
+      const matches =
         isLongHorizonSubscriptionTarget(target) &&
         target.spaceId === spaceId &&
-        target.agentId === agentId
-    );
+        target.agentId === agentId;
+      if (matches) this.longHorizonSubscriptionPatterns.delete(target.subscriptionId);
+      return matches;
+    });
     this.clearLongHorizonRetries(
       (target) => target.spaceId === spaceId && target.agentId === agentId
     );

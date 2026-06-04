@@ -496,6 +496,55 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.stop();
   });
 
+  test('cancels long-horizon retry after subscription route changes', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-route-change',
+      spaceId: SPACE_ID,
+      handle: 'route-change-watcher',
+      displayName: 'Route Change Watcher',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: false };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await eventService.publish(makeEvent({ id: 'evt-route-change' }));
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(true);
+
+    repo.updateSubscription(subscription.id, { topic: 'github/*/*/pull_request/*.closed' });
+    expect(runtime.refreshLongHorizonSubscription(SPACE_ID, subscription.id)).toEqual({
+      success: true,
+    });
+
+    const delivery = eventStore.listDeliveries('evt-route-change')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+    await runtime.stop();
+  });
+
   test('cancels in-flight long-horizon delivery after agent pause', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({

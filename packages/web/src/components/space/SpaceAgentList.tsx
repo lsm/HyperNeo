@@ -466,25 +466,23 @@ export function SpaceAgentList() {
     .join('|');
   const longHorizonAgentResolver = useMemo(() => {
     const activeById = new Map<string, SpaceLongHorizonAgent>();
-    const activeByHandle = new Map<string, SpaceLongHorizonAgent>();
     const inactiveById = new Map<string, SpaceLongHorizonAgent>();
-    const inactiveByHandle = new Map<string, SpaceLongHorizonAgent>();
     for (const agent of longHorizonAgents) {
       if (agent.status === 'active') {
         activeById.set(agent.id, agent);
-        activeByHandle.set(agent.handle, agent);
       } else {
         inactiveById.set(agent.id, agent);
-        inactiveByHandle.set(agent.handle, agent);
       }
     }
     return (agent: SpaceAgent) => {
-      const handle = isCoordinatorAgent(agent) ? 'coordinator' : agent.handle;
+      const coordinatorId = isCoordinatorAgent(agent)
+        ? `space-lh-agent:coordinator:${agent.spaceId}`
+        : null;
       return (
         activeById.get(agent.id) ??
-        activeByHandle.get(handle) ??
+        (coordinatorId ? activeById.get(coordinatorId) : null) ??
         inactiveById.get(agent.id) ??
-        inactiveByHandle.get(handle) ??
+        (coordinatorId ? inactiveById.get(coordinatorId) : null) ??
         null
       );
     };
@@ -612,6 +610,7 @@ export function SpaceAgentList() {
   const handleEditSubscriptions = async (agent: SpaceAgent) => {
     let longHorizonAgent = longHorizonAgentResolver(agent);
     try {
+      const agentStatus = agent.status ?? 'active';
       const agentConfig = {
         handle: isCoordinatorAgent(agent) ? 'coordinator' : agent.handle,
         displayName: agent.name,
@@ -625,12 +624,13 @@ export function SpaceAgentList() {
       if (longHorizonAgent) {
         longHorizonAgent = await spaceStore.updateLongHorizonAgent(longHorizonAgent.id, {
           ...agentConfig,
-          status: 'active',
+          status: agentStatus,
         });
       } else {
         longHorizonAgent = await spaceStore.createLongHorizonAgent({
           id: agent.id,
           ...agentConfig,
+          status: agentStatus,
         });
       }
     } catch (err) {

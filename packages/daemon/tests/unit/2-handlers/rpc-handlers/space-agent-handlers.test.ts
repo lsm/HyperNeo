@@ -714,27 +714,28 @@ describe('Space Agent RPC Handlers', () => {
       expect(daemonData.publishMock).not.toHaveBeenCalled();
     });
 
-    it('syncs legacy long-horizon rows matched by the previous handle', async () => {
+    it('does not sync standalone long-horizon rows matched only by handle', async () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
-      const legacyAgent = longHorizonRepo.create({
-        id: 'legacy-lh-agent',
+      const standaloneAgent = longHorizonRepo.create({
+        id: 'standalone-lh-agent',
         spaceId: 'space-1',
         handle: visibleAgent?.handle ?? 'original',
-        displayName: 'Legacy Agent',
+        displayName: 'Standalone Agent',
+        instructions: 'Standalone prompt',
       });
 
       await call(hubData.handlers, 'spaceAgent.update', {
         id: agentId,
-        handle: 'renamed-legacy',
-        customPrompt: 'Updated legacy prompt',
+        handle: 'renamed-visible',
+        customPrompt: 'Updated visible prompt',
       });
 
-      expect(longHorizonRepo.getById(legacyAgent.id)).toEqual(
+      expect(longHorizonRepo.getById(standaloneAgent.id)).toEqual(
         expect.objectContaining({
-          handle: 'renamed-legacy',
-          instructions: 'Updated legacy prompt',
+          handle: visibleAgent?.handle,
+          instructions: 'Standalone prompt',
         })
       );
     });
@@ -855,6 +856,30 @@ describe('Space Agent RPC Handlers', () => {
       await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
       expect(longHorizonRepo.getById(longHorizonAgent.id)?.status).toBe('archived');
+    });
+
+    it('does not archive standalone long-horizon rows matched only by handle', async () => {
+      setupSpaceAgentHandlers(
+        hubData.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        { removeLongHorizonAgentSubscriptions: mock(() => {}) }
+      );
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const standaloneAgent = longHorizonRepo.create({
+        id: 'standalone-lh-agent-delete',
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'todelete',
+        displayName: 'Standalone To Keep',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
+
+      expect(longHorizonRepo.getById(standaloneAgent.id)?.status).toBe('active');
     });
 
     it('archives seeded coordinator long-horizon rows using normalized handle', async () => {

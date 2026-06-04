@@ -117,8 +117,10 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
   }
   if (resourceSegments.length === 1) {
     if (firstDottedResource) {
+      ensureGitHubEventResource(topic, firstDottedResource.resource);
       return `${source}/*/*/${firstDottedResource.resource}/*.${firstDottedResource.action}`;
     }
+    ensureGitHubEventResource(topic, firstResourceSegment);
     return `${source}/*/*/${firstResourceSegment}/*`;
   }
   return `${source}/*/*/${topic}`;
@@ -240,6 +242,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       provider?: string | null;
       settingSources?: SpaceLongHorizonAgent['settingSources'];
       toolPermissions?: Record<string, unknown>;
+      status?: string;
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.handle) throw new Error('handle is required');
@@ -258,6 +261,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       provider: params.provider,
       settingSources: params.settingSources,
       toolPermissions: params.toolPermissions,
+      status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
     return { agent };
   });

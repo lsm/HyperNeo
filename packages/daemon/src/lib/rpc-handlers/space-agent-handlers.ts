@@ -89,7 +89,7 @@ function findMatchingLongHorizonAgent(
     const coordinator = repo.getById(coordinatorLongHorizonAgentId(agent.spaceId));
     if (coordinator) return coordinator;
   }
-  return repo.getByHandle(agent.spaceId, getLongHorizonAgentHandle(agent));
+  return null;
 }
 
 function archiveMatchingLongHorizonAgent(

@@ -2155,6 +2155,7 @@ class SpaceStore {
     provider?: string | null;
     settingSources?: SpaceLongHorizonAgent['settingSources'];
     toolPermissions?: Record<string, unknown>;
+    status?: SpaceLongHorizonAgent['status'];
   }): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');

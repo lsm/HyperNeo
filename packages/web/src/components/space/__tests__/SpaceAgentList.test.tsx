@@ -531,7 +531,7 @@ describe('SpaceAgentList', () => {
     expect(getByTestId('editor-agent-name').textContent).toBe('Coder');
   });
 
-  it('opens event subscriptions using the matching long-horizon agent handle', async () => {
+  it('opens event subscriptions using the seeded coordinator long-horizon agent id', async () => {
     mockAgents.value = [
       makeAgent({
         id: 'space-agent-coordinator',
@@ -578,12 +578,13 @@ describe('SpaceAgentList', () => {
     expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
   });
 
-  it('reactivates inactive long-horizon rows when opening subscriptions', async () => {
+  it('preserves inactive long-horizon rows when opening subscriptions for paused agents', async () => {
     mockAgents.value = [
       makeAgent({
         id: 'space-agent-coder',
         name: 'Coder',
         handle: 'coder',
+        status: 'paused',
         customPrompt: 'Use Coder prompt.',
         model: 'claude-sonnet-4-6',
         thinkingLevel: 'medium',
@@ -596,7 +597,7 @@ describe('SpaceAgentList', () => {
       makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' }),
     ];
     mockUpdateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' })
+      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' })
     );
 
     const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
@@ -615,7 +616,7 @@ describe('SpaceAgentList', () => {
         provider: 'openrouter',
         settingSources: ['project'],
         toolPermissions: { tools: ['Read', 'Edit'] },
-        status: 'active',
+        status: 'paused',
       })
     );
     expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
@@ -627,6 +628,7 @@ describe('SpaceAgentList', () => {
         id: 'space-agent-coder',
         name: 'Coder',
         handle: 'coder',
+        status: 'paused',
         tools: ['Read', 'Edit'],
         provider: 'openrouter',
         settingSources: ['project'],
@@ -635,7 +637,12 @@ describe('SpaceAgentList', () => {
       }),
     ];
     mockCreateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', displayName: 'Coder' })
+      makeLongHorizonAgent({
+        id: 'space-agent-coder',
+        handle: 'coder',
+        displayName: 'Coder',
+        status: 'paused',
+      })
     );
 
     const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
@@ -651,6 +658,7 @@ describe('SpaceAgentList', () => {
         provider: 'openrouter',
         settingSources: ['project'],
         toolPermissions: { tools: ['Read', 'Edit'] },
+        status: 'paused',
       })
     );
     expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
