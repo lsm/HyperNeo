@@ -49,6 +49,8 @@ export function createSpaceAgentSchema(db: Database): void {
 			tools TEXT NOT NULL DEFAULT '[]',
 			thinking_level TEXT DEFAULT NULL,
 			custom_prompt TEXT,
+			system_prompt TEXT NOT NULL DEFAULT '',
+			instructions TEXT,
 			provider TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
@@ -105,7 +107,8 @@ export function createSpaceAgentSchema(db: Database): void {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE,
+			UNIQUE(space_id, agent_id, source, topic, filter_json)
 		)
 	`);
 

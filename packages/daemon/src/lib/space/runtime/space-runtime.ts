@@ -1081,6 +1081,14 @@ export class SpaceRuntime {
     return { success: true };
   }
 
+  hasPendingRetriesForAgent(spaceId: string, agentId: string): boolean {
+    for (const deliveryKey of this.externalEventRetryTimers.keys()) {
+      const target = this.parseLongHorizonDeliveryKey(deliveryKey);
+      if (target?.spaceId === spaceId && target.agentId === agentId) return true;
+    }
+    return false;
+  }
+
   refreshLongHorizonAgentSubscriptions(
     spaceId: string,
     agentId: string

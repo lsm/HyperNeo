@@ -579,7 +579,19 @@ describe('SpaceAgentList', () => {
   });
 
   it('reactivates inactive long-horizon rows when opening subscriptions', async () => {
-    mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
+    mockAgents.value = [
+      makeAgent({
+        id: 'space-agent-coder',
+        name: 'Coder',
+        handle: 'coder',
+        customPrompt: 'Use Coder prompt.',
+        model: 'claude-sonnet-4-6',
+        thinkingLevel: 'medium',
+        provider: 'openrouter',
+        settingSources: ['project'],
+        tools: ['Read', 'Edit'],
+      }),
+    ];
     mockLongHorizonAgents.value = [
       makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' }),
     ];
@@ -594,7 +606,17 @@ describe('SpaceAgentList', () => {
     expect(mockCreateLongHorizonAgent).not.toHaveBeenCalled();
     expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
       'space-agent-coder',
-      expect.objectContaining({ status: 'active' })
+      expect.objectContaining({
+        handle: 'coder',
+        displayName: 'Coder',
+        instructions: 'Use Coder prompt.',
+        model: 'claude-sonnet-4-6',
+        thinkingLevel: 'medium',
+        provider: 'openrouter',
+        settingSources: ['project'],
+        toolPermissions: { tools: ['Read', 'Edit'] },
+        status: 'active',
+      })
     );
     expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
   });

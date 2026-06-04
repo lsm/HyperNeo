@@ -585,6 +585,33 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
+    it('allows non-duplicate subscription patterns for the same agent', async () => {
+      repo.listSubscriptions = mock(() => [
+        {
+          id: 'sub-existing',
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/*',
+          filter: {},
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
+
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'owner/repo/pull_request/*.closed',
+      });
+
+      expect(repo.createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'owner/repo/pull_request/*.closed' })
+      );
+    });
+
     it('skips invalid existing subscriptions during duplicate checks', async () => {
       repo.listSubscriptions = mock(() => [
         {

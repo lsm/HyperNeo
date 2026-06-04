@@ -480,13 +480,14 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.rehydrateExecutors();
     await eventService.publish(makeEvent({ id: 'evt-paused-retry' }));
     expect(longHorizonMessages).toHaveLength(1);
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(true);
 
     repo.update(agent.id, { status: 'paused' });
     expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
       success: true,
     });
-    await new Promise((resolve) => setTimeout(resolve, 1100));
 
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
     expect(longHorizonMessages).toHaveLength(1);
     await runtime.stop();
   });
