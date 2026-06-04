@@ -288,6 +288,16 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow(
         'GitHub topic "github/owner/repo/pull_request/42" must use dotted entity actions like "pull_request/42.opened"'
       );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'pull_request/42',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "pull_request/42" must use dotted entity actions like "pull_request/42.opened"'
+      );
     });
 
     it('expands GitHub resource shorthands with entity wildcards', async () => {
@@ -332,6 +342,18 @@ describe('Space long-horizon agent handlers', () => {
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/pull_request',
+      });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/pull_request/*.closed',
+      });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/pull_request/42.closed',
       });
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',

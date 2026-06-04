@@ -500,6 +500,12 @@ function rejectSlashSeparatedGitHubAction(topic: string): never {
   );
 }
 
+const GITHUB_EVENT_RESOURCES = new Set(['pull_request']);
+
+function isGitHubEventResource(resource: string): boolean {
+  return GITHUB_EVENT_RESOURCES.has(resource);
+}
+
 function splitDottedGitHubResource(segment: string): { resource: string; action: string } | null {
   const dotIndex = segment.indexOf('.');
   if (dotIndex <= 0 || dotIndex === segment.length - 1) return null;
@@ -520,38 +526,54 @@ function ensureGitHubEntityAction(topic: string, entityAction: string): void {
 
 function composeGitHubSubscriptionPattern(source: string, topic: string): string {
   const segments = topic.split('/');
-  if (segments[0] === source && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
-  if (segments[0] === source && segments.length === 5) {
+  const isSourcePrefixed = segments[0] === source;
+  const resourceSegments = isSourcePrefixed ? segments.slice(1) : segments;
+  const firstResourceSegment = resourceSegments[0] ?? '';
+  const firstDottedResource = splitDottedGitHubResource(firstResourceSegment);
+
+  if (isSourcePrefixed && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
+  if (!isSourcePrefixed && segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
+  if (isSourcePrefixed && segments.length === 5) {
     ensureGitHubEntityAction(topic, segments[4] ?? '');
     return topic;
   }
-  if (segments[0] === source && segments.length === 4 && segments[2] !== 'pull_request') {
-    const dotted = splitDottedGitHubResource(segments[3] ?? '');
-    if (dotted)
-      return `${source}/${segments[1]}/${segments[2]}/${dotted.resource}/*.${dotted.action}`;
-    return `${topic}/*`;
+  if (resourceSegments.length === 4) {
+    ensureGitHubEntityAction(topic, resourceSegments[3] ?? '');
+    return `${source}/${resourceSegments.join('/')}`;
   }
-  if (segments[0] === source && segments.length === 2) {
-    const resource = segments[1] ?? '';
-    const dotted = splitDottedGitHubResource(resource);
-    if (dotted) return `${source}/*/*/${dotted.resource}/*.${dotted.action}`;
-    return `${source}/*/*/${resource}/*`;
+  if (isSourcePrefixed && resourceSegments.length === 3) {
+    const [first, second, third] = resourceSegments;
+    if (isGitHubEventResource(first ?? '')) {
+      ensureGitHubEntityAction(topic, `${second}.${third}`);
+      return `${source}/*/*/${first}/${second}.${third}`;
+    }
+    if (isGitHubEventResource(second ?? '')) {
+      ensureGitHubEntityAction(topic, third ?? '');
+      return `${source}/${source}/${first}/${second}/${third}`;
+    }
   }
-  if (segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
-  if (segments.length === 4) {
-    ensureGitHubEntityAction(topic, segments[3] ?? '');
-    return `${source}/${topic}`;
+  if (resourceSegments.length === 3) {
+    const [owner, repo, resource] = resourceSegments;
+    const dotted = splitDottedGitHubResource(resource ?? '');
+    if (dotted) return `${source}/${owner}/${repo}/${dotted.resource}/*.${dotted.action}`;
+    if (!isGitHubEventResource(resource ?? '')) rejectSlashSeparatedGitHubAction(topic);
+    return `${source}/${owner}/${repo}/${resource}/*`;
   }
-  if (segments.length === 3) {
-    const dotted = splitDottedGitHubResource(segments[2] ?? '');
-    if (dotted)
-      return `${source}/${segments[0]}/${segments[1]}/${dotted.resource}/*.${dotted.action}`;
-    return `${source}/${topic}/*`;
+  if (resourceSegments.length === 2) {
+    const [resource, entityAction] = resourceSegments;
+    if (!isGitHubEventResource(resource ?? '')) {
+      throw new Error(
+        `GitHub topic "${topic}" must include a resource segment like "owner/repo/pull_request"`
+      );
+    }
+    ensureGitHubEntityAction(topic, entityAction ?? '');
+    return `${source}/*/*/${resource}/${entityAction}`;
   }
-  if (segments.length === 1) {
-    const dotted = splitDottedGitHubResource(topic);
-    if (dotted) return `${source}/*/*/${dotted.resource}/*.${dotted.action}`;
-    return `${source}/*/*/${topic}/*`;
+  if (resourceSegments.length === 1) {
+    if (firstDottedResource) {
+      return `${source}/*/*/${firstDottedResource.resource}/*.${firstDottedResource.action}`;
+    }
+    return `${source}/*/*/${firstResourceSegment}/*`;
   }
   return `${source}/*/*/${topic}`;
 }
