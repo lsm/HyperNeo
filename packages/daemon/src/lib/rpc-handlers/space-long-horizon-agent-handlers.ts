@@ -74,6 +74,11 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
 
   if (isSourcePrefixed && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
   if (!isSourcePrefixed && segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
+  if (resourceSegments.length > 4) {
+    throw new Error(
+      `GitHub topic "${topic}" must match supported shape "owner/repo/pull_request/<id>.<action>"`
+    );
+  }
   if (isSourcePrefixed && segments.length === 5) {
     ensureGitHubEventResource(topic, segments[3] ?? '');
     ensureGitHubEntityAction(topic, segments[4] ?? '');
@@ -98,16 +103,24 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
   if (resourceSegments.length === 3) {
     const [owner, repo, resource] = resourceSegments;
     const dotted = splitDottedGitHubResource(resource ?? '');
-    if (dotted) return `${source}/${owner}/${repo}/${dotted.resource}/*.${dotted.action}`;
+    if (dotted) {
+      ensureGitHubEventResource(topic, dotted.resource);
+      return `${source}/${owner}/${repo}/${dotted.resource}/*.${dotted.action}`;
+    }
     if (!isGitHubEventResource(resource ?? '')) rejectSlashSeparatedGitHubAction(topic);
     return `${source}/${owner}/${repo}/${resource}/*`;
   }
   if (resourceSegments.length === 2) {
     const [resource, entityAction] = resourceSegments;
-    if (isSourcePrefixed && isGitHubEventResource(entityAction ?? '')) {
-      return `${source}/${source}/${resource}/${entityAction}/*`;
-    }
     if (!isGitHubEventResource(resource ?? '')) {
+      const dottedEntityAction = splitDottedGitHubResource(entityAction ?? '');
+      if (isSourcePrefixed && dottedEntityAction) {
+        ensureGitHubEventResource(topic, dottedEntityAction.resource);
+        return `${source}/${source}/${resource}/${dottedEntityAction.resource}/*.${dottedEntityAction.action}`;
+      }
+      if (isSourcePrefixed && isGitHubEventResource(entityAction ?? '')) {
+        return `${source}/${source}/${resource}/${entityAction}/*`;
+      }
       throw new Error(
         `GitHub topic "${topic}" must include a resource segment like "owner/repo/pull_request"`
       );

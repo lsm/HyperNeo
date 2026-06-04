@@ -341,9 +341,19 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow(
         'GitHub topic "issue.opened" uses unsupported resource "issue"; supported resources: pull_request'
       );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/issue.opened',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/issue.opened" uses unsupported resource "issue"; supported resources: pull_request'
+      );
     });
 
-    it('rejects malformed GitHub entity actions', async () => {
+    it('rejects malformed GitHub entity actions and overlong shapes', async () => {
       await expect(
         call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
           spaceId: 'space-1',
@@ -363,6 +373,16 @@ describe('Space long-horizon agent handlers', () => {
         })
       ).rejects.toThrow(
         'GitHub topic "owner/repo/pull_request/42." must use dotted entity actions like "pull_request/42.opened"'
+      );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/42.opened/extra/x',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/pull_request/42.opened/extra/x" must match supported shape "owner/repo/pull_request/<id>.<action>"'
       );
     });
 
@@ -433,12 +453,21 @@ describe('Space long-horizon agent handlers', () => {
         source: 'github',
         topic: 'space/neokai/pull_request',
       });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'github/neokai/pull_request.closed',
+      });
 
       expect(repo.createSubscription).toHaveBeenCalledWith(
         expect.objectContaining({ topic: 'github/neokai/pull_request/*' })
       );
       expect(repo.createSubscription).toHaveBeenCalledWith(
         expect.objectContaining({ topic: 'space/neokai/pull_request' })
+      );
+      expect(repo.createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'github/neokai/pull_request.closed' })
       );
 
       repo.listSubscriptions = mock(() => [
