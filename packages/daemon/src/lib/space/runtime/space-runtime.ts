@@ -526,7 +526,9 @@ function rejectGitHubEntityPatternWithoutAction(topic: string): never {
 }
 
 function ensureGitHubEntityAction(topic: string, entityAction: string): void {
-  if (entityAction !== '*' && !entityAction.includes('.')) {
+  if (entityAction === '*') return;
+  const dotIndex = entityAction.indexOf('.');
+  if (dotIndex <= 0 || dotIndex === entityAction.length - 1) {
     rejectGitHubEntityPatternWithoutAction(topic);
   }
 }
@@ -570,6 +572,9 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
   }
   if (resourceSegments.length === 2) {
     const [resource, entityAction] = resourceSegments;
+    if (isSourcePrefixed && isGitHubEventResource(entityAction ?? '')) {
+      return `${source}/${source}/${resource}/${entityAction}/*`;
+    }
     if (!isGitHubEventResource(resource ?? '')) {
       throw new Error(
         `GitHub topic "${topic}" must include a resource segment like "owner/repo/pull_request"`
@@ -595,7 +600,9 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   if (trimmedSource === 'github') {
     const segments = trimmedTopic.split('/');
     const isOwnerRepoShorthand =
-      segments.length === 4 || (segments[0] === trimmedSource && segments.length === 4);
+      segments.length === 3 ||
+      segments.length === 4 ||
+      (segments[0] === trimmedSource && (segments.length === 3 || segments.length === 4));
     if (isOwnerRepoShorthand || topicSource === trimmedSource) {
       return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
     }
@@ -877,6 +884,7 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
+  private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
@@ -1357,12 +1365,14 @@ export class SpaceRuntime {
         message: this.formatExternalEventMessage(event),
         idempotencyKey: deliveryKey,
       });
+      if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
       if (!result.delivered) throw new Error('long-horizon agent unavailable');
       this.clearExternalEventRetry(deliveryKey);
       store.markDeliveryDelivered(event.eventId, deliveryKey);
       store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
       store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
     } catch (err) {
+      if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
       const failureReason = err instanceof Error ? err.message : String(err);
       store.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: false,
@@ -1375,6 +1385,7 @@ export class SpaceRuntime {
       );
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
+      this.cancelledLongHorizonDeliveries.delete(deliveryKey);
     }
   }
 
@@ -1386,6 +1397,12 @@ export class SpaceRuntime {
       if (!target || !predicate(target)) continue;
       this.markLongHorizonRetryCancelled(deliveryKey);
       this.clearExternalEventRetry(deliveryKey);
+    }
+    for (const deliveryKey of Array.from(this.externalEventDeliveriesInFlight)) {
+      const target = this.parseLongHorizonDeliveryKey(deliveryKey);
+      if (!target || !predicate(target)) continue;
+      this.cancelledLongHorizonDeliveries.add(deliveryKey);
+      this.markLongHorizonRetryCancelled(deliveryKey);
     }
   }
 

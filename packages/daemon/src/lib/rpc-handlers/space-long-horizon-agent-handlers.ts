@@ -58,7 +58,9 @@ function rejectGitHubEntityPatternWithoutAction(topic: string): never {
 }
 
 function ensureGitHubEntityAction(topic: string, entityAction: string): void {
-  if (entityAction !== '*' && !entityAction.includes('.')) {
+  if (entityAction === '*') return;
+  const dotIndex = entityAction.indexOf('.');
+  if (dotIndex <= 0 || dotIndex === entityAction.length - 1) {
     rejectGitHubEntityPatternWithoutAction(topic);
   }
 }
@@ -102,6 +104,9 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
   }
   if (resourceSegments.length === 2) {
     const [resource, entityAction] = resourceSegments;
+    if (isSourcePrefixed && isGitHubEventResource(entityAction ?? '')) {
+      return `${source}/${source}/${resource}/${entityAction}/*`;
+    }
     if (!isGitHubEventResource(resource ?? '')) {
       throw new Error(
         `GitHub topic "${topic}" must include a resource segment like "owner/repo/pull_request"`
@@ -127,7 +132,9 @@ function composeLongHorizonSubscriptionPattern(source: string, topic: string): s
   if (trimmedSource === 'github') {
     const segments = trimmedTopic.split('/');
     const isOwnerRepoShorthand =
-      segments.length === 4 || (segments[0] === trimmedSource && segments.length === 4);
+      segments.length === 3 ||
+      segments.length === 4 ||
+      (segments[0] === trimmedSource && (segments.length === 3 || segments.length === 4));
     if (isOwnerRepoShorthand || topicSource === trimmedSource) {
       return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
     }

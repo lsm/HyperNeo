@@ -496,6 +496,69 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.stop();
   });
 
+  test('cancels in-flight long-horizon delivery after agent pause', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-inflight-pause',
+      spaceId: SPACE_ID,
+      handle: 'inflight-pause-watcher',
+      displayName: 'Inflight Pause Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    let resolveDelivery!: (value: { delivered: boolean }) => void;
+    let resolveStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        resolveStarted();
+        return new Promise<{ delivered: boolean }>((resolve) => {
+          resolveDelivery = resolve;
+        });
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const publishPromise = eventService.publish(makeEvent({ id: 'evt-inflight-pause' }));
+    await deliveryStarted;
+
+    repo.update(agent.id, { status: 'paused' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+
+    const delivery = eventStore.listDeliveries('evt-inflight-pause')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+
+    resolveDelivery({ delivered: false });
+    await publishPromise;
+
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(eventStore.getById('evt-inflight-pause')?.state).toBe('failed');
+    await runtime.stop();
+  });
+
   test('removes trie entries after long-horizon agent deletion', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({

@@ -323,6 +323,29 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
+    it('rejects malformed GitHub entity actions', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/.opened',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/pull_request/.opened" must use dotted entity actions like "pull_request/42.opened"'
+      );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/pull_request/42.',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/pull_request/42." must use dotted entity actions like "pull_request/42.opened"'
+      );
+    });
+
     it('expands GitHub resource shorthands with entity wildcards', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',
@@ -384,9 +407,18 @@ describe('Space long-horizon agent handlers', () => {
         source: 'github',
         topic: 'github/neokai/pull_request/*',
       });
+      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        source: 'github',
+        topic: 'space/neokai/pull_request',
+      });
 
       expect(repo.createSubscription).toHaveBeenCalledWith(
         expect.objectContaining({ topic: 'github/neokai/pull_request/*' })
+      );
+      expect(repo.createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'space/neokai/pull_request' })
       );
 
       repo.listSubscriptions = mock(() => [
