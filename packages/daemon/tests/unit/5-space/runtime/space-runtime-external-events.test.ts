@@ -488,6 +488,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+    const delivery = eventStore.listDeliveries('evt-paused-retry')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(eventStore.getById('evt-paused-retry')?.state).toBe('failed');
     expect(longHorizonMessages).toHaveLength(1);
     await runtime.stop();
   });

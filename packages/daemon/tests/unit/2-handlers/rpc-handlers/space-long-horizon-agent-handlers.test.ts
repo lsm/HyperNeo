@@ -300,6 +300,29 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
+    it('rejects unsupported GitHub resources in exact patterns', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'owner/repo/issue/42.opened',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/issue/42.opened" uses unsupported resource "issue"; supported resources: pull_request'
+      );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
+          topic: 'github/owner/repo/issue/42.opened',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "github/owner/repo/issue/42.opened" uses unsupported resource "issue"; supported resources: pull_request'
+      );
+    });
+
     it('expands GitHub resource shorthands with entity wildcards', async () => {
       await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
         spaceId: 'space-1',

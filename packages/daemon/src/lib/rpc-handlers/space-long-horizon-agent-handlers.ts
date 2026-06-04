@@ -38,6 +38,13 @@ function isGitHubEventResource(resource: string): boolean {
   return GITHUB_EVENT_RESOURCES.has(resource);
 }
 
+function ensureGitHubEventResource(topic: string, resource: string): void {
+  if (resource === '*' || isGitHubEventResource(resource)) return;
+  throw new Error(
+    `GitHub topic "${topic}" uses unsupported resource "${resource}"; supported resources: pull_request`
+  );
+}
+
 function splitDottedGitHubResource(segment: string): { resource: string; action: string } | null {
   const dotIndex = segment.indexOf('.');
   if (dotIndex <= 0 || dotIndex === segment.length - 1) return null;
@@ -66,10 +73,12 @@ function composeGitHubSubscriptionPattern(source: string, topic: string): string
   if (isSourcePrefixed && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
   if (!isSourcePrefixed && segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
   if (isSourcePrefixed && segments.length === 5) {
+    ensureGitHubEventResource(topic, segments[3] ?? '');
     ensureGitHubEntityAction(topic, segments[4] ?? '');
     return topic;
   }
   if (resourceSegments.length === 4) {
+    ensureGitHubEventResource(topic, resourceSegments[2] ?? '');
     ensureGitHubEntityAction(topic, resourceSegments[3] ?? '');
     return `${source}/${resourceSegments.join('/')}`;
   }
