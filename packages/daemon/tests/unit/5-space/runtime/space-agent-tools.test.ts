@@ -4039,8 +4039,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const tam = makeFakeTaskAgentManager(ctx);
     const handlers = makeHandlersWith(tam, {
       activateNode: async () => {},
-      myAgentName: 'space-agent',
-      myAgentNameAliases: ['@coordinator'],
+      myAgentName: 'Coder',
+      myAgentNameAliases: ['@coder-2'],
     });
 
     await handlers.send_message_to_task({
@@ -4049,11 +4049,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       message: 'check routing',
     });
 
-    expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
+    expect(tam.subSessionInjects[0]?.message).toContain('─── Message from Coder ───');
     expect(tam.subSessionInjects[0]?.message).toContain(
-      'To reply, use: send_message with target "@coordinator"'
+      'To reply, use: send_message with target "@coder-2"'
     );
-    expect(tam.subSessionInjects[0]?.message).not.toContain('@@coordinator');
+    expect(tam.subSessionInjects[0]?.message).not.toContain('@@coder-2');
+    expect(tam.subSessionInjects[0]?.message).not.toContain('target "@coder"');
   });
 
   test('long-horizon sender falls back to display-name handle only when no alias exists', async () => {

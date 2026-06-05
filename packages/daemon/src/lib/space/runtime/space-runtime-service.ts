@@ -609,7 +609,9 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null);
+    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null, [
+      `@${agent.handle}`,
+    ]);
     return session;
   }
 
@@ -751,14 +753,16 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceAgent | null
+    agent: SpaceAgent | null,
+    agentHandleAliases?: string[]
   ): void {
     const mcpServers: Record<string, McpServerConfig> = {
       'space-agent-tools': this.buildLongTermAgentMcpServer(
         space,
         agentName,
         sessionId,
-        agent
+        agent,
+        agentHandleAliases
       ) as unknown as McpServerConfig,
     };
     if (this.config.memoryRepo) {
@@ -801,10 +805,12 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceAgent | null
+    agent: SpaceAgent | null,
+    agentHandleAliases?: string[]
   ) {
     const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
     const agentHandle = agent ? canonicalAgentHandle(agents, agent) : undefined;
+    const aliases = agentHandleAliases ?? (agentHandle ? [agentHandle] : undefined);
     return createSpaceAgentMcpServer({
       spaceId: space.id,
       db: this.config.db,
@@ -834,7 +840,7 @@ export class SpaceRuntimeService {
         return s?.autonomyLevel ?? 1;
       },
       myAgentName: agentName,
-      myAgentNameAliases: agentHandle ? [agentHandle] : undefined,
+      myAgentNameAliases: aliases,
       mySessionId: sessionId,
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,

@@ -6,6 +6,7 @@ import {
   SpaceActorRegistryAdapter,
 } from '../../../src/lib/space/actor-registry';
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
+import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
@@ -458,6 +459,54 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(registry.getActor(space.id, `agent:${paused.id}`)?.status).toBe('archived');
     expect(registry.getActor(space.id, `agent:${disabled.id}`)?.status).toBe('archived');
     expect(registry.getActor(space.id, `agent:${archived.id}`)?.status).toBe('archived');
+  });
+
+  it('keeps shared-ID non-active long-horizon agents unroutable despite worker sessions', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    longHorizonAgentRepo.create({
+      id: worker.id,
+      spaceId: space.id,
+      handle: 'legacy-worker',
+      displayName: 'Legacy Worker',
+      status: 'paused',
+    });
+    sessionRepo.createSession(
+      makeSession(longTermAgentSessionId(space.id, worker.id), { context: { spaceId: space.id } })
+    );
+
+    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+
+    expect(actor?.handle).toBe('@legacy-worker');
+    expect(actor?.status).toBe('archived');
+  });
+
+  it('does not expose long-horizon coordinator row as separate actor', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    longHorizonAgentRepo.ensureCoordinator(space.id);
+
+    const actors = registry.listActors(space.id);
+
+    expect(actors).toContainEqual({
+      actorId: `agent:coordinator:${space.id}`,
+      kind: 'agent',
+      spaceId: space.id,
+      handle: '@coordinator',
+      roles: ['coordinator', 'space-agent'],
+      status: 'inactive',
+    });
+    expect(
+      actors.some((actor) => actor.actorId === `agent:${coordinatorLongHorizonAgentId(space.id)}`)
+    ).toBe(false);
+    expect(actors.filter((actor) => actor.handle === '@coordinator')).toHaveLength(1);
   });
 
   it('returns row-backed inactive coordinator when no space chat session exists', () => {
