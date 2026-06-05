@@ -122,6 +122,15 @@ describe('BottomTabBar space active tab', () => {
     expect(selectedTabLabel()).toBe('Agents');
   });
 
+  it('selects Agents for direct long-horizon agent session routes before config loads', () => {
+    currentSpaceSessionIdSignal.value = 'space:agent:space-1:agent-1';
+    spaceStore.longHorizonAgents.value = [];
+
+    render(<BottomTabBar />);
+
+    expect(selectedTabLabel()).toBe('Agents');
+  });
+
   it('updates highlight when space subview signals change', () => {
     const { rerender } = render(<BottomTabBar />);
     expect(selectedTabLabel()).toBe('Overview');
