@@ -692,6 +692,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 152: Preserve provider and setting sources on long-horizon agents.
   runMigration152(db);
+
+  // Migration 153: Expand Forge evidence kinds for public feedback mining.
+  runMigration153(db);
 }
 
 /**
@@ -9637,7 +9640,13 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
     sql.includes("'test_failure'") &&
     sql.includes("'permission_block'") &&
     sql.includes("'slow_tool_call'") &&
-    sql.includes("'conversation_friction'")
+    sql.includes("'conversation_friction'") &&
+    sql.includes("'public_feedback'") &&
+    sql.includes("'social_post'") &&
+    sql.includes("'github_issue'") &&
+    sql.includes("'community_discussion'") &&
+    sql.includes("'livestream_chat'") &&
+    sql.includes("'dogfood_reaction'")
   ) {
     return;
   }
@@ -9650,7 +9659,7 @@ function widenEvolutionEvidenceKinds(db: BunDatabase): void {
 				id TEXT PRIMARY KEY,
 				scope_id TEXT NOT NULL,
 				kind TEXT NOT NULL
-					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction')),
+					CHECK(kind IN ('task', 'workflow_run', 'session', 'manual_note', 'metric_snapshot', 'task_result', 'artifact', 'error', 'daemon_error', 'runtime_crash', 'runtime_warning', 'uncaught_exception', 'error_cluster', 'retry_loop', 'tool_failure', 'test_failure', 'permission_block', 'slow_tool_call', 'conversation_friction', 'public_feedback', 'social_post', 'github_issue', 'community_discussion', 'livestream_chat', 'dogfood_reaction')),
 				summary TEXT NOT NULL,
 				source_id TEXT,
 				metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -10522,4 +10531,11 @@ function runMigration152(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_long_horizon_agents', 'setting_sources')) {
     db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
   }
+}
+
+/**
+ * Migration 153 — Expand Forge evidence kinds for public feedback mining.
+ */
+function runMigration153(db: BunDatabase): void {
+  widenEvolutionEvidenceKinds(db);
 }

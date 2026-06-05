@@ -305,6 +305,46 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
     toolPermissions: {},
   },
   {
+    key: 'feedback-miner.default',
+    handle: 'feedback-miner',
+    displayName: 'Feedback Miner',
+    description:
+      'Mines public feedback from social posts, GitHub, community discussions, livestream chat, and dogfood reactions. Clusters themes and attaches evidence to Forge for product work.',
+    instructions:
+      'Mine public feedback and turn it into actionable product intelligence. Check social posts, GitHub issues and discussions, community forums, livestream chat logs, and internal dogfood reactions. Capture feedback as Forge evidence with themes (bug, ux_gap, marketing_confusion, feature_request, performance, reliability, documentation, pricing, competitor_comparison). Cluster related items, validate bugs against existing issues, and create draft product tasks with evidence attached. Until external listeners exist, use scheduled manual checks and human-provided links. Prefer creating scoped tasks over raw collections.',
+    suggestedAutonomyLevel: 2,
+    suggestedEventSubscriptions: [
+      {
+        source: 'space',
+        topic: 'task.created',
+        filter: { labels: ['feedback', 'mining', 'social', 'dogfood'] },
+      },
+    ],
+    reminderDefaults: [
+      {
+        title: 'Check public feedback sources',
+        body: 'Review social posts, GitHub issues, community discussions, livestream chat, and dogfood reactions for new feedback. Capture evidence and cluster themes.',
+        triggerType: 'cron',
+        cronExpression: '0 10 * * 1,4',
+        timezone: 'UTC',
+      },
+    ],
+    ownershipPatterns: [
+      {
+        target: 'goal',
+        relationship: 'owner',
+        description: 'Own feedback-mining recurring goals and keep source coverage current.',
+      },
+      {
+        target: 'forge_scope',
+        relationship: 'manager',
+        description:
+          'Manage Forge scopes for public feedback, UX gaps, bugs, and marketing confusion.',
+      },
+    ],
+    toolPermissions: {},
+  },
+  {
     key: 'family-ops-chores.default',
     handle: 'family-ops-chores',
     displayName: 'Family Ops/Chores',

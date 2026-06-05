@@ -35,7 +35,8 @@
   ],
   "ignoreFiles": [
     "packages/daemon/src/lib/agent/reference-resolver.ts",
-    "packages/daemon/src/lib/id-resolution.ts"
+    "packages/daemon/src/lib/id-resolution.ts",
+    "packages/daemon/src/lib/space/feedback-mining-service.ts"
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
