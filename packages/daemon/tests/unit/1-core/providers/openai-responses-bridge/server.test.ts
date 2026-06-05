@@ -1896,6 +1896,41 @@ describe('openai-responses-bridge server', () => {
     expect(capturedBody?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
   });
 
+  it('omits reasoning.summary_text from include for ChatGPT OAuth endpoint', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'chatgpt_oauth', apiKey: 'chatgpt-token', accountId: 'acc_123' },
+      models,
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'Think deeply.' }],
+        thinking: { type: 'enabled', budget_tokens: 16000 },
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+    expect(capturedBody?.include).toEqual(['reasoning.encrypted_content']);
+  });
+
   it('caps think32k to high on models that do not support xhigh', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({

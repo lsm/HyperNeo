@@ -580,7 +580,11 @@ function buildResponsesRequest(
   body: AnthropicRequest,
   model: string,
   continuation?: { previousResponseId: string; input: ResponsesInputItem[] },
-  options: { includeMaxOutputTokens?: boolean; includeParallelToolCalls?: boolean } = {},
+  options: {
+    includeMaxOutputTokens?: boolean;
+    includeParallelToolCalls?: boolean;
+    isChatgptOAuth?: boolean;
+  } = {},
   reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesRequest {
   const instructions = extractSystemText(body.system) || undefined;
@@ -604,11 +608,16 @@ function buildResponsesRequest(
     ...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
     ...(reasoning ? { reasoning } : {}),
     // encrypted_content is required for multi-turn stateless continuation.
-    // summary_text is required for the API to stream reasoning summary deltas
-    // (response.reasoning_summary_text.delta) that the bridge translates into
-    // Anthropic thinking SSE blocks. Without it, thinking blocks never appear.
+    // summary_text is required for the standard OpenAI API to stream reasoning
+    // summary deltas (response.reasoning_summary_text.delta). The ChatGPT Codex
+    // endpoint rejects summary_text, so keep it off that path.
     ...(reasoning || (reasoningItems && reasoningItems.length > 0)
-      ? { include: ['reasoning.encrypted_content', 'reasoning.summary_text'] }
+      ? {
+          include: [
+            'reasoning.encrypted_content',
+            ...(options.isChatgptOAuth ? [] : ['reasoning.summary_text']),
+          ],
+        }
       : {}),
   };
 }
@@ -1148,6 +1157,7 @@ export function createOpenAIResponsesBridgeServer(
   const buildOpts = {
     includeMaxOutputTokens: !isChatgptOAuth,
     includeParallelToolCalls: !isChatgptOAuth,
+    isChatgptOAuth,
   };
 
   const deleteContinuation = (sessionId: string, callId: string): void => {
