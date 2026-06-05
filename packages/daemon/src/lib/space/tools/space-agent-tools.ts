@@ -72,6 +72,7 @@ import { canTransition } from '../runtime/workflow-run-status-machine';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 import { validateGlobPattern } from '../../external-events/topic-validator';
+import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
 
@@ -148,6 +149,22 @@ function validateTools(tools: string[]): string | null {
   return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid
     .map((toolName) => `"${toolName}"`)
     .join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
+}
+
+async function validateLongHorizonModel(
+  model: string,
+  provider?: string | null
+): Promise<string | null> {
+  const available = getAvailableModels('global');
+  if (available.length === 0) return null;
+
+  if (provider) {
+    const valid = await isValidModel(model, 'global', provider);
+    return valid ? null : `Unrecognized model "${model}" for provider "${provider}"`;
+  }
+
+  const info = await getModelInfoUnfiltered(model, 'global');
+  return info ? null : `Unrecognized model: "${model}"`;
 }
 
 function compactLongHorizonAgent(agent: {
@@ -580,6 +597,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const toolError = validateTools(args.tools);
           if (toolError) return jsonResult({ success: false, error: toolError });
         }
+        if (args.model) {
+          const modelError = await validateLongHorizonModel(args.model, args.provider);
+          if (modelError) return jsonResult({ success: false, error: modelError });
+        }
         const agent = requireLongHorizonAgentRepo().create({
           spaceId,
           handle: uniqueLongHorizonAgentHandle(args.name),
@@ -620,6 +641,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (name.trim() === '') {
           return jsonResult({ success: false, error: 'Agent name cannot be empty' });
         }
+        if (args.model) {
+          const modelError = await validateLongHorizonModel(args.model, args.provider);
+          if (modelError) return jsonResult({ success: false, error: modelError });
+        }
         const agent = requireLongHorizonAgentRepo().create({
           spaceId,
           handle: uniqueLongHorizonAgentHandle(name),
@@ -646,13 +671,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       args: { agent_id: string } & LongHorizonAgentUpdateArgs
     ): Promise<ToolResult> {
       try {
-        requireLongHorizonAgentInSpace(args.agent_id);
+        const existingAgent = requireLongHorizonAgentInSpace(args.agent_id);
+        if (!existingAgent) throw new Error(`Long-horizon agent not found: ${args.agent_id}`);
         if (args.name !== undefined && args.name.trim() === '') {
           return jsonResult({ success: false, error: 'Agent name cannot be empty' });
         }
         if (args.tools) {
           const toolError = validateTools(args.tools);
           if (toolError) return jsonResult({ success: false, error: toolError });
+        }
+        if (args.model) {
+          const provider = args.provider === undefined ? existingAgent.provider : args.provider;
+          const modelError = await validateLongHorizonModel(args.model, provider);
+          if (modelError) return jsonResult({ success: false, error: modelError });
         }
         const agent = requireLongHorizonAgentRepo().update(args.agent_id, {
           displayName: args.name,

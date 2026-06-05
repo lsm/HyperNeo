@@ -45,6 +45,7 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonSubscription: ReturnType<typeof mock>;
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
   };
+  let spaceAgentManager: { listBySpaceId: ReturnType<typeof mock> };
 
   beforeEach(() => {
     hubData = createMockMessageHub();
@@ -99,7 +100,14 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonSubscription: mock(() => {}),
       removeLongHorizonAgentSubscriptions: mock(() => {}),
     };
-    setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo, runtimeService);
+    spaceAgentManager = { listBySpaceId: mock(() => []) };
+    setupSpaceLongHorizonAgentHandlers(
+      hubData.hub,
+      createMockSpaceManager(),
+      repo,
+      spaceAgentManager as never,
+      runtimeService
+    );
   });
 
   describe('spaceLongHorizonAgent.create', () => {
@@ -126,15 +134,101 @@ describe('Space long-horizon agent handlers', () => {
       );
 
       expect(result.agent).toEqual(
-        expect.objectContaining({ id: 'visible-agent', handle: 'researcher-events-2' })
+        expect.objectContaining({ id: 'visible-agent', handle: 'researcher-2' })
       );
       expect(repo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'visible-agent', handle: 'researcher-events-2' })
+        expect.objectContaining({ id: 'visible-agent', handle: 'researcher-2' })
       );
+    });
+
+    it('slugifies raw RPC handles before exposing actor handles', async () => {
+      const result = await call<{ agent: { id: string; handle: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.create',
+        {
+          id: 'visible-agent',
+          spaceId: 'space-1',
+          handle: 'QA/Review',
+          displayName: 'QA Review',
+        }
+      );
+
+      expect(result.agent.handle).toBe('qa-review');
+      expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ handle: 'qa-review' }));
+    });
+
+    it('reserves worker handles for RPC-created long-horizon agents', async () => {
+      spaceAgentManager.listBySpaceId = mock(() => [
+        { id: 'worker-agent', spaceId: 'space-1', handle: 'coder' },
+      ]);
+
+      const result = await call<{ agent: { id: string; handle: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.create',
+        {
+          id: 'visible-agent',
+          spaceId: 'space-1',
+          handle: 'coder',
+          displayName: 'Coder',
+        }
+      );
+
+      expect(result.agent.handle).toBe('coder-2');
+      expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ handle: 'coder-2' }));
     });
   });
 
   describe('spaceLongHorizonAgent.update', () => {
+    it('rejects invalid raw handle updates', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          handle: 'ops:bot',
+        })
+      ).rejects.toThrow('Invalid agent handle');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects handle updates that collide with worker agents', async () => {
+      spaceAgentManager.listBySpaceId = mock(() => [
+        { id: 'worker-agent', spaceId: 'space-1', handle: 'coder' },
+      ]);
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          handle: 'coder',
+        })
+      ).rejects.toThrow('An agent with handle "coder" already exists in this Space');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('allows shared-ID long-horizon agents to keep their worker handle', async () => {
+      spaceAgentManager.listBySpaceId = mock(() => [
+        { id: 'agent-1', spaceId: 'space-1', handle: 'coder' },
+      ]);
+
+      const result = await call<{ agent: { id: string; handle: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.update',
+        {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          handle: 'coder',
+        }
+      );
+
+      expect(result.agent.handle).toBe('coder');
+      expect(repo.update).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ handle: 'coder' })
+      );
+    });
+
     it('refreshes durable subscriptions after policy updates', async () => {
       const result = await call<{ agent: { id: string; status: string } }>(
         hubData.handlers,

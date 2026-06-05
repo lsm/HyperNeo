@@ -10,6 +10,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import type { ModelInfo } from '@neokai/shared';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -42,6 +43,7 @@ import {
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
+import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 
 // ---------------------------------------------------------------------------
 // DB + space setup helpers
@@ -449,10 +451,13 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 
 describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   let ctx: TestCtx;
+  let modelsCacheSnapshot: Map<string, ModelInfo[]>;
   beforeEach(() => {
+    modelsCacheSnapshot = getModelsCache();
     ctx = makeCtx();
   });
   afterEach(() => {
+    setModelsCache(modelsCacheSnapshot);
     ctx.db.close();
   });
 
@@ -582,6 +587,74 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const listed = JSON.parse((await handlers.list_agents({ status: 'archived' })).content[0].text);
     expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
+  });
+
+  test('rejects invalid model overrides for MCP-created long-horizon agents', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'sonnet',
+              name: 'Claude Sonnet',
+              alias: 'default',
+              provider: 'anthropic',
+              family: 'sonnet',
+              contextWindow: 200000,
+              description: 'Best balance of speed and intelligence',
+              releaseDate: '2025-01-01',
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const handlers = makeHandlers(ctx);
+
+    const invalidCreate = JSON.parse(
+      (
+        await handlers.create_agent({
+          name: 'Bad Model',
+          model: 'not-a-model',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    expect(invalidCreate).toEqual({
+      success: false,
+      error: 'Unrecognized model "not-a-model" for provider "anthropic"',
+    });
+
+    const invalidTemplate = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Reviewer',
+          model: 'not-a-model',
+        })
+      ).content[0].text
+    );
+    expect(invalidTemplate).toEqual({
+      success: false,
+      error: 'Unrecognized model: "not-a-model"',
+    });
+
+    const created = JSON.parse(
+      (await handlers.create_agent({ name: 'Valid Model' })).content[0].text
+    );
+    const invalidUpdate = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          model: 'not-a-model',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    expect(invalidUpdate).toEqual({
+      success: false,
+      error: 'Unrecognized model "not-a-model" for provider "anthropic"',
+    });
   });
 
   test('manages agent assignments, reminders, and event subscriptions', async () => {

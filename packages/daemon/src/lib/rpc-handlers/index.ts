@@ -886,6 +886,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.spaceManager,
     longHorizonAgentRepo,
+    deps.spaceAgentManager,
     spaceRuntimeService
   );
 
