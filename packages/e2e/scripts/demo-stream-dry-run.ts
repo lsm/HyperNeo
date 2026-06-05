@@ -94,10 +94,17 @@ async function ensureDemoSpace(page: Page): Promise<DemoSpaceResult> {
       const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
 
-      // Reuse existing space with the same name if present.
+      // Reuse existing space with the same name if present, and fetch its stored
+      // workspacePath so the session we create is bound to the same path as the live UI.
       const list = (await hub.request('space.list', {})) as Array<{ id: string; name: string }>;
       const existing = list.find((s) => s.name === name);
-      if (existing) return { spaceId: existing.id, workspacePath, created: false };
+      if (existing) {
+        const fullSpace = (await hub.request('space.get', { id: existing.id })) as {
+          id: string;
+          workspacePath: string;
+        };
+        return { spaceId: fullSpace.id, workspacePath: fullSpace.workspacePath, created: false };
+      }
 
       const space = (await hub.request('space.create', { name, workspacePath })) as {
         id: string;
@@ -115,13 +122,28 @@ async function seedDemoTask(page: Page, spaceId: string): Promise<string | null>
       if (!hub?.request) throw new Error('MessageHub not available');
 
       // Archive any previous demo tasks with the same title so re-runs do not
-      // pollute the Space with duplicates or leave stale draft tasks behind.
+      // pollute the Space with duplicates or leave stale draft/open tasks behind.
+      // Some status transitions reject direct archival, so we transition through
+      // an allowed intermediate state when necessary.
       const list = (await hub.request('spaceTask.list', {
         spaceId,
         includeArchived: true,
       })) as Array<{ id: string; title: string; status: string }>;
       for (const t of list) {
-        if (t.title === title && t.status !== 'archived') {
+        if (t.title !== title || t.status === 'archived') continue;
+        try {
+          await hub.request('spaceTask.update', {
+            spaceId,
+            taskId: t.id,
+            status: 'archived',
+          });
+        } catch {
+          // Direct archival rejected; move to an intermediate terminal state first.
+          await hub.request('spaceTask.update', {
+            spaceId,
+            taskId: t.id,
+            status: 'cancelled',
+          });
           await hub.request('spaceTask.update', {
             spaceId,
             taskId: t.id,
@@ -315,11 +337,16 @@ async function main() {
   await safeStep(
     'create-session',
     async () => {
-      if (!spaceId || !workspacePath) throw new Error('no spaceId or workspacePath');
-      const sessionId = await createDemoSession(page, spaceId, workspacePath);
-      if (!sessionId) throw new Error('session.create returned no id');
+      if (!spaceId) throw new Error('no spaceId');
+      // Drive the same UI path the operator uses: Sessions nav → Create session button.
+      await page.goto(`/space/${spaceId}/sessions`);
+      await page.getByRole('button', { name: 'Create session' }).first().click();
+      await page.waitForURL(
+        new RegExp(`^${BASE_URL.replace(/\//g, '\\/')}\\/space\\/${spaceId}\\/session\\/.+`)
+      );
+      const sessionId = page.url().split('/session/')[1]?.split('?')[0];
+      if (!sessionId) throw new Error('Could not extract sessionId from URL');
       createdSessionId = sessionId;
-      await page.goto(`/space/${spaceId}/session/${sessionId}`);
       await page
         .locator('textarea[placeholder="Ask or make anything..."]')
         .first()

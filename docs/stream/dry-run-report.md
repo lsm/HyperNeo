@@ -2,7 +2,7 @@
 
 - **Base URL:** http://localhost:8383
 - **Space:** dev-NeoKai
-- **Time:** 2026-06-05T19:33:35.955Z
+- **Time:** 2026-06-05T19:43:22.220Z
 - **Result:** All steps passed
 
 ## Screenshots
@@ -32,7 +32,9 @@ None.
 - Skills step waits for the `Add Skill` button rendered by `SkillsRegistry`.
 - Runbook and demo script now tell the operator to start the daemon with `NEOKAI_USE_DEV_PROXY=1` and to also run `make test-proxy-start`.
 - The demo Space is kept after the dry-run so the live demo can open it.
-- Demo tasks are created as `blocked` + `human_input_requested` (non-runnable) and any stale previous demo task is archived first to avoid duplicates.
+- Demo tasks are created as `blocked` + `human_input_requested` (non-runnable) and any stale previous demo task is archived first (via `cancelled` if needed) to avoid duplicates.
+- The dry-run fetches the existing Space's stored `workspacePath` so the created session is bound to the same workspace the live UI uses.
+- The `create-session` step is driven through the UI (`Sessions` → `Create session` button) rather than via RPC.
 
 ## Notes for the stream
 
