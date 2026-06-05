@@ -692,6 +692,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 152: Preserve provider and setting sources on long-horizon agents.
   runMigration152(db);
+
+  // Migration 153: Add workflow hook config and per-run hook state storage.
+  runMigration153(db);
 }
 
 /**
@@ -10172,6 +10175,48 @@ export function runMigration140(db: BunDatabase): void {
 	`);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_agent_core_memory_rank ON space_agent_core_memory(space_id, rank)`
+  );
+}
+
+export function runMigration153(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflows') && !tableHasColumn(db, 'space_workflows', 'hooks')) {
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN hooks TEXT`);
+  }
+
+  if (!tableExists(db, 'space_workflow_runs')) return;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_state (
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      local_state TEXT NOT NULL DEFAULT '{}',
+      last_result TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      vote_maps TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, hook_id),
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_hook_state_run ON workflow_hook_state(run_id)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_result_artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      result TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_hook_result_artifacts_run_hook ` +
+      `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
   );
 }
 

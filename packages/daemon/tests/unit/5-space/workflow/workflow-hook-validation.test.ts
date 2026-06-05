@@ -1,0 +1,112 @@
+import { describe, test, expect } from 'bun:test';
+import type { WorkflowHook, WorkflowNodeInput } from '@neokai/shared';
+import { validateWorkflowHooks } from '../../../../src/lib/space/workflow-hook-validation.ts';
+import { WorkflowHookRuntimeService } from '../../../../src/lib/space/workflow-hook-runtime-service.ts';
+
+const runtimeService = new WorkflowHookRuntimeService();
+
+const nodes: WorkflowNodeInput[] = [
+  { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+  { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+];
+
+function validHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
+  return {
+    id: 'hook-1',
+    enabled: true,
+    sourceNode: 'Coding',
+    targetNode: 'Review',
+    method: 'send_message',
+    validator: { kind: 'built_in', id: 'pr_open' },
+    authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    ...overrides,
+  };
+}
+
+describe('workflow hook validation', () => {
+  test('accepts valid hook definitions', () => {
+    expect(validateWorkflowHooks([validHook()], nodes)).toEqual([]);
+  });
+
+  test('rejects unknown MCP methods and invalid node references', () => {
+    const errors = validateWorkflowHooks(
+      [validHook({ method: 'unknown' as never, sourceNode: 'Missing', targetNode: 'Gone' })],
+      nodes
+    );
+    expect(errors.join('\n')).toContain('unknown MCP method');
+    expect(errors.join('\n')).toContain('unknown node "Missing"');
+    expect(errors.join('\n')).toContain('unknown node "Gone"');
+  });
+
+  test('rejects gate-only fields and role terminology', () => {
+    const hook = { ...validHook(), fields: [], roleName: 'writer' } as unknown;
+    const errors = validateWorkflowHooks([hook], nodes).join('\n');
+    expect(errors).toContain('gate-only field');
+    expect(errors).toContain('role terminology is not allowed');
+  });
+
+  test('fails closed for absent callers unless humanOnly', () => {
+    expect(
+      validateWorkflowHooks([validHook({ authorizedCallers: undefined })], nodes).join('\n')
+    ).toContain('authorizedCallers');
+    expect(
+      validateWorkflowHooks([validHook({ humanOnly: true, authorizedCallers: undefined })], nodes)
+    ).toEqual([]);
+  });
+
+  test('rejects agent invocation for human-only hooks', () => {
+    const hook = validHook({ humanOnly: true, authorizedCallers: undefined });
+    expect(
+      runtimeService.isCallerAuthorized(hook, {
+        kind: 'agent',
+        sourceNode: 'Coding',
+        agentSlot: 'coder',
+      })
+    ).toBe(false);
+    expect(runtimeService.isCallerAuthorized(hook, { kind: 'human' })).toBe(true);
+  });
+
+  test('authorizes only declared node and agent slots', () => {
+    const hook = validHook();
+    expect(
+      runtimeService.isCallerAuthorized(hook, {
+        kind: 'agent',
+        sourceNode: 'Coding',
+        agentSlot: 'coder',
+      })
+    ).toBe(true);
+    expect(
+      runtimeService.isCallerAuthorized(hook, {
+        kind: 'agent',
+        sourceNode: 'Coding',
+        agentSlot: 'reviewer',
+      })
+    ).toBe(false);
+  });
+
+  test('narrows script hooks to bash and GitHub-only external lookups', () => {
+    const errors = validateWorkflowHooks(
+      [
+        validHook({
+          validator: {
+            kind: 'script',
+            interpreter: 'python3' as never,
+            source: 'print(1)',
+            externalLookups: ['github', 'jira' as never],
+          },
+        }),
+      ],
+      nodes
+    ).join('\n');
+    expect(errors).toContain('expected "bash"');
+    expect(errors).toContain('only "github" is allowed');
+  });
+
+  test('bounds hook result shapes', () => {
+    expect(runtimeService.validateResult({ type: 'allow' })).toEqual([]);
+    expect(runtimeService.validateResult({ type: 'block' }).join('\n')).toContain('reason');
+    expect(runtimeService.validateResult({ type: 'shell_out', command: 'x' }).join('\n')).toContain(
+      'bounded hook result type'
+    );
+  });
+});
