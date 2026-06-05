@@ -87,6 +87,37 @@ export interface SpaceWithTasks extends Space {
   sessions: SpaceSessionSummary[];
 }
 
+export type ExternalEventDeliveryStatus = 'pending' | 'delivered' | 'failed';
+
+export interface SpaceExternalEventDeliveryLogRecord {
+  eventId: string;
+  deliveryKey: string;
+  workflowRunId: string;
+  taskId: string;
+  nodeId: string;
+  agentName: string;
+  state: ExternalEventDeliveryStatus;
+  failureReason: string | null;
+  deliveredAt: number | null;
+  updatedAt: number;
+  event: {
+    id: string;
+    spaceId: string;
+    topic: string;
+    occurredAt: number;
+    ingestedAt: number;
+    source: string;
+    sourceEventId?: string;
+    summary: string;
+    externalUrl?: string;
+    payload: Record<string, unknown>;
+    dedupeKey: string;
+  };
+  eventState: string;
+  eventCreatedAt: number;
+  eventUpdatedAt: number;
+}
+
 export interface SpaceAgentTemplate {
   name: string;
   description: string;
@@ -2036,6 +2067,36 @@ class SpaceStore {
       }>;
     }>('spaceWorkflowRun.listGateData', { runId });
     return result?.gateData ?? [];
+  }
+
+  async listExternalEventDeliveries(
+    filters: {
+      spaceId?: string;
+      status?: ExternalEventDeliveryStatus | '';
+      agentName?: string;
+      eventId?: string;
+      limit?: number;
+      offset?: number;
+    } = {}
+  ): Promise<SpaceExternalEventDeliveryLogRecord[]> {
+    const spaceId = filters.spaceId ?? this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{ deliveries: SpaceExternalEventDeliveryLogRecord[] }>(
+      'space.externalEvents.listDeliveries',
+      {
+        spaceId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.agentName ? { agentName: filters.agentName } : {}),
+        ...(filters.eventId ? { eventId: filters.eventId } : {}),
+        limit: filters.limit ?? 100,
+        offset: filters.offset ?? 0,
+      }
+    );
+    return result?.deliveries ?? [];
   }
 
   /**

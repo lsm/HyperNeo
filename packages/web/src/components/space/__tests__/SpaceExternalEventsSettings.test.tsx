@@ -6,6 +6,7 @@ const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
+const mockListExternalEventDeliveries = vi.fn();
 
 vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
@@ -22,6 +23,14 @@ vi.mock('../../../lib/toast', () => ({
     },
     get error() {
       return mockToastError;
+    },
+  },
+}));
+
+vi.mock('../../../lib/space-store', () => ({
+  spaceStore: {
+    get listExternalEventDeliveries() {
+      return mockListExternalEventDeliveries;
     },
   },
 }));
@@ -127,6 +136,35 @@ const pollingOnlyRepoResult = {
   ],
 };
 
+const deliveryResult = [
+  {
+    eventId: 'evt-1',
+    deliveryKey: 'delivery-1',
+    workflowRunId: 'run-1',
+    taskId: 'task-1',
+    nodeId: 'node-1',
+    agentName: 'coder',
+    state: 'failed',
+    failureReason: 'agent session missing',
+    deliveredAt: null,
+    updatedAt: 1_700_000_003_000,
+    event: {
+      id: 'evt-1',
+      spaceId: 'space-1',
+      topic: 'github/acme/widgets/pull_request/42.review_submitted',
+      occurredAt: 1_700_000_000_000,
+      ingestedAt: 1_700_000_001_000,
+      source: 'github',
+      summary: 'PR #42 review submitted',
+      payload: { number: 42, action: 'review_submitted' },
+      dedupeKey: 'github:pr:42:review_submitted',
+    },
+    eventState: 'failed',
+    eventCreatedAt: 1_700_000_001_000,
+    eventUpdatedAt: 1_700_000_003_000,
+  },
+];
+
 function setupRequests() {
   mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
   mockRequest.mockImplementation((method) => {
@@ -146,6 +184,8 @@ describe('SpaceExternalEventsSettings', () => {
     mockGetHubIfConnected.mockReset();
     mockToastSuccess.mockReset();
     mockToastError.mockReset();
+    mockListExternalEventDeliveries.mockReset();
+    mockListExternalEventDeliveries.mockResolvedValue([]);
   });
 
   afterEach(() => cleanup());
@@ -209,6 +249,51 @@ describe('SpaceExternalEventsSettings', () => {
       'space.github.listWatchedRepos',
       expect.anything()
     );
+  });
+
+  it('shows delivery log rows and payload detail', async () => {
+    setupRequests();
+    mockListExternalEventDeliveries.mockResolvedValue(deliveryResult);
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+
+    expect(await findByText('github/acme/widgets/pull_request/42.review_submitted')).toBeTruthy();
+    expect(screen.getAllByText('failed')).toHaveLength(2);
+    expect(getByText('agent session missing')).toBeTruthy();
+    fireEvent.click(getByText('PR #42 review submitted'));
+    expect(getByText('Payload')).toBeTruthy();
+    expect(getByText(/"number": 42/)).toBeTruthy();
+    expect(mockListExternalEventDeliveries).toHaveBeenCalledWith({
+      spaceId: 'space-1',
+      status: '',
+      agentName: undefined,
+    });
+  });
+
+  it('filters deliveries by status and agent', async () => {
+    setupRequests();
+    const { findByText, getByLabelText, getByPlaceholderText, getByText } = render(
+      <SpaceExternalEventsSettings spaceId="space-1" />
+    );
+    await findByText('Event delivery log');
+
+    fireEvent.change(getByLabelText('Delivery status'), { target: { value: 'failed' } });
+    await waitFor(() => {
+      expect(mockListExternalEventDeliveries).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        status: 'failed',
+        agentName: undefined,
+      });
+    });
+
+    fireEvent.input(getByPlaceholderText('filter agent'), { target: { value: 'coder' } });
+    fireEvent.click(getByText('Apply'));
+    await waitFor(() => {
+      expect(mockListExternalEventDeliveries).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        status: 'failed',
+        agentName: 'coder',
+      });
+    });
   });
 
   it('toggles space enablement', async () => {
