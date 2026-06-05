@@ -2510,6 +2510,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       content: string;
       url?: string | null;
       author?: string | null;
+      posted_at?: number | null;
       themes?: string[];
       sentiment?: string;
       urgency?: string;
@@ -2544,9 +2545,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           'competitor_comparison',
           'unclear',
         ] as const;
-        const themes = (args.themes ?? []).filter((t) =>
-          validThemes.includes(t as (typeof validThemes)[number])
-        );
+        if (args.themes) {
+          const invalidThemes = args.themes.filter(
+            (t) => !validThemes.includes(t as (typeof validThemes)[number])
+          );
+          if (invalidThemes.length > 0) {
+            return jsonResult({
+              success: false,
+              error: `Invalid theme(s): ${invalidThemes.join(', ')}. Must be one of: ${validThemes.join(', ')}`,
+            });
+          }
+        }
+        const themes = args.themes ?? [];
         const validSentiments = ['negative', 'neutral', 'positive'] as const;
         const sentiment = args.sentiment
           ? validSentiments.includes(args.sentiment as (typeof validSentiments)[number])
@@ -2577,6 +2587,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           content: args.content,
           url: args.url ?? null,
           author: args.author ?? null,
+          postedAt: args.posted_at ?? null,
           themes: themes.length > 0 ? (themes as (typeof validThemes)[number][]) : undefined,
           sentiment,
           urgency,
@@ -3888,6 +3899,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           content: z.string().min(1).describe('Full feedback text'),
           url: z.string().nullable().optional().describe('Optional URL to original post'),
           author: z.string().nullable().optional().describe('Optional author name'),
+          posted_at: z
+            .number()
+            .int()
+            .nullable()
+            .optional()
+            .describe('Optional original post timestamp ms'),
           themes: z.array(z.string()).optional().describe('Optional theme tags'),
           sentiment: z.string().optional().describe('negative, neutral, or positive'),
           urgency: z.string().optional().describe('low, medium, or high'),

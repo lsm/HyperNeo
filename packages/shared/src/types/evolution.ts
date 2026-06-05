@@ -147,6 +147,7 @@ export interface EvidenceQualityPreflight {
     manualNotes: number;
     taskResults: number;
     workflowArtifacts: number;
+    publicFeedback: number;
     metricSnapshots: number;
     outcomes: number;
   };
