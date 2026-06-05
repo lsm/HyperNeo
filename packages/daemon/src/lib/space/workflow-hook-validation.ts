@@ -107,6 +107,9 @@ export function validateWorkflowHookResult(result: unknown): string[] {
     );
     return errors;
   }
+  if (result.message !== undefined && typeof result.message !== 'string') {
+    errors.push('result.message: expected string');
+  }
   switch (result.type as WorkflowHookResult['type']) {
     case 'allow':
       break;
@@ -329,6 +332,7 @@ export function isWorkflowHookCallerAuthorized(
   hook: WorkflowHook,
   context: WorkflowHookInvocationContext
 ): boolean {
+  if (!hook.enabled) return false;
   if (hook.humanOnly) return context.kind === 'human';
   if (context.kind !== 'agent') return false;
   if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;

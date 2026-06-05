@@ -54,6 +54,23 @@ describe('workflow hook validation', () => {
     ).toEqual([]);
   });
 
+  test('rejects disabled hooks during caller authorization', () => {
+    const hook = validHook({ enabled: false });
+    expect(
+      runtimeService.isCallerAuthorized(hook, {
+        kind: 'agent',
+        sourceNode: 'Coding',
+        agentSlot: 'coder',
+      })
+    ).toBe(false);
+    expect(
+      runtimeService.isCallerAuthorized(
+        validHook({ enabled: false, humanOnly: true, authorizedCallers: undefined }),
+        { kind: 'human' }
+      )
+    ).toBe(false);
+  });
+
   test('rejects agent invocation for human-only hooks', () => {
     const hook = validHook({ humanOnly: true, authorizedCallers: undefined });
     expect(
@@ -104,6 +121,9 @@ describe('workflow hook validation', () => {
 
   test('bounds hook result shapes', () => {
     expect(runtimeService.validateResult({ type: 'allow' })).toEqual([]);
+    expect(runtimeService.validateResult({ type: 'allow', message: 123 }).join('\n')).toContain(
+      'result.message: expected string'
+    );
     expect(runtimeService.validateResult({ type: 'block' }).join('\n')).toContain('reason');
     expect(runtimeService.validateResult({ type: 'shell_out', command: 'x' }).join('\n')).toContain(
       'bounded hook result type'
