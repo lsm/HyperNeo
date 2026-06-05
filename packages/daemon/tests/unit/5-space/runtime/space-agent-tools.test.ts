@@ -505,6 +505,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const agent = JSON.parse(
       (await handlers.create_agent({ name: 'Manager' })).content[0].text
     ).agent;
+    ctx.longHorizonAgentRepo.create({
+      id: agent.id,
+      spaceId: ctx.spaceId,
+      handle: `${agent.handle}-lh`,
+      displayName: 'Manager LH',
+    });
     const goal = JSON.parse(
       (await handlers.create_goal({ title: 'Goal', description: 'Desc' })).content[0].text
     ).goal;
@@ -635,60 +641,44 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         })
       ).content[0].text
     );
-    expect(subscribedLegacy.success).toBe(true);
-    ctx.agentManager.update(legacyAgent.id, {
-      status: 'paused',
-      customPrompt: 'Converted agent prompt',
-      tools: ['Read', 'Edit'],
+    expect(subscribedLegacy.success).toBe(false);
+    expect(subscribedLegacy.error).toBe('Expected long-horizon agent id, got worker agent id.');
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
+
+    const sharedLongHorizonAgent = ctx.longHorizonAgentRepo.create({
+      id: legacyAgent.id,
+      spaceId: ctx.spaceId,
+      handle: `${legacyAgent.handle}-lh`,
+      displayName: 'Shared Legacy Agent',
+      instructions: 'Independent prompt',
+      toolPermissions: { tools: ['Read'] },
     });
-    ctx.longHorizonAgentRepo.deleteSubscriptionByRoute(
-      ctx.spaceId,
-      legacyAgent.id,
-      'github',
-      'github/*/*/pull_request/*'
-    );
-    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(legacyAgent.id);
-    const resubscribedLegacy = JSON.parse(
+    const subscribedShared = JSON.parse(
       (
         await handlers.subscribe_agent_event({
           agent_id: legacyAgent.id,
-          topic_pattern: 'github/*/*/pull_request/*.opened',
+          topic_pattern: 'github/*/*/pull_request/*',
         })
       ).content[0].text
     );
-    expect(resubscribedLegacy.success).toBe(true);
-    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
-      expect.objectContaining({
-        handle: `${legacyAgent.handle ?? legacyAgent.name}-${legacyAgent.id}`,
-        status: 'paused',
-        instructions: 'Converted agent prompt',
-        toolPermissions: { tools: ['Read', 'Edit'] },
-      })
-    );
-    const updatedConvertedLegacy = JSON.parse(
+    expect(subscribedShared.success).toBe(true);
+    const updatedWorker = JSON.parse(
       (
         await handlers.update_agent({
           agent_id: legacyAgent.id,
-          status: 'active',
-          custom_prompt: 'Updated converted prompt',
-          tools: ['Read'],
+          status: 'paused',
+          custom_prompt: 'Worker-only prompt update',
+          tools: ['Read', 'Edit'],
         })
       ).content[0].text
     );
-    expect(updatedConvertedLegacy.success).toBe(true);
-    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+    expect(updatedWorker.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(sharedLongHorizonAgent.id)).toEqual(
       expect.objectContaining({
         status: 'active',
-        instructions: 'Updated converted prompt',
+        instructions: 'Independent prompt',
         toolPermissions: { tools: ['Read'] },
       })
-    );
-    const pausedConvertedLegacy = JSON.parse(
-      (await handlers.pause_agent({ agent_id: legacyAgent.id })).content[0].text
-    );
-    expect(pausedConvertedLegacy.success).toBe(true);
-    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
-      expect.objectContaining({ status: 'paused' })
     );
     expect(
       JSON.parse(
@@ -737,7 +727,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(missingReminder.success).toBe(false);
-    expect(missingReminder.error).toBe(`Agent not found: ${missingId}`);
+    expect(missingReminder.error).toBe(`Long-horizon agent not found: ${missingId}`);
   });
 
   test('returns errors from database-backed tools when database is not configured', async () => {

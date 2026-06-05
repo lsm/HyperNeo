@@ -55,6 +55,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { computeAgentTemplateHash } from '../agents/agent-template-hash';
+import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
@@ -362,7 +363,6 @@ export interface SpaceAgentToolsConfig {
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const {
     spaceId,
-    db,
     runtime,
     workflowManager,
     taskRepo,
@@ -460,11 +460,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     sourceSessionId: mySessionId ?? null,
   };
 
-  function requireLongHorizonAgentDb(): BunDatabase {
-    if (!db) throw new Error('Long-horizon agent management not available');
-    return db;
-  }
-
   function requireLongHorizonAgentRepo(): SpaceLongHorizonAgentRepository {
     if (!config.longHorizonAgentRepo)
       throw new Error('Long-horizon agent management not available');
@@ -476,70 +471,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return existing?.spaceId === spaceId ? existing : null;
   }
 
-  function longHorizonStatusFromSpaceAgent(agent: SpaceAgent) {
-    return agent.status === 'archived'
-      ? 'archived'
-      : agent.status === 'paused'
-        ? 'paused'
-        : 'active';
-  }
-
-  function longHorizonToolPermissionsFromSpaceAgent(agent: SpaceAgent) {
-    return agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {};
-  }
-
-  function longHorizonHandleFromSpaceAgent(agent: SpaceAgent) {
-    const repo = requireLongHorizonAgentRepo();
-    const base = agent.handle ?? agent.name;
-    const candidates = [base, `${base}-${agent.id}`];
-    for (let suffix = 2; suffix <= 10; suffix += 1)
-      candidates.push(`${base}-${agent.id}-${suffix}`);
-    for (const candidate of candidates) {
-      const existing = repo.getByHandle(spaceId, candidate);
-      if (!existing || existing.id === agent.id) return candidate;
-    }
-    return `${base}-${agent.id}-${Date.now()}`;
-  }
-
-  function syncConvertedLongHorizonAgent(spaceAgent: SpaceAgent) {
-    const repo = requireLongHorizonAgentRepo();
-    const existing = repo.getById(spaceAgent.id);
-    if (!existing || existing.spaceId !== spaceId) return null;
-    return repo.update(spaceAgent.id, {
-      displayName: spaceAgent.name,
-      status: longHorizonStatusFromSpaceAgent(spaceAgent),
-      instructions: spaceAgent.customPrompt ?? '',
-      model: spaceAgent.model,
-      thinkingLevel: spaceAgent.thinkingLevel,
-      toolPermissions: longHorizonToolPermissionsFromSpaceAgent(spaceAgent),
-    });
-  }
-
-  function refreshConvertedLongHorizonSubscriptions(agentId: string) {
-    const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
-    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
-  }
-
-  function ensureLongHorizonAgentInSpace(agentId: string) {
-    const existing = getLongHorizonAgentInSpace(agentId);
-    if (existing) return existing;
-    const repo = requireLongHorizonAgentRepo();
-    const spaceAgent = spaceAgentManager.getById(agentId);
-    if (!spaceAgent || spaceAgent.spaceId !== spaceId) {
-      throw new Error(`Long-horizon agent not found: ${agentId}`);
-    }
-
-    return repo.create({
-      id: spaceAgent.id,
+  function requireLongHorizonAgentInSpace(agentId: string) {
+    return requireAgentFamily({
       spaceId,
-      handle: longHorizonHandleFromSpaceAgent(spaceAgent),
-      displayName: spaceAgent.name,
-      status: longHorizonStatusFromSpaceAgent(spaceAgent),
-      instructions: spaceAgent.customPrompt ?? '',
-      model: spaceAgent.model,
-      thinkingLevel: spaceAgent.thinkingLevel,
-      toolPermissions: longHorizonToolPermissionsFromSpaceAgent(spaceAgent),
-    });
+      agentId,
+      expected: 'long_horizon',
+      spaceAgentManager,
+      longHorizonAgentRepo: requireLongHorizonAgentRepo(),
+    }).longHorizonAgent;
   }
 
   function sourceFromTopicPattern(topicPattern: string): string {
@@ -729,8 +668,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         normalizeSpaceAgentUpdateArgs(args)
       );
       if (!result.ok) return jsonResult({ success: false, error: result.error });
-      const synced = syncConvertedLongHorizonAgent(result.value);
-      if (synced) refreshConvertedLongHorizonSubscriptions(result.value.id);
       logAudit('update_agent', { agent_id: args.agent_id, status: args.status });
       emitSpaceAgentUpdated(result.value);
       return jsonResult({ success: true, agent: result.value });
@@ -746,14 +683,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
     async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
+        requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
-        requireLongHorizonAgentDb()
-          .prepare(
-            `INSERT OR IGNORE INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
-						 VALUES (?, ?, ?, ?)`
-          )
-          .run(spaceId, args.agent_id, args.goal_id, Date.now());
+        requireLongHorizonAgentRepo().assignGoal(args.agent_id, args.goal_id);
         logAudit('assign_agent_to_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -767,14 +699,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       goal_id: string;
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
+        requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
-        requireLongHorizonAgentDb()
-          .prepare(
-            `DELETE FROM space_agent_goal_assignments
-						 WHERE space_id = ? AND agent_id = ? AND goal_id = ?`
-          )
-          .run(spaceId, args.agent_id, args.goal_id);
+        requireLongHorizonAgentRepo().deleteGoalAssignment(args.agent_id, args.goal_id);
         logAudit('unassign_agent_from_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -788,14 +715,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       scope_id: string;
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
+        requireLongHorizonAgentInSpace(args.agent_id);
         requireEvolutionScopeInSpace(args.scope_id);
-        requireLongHorizonAgentDb()
-          .prepare(
-            `INSERT OR IGNORE INTO space_agent_forge_scope_assignments (space_id, agent_id, scope_id, created_at)
-						 VALUES (?, ?, ?, ?)`
-          )
-          .run(spaceId, args.agent_id, args.scope_id, Date.now());
+        requireLongHorizonAgentRepo().assignForgeScope(args.agent_id, args.scope_id);
         logAudit('assign_agent_to_forge_scope', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -809,14 +731,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       scope_id: string;
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
+        requireLongHorizonAgentInSpace(args.agent_id);
         requireEvolutionScopeInSpace(args.scope_id);
-        requireLongHorizonAgentDb()
-          .prepare(
-            `DELETE FROM space_agent_forge_scope_assignments
-						 WHERE space_id = ? AND agent_id = ? AND scope_id = ?`
-          )
-          .run(spaceId, args.agent_id, args.scope_id);
+        requireLongHorizonAgentRepo().deleteForgeScopeAssignment(args.agent_id, args.scope_id);
         logAudit('unassign_agent_from_forge_scope', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -831,18 +748,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       remind_at: number;
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
-        const id = crypto.randomUUID();
-        const now = Date.now();
-        requireLongHorizonAgentDb()
-          .prepare(
-            `INSERT INTO space_agent_reminders
-						 (id, space_id, agent_id, message, remind_at, status, created_at, updated_at)
-						 VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
-          )
-          .run(id, spaceId, args.agent_id, args.message, args.remind_at, now, now);
+        requireLongHorizonAgentInSpace(args.agent_id);
+        const reminder = requireLongHorizonAgentRepo().createReminder({
+          spaceId,
+          agentId: args.agent_id,
+          title: args.message,
+          triggerType: 'at',
+          runAt: args.remind_at,
+          nextRunAt: args.remind_at,
+          status: 'active',
+          createdBySession: mySessionId ?? null,
+        });
         logAudit('create_agent_reminder', { agent_id: args.agent_id, remind_at: args.remind_at });
-        return jsonResult({ success: true, reminder: { id, ...args, status: 'active' } });
+        return jsonResult({ success: true, reminder });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
@@ -854,24 +772,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       status?: 'active' | 'done' | 'cancelled';
     }): Promise<ToolResult> {
       try {
-        requireSpaceAgentInSpace(args.agent_id);
-        const conn = requireLongHorizonAgentDb();
-        const rows = args.status
-          ? conn
-              .prepare(
-                `SELECT * FROM space_agent_reminders
-								 WHERE space_id = ? AND agent_id = ? AND status = ?
-								 ORDER BY remind_at ASC`
-              )
-              .all(spaceId, args.agent_id, args.status)
-          : conn
-              .prepare(
-                `SELECT * FROM space_agent_reminders
-								 WHERE space_id = ? AND agent_id = ?
-								 ORDER BY remind_at ASC`
-              )
-              .all(spaceId, args.agent_id);
-        return jsonResult({ success: true, reminders: rows });
+        requireLongHorizonAgentInSpace(args.agent_id);
+        const status =
+          args.status === 'done'
+            ? 'fired'
+            : args.status === 'cancelled'
+              ? 'cancelled'
+              : args.status;
+        const reminders = requireLongHorizonAgentRepo()
+          .listReminders(args.agent_id)
+          .filter((reminder) => !status || reminder.status === status);
+        return jsonResult({ success: true, reminders });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
@@ -884,7 +795,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       label?: string;
     }): Promise<ToolResult> {
       try {
-        ensureLongHorizonAgentInSpace(args.agent_id);
+        requireLongHorizonAgentInSpace(args.agent_id);
         const validation = validateGlobPattern(args.topic_pattern);
         if (!validation.valid) {
           return jsonResult({ success: false, error: validation.reason ?? 'invalid pattern' });

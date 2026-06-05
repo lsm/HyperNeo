@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -695,6 +696,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 153: Store GitHub webhook auto-registration state.
   runMigration153(db);
+
+  // Migration 154: Copy legacy ownership/automation rows into long-horizon tables.
+  runMigration154(db);
 }
 
 /**
@@ -10543,4 +10547,19 @@ function runMigration153(db: BunDatabase): void {
       db.exec(`ALTER TABLE space_github_watched_repos ADD COLUMN ${name} ${definition}`);
     }
   }
+}
+
+/**
+ * Migration 154 — Copy legacy long-horizon ownership/automation data.
+ */
+export function runMigration154(db: BunDatabase): void {
+  if (
+    !tableExists(db, 'space_agent_goal_assignments') ||
+    !tableExists(db, 'space_agent_forge_scope_assignments') ||
+    !tableExists(db, 'space_agent_reminders') ||
+    !tableExists(db, 'space_long_horizon_agents')
+  ) {
+    return;
+  }
+  migrateLegacyLongHorizonAgentData(db);
 }
