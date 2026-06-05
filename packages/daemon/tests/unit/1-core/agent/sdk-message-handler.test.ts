@@ -4,7 +4,7 @@
  * Tests for processing incoming SDK messages.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
@@ -19,6 +19,7 @@ import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { setModelsCache } from '../../../../src/lib/model-service';
 
 describe('SDKMessageHandler', () => {
   let handler: SDKMessageHandler;
@@ -132,6 +133,8 @@ describe('SDKMessageHandler', () => {
     mockContextTracker = {
       getContextInfo: getContextInfoSpy,
       updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
+      shouldCompact: mock(() => false),
+      markCompactionTriggered: mock(() => {}),
     } as unknown as ContextTracker;
 
     // MessageQueue spies
@@ -1331,6 +1334,176 @@ describe('SDKMessageHandler', () => {
 
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
       expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
+    });
+
+    describe('NeoKai-level compaction trigger', () => {
+      afterEach(() => {
+        setModelsCache(new Map());
+      });
+
+      it('enqueues /compact when non-native provider exceeds 85% threshold', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 860_000 }],
+          totalTokens: 860_000,
+          maxTokens: Number.MAX_SAFE_INTEGER,
+          rawMaxTokens: Number.MAX_SAFE_INTEGER,
+          percentage: 0,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+        mockContextTracker.shouldCompact = mock(() => true);
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+      });
+
+      it('does not enqueue /compact for native Anthropic providers', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'sonnet',
+                  name: 'Claude Sonnet',
+                  provider: 'anthropic',
+                  contextWindow: 200_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 180_000 }],
+          totalTokens: 180_000,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 90,
+          gridRows: [],
+          model: 'claude-sonnet-4-6',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'anthropic';
+        mockContext.session.config.model = 'sonnet';
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('does not enqueue /compact when model info is missing', async () => {
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 860_000 }],
+          totalTokens: 860_000,
+          maxTokens: Number.MAX_SAFE_INTEGER,
+          rawMaxTokens: Number.MAX_SAFE_INTEGER,
+          percentage: 0,
+          gridRows: [],
+          model: 'unknown',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: false,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'unknown-model';
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
     });
 
     it('never injects /context into the message queue', async () => {
