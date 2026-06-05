@@ -6,10 +6,11 @@ A bounded, 8–10 minute walkthrough of NeoKai using the `dev-NeoKai` Space. All
 
 ```bash
 # Terminal 1 — start the dev server on port 8383 with an isolated DB.
-# If you will press Enter in the chat input, also enable the dev proxy:
+# If you will press Enter in the chat input, enable the dev proxy env:
 NEOKAI_USE_DEV_PROXY=1 make dev DB_PATH=/tmp/beokai-8383 PORT=8383
 
-# Terminal 2 (only if not using NEOKAI_USE_DEV_PROXY=1 above)
+# Terminal 2 — start the dev proxy whenever NEOKAI_USE_DEV_PROXY=1 is set above.
+# The daemon routes Anthropic calls to 127.0.0.1:8000; devproxy must be listening there.
 make test-proxy-start
 ```
 
@@ -21,7 +22,7 @@ A fresh isolated DB has no Spaces. Before the stream, run the dry-run script onc
 cd packages/e2e && bun run scripts/demo-stream-dry-run.ts
 ```
 
-The script is safe to re-run: it reuses an existing `dev-NeoKai` Space and only cleans up resources it created in the current run.
+The script is safe to re-run: it reuses an existing `dev-NeoKai` Space, reuses an existing demo task, and deletes only the session it created. By default the Space is kept so the live demo can open it; set `DEMO_CLEANUP_SPACE=1` to also delete the Space after the run.
 
 ## Demo flow
 

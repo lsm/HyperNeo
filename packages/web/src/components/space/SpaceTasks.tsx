@@ -760,10 +760,7 @@ export function SpaceTasks({ spaceId, navigationSpaceId, onSelectTask }: SpaceTa
   const mobileOverflowTabs = allTabs.slice(mobileTabCount);
 
   return (
-    <div
-      class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto"
-      data-testid="space-tasks-view"
-    >
+    <div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
       <div class="min-h-[calc(100%+1px)] space-y-6">
         <div class="flex border-b border-dark-700">
           {/* Mobile (<640px): JS-driven count */}

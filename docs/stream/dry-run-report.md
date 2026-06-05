@@ -2,7 +2,7 @@
 
 - **Base URL:** http://localhost:8383
 - **Space:** dev-NeoKai
-- **Time:** 2026-06-05T19:19:24.991Z
+- **Time:** 2026-06-05T19:33:35.955Z
 - **Result:** All steps passed
 
 ## Screenshots
@@ -25,15 +25,17 @@ None.
 
 ## Review fixes applied
 
-- Reused `dev-NeoKai` spaces are no longer deleted by the dry-run.
+- Reused `dev-NeoKai` spaces are no longer deleted by the dry-run (`DEMO_CLEANUP_SPACE=1` to opt in).
 - Created demo sessions are deleted before the space is deleted.
 - `workspacePath` is passed to `session.create` to match the live UI path.
-- Tasks view waits for `[data-testid="space-tasks-view"]` instead of sidebar text.
+- Tasks view waits for `[data-testid="space-tasks-view"]` on the route wrapper instead of sidebar text.
 - Skills step waits for the `Add Skill` button rendered by `SkillsRegistry`.
-- Runbook and demo script now tell the operator to start the daemon with `NEOKAI_USE_DEV_PROXY=1` when proxying SDK calls.
+- Runbook and demo script now tell the operator to start the daemon with `NEOKAI_USE_DEV_PROXY=1` and to also run `make test-proxy-start`.
+- The demo Space is kept after the dry-run so the live demo can open it.
+- Demo tasks are created as `blocked` + `human_input_requested` (non-runnable) and any stale previous demo task is archived first to avoid duplicates.
 
 ## Notes for the stream
 
-- Use `NEOKAI_USE_DEV_PROXY=1 make dev DB_PATH=/tmp/beokai-8383 PORT=8383` if the session input will be submitted.
+- Use `NEOKAI_USE_DEV_PROXY=1 make dev DB_PATH=/tmp/beokai-8383 PORT=8383` **and** `make test-proxy-start` if the session input will be submitted.
 - Run the dry-run once before streaming to seed the `dev-NeoKai` Space in the isolated DB.
 - Keep the demo on the isolated DB and `/tmp/neokai-demo-workspace-*` path only.

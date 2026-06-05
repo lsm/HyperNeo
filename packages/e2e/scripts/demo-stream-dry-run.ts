@@ -113,10 +113,31 @@ async function seedDemoTask(page: Page, spaceId: string): Promise<string | null>
     async ({ spaceId, title }) => {
       const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
       if (!hub?.request) throw new Error('MessageHub not available');
+
+      // Archive any previous demo tasks with the same title so re-runs do not
+      // pollute the Space with duplicates or leave stale draft tasks behind.
+      const list = (await hub.request('spaceTask.list', {
+        spaceId,
+        includeArchived: true,
+      })) as Array<{ id: string; title: string; status: string }>;
+      for (const t of list) {
+        if (t.title === title && t.status !== 'archived') {
+          await hub.request('spaceTask.update', {
+            spaceId,
+            taskId: t.id,
+            status: 'archived',
+          });
+        }
+      }
+
+      // Create as blocked/human_input so the task renders SpaceTaskPane (thread
+      // tab visible) without entering the runnable open-task pipeline.
       const task = (await hub.request('spaceTask.create', {
         spaceId,
         title,
         description: 'Harmless demo task used for UI dry-run only.',
+        status: 'blocked',
+        blockReason: 'human_input_requested',
       })) as { id: string };
       return task.id;
     },
@@ -190,6 +211,7 @@ async function main() {
   }
 
   let demoSpace: DemoSpaceResult | null = null;
+  let demoTaskId: string | null = null;
   let createdSessionId: string | null = null;
 
   await safeStep(
@@ -233,7 +255,8 @@ async function main() {
     'seed-task',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      await seedDemoTask(page, spaceId);
+      demoTaskId = await seedDemoTask(page, spaceId);
+      console.log(`  taskId=${demoTaskId}`);
     },
     page
   );
@@ -253,10 +276,11 @@ async function main() {
     'open-task',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      await page.goto(`/space/${spaceId}`);
+      if (!demoTaskId) throw new Error('no demoTaskId');
+      // Navigate directly to the draft task so the dry-run does not depend on
+      // which Tasks tab is currently active in the sidebar.
+      await page.goto(`/space/${spaceId}/task/${demoTaskId}`);
       await waitForWebSocketConnected(page);
-      await page.locator('[data-testid="space-detail-tasks"]').click();
-      await page.getByText(DEMO_TASK_TITLE).first().click();
       // The task pane renders the thread panel directly; no explicit "Thread" tab text.
       await page.locator('[data-testid="task-thread-panel"]').waitFor({ state: 'visible' });
       await screenshot(page, '03-task-thread');
@@ -334,8 +358,11 @@ async function main() {
     'cleanup',
     async () => {
       if (createdSessionId) await deleteDemoSession(page, createdSessionId);
-      // Only delete the space if this run created it, so a pre-existing dev-NeoKai space survives.
-      if (demoSpace?.created && spaceId) await deleteDemoSpace(page, spaceId);
+      // Default: keep the demo Space so it remains available for the live stream.
+      // Set DEMO_CLEANUP_SPACE=1 to delete a Space created by this run (useful for CI).
+      if (process.env.DEMO_CLEANUP_SPACE === '1' && demoSpace?.created && spaceId) {
+        await deleteDemoSpace(page, spaceId);
+      }
     },
     page
   );
