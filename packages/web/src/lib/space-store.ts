@@ -855,6 +855,54 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubAgentDeleted);
 
+    // --- spaceLongHorizonAgent.created ---
+    const unsubLongHorizonAgentCreated = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      agent: SpaceLongHorizonAgent;
+    }>('spaceLongHorizonAgent.created', (event) => {
+      if (event.spaceId === spaceId) {
+        const exists = this.longHorizonAgents.value.some((agent) => agent.id === event.agent.id);
+        if (!exists) this.longHorizonAgents.value = [...this.longHorizonAgents.value, event.agent];
+      }
+    });
+    this.cleanupFunctions.push(unsubLongHorizonAgentCreated);
+
+    // --- spaceLongHorizonAgent.updated ---
+    const unsubLongHorizonAgentUpdated = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      agent: SpaceLongHorizonAgent;
+    }>('spaceLongHorizonAgent.updated', (event) => {
+      if (event.spaceId === spaceId) {
+        const idx = this.longHorizonAgents.value.findIndex((agent) => agent.id === event.agent.id);
+        if (idx >= 0) {
+          this.longHorizonAgents.value = [
+            ...this.longHorizonAgents.value.slice(0, idx),
+            event.agent,
+            ...this.longHorizonAgents.value.slice(idx + 1),
+          ];
+        } else {
+          this.longHorizonAgents.value = [...this.longHorizonAgents.value, event.agent];
+        }
+      }
+    });
+    this.cleanupFunctions.push(unsubLongHorizonAgentUpdated);
+
+    // --- spaceLongHorizonAgent.deleted ---
+    const unsubLongHorizonAgentDeleted = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      agentId: string;
+    }>('spaceLongHorizonAgent.deleted', (event) => {
+      if (event.spaceId === spaceId) {
+        this.longHorizonAgents.value = this.longHorizonAgents.value.filter(
+          (agent) => agent.id !== event.agentId
+        );
+      }
+    });
+    this.cleanupFunctions.push(unsubLongHorizonAgentDeleted);
+
     // --- spaceWorkflow.created ---
     const unsubWorkflowCreated = hub.onEvent<{
       sessionId: string;

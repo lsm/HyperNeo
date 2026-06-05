@@ -259,7 +259,10 @@ function makeCtx(): TestCtx {
   };
 }
 
-function makeHandlers(ctx: TestCtx) {
+function makeHandlers(
+  ctx: TestCtx,
+  overrides: Partial<Parameters<typeof createSpaceAgentToolHandlers>[0]> = {}
+) {
   return createSpaceAgentToolHandlers({
     spaceId: ctx.spaceId,
     db: ctx.db,
@@ -275,6 +278,7 @@ function makeHandlers(ctx: TestCtx) {
     goalService: ctx.goalService,
     evolutionScopeService: ctx.evolutionScopeService,
     evolutionEpisodeService: ctx.evolutionEpisodeService,
+    ...overrides,
   });
 }
 
@@ -655,6 +659,61 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       success: false,
       error: 'Unrecognized model "not-a-model" for provider "anthropic"',
     });
+
+    const providerOnlyTarget = JSON.parse(
+      (
+        await handlers.create_agent({
+          name: 'Provider Switch',
+          model: 'sonnet',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    const invalidProviderOnlyUpdate = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: providerOnlyTarget.agent.id,
+          provider: 'openrouter',
+        })
+      ).content[0].text
+    );
+    expect(invalidProviderOnlyUpdate).toEqual({
+      success: false,
+      error: 'Unrecognized model "sonnet" for provider "openrouter"',
+    });
+  });
+
+  test('emits long-horizon agent events after MCP create and update', async () => {
+    const publish = mock(async () => {});
+    const handlers = makeHandlers(ctx, {
+      internalEventBus: {
+        publish,
+      } as unknown as Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus'],
+      mySessionId: 'mcp-session',
+    });
+
+    const created = JSON.parse((await handlers.create_agent({ name: 'Notifier' })).content[0].text);
+    expect(created.success).toBe(true);
+    expect(publish).toHaveBeenCalledWith('spaceLongHorizonAgent.created', {
+      sessionId: 'mcp-session',
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier' }),
+    });
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          name: 'Notifier Renamed',
+        })
+      ).content[0].text
+    );
+    expect(updated.success).toBe(true);
+    expect(publish).toHaveBeenCalledWith('spaceLongHorizonAgent.updated', {
+      sessionId: 'mcp-session',
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier Renamed' }),
+    });
   });
 
   test('manages agent assignments, reminders, and event subscriptions', async () => {
@@ -698,19 +757,24 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(reminder.success).toBe(true);
+    expect(reminder.reminder.message).toBe('Check progress');
+    expect(reminder.reminder.remind_at).toBe(reminder.reminder.runAt);
     await handlers.create_agent_reminder({
       agent_id: agent.id,
       message: 'Check earlier',
-      remind_at: reminder.reminder.runAt - 1_000,
+      remind_at: reminder.reminder.remind_at - 1_000,
     });
     const reminders = JSON.parse(
       (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
         .text
     );
-    expect(reminders.reminders.map((item: { title: string }) => item.title)).toEqual([
+    expect(reminders.reminders.map((item: { message: string }) => item.message)).toEqual([
       'Check earlier',
       'Check progress',
     ]);
+    expect(reminders.reminders.map((item: { remind_at: number }) => item.remind_at)).toEqual(
+      reminders.reminders.map((item: { runAt: number }) => item.runAt)
+    );
     ctx.db
       .prepare(`UPDATE space_long_horizon_agent_reminders SET status = 'fired' WHERE id = ?`)
       .run(reminder.reminder.id);

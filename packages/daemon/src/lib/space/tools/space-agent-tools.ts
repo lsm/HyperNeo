@@ -191,6 +191,26 @@ function compactLongHorizonAgent(agent: {
   };
 }
 
+function mcpReminderShape(reminder: {
+  id: string;
+  agentId: string;
+  title: string;
+  body?: string | null;
+  status: string;
+  runAt: number | null;
+  nextRunAt?: number | null;
+  createdAt?: number;
+  updatedAt?: number;
+}) {
+  const remindAt = reminder.runAt ?? reminder.nextRunAt ?? null;
+  return {
+    ...reminder,
+    message: reminder.title,
+    remind_at: remindAt,
+    status: reminder.status === 'fired' ? 'done' : reminder.status,
+  };
+}
+
 /**
  * Resolve a `node_id` selector ({execution UUID, agent name}) to a concrete
  * node_execution row. Preference order:
@@ -534,6 +554,26 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       });
   }
 
+  function emitLongHorizonAgentCreated(agent: SpaceLongHorizonAgent): void {
+    internalEventBus
+      ?.publish('spaceLongHorizonAgent.created', {
+        sessionId: mySessionId ?? 'space-agent-tools',
+        spaceId,
+        agent,
+      })
+      .catch(() => {});
+  }
+
+  function emitLongHorizonAgentUpdated(agent: SpaceLongHorizonAgent): void {
+    internalEventBus
+      ?.publish('spaceLongHorizonAgent.updated', {
+        sessionId: mySessionId ?? 'space-agent-tools',
+        spaceId,
+        agent,
+      })
+      .catch(() => {});
+  }
+
   /** Helper to log MCP write operations to the audit log. */
   function logAudit(
     toolName: string,
@@ -612,6 +652,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           settingSources: args.setting_sources ?? null,
           toolPermissions: args.tools && args.tools.length > 0 ? { tools: args.tools } : {},
         });
+        emitLongHorizonAgentCreated(agent);
         logAudit('create_agent', { name: args.name, tools: args.tools });
         return jsonResult({ success: true, agent });
       } catch (err) {
@@ -656,6 +697,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? null,
           toolPermissions: template.tools.length > 0 ? { tools: template.tools } : {},
         });
+        emitLongHorizonAgentCreated(agent);
         logAudit('create_agent_from_template', {
           template_name: args.template_name,
           name: args.name,
@@ -680,9 +722,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const toolError = validateTools(args.tools);
           if (toolError) return jsonResult({ success: false, error: toolError });
         }
-        if (args.model) {
-          const provider = args.provider === undefined ? existingAgent.provider : args.provider;
-          const modelError = await validateLongHorizonModel(args.model, provider);
+        const effectiveModel = args.model === undefined ? existingAgent.model : args.model;
+        const effectiveProvider =
+          args.provider === undefined ? existingAgent.provider : args.provider;
+        if (effectiveModel && (args.model !== undefined || args.provider !== undefined)) {
+          const modelError = await validateLongHorizonModel(effectiveModel, effectiveProvider);
           if (modelError) return jsonResult({ success: false, error: modelError });
         }
         const agent = requireLongHorizonAgentRepo().update(args.agent_id, {
@@ -709,6 +753,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
         const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, args.agent_id);
         if (!refresh.success) return jsonResult({ success: false, error: refresh.error });
+        if (agent) emitLongHorizonAgentUpdated(agent);
         logAudit('update_agent', { agent_id: args.agent_id, status: args.status });
         return jsonResult({ success: true, agent });
       } catch (err) {
@@ -804,7 +849,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           createdBySession: mySessionId ?? null,
         });
         logAudit('create_agent_reminder', { agent_id: args.agent_id, remind_at: args.remind_at });
-        return jsonResult({ success: true, reminder });
+        return jsonResult({ success: true, reminder: mcpReminderShape(reminder) });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
@@ -829,10 +874,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           .listReminders(args.agent_id)
           .filter((reminder) => !status || reminder.status === status)
           .sort((left, right) => dueTime(left) - dueTime(right))
-          .map((reminder) => ({
-            ...reminder,
-            status: reminder.status === 'fired' ? 'done' : reminder.status,
-          }));
+          .map(mcpReminderShape);
         return jsonResult({ success: true, reminders });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
