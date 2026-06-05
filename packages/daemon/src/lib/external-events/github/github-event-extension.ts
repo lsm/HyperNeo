@@ -20,9 +20,26 @@ import {
 
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const GITHUB_API_BASE = 'https://api.github.com';
+const WEBHOOK_EVENTS = [
+  'push',
+  'pull_request',
+  'issue_comment',
+  'pull_request_review',
+  'pull_request_review_comment',
+];
 
 interface GitHubEventExtensionOptions {
   pollIntervalMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+interface GitHubHookResponse {
+  id: number;
+  active: boolean;
+  config?: {
+    url?: string;
+  };
 }
 
 export class GitHubEventExtension implements HttpExternalEventExtension, RpcExternalEventExtension {
@@ -121,7 +138,50 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         spaceId: watchedRepo.spaceId,
         kind: 'watched_repo_changed',
       });
-      return { watchedRepo, webhookUrl: '/webhook/github/space' };
+      return {
+        watchedRepo: this.sanitizeWatchedRepo(watchedRepo),
+        webhookUrl: '/webhook/github/space',
+      };
+    });
+
+    hub.onRequest('space.github.autoConfigureWebhook', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as {
+        spaceId?: string;
+        owner?: string;
+        repo?: string;
+        webhookUrl?: string;
+      };
+      if (!params.spaceId || !params.owner || !params.repo || !params.webhookUrl) {
+        throw new Error('spaceId, owner, repo and webhookUrl are required');
+      }
+      const watchedRepo = await this.autoConfigureWebhook({
+        spaceId: params.spaceId,
+        owner: params.owner,
+        repo: params.repo,
+        webhookUrl: params.webhookUrl,
+      });
+      await this.persistSpaceConfig(context, watchedRepo.spaceId);
+      context.onSourceConfigChanged({
+        source: this.sourceId,
+        spaceId: watchedRepo.spaceId,
+        kind: 'watched_repo_changed',
+      });
+      return {
+        watchedRepo: this.sanitizeWatchedRepo(watchedRepo),
+        webhookUrl: watchedRepo.webhookUrl,
+      };
+    });
+
+    hub.onRequest('space.github.checkWebhook', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as { spaceId?: string; owner?: string; repo?: string };
+      if (!params.spaceId || !params.owner || !params.repo) {
+        throw new Error('spaceId, owner and repo are required');
+      }
+      const watchedRepo = await this.checkWebhook(params.spaceId, params.owner, params.repo);
+      await this.persistSpaceConfig(context, watchedRepo.spaceId);
+      return { watchedRepo: this.sanitizeWatchedRepo(watchedRepo) };
     });
 
     hub.onRequest('space.github.listWatchedRepos', async (data) => {
@@ -129,10 +189,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const params = data as { spaceId?: string };
       if (!params.spaceId) throw new Error('spaceId is required');
       return {
-        repositories: this.repo.listWatchedRepos(params.spaceId).map((repo) => ({
-          ...repo,
-          webhookSecret: repo.webhookSecret ? 'configured' : null,
-        })),
+        repositories: this.repo
+          .listWatchedRepos(params.spaceId)
+          .map((repo) => this.sanitizeWatchedRepo(repo)),
       };
     });
 
@@ -141,6 +200,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const params = data as { spaceId?: string; owner?: string; repo?: string };
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
+      }
+      const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
+      if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
+        await this.deleteRemoteWebhook(existing);
       }
       const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
       await this.persistSpaceConfig(context, params.spaceId);
@@ -316,6 +379,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           webhookEnabled: repo.webhookEnabled,
           pollingEnabled: repo.pollingEnabled,
           webhookSecret: repo.webhookSecret ? 'configured' : null,
+          webhookRemoteId: repo.webhookRemoteId,
+          webhookUrl: repo.webhookUrl,
+          webhookAutoRegistered: repo.webhookAutoRegistered,
+          webhookActive: repo.webhookActive,
+          webhookLastCheckedAt: repo.webhookLastCheckedAt,
+          webhookLastError: repo.webhookLastError,
+          webhookConfiguredAt: repo.webhookConfiguredAt,
           lastWebhookAt: repo.lastWebhookAt,
           lastPollAt: repo.lastPollAt,
           createdAt: repo.createdAt,
@@ -323,6 +393,138 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         })),
       },
     });
+  }
+
+  private sanitizeWatchedRepo(repo: GitHubWatchedRepo): Omit<GitHubWatchedRepo, 'webhookSecret'> & {
+    webhookSecret: 'configured' | null;
+  } {
+    return {
+      ...repo,
+      webhookSecret: repo.webhookSecret ? 'configured' : null,
+    };
+  }
+
+  private async autoConfigureWebhook(params: {
+    spaceId: string;
+    owner: string;
+    repo: string;
+    webhookUrl: string;
+  }): Promise<GitHubWatchedRepo> {
+    if (!this.githubToken) {
+      throw new Error('GITHUB_TOKEN is required to configure GitHub webhooks');
+    }
+    const webhookUrl = validateWebhookUrl(params.webhookUrl);
+    const secret = generateWebhookSecret();
+    const hook = await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+    return this.repo.upsertWatchedRepo({
+      spaceId: params.spaceId,
+      owner: params.owner,
+      repo: params.repo,
+      webhookSecret: secret,
+      webhookEnabled: true,
+      pollingEnabled: false,
+      webhookRemoteId: hook.id,
+      webhookUrl: hook.config?.url ?? webhookUrl,
+      webhookAutoRegistered: true,
+      webhookActive: hook.active,
+      webhookLastCheckedAt: Date.now(),
+      webhookLastError: null,
+      webhookConfiguredAt: Date.now(),
+    });
+  }
+
+  private async checkWebhook(
+    spaceId: string,
+    owner: string,
+    repo: string
+  ): Promise<GitHubWatchedRepo> {
+    if (!this.githubToken) {
+      throw new Error('GITHUB_TOKEN is required to check GitHub webhooks');
+    }
+    const watched = this.repo.getWatchedRepo(spaceId, owner, repo);
+    if (!watched) throw new Error(`Repository ${owner}/${repo} is not watched`);
+    if (!watched.webhookRemoteId)
+      throw new Error(`Repository ${owner}/${repo} has no auto-configured webhook`);
+    try {
+      const hook = await this.getRemoteWebhook(watched);
+      this.repo.updateWebhookStatus(watched.id, {
+        active: hook.active,
+        lastCheckedAt: Date.now(),
+        lastError: null,
+      });
+    } catch (error) {
+      this.repo.updateWebhookStatus(watched.id, {
+        active: false,
+        lastCheckedAt: Date.now(),
+        lastError: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    return this.repo.getWatchedRepoById(watched.id)!;
+  }
+
+  private async createRemoteWebhook(
+    owner: string,
+    repo: string,
+    webhookUrl: string,
+    secret: string
+  ): Promise<GitHubHookResponse> {
+    const response = await this.githubFetch(`/repos/${owner}/${repo}/hooks`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'web',
+        active: true,
+        events: WEBHOOK_EVENTS,
+        config: {
+          url: webhookUrl,
+          content_type: 'json',
+          secret,
+          insecure_ssl: '0',
+        },
+      }),
+    });
+    return (await response.json()) as GitHubHookResponse;
+  }
+
+  private async getRemoteWebhook(watched: GitHubWatchedRepo): Promise<GitHubHookResponse> {
+    const response = await this.githubFetch(
+      `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`
+    );
+    return (await response.json()) as GitHubHookResponse;
+  }
+
+  private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
+    if (!this.githubToken) return;
+    try {
+      await this.githubFetch(
+        `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`,
+        {
+          method: 'DELETE',
+        }
+      );
+    } catch (error) {
+      log.warn('Failed to delete GitHub webhook during unwatch', {
+        owner: watched.owner,
+        repo: watched.repo,
+        webhookRemoteId: watched.webhookRemoteId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const response = await (this.options.fetchImpl ?? fetch)(`${GITHUB_API_BASE}${path}`, {
+      ...init,
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${this.githubToken}`,
+        'User-Agent': 'NeoKai-Space-GitHub/1.0',
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...init.headers,
+      },
+    });
+    if (!response.ok) throw new Error(await formatGitHubApiError(response));
+    return response;
   }
 
   async pollWatchedRepo(
@@ -402,4 +604,43 @@ async function assertRpcConfigEnabled(
   if (!global.globallyEnabled || !global.capabilities.rpcConfig) {
     throw new Error('GitHub RPC configuration capability is disabled');
   }
+}
+
+function generateWebhookSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function validateWebhookUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('webhookUrl must be a valid URL');
+  }
+  if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+    throw new Error('webhookUrl must use HTTPS unless it points to localhost');
+  }
+  return url.toString();
+}
+
+async function formatGitHubApiError(response: Response): Promise<string> {
+  let message = `${response.status} ${response.statusText}`.trim();
+  try {
+    const body = (await response.json()) as { message?: string; documentation_url?: string };
+    if (body.message) message = body.message;
+  } catch {
+    // Ignore non-JSON error bodies.
+  }
+  if (response.status === 401) {
+    return `GitHub token is invalid or expired: ${message}`;
+  }
+  if (response.status === 403) {
+    return `GitHub token lacks permission to manage repository webhooks: ${message}`;
+  }
+  if (response.status === 404) {
+    return `GitHub repository or webhook was not found, or token lacks access: ${message}`;
+  }
+  return `GitHub API error: ${message}`;
 }

@@ -40,6 +40,13 @@ interface GitHubWatchedRepo {
   webhookEnabled: boolean;
   pollingEnabled: boolean;
   webhookSecret: 'configured' | null;
+  webhookRemoteId: number | null;
+  webhookUrl: string | null;
+  webhookAutoRegistered: boolean;
+  webhookActive: boolean | null;
+  webhookLastCheckedAt: number | null;
+  webhookLastError: string | null;
+  webhookConfiguredAt: number | null;
   lastWebhookAt: number | null;
   lastPollAt: number | null;
 }
@@ -297,6 +304,62 @@ export function SpaceExternalEventsSettings({
     }
   }
 
+  async function autoConfigureWebhook(repo: GitHubWatchedRepo): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy(`webhook:${repo.id}`);
+      await hub.request('space.github.autoConfigureWebhook', {
+        spaceId: actionSpaceId,
+        owner: repo.owner,
+        repo: repo.repo,
+        webhookUrl,
+      });
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.success(`Configured GitHub webhook for ${repo.owner}/${repo.repo}`);
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to configure webhook for ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function checkWebhook(repo: GitHubWatchedRepo): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy(`webhook:${repo.id}`);
+      await hub.request('space.github.checkWebhook', {
+        spaceId: actionSpaceId,
+        owner: repo.owner,
+        repo: repo.repo,
+      });
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to check webhook for ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function removeRepo(repo: GitHubWatchedRepo): Promise<void> {
     const actionSpaceId = spaceIdRef.current;
     const hub = connectionManager.getHubIfConnected();
@@ -440,8 +503,11 @@ export function SpaceExternalEventsSettings({
                     key={repo.id}
                     repo={repo}
                     disabled={disabled || busy === `repo:${repo.id}` || !githubControlsEnabled}
+                    webhookBusy={busy === `webhook:${repo.id}`}
                     pollingEnabled={githubPollingEnabled}
                     onUpdate={(patch) => updateRepo(repo, patch)}
+                    onAutoConfigureWebhook={() => autoConfigureWebhook(repo)}
+                    onCheckWebhook={() => checkWebhook(repo)}
                     onRemove={() => removeRepo(repo)}
                   />
                 ))
@@ -511,12 +577,24 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
 interface GitHubRepoRowProps {
   repo: GitHubWatchedRepo;
   disabled: boolean;
+  webhookBusy: boolean;
   pollingEnabled: boolean;
   onUpdate: (patch: Partial<GitHubWatchedRepo>) => Promise<void>;
+  onAutoConfigureWebhook: () => Promise<void>;
+  onCheckWebhook: () => Promise<void>;
   onRemove: () => Promise<void>;
 }
 
-function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: GitHubRepoRowProps) {
+function GitHubRepoRow({
+  repo,
+  disabled,
+  webhookBusy,
+  pollingEnabled,
+  onUpdate,
+  onAutoConfigureWebhook,
+  onCheckWebhook,
+  onRemove,
+}: GitHubRepoRowProps) {
   return (
     <div
       class={cn(
@@ -531,18 +609,43 @@ function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: G
           </div>
           <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-400">
             <span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
+            <WebhookStatus repo={repo} />
             <span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
             <span>last poll {formatTimestamp(repo.lastPollAt)}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={disabled}
-          class="text-xs text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
-        >
-          Remove
-        </button>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            loading={webhookBusy}
+            disabled={disabled || webhookBusy}
+            onClick={onAutoConfigureWebhook}
+          >
+            Auto-configure webhook
+          </Button>
+          {repo.webhookRemoteId && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              loading={false}
+              disabled={disabled || webhookBusy}
+              onClick={onCheckWebhook}
+            >
+              Check webhook
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={disabled}
+            class="text-xs text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
+          >
+            Remove
+          </button>
+        </div>
       </div>
       <div class="mt-3 flex flex-wrap gap-4">
         <label class="flex items-center gap-2 text-xs text-gray-300">
@@ -578,4 +681,17 @@ function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: G
       </div>
     </div>
   );
+}
+
+function WebhookStatus({ repo }: { repo: GitHubWatchedRepo }) {
+  if (!repo.webhookRemoteId) {
+    return <span>webhook manual</span>;
+  }
+  if (repo.webhookActive === true) {
+    return <span class="text-green-300">webhook active</span>;
+  }
+  if (repo.webhookActive === false) {
+    return <span class="text-red-300">webhook inactive</span>;
+  }
+  return <span>webhook status unknown</span>;
 }

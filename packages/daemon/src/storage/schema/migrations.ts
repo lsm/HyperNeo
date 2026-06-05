@@ -686,6 +686,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 150: Create providers table for unified provider registry.
   runMigration150(db);
+
+  // Migration 151: Store GitHub webhook auto-registration state.
+  runMigration151(db);
 }
 
 /**
@@ -10412,4 +10415,22 @@ function runMigration150(db: BunDatabase): void {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_provider_id ON providers(provider_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_providers_sort_order ON providers(sort_order)`);
+}
+
+function runMigration151(db: BunDatabase): void {
+  if (!tableExists(db, 'space_github_watched_repos')) return;
+  const columns: Array<[string, string]> = [
+    ['webhook_remote_id', 'INTEGER'],
+    ['webhook_url', 'TEXT'],
+    ['webhook_auto_registered', 'INTEGER NOT NULL DEFAULT 0'],
+    ['webhook_active', 'INTEGER'],
+    ['webhook_last_checked_at', 'INTEGER'],
+    ['webhook_last_error', 'TEXT'],
+    ['webhook_configured_at', 'INTEGER'],
+  ];
+  for (const [name, definition] of columns) {
+    if (!tableHasColumn(db, 'space_github_watched_repos', name)) {
+      db.exec(`ALTER TABLE space_github_watched_repos ADD COLUMN ${name} ${definition}`);
+    }
+  }
 }
