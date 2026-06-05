@@ -897,6 +897,9 @@ export class SDKMessageHandler {
         // providers because the SDK assumes a 200 k Claude context window.
         // We monitor usage and enqueue /compact when the real limit is approached.
         const providerId = session.config.provider;
+        if (!providerId) {
+          return;
+        }
         const isNativeProvider = NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId);
         if (
           !isNativeProvider &&
