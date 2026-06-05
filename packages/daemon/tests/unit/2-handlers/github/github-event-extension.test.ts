@@ -541,7 +541,7 @@ describe('GitHubEventExtension', () => {
     }
   });
 
-  test('RPC autoConfigureWebhook deletes existing auto-registered hook after creating replacement', async () => {
+  test('RPC autoConfigureWebhook deletes existing auto-registered hook before creating replacement', async () => {
     const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
     process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
     const db = setupDb();
@@ -597,14 +597,56 @@ describe('GitHubEventExtension', () => {
       });
 
       expect(calls.map((call) => `${call.init?.method ?? 'GET'} ${call.url}`)).toEqual([
-        'POST https://api.github.com/repos/acme/widgets/hooks',
         'DELETE https://api.github.com/repos/acme/widgets/hooks/123',
+        'POST https://api.github.com/repos/acme/widgets/hooks',
       ]);
       expect(extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')?.webhookRemoteId).toBe(
         456
       );
     } finally {
       await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
+      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('RPC autoConfigureWebhook rejects when webhook capability is disabled', async () => {
+    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
+    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    let fetchCalled = false;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () => {
+        fetchCalled = true;
+        return new Response('{}', { status: 201 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({
+        globallyEnabled: true,
+        webhooks: false,
+      }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      await expect(
+        clientHub.request('space.github.autoConfigureWebhook', {
+          spaceId: 'space-1',
+          owner: 'acme',
+          repo: 'widgets',
+        })
+      ).rejects.toThrow('GitHub webhook capability is disabled');
+      expect(fetchCalled).toBe(false);
+    } finally {
       if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
       else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
     }

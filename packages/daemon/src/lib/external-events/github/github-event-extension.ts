@@ -147,6 +147,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     hub.onRequest('space.github.autoConfigureWebhook', async (data) => {
       await assertRpcConfigEnabled(context, this.sourceId);
+      await assertWebhookCapabilityEnabled(context, this.sourceId);
       const params = data as {
         spaceId?: string;
         owner?: string;
@@ -413,11 +414,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const webhookUrl = getConfiguredWebhookUrl();
     const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    const secret = generateWebhookSecret();
-    const hook = await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
     if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
       await this.deleteRemoteWebhook(existing);
     }
+    const secret = generateWebhookSecret();
+    const hook = await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
     return this.repo.upsertWatchedRepo({
       spaceId: params.spaceId,
       owner: params.owner,
@@ -608,6 +609,16 @@ async function assertRpcConfigEnabled(
   const global = await context.config.getGlobalConfig(sourceId);
   if (!global.globallyEnabled || !global.capabilities.rpcConfig) {
     throw new Error('GitHub RPC configuration capability is disabled');
+  }
+}
+
+async function assertWebhookCapabilityEnabled(
+  context: ExternalEventExtensionContext,
+  sourceId: string
+): Promise<void> {
+  const global = await context.config.getGlobalConfig(sourceId);
+  if (!global.globallyEnabled || global.capabilities.webhooks === false) {
+    throw new Error('GitHub webhook capability is disabled');
   }
 }
 

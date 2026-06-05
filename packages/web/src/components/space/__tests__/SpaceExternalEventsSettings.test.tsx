@@ -81,6 +81,20 @@ const pollingDisabledExtensionResult = {
   ],
 };
 
+const webhooksDisabledExtensionResult = {
+  extensions: [
+    {
+      source: 'github',
+      status: 'started',
+      config: {
+        source: 'github',
+        globallyEnabled: true,
+        capabilities: { webhooks: false, polling: true, rpcConfig: true },
+      },
+    },
+  ],
+};
+
 const disabledExtensionResult = {
   extensions: [
     {
@@ -625,6 +639,30 @@ describe('SpaceExternalEventsSettings', () => {
       await findByText('Webhook secret is required because polling is disabled for GitHub')
     ).toBeTruthy();
     expect(mockRequest).not.toHaveBeenCalledWith('space.github.watchRepo', expect.anything());
+  });
+
+  it('disables auto-configure controls when webhook capability is disabled', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') {
+        return Promise.resolve(webhooksDisabledExtensionResult);
+      }
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      return Promise.resolve({});
+    });
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('acme/widgets');
+
+    expect(getByText('Auto-configure')).toHaveProperty('disabled', true);
+    expect(getByText('Auto-configure webhook')).toHaveProperty('disabled', true);
   });
 
   it('auto-configures new repositories without a manual secret when polling is disabled', async () => {

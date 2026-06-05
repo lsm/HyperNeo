@@ -131,6 +131,7 @@ export function SpaceExternalEventsSettings({
   const githubGloballyEnabled = githubExtension?.config.globallyEnabled ?? false;
   const githubRpcConfigEnabled = githubExtension?.config.capabilities.rpcConfig ?? false;
   const githubPollingEnabled = githubExtension?.config.capabilities.polling === true;
+  const githubWebhooksEnabled = githubExtension?.config.capabilities.webhooks !== false;
   const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
   const webhookUrl = useMemo(getWebhookUrl, []);
@@ -583,7 +584,12 @@ export function SpaceExternalEventsSettings({
                 size="sm"
                 variant="secondary"
                 loading={busy === 'repo:add:auto'}
-                disabled={disabled || !githubControlsEnabled || busy === 'repo:add:auto'}
+                disabled={
+                  disabled ||
+                  !githubControlsEnabled ||
+                  !githubWebhooksEnabled ||
+                  busy === 'repo:add:auto'
+                }
                 onClick={() => addRepo(undefined, true)}
               >
                 Auto-configure
@@ -608,6 +614,7 @@ export function SpaceExternalEventsSettings({
                       !githubControlsEnabled
                     }
                     webhookBusy={busy === `webhook:${repo.id}`}
+                    webhooksEnabled={githubWebhooksEnabled}
                     pollingEnabled={githubPollingEnabled}
                     onUpdate={(patch) => updateRepo(repo, patch)}
                     onAutoConfigureWebhook={() => autoConfigureWebhook(repo)}
@@ -910,6 +917,7 @@ interface GitHubRepoRowProps {
   repo: GitHubWatchedRepo;
   disabled: boolean;
   webhookBusy: boolean;
+  webhooksEnabled: boolean;
   pollingEnabled: boolean;
   onUpdate: (patch: Partial<GitHubWatchedRepo>) => Promise<void>;
   onAutoConfigureWebhook: () => Promise<void>;
@@ -921,6 +929,7 @@ function GitHubRepoRow({
   repo,
   disabled,
   webhookBusy,
+  webhooksEnabled,
   pollingEnabled,
   onUpdate,
   onAutoConfigureWebhook,
@@ -952,7 +961,7 @@ function GitHubRepoRow({
             size="sm"
             variant="secondary"
             loading={webhookBusy}
-            disabled={disabled || webhookBusy}
+            disabled={disabled || webhookBusy || !webhooksEnabled}
             onClick={onAutoConfigureWebhook}
           >
             Auto-configure webhook
