@@ -167,26 +167,6 @@ async function seedDemoTask(page: Page, spaceId: string): Promise<string | null>
   );
 }
 
-async function createDemoSession(
-  page: Page,
-  spaceId: string,
-  workspacePath: string
-): Promise<string | null> {
-  return page.evaluate(
-    async ({ sid, workspacePath }) => {
-      const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
-      if (!hub?.request) throw new Error('MessageHub not available');
-      const result = (await hub.request('session.create', {
-        spaceId: sid,
-        workspacePath,
-        createdBy: 'human',
-      })) as { sessionId: string };
-      return result.sessionId;
-    },
-    { sid: spaceId, workspacePath }
-  );
-}
-
 async function deleteDemoSession(page: Page, sessionId: string) {
   try {
     await page.evaluate(async (sid) => {
