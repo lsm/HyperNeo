@@ -115,7 +115,11 @@ export class WorkflowHookStateRepository {
     patch: WorkflowHookStatePatch
   ): WorkflowHookStateSnapshot | null {
     const tx = this.db.transaction(() => {
-      const current = this.ensure(runId, hookId);
+      let current = this.get(runId, hookId);
+      if (!current) {
+        if (patch.expectedVersion !== 0) return null;
+        current = this.ensure(runId, hookId);
+      }
       if (current.version !== patch.expectedVersion) return null;
       const now = Date.now();
       const nextVersion = current.version + 1;

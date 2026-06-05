@@ -2228,7 +2228,7 @@ describe('full export→import round-trip', () => {
     expect((wfCreatedEvents[0].data as any).workflow.name).toBe('Code Pipeline');
   });
 
-  it('multi-agent step round-trip: export → import preserves agents array and channels', async () => {
+  it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {
     const coderAgent: SpaceAgent = {
       id: 'src-coder',
       spaceId: 'other-space',
@@ -2276,6 +2276,17 @@ describe('full export→import round-trip', () => {
         },
       ],
       channels: [{ id: 'ch-1', from: 'coder', to: 'reviewer', label: 'hand-off' }],
+      hooks: [
+        {
+          id: 'hook-1',
+          enabled: true,
+          sourceNode: 'Code and Review',
+          targetNode: 'End',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_open' },
+          authorizedCallers: [{ sourceNode: 'Code and Review', agentSlots: ['coder'] }],
+        },
+      ],
       startNodeId: 'step-ma',
       tags: ['collab'],
       createdAt: 1000,
@@ -2327,6 +2338,8 @@ describe('full export→import round-trip', () => {
     expect(importedWf.channels![0].to).toBe('reviewer');
     // direction field removed from WorkflowChannel schema
     expect(importedWf.channels![0].label).toBe('hand-off');
+
+    expect(importedWf.hooks).toEqual(workflow.hooks);
   });
 
   it('import rejects bundle with empty name in agents[] entry (Zod validation)', async () => {

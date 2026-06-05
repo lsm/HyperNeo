@@ -162,11 +162,32 @@ describe('buildWorkflowFingerprint', () => {
     expect(fp.instructions).toBe('');
   });
 
-  it('treats empty channels and gates as empty arrays', () => {
-    const wf = makeWorkflow({ channels: undefined, gates: undefined });
+  it('treats empty channels, gates, and hooks as empty arrays', () => {
+    const wf = makeWorkflow({ channels: undefined, gates: undefined, hooks: undefined });
     const fp = buildWorkflowFingerprint(wf);
     expect(fp.channels).toEqual([]);
     expect(fp.gates).toEqual([]);
+    expect(fp.hooks).toEqual([]);
+  });
+
+  it('includes workflow hooks in fingerprint', () => {
+    const wf = makeWorkflow({
+      hooks: [
+        {
+          id: 'hook-1',
+          enabled: true,
+          sourceNode: 'Coder',
+          targetNode: 'Reviewer',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_open' },
+          authorizedCallers: [{ sourceNode: 'Coder', agentSlots: ['Coder'] }],
+        },
+      ],
+    });
+    const fp = buildWorkflowFingerprint(wf);
+    expect(fp.hooks).toHaveLength(1);
+    expect(JSON.parse(fp.hooks[0])).toEqual(wf.hooks![0]);
+    expect(computeWorkflowHash(wf)).not.toBe(computeWorkflowHash(makeWorkflow()));
   });
 
   it('includes sorted nodePrompts for each node-agent pair', () => {

@@ -58,6 +58,16 @@ describe('WorkflowHookStateRepository', () => {
     expect(JSON.parse(artifacts[0].result)).toEqual({ type: 'allow', data: { ok: true } });
   });
 
+  test('does not create missing state rows for stale expected versions', () => {
+    const stale = repo.update('run-1', 'hook-1', {
+      expectedVersion: 1,
+      localState: { approvals: { coder: 'approved' } },
+    });
+
+    expect(stale).toBeNull();
+    expect(repo.get('run-1', 'hook-1')).toBeNull();
+  });
+
   test('deep-merges vote maps within one transaction', () => {
     repo.ensure('run-1', 'hook-1');
     const first = repo.update('run-1', 'hook-1', {

@@ -2518,6 +2518,8 @@ export interface ExportedSpaceWorkflow {
    * Directed messaging channels. `from`/`to` use node names. Channel `id` is stripped.
    */
   channels?: ExportedWorkflowChannel[];
+  /** Workflow hooks in portable form. Node references use node/agent slot names. */
+  hooks?: WorkflowHook[];
   /**
    * Minimum autonomy level (1-5) required for end-node agents to self-close
    * the task via `approve_task`. Below this threshold, `approve_task` becomes
