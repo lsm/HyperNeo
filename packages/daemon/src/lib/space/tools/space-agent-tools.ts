@@ -2547,6 +2547,30 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const themes = (args.themes ?? []).filter((t) =>
           validThemes.includes(t as (typeof validThemes)[number])
         );
+        const validSentiments = ['negative', 'neutral', 'positive'] as const;
+        const sentiment = args.sentiment
+          ? validSentiments.includes(args.sentiment as (typeof validSentiments)[number])
+            ? (args.sentiment as (typeof validSentiments)[number])
+            : undefined
+          : undefined;
+        if (args.sentiment && !sentiment) {
+          return jsonResult({
+            success: false,
+            error: `Invalid sentiment: ${args.sentiment}. Must be one of: ${validSentiments.join(', ')}`,
+          });
+        }
+        const validUrgencies = ['low', 'medium', 'high'] as const;
+        const urgency = args.urgency
+          ? validUrgencies.includes(args.urgency as (typeof validUrgencies)[number])
+            ? (args.urgency as (typeof validUrgencies)[number])
+            : undefined
+          : undefined;
+        if (args.urgency && !urgency) {
+          return jsonResult({
+            success: false,
+            error: `Invalid urgency: ${args.urgency}. Must be one of: ${validUrgencies.join(', ')}`,
+          });
+        }
         const item = requireFeedbackMiningService().captureFeedback({
           scopeId: args.scope_id,
           source: args.source as (typeof validSources)[number],
@@ -2554,8 +2578,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           url: args.url ?? null,
           author: args.author ?? null,
           themes: themes.length > 0 ? (themes as (typeof validThemes)[number][]) : undefined,
-          sentiment: (args.sentiment as 'negative' | 'neutral' | 'positive') ?? undefined,
-          urgency: (args.urgency as 'low' | 'medium' | 'high') ?? undefined,
+          sentiment,
+          urgency,
           metadata: args.metadata,
         });
         logAudit('capture_public_feedback', { scope_id: args.scope_id, source: args.source });
