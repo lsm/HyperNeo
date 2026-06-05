@@ -290,8 +290,8 @@ export function SpaceExternalEventsSettings({
     }
   }
 
-  async function addRepo(event: Event): Promise<void> {
-    event.preventDefault();
+  async function addRepo(event?: Event, autoConfigure = false): Promise<void> {
+    event?.preventDefault();
     const actionSpaceId = spaceIdRef.current;
     const parsed = splitRepoInput(repoInput);
     if (!parsed) {
@@ -304,25 +304,38 @@ export function SpaceExternalEventsSettings({
       return;
     }
     try {
-      setBusy('repo:add');
+      setBusy(autoConfigure ? 'repo:add:auto' : 'repo:add');
       setFormError(null);
       const secret = webhookSecret.trim();
-      if (!secret && !githubPollingEnabled) {
+      if (!secret && !githubPollingEnabled && !autoConfigure) {
         setFormError('Webhook secret is required because polling is disabled for GitHub');
         return;
       }
-      await hub.request('space.github.watchRepo', {
-        spaceId: actionSpaceId,
-        owner: parsed.owner,
-        repo: parsed.repo,
-        webhookSecret: secret || undefined,
-        webhookEnabled: Boolean(secret),
-        pollingEnabled: !secret,
-      });
+      await hub.request(
+        autoConfigure ? 'space.github.autoConfigureWebhook' : 'space.github.watchRepo',
+        autoConfigure
+          ? {
+              spaceId: actionSpaceId,
+              owner: parsed.owner,
+              repo: parsed.repo,
+            }
+          : {
+              spaceId: actionSpaceId,
+              owner: parsed.owner,
+              repo: parsed.repo,
+              webhookSecret: secret || undefined,
+              webhookEnabled: Boolean(secret),
+              pollingEnabled: !secret,
+            }
+      );
       if (!isActionCurrent(actionSpaceId)) return;
       setRepoInput('');
       setWebhookSecret('');
-      toast.success(`Watching ${parsed.owner}/${parsed.repo}`);
+      toast.success(
+        autoConfigure
+          ? `Configured GitHub webhook for ${parsed.owner}/${parsed.repo}`
+          : `Watching ${parsed.owner}/${parsed.repo}`
+      );
       await refresh();
     } catch (err) {
       if (!isActionCurrent(actionSpaceId)) return;
@@ -387,7 +400,6 @@ export function SpaceExternalEventsSettings({
         spaceId: actionSpaceId,
         owner: repo.owner,
         repo: repo.repo,
-        webhookUrl,
       });
       if (!isActionCurrent(actionSpaceId)) return;
       toast.success(`Configured GitHub webhook for ${repo.owner}/${repo.repo}`);
@@ -411,13 +423,20 @@ export function SpaceExternalEventsSettings({
     }
     try {
       setBusy(`webhook:${repo.id}`);
-      await hub.request('space.github.checkWebhook', {
-        spaceId: actionSpaceId,
-        owner: repo.owner,
-        repo: repo.repo,
-      });
+      const result = await hub.request<{ watchedRepo?: GitHubWatchedRepo }>(
+        'space.github.checkWebhook',
+        {
+          spaceId: actionSpaceId,
+          owner: repo.owner,
+          repo: repo.repo,
+        }
+      );
       if (!isActionCurrent(actionSpaceId)) return;
-      toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
+      if (result.watchedRepo?.webhookActive === false) {
+        toast.error(`GitHub webhook is inactive for ${repo.owner}/${repo.repo}`);
+      } else {
+        toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
+      }
       await refresh();
     } catch (err) {
       if (!isActionCurrent(actionSpaceId)) return;
@@ -532,8 +551,8 @@ export function SpaceExternalEventsSettings({
             </div>
 
             <form
-              onSubmit={addRepo}
-              class="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+              onSubmit={(event) => addRepo(event)}
+              class="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]"
             >
               <input
                 type="text"
@@ -559,6 +578,16 @@ export function SpaceExternalEventsSettings({
               >
                 Add watch
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                loading={busy === 'repo:add:auto'}
+                disabled={disabled || !githubControlsEnabled || busy === 'repo:add:auto'}
+                onClick={() => addRepo(undefined, true)}
+              >
+                Auto-configure
+              </Button>
             </form>
             {formError && <p class="mt-2 text-xs text-red-300">{formError}</p>}
 
@@ -572,7 +601,12 @@ export function SpaceExternalEventsSettings({
                   <GitHubRepoRow
                     key={repo.id}
                     repo={repo}
-                    disabled={disabled || busy === `repo:${repo.id}` || !githubControlsEnabled}
+                    disabled={
+                      disabled ||
+                      busy === `repo:${repo.id}` ||
+                      busy === `webhook:${repo.id}` ||
+                      !githubControlsEnabled
+                    }
                     webhookBusy={busy === `webhook:${repo.id}`}
                     pollingEnabled={githubPollingEnabled}
                     onUpdate={(patch) => updateRepo(repo, patch)}

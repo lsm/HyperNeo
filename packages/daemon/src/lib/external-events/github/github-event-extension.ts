@@ -28,6 +28,7 @@ const WEBHOOK_EVENTS = [
   'pull_request_review',
   'pull_request_review_comment',
 ];
+const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
   pollIntervalMs?: number;
@@ -150,16 +151,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         spaceId?: string;
         owner?: string;
         repo?: string;
-        webhookUrl?: string;
       };
-      if (!params.spaceId || !params.owner || !params.repo || !params.webhookUrl) {
-        throw new Error('spaceId, owner, repo and webhookUrl are required');
+      if (!params.spaceId || !params.owner || !params.repo) {
+        throw new Error('spaceId, owner and repo are required');
       }
       const watchedRepo = await this.autoConfigureWebhook({
         spaceId: params.spaceId,
         owner: params.owner,
         repo: params.repo,
-        webhookUrl: params.webhookUrl,
       });
       await this.persistSpaceConfig(context, watchedRepo.spaceId);
       context.onSourceConfigChanged({
@@ -408,14 +407,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     spaceId: string;
     owner: string;
     repo: string;
-    webhookUrl: string;
   }): Promise<GitHubWatchedRepo> {
     if (!this.githubToken) {
       throw new Error('GITHUB_TOKEN is required to configure GitHub webhooks');
     }
-    const webhookUrl = validateWebhookUrl(params.webhookUrl);
+    const webhookUrl = getConfiguredWebhookUrl();
+    const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
     const secret = generateWebhookSecret();
     const hook = await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+    if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
+      await this.deleteRemoteWebhook(existing);
+    }
     return this.repo.upsertWatchedRepo({
       spaceId: params.spaceId,
       owner: params.owner,
@@ -460,7 +462,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
       throw error;
     }
-    return this.repo.getWatchedRepoById(watched.id)!;
+    const result = this.repo.getWatchedRepoById(watched.id);
+    if (!result) throw new Error('Repository was removed during webhook check');
+    return result;
   }
 
   private async createRemoteWebhook(
@@ -517,6 +521,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ...init,
       headers: {
         Accept: 'application/vnd.github+json',
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         Authorization: `Bearer ${this.githubToken}`,
         'User-Agent': 'NeoKai-Space-GitHub/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
@@ -612,15 +617,20 @@ function generateWebhookSecret(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function validateWebhookUrl(value: string): string {
+function getConfiguredWebhookUrl(): string {
+  const baseUrl = process.env.NEOKAI_PUBLIC_URL ?? process.env.PUBLIC_URL;
+  if (!baseUrl) {
+    throw new Error('NEOKAI_PUBLIC_URL is required to configure GitHub webhooks');
+  }
+
   let url: URL;
   try {
-    url = new URL(value);
+    url = new URL(WEBHOOK_PATH, baseUrl);
   } catch {
-    throw new Error('webhookUrl must be a valid URL');
+    throw new Error('NEOKAI_PUBLIC_URL must be a valid URL');
   }
   if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
-    throw new Error('webhookUrl must use HTTPS unless it points to localhost');
+    throw new Error('NEOKAI_PUBLIC_URL must use HTTPS unless it points to localhost');
   }
   return url.toString();
 }
