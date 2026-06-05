@@ -1261,8 +1261,10 @@ export function createOpenAIResponsesBridgeServer(
       // The Claude Code CLI handles thinking internally and does not include the
       // thinking field in Anthropic Messages API requests. Merge the per-session
       // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
+      // If the SDK sends a non-enabled thinking payload (e.g. {type:'adaptive'}),
+      // override it with the session's explicit enabled config.
       const sessionThinkingEntry = sessionThinkingConfigs.get(route.sessionId);
-      if (sessionThinkingEntry?.thinking && !body.thinking) {
+      if (sessionThinkingEntry?.thinking && (!body.thinking || body.thinking.type !== 'enabled')) {
         body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 

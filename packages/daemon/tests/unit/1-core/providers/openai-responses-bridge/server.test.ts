@@ -2652,6 +2652,48 @@ describe('openai-responses-bridge server', () => {
     expect(capturedBody?.reasoning).toEqual({ effort: 'low', summary: 'auto' });
   });
 
+  it('overrides non-enabled SDK thinking payload with session enabled config', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    server.setSessionThinkingConfig?.('session-adaptive', {
+      type: 'enabled',
+      budget_tokens: 16000,
+    });
+
+    const resp = await fetch(`${server.baseUrlForSession?.('session-adaptive')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'Think adaptively.' }],
+        // The SDK can send {type:'adaptive'} internally; the bridge should
+        // override it with the session's explicit enabled config so reasoning
+        // is forwarded to OpenAI.
+        thinking: { type: 'adaptive' },
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+  });
+
   it('clears session thinking config when undefined is passed', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({
