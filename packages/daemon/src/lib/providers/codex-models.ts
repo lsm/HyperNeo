@@ -69,14 +69,6 @@ export function getModelContextWindow(modelId: string): number | undefined {
   return resolved ? MODEL_CONTEXT_WINDOWS[resolved] : undefined;
 }
 
-export function requireModelContextWindow(modelId: string): number {
-  const contextWindow = getModelContextWindow(modelId);
-  if (!contextWindow) {
-    throw new Error(`Unknown Codex model context window: ${modelId}`);
-  }
-  return contextWindow;
-}
-
 export function getCodexBridgeModelInfos(): ModelInfo[] {
   return (Object.keys(MODEL_CONTEXT_WINDOWS) as CodexBridgeModelId[]).map((id) => {
     const details = CODEX_MODEL_DETAILS[id];

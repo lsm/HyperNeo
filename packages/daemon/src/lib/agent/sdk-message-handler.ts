@@ -890,6 +890,25 @@ export class SDKMessageHandler {
           sessionId: session.id,
           contextInfo,
         });
+
+        // NeoKai-level compaction trigger for non-native providers.
+        // SDK auto-compaction is disabled in buildProviderSettings() for these
+        // providers because the SDK assumes a 200 k Claude context window.
+        // We monitor usage and enqueue /compact when the real limit is approached.
+        const providerId = session.config.provider;
+        const isNativeProvider = providerId === 'anthropic' || providerId === 'anthropic-copilot';
+        if (
+          !isNativeProvider &&
+          modelInfo?.contextWindow &&
+          contextTracker.shouldCompact(modelInfo.contextWindow)
+        ) {
+          contextTracker.markCompactionTriggered();
+          this.logger.info(
+            `Triggering compaction for session ${session.id} ` +
+              `(${contextInfo.totalUsed} / ${modelInfo.contextWindow} tokens)`
+          );
+          void this.ctx.messageQueue.enqueue('/compact', /* internal */ true);
+        }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
