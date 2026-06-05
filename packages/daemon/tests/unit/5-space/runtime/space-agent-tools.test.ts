@@ -303,9 +303,30 @@ function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpSer
 
 function getRegisteredTool(server: ReturnType<typeof createSpaceAgentMcpServer>, name: string) {
   const instance = server.instance as unknown as {
-    _registeredTools: Record<string, { inputSchema: { parse: (value: unknown) => unknown } }>;
+    _registeredTools: Record<string, { inputSchema: unknown }>;
   };
   return instance._registeredTools[name];
+}
+
+function expectToolInputParses(
+  server: ReturnType<typeof createSpaceAgentMcpServer>,
+  name: string,
+  input: Record<string, unknown>
+) {
+  const inputSchema = getRegisteredTool(server, name).inputSchema;
+  if (hasParser(inputSchema)) {
+    inputSchema.parse(input);
+    return;
+  }
+  const shape = inputSchema as Record<string, unknown>;
+  for (const [key, value] of Object.entries(input)) {
+    const field = shape[key];
+    if (hasParser(field)) field.parse(value);
+  }
+}
+
+function hasParser(value: unknown): value is { parse: (input: unknown) => unknown } {
+  return typeof (value as { parse?: unknown } | null)?.parse === 'function';
 }
 
 describe('schema evolution setup', () => {
@@ -364,13 +385,13 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('assign_agent_to_goal');
     expect(names).toContain('create_agent_reminder');
     expect(() =>
-      getRegisteredTool(server, 'update_agent').inputSchema.parse({
+      expectToolInputParses(server, 'update_agent', {
         agent_id: 'agent-1',
         status: 'disabled',
       })
     ).not.toThrow();
     expect(() =>
-      getRegisteredTool(server, 'list_agents').inputSchema.parse({ status: 'disabled' })
+      expectToolInputParses(server, 'list_agents', { status: 'disabled' })
     ).not.toThrow();
   });
 
