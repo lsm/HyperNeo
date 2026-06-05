@@ -10,8 +10,9 @@ Goal: run a bounded, safe YouTube stream that walks through NeoKai using the dev
 - [ ] Webcam/mic tested; mute toggle mapped to a hotkey.
 - [ ] Chat moderation: YouTube live chat visible on a second screen; slow mode enabled.
 - [ ] `make dev DB_PATH=/tmp/beokai-8383 PORT=8383` running and reachable.
+- [ ] If using the dev proxy: start the server with `NEOKAI_USE_DEV_PROXY=1 make dev DB_PATH=/tmp/beokai-8383 PORT=8383`.
 - [ ] Demo dry-run executed within the last hour; no new breakages.
-- [ ] Dev proxy or a low-cost model selected so API calls do not burn credits.
+- [ ] Dev proxy active or a low-cost model selected so API calls do not burn credits.
 - [ ] No credentials, `.env`, or Keychain visible on screen.
 
 ## Scene collection

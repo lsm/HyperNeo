@@ -5,14 +5,23 @@ A bounded, 8–10 minute walkthrough of NeoKai using the `dev-NeoKai` Space. All
 ## Prerequisites
 
 ```bash
-# Terminal 1 — start the dev server on port 8383 with an isolated DB
-make dev DB_PATH=/tmp/beokai-8383 PORT=8383
+# Terminal 1 — start the dev server on port 8383 with an isolated DB.
+# If you will press Enter in the chat input, also enable the dev proxy:
+NEOKAI_USE_DEV_PROXY=1 make dev DB_PATH=/tmp/beokai-8383 PORT=8383
 
-# Terminal 2 (optional) — start the dev proxy to avoid real LLM calls
+# Terminal 2 (only if not using NEOKAI_USE_DEV_PROXY=1 above)
 make test-proxy-start
 ```
 
 Open the app at `http://localhost:8383` in the browser source used by OBS.
+
+A fresh isolated DB has no Spaces. Before the stream, run the dry-run script once to create the `dev-NeoKai` demo Space:
+
+```bash
+cd packages/e2e && bun run scripts/demo-stream-dry-run.ts
+```
+
+The script is safe to re-run: it reuses an existing `dev-NeoKai` Space and only cleans up resources it created in the current run.
 
 ## Demo flow
 
@@ -52,10 +61,10 @@ Open the app at `http://localhost:8383` in the browser source used by OBS.
 
 **UI action:** Click `Agents` in the space sidebar.
 
-**Expected state:** Agent list visible: Planner, Coder, Research, Reviewer, QA. Each has a model and prompt slot.
+**Expected state:** Long-horizon agent list visible with at least `Coordinator`. Each agent shows autonomy level, model, and instructions.
 
 **Talking points:**
-- Built-in agents are seeded automatically.
+- Spaces seed a Coordinator agent automatically.
 - Agents are peers in a workflow; the workflow graph decides handoffs.
 
 **Safety:** Do not edit agents or save prompt changes.
@@ -120,8 +129,9 @@ Switch to the `BRB / Fail-Safe` OBS scene if any of the following happen:
 
 ## Selectors used by the dry-run script
 
-- New Session button: `role=button name=/New Session/i`
+- Space switcher: `[data-testid="space-switcher"]`
 - Space nav items: `[data-testid="space-detail-dashboard"]` etc.
+- Tasks view: `[data-testid="space-tasks-view"]`
 - Chat input: `textarea[placeholder="Ask or make anything..."]`
 - Settings button: `aria-label=/Settings/i`
-- Space switcher: `[data-testid="space-switcher"]`
+- Skills content: `role=button name="Add Skill"`

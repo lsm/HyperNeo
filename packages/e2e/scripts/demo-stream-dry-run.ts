@@ -18,10 +18,16 @@ import { join, resolve } from 'node:path';
 
 const BASE_URL = process.env.DEMO_BASE_URL?.replace(/\/$/, '') || 'http://localhost:8383';
 const OUT_DIR = resolve(process.env.DEMO_OUT_DIR || '../../tmp/demo-screenshots');
-const DEMO_SPACE_NAME = 'dev-NeoKai Demo';
+const DEMO_SPACE_NAME = 'dev-NeoKai';
 const DEMO_TASK_TITLE = 'Demo task — do not execute';
 
 mkdirSync(OUT_DIR, { recursive: true });
+
+interface DemoSpaceResult {
+  spaceId: string;
+  workspacePath: string;
+  created: boolean;
+}
 
 interface Breakage {
   step: string;
@@ -76,7 +82,7 @@ async function waitForWebSocketConnected(page: Page, timeout = 15000) {
   );
 }
 
-async function ensureDemoSpace(page: Page): Promise<string | null> {
+async function ensureDemoSpace(page: Page): Promise<DemoSpaceResult> {
   await waitForWebSocketConnected(page);
 
   // Use a temp workspace path on the host. The daemon validates it exists.
@@ -91,12 +97,12 @@ async function ensureDemoSpace(page: Page): Promise<string | null> {
       // Reuse existing space with the same name if present.
       const list = (await hub.request('space.list', {})) as Array<{ id: string; name: string }>;
       const existing = list.find((s) => s.name === name);
-      if (existing) return existing.id;
+      if (existing) return { spaceId: existing.id, workspacePath, created: false };
 
       const space = (await hub.request('space.create', { name, workspacePath })) as {
         id: string;
       };
-      return space.id;
+      return { spaceId: space.id, workspacePath, created: true };
     },
     { name: DEMO_SPACE_NAME, workspacePath: demoWorkspacePath }
   );
@@ -118,16 +124,36 @@ async function seedDemoTask(page: Page, spaceId: string): Promise<string | null>
   );
 }
 
-async function createDemoSession(page: Page, spaceId: string): Promise<string | null> {
-  return page.evaluate(async (sid) => {
-    const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
-    if (!hub?.request) throw new Error('MessageHub not available');
-    const result = (await hub.request('session.create', {
-      spaceId: sid,
-      createdBy: 'human',
-    })) as { sessionId: string };
-    return result.sessionId;
-  }, spaceId);
+async function createDemoSession(
+  page: Page,
+  spaceId: string,
+  workspacePath: string
+): Promise<string | null> {
+  return page.evaluate(
+    async ({ sid, workspacePath }) => {
+      const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+      if (!hub?.request) throw new Error('MessageHub not available');
+      const result = (await hub.request('session.create', {
+        spaceId: sid,
+        workspacePath,
+        createdBy: 'human',
+      })) as { sessionId: string };
+      return result.sessionId;
+    },
+    { sid: spaceId, workspacePath }
+  );
+}
+
+async function deleteDemoSession(page: Page, sessionId: string) {
+  try {
+    await page.evaluate(async (sid) => {
+      const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+      if (!hub?.request) return;
+      await hub.request('session.delete', { sessionId: sid });
+    }, sessionId);
+  } catch {
+    // best-effort cleanup
+  }
 }
 
 async function deleteDemoSpace(page: Page, spaceId: string) {
@@ -163,7 +189,8 @@ async function main() {
     return;
   }
 
-  let spaceId: string | null = null;
+  let demoSpace: DemoSpaceResult | null = null;
+  let createdSessionId: string | null = null;
 
   await safeStep(
     'open-app',
@@ -178,12 +205,17 @@ async function main() {
   await safeStep(
     'ensure-demo-space',
     async () => {
-      spaceId = await ensureDemoSpace(page);
-      if (!spaceId) throw new Error('space.create returned no id');
-      console.log(`  spaceId=${spaceId}`);
+      demoSpace = await ensureDemoSpace(page);
+      if (!demoSpace) throw new Error('space.create returned no id');
+      console.log(
+        `  spaceId=${demoSpace.spaceId} created=${demoSpace.created} workspacePath=${demoSpace.workspacePath}`
+      );
     },
     page
   );
+
+  const spaceId = demoSpace?.spaceId ?? null;
+  const workspacePath = demoSpace?.workspacePath ?? '';
 
   await safeStep(
     'space-overview',
@@ -211,7 +243,7 @@ async function main() {
     async () => {
       if (!spaceId) throw new Error('no spaceId');
       await page.goto(`/space/${spaceId}/tasks`);
-      await page.locator('text=Tasks').first().waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-tasks-view"]').waitFor({ state: 'visible' });
       await screenshot(page, '02-tasks-view');
     },
     page
@@ -259,9 +291,10 @@ async function main() {
   await safeStep(
     'create-session',
     async () => {
-      if (!spaceId) throw new Error('no spaceId');
-      const sessionId = await createDemoSession(page, spaceId);
+      if (!spaceId || !workspacePath) throw new Error('no spaceId or workspacePath');
+      const sessionId = await createDemoSession(page, spaceId, workspacePath);
       if (!sessionId) throw new Error('session.create returned no id');
+      createdSessionId = sessionId;
       await page.goto(`/space/${spaceId}/session/${sessionId}`);
       await page
         .locator('textarea[placeholder="Ask or make anything..."]')
@@ -280,10 +313,8 @@ async function main() {
     'settings-skills',
     async () => {
       await page.goto('/settings?tab=skills');
-      await page
-        .getByRole('button', { name: /Skills/i })
-        .first()
-        .waitFor({ state: 'visible' });
+      // Wait for SkillsRegistry content (the "Add Skill" button) rather than the sidebar nav.
+      await page.getByRole('button', { name: 'Add Skill' }).waitFor({ state: 'visible' });
       await screenshot(page, '07-settings-skills');
     },
     page
@@ -302,7 +333,9 @@ async function main() {
   await safeStep(
     'cleanup',
     async () => {
-      if (spaceId) await deleteDemoSpace(page, spaceId);
+      if (createdSessionId) await deleteDemoSession(page, createdSessionId);
+      // Only delete the space if this run created it, so a pre-existing dev-NeoKai space survives.
+      if (demoSpace?.created && spaceId) await deleteDemoSpace(page, spaceId);
     },
     page
   );
