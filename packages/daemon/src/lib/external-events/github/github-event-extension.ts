@@ -28,6 +28,7 @@ const WEBHOOK_EVENTS = [
   'pull_request_review',
   'pull_request_review_comment',
 ];
+const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'push');
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
@@ -128,7 +129,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
       const replacingAutoSecret = Boolean(params.webhookSecret && existing?.webhookAutoRegistered);
       if (replacingAutoSecret && existing?.webhookRemoteId) {
-        await this.deleteRemoteWebhook(existing);
+        await this.deleteRemoteWebhookIfUnshared(existing);
       }
       let watchedRepo = this.repo.upsertWatchedRepo({
         spaceId: params.spaceId,
@@ -213,7 +214,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
       if (existing?.webhookRemoteId && existing.webhookAutoRegistered) {
-        await this.deleteRemoteWebhook(existing);
+        await this.deleteRemoteWebhookIfUnshared(existing);
       }
       const removed = this.repo.removeWatchedRepo(params.spaceId, params.owner, params.repo);
       await this.persistSpaceConfig(context, params.spaceId);
@@ -425,10 +426,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const webhookUrl = getConfiguredWebhookUrl();
     const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
     const reusable = this.repo.getAutoRegisteredRepo(params.owner, params.repo, webhookUrl);
+    const source = existing?.webhookAutoRegistered ? existing : reusable;
     const secret = existing?.webhookAutoRegistered
       ? generateWebhookSecret()
       : (reusable?.webhookSecret ?? generateWebhookSecret());
-    const hook = await this.configureRemoteWebhook(params, existing, reusable, webhookUrl, secret);
+    const hook = await this.configureRemoteWebhook(params, source, webhookUrl, secret);
+    const checkedAt = Date.now();
+    const configuredAt = Date.now();
+    const storedUrl = hook.config?.url ?? webhookUrl;
+    if (source?.webhookRemoteId && hook.id === source.webhookRemoteId) {
+      this.repo.updateSharedAutoHook({
+        owner: params.owner,
+        repo: params.repo,
+        webhookRemoteId: hook.id,
+        webhookSecret: secret,
+        webhookUrl: storedUrl,
+        webhookActive: hook.active,
+        webhookLastCheckedAt: checkedAt,
+        webhookConfiguredAt: configuredAt,
+      });
+    }
     return this.repo.upsertWatchedRepo({
       spaceId: params.spaceId,
       owner: params.owner,
@@ -437,12 +454,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       webhookEnabled: true,
       pollingEnabled: false,
       webhookRemoteId: hook.id,
-      webhookUrl: hook.config?.url ?? webhookUrl,
+      webhookUrl: storedUrl,
       webhookAutoRegistered: true,
       webhookActive: hook.active,
-      webhookLastCheckedAt: Date.now(),
+      webhookLastCheckedAt: checkedAt,
       webhookLastError: null,
-      webhookConfiguredAt: Date.now(),
+      webhookConfiguredAt: configuredAt,
     });
   }
 
@@ -481,12 +498,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private async configureRemoteWebhook(
     params: { owner: string; repo: string },
-    existing: GitHubWatchedRepo | null,
-    reusable: GitHubWatchedRepo | null,
+    source: GitHubWatchedRepo | null,
     webhookUrl: string,
     secret: string
   ): Promise<GitHubHookResponse> {
-    const source = existing?.webhookAutoRegistered ? existing : reusable;
     if (!source?.webhookRemoteId) {
       return await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
     }
@@ -552,6 +567,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`
     );
     return (await response.json()) as GitHubHookResponse;
+  }
+
+  private async deleteRemoteWebhookIfUnshared(watched: GitHubWatchedRepo): Promise<void> {
+    if (!watched.webhookRemoteId) return;
+    if (
+      this.repo.countAutoRegisteredHookRefs(watched.owner, watched.repo, watched.webhookRemoteId) >
+      1
+    ) {
+      return;
+    }
+    await this.deleteRemoteWebhook(watched);
   }
 
   private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
@@ -673,7 +699,7 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
     return 'GitHub webhook URL does not match this NeoKai endpoint';
   }
   const events = new Set(hook.events ?? []);
-  const missingEvents = WEBHOOK_EVENTS.filter((event) => !events.has(event));
+  const missingEvents = REQUIRED_WEBHOOK_EVENTS.filter((event) => !events.has(event));
   if (missingEvents.length > 0) {
     return `GitHub webhook is missing events: ${missingEvents.join(', ')}`;
   }

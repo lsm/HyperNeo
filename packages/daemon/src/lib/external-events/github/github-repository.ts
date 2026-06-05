@@ -256,6 +256,48 @@ export class GitHubEventExtensionRepository {
     return row ? this.rowToRepo(row) : null;
   }
 
+  countAutoRegisteredHookRefs(owner: string, repo: string, webhookRemoteId: number): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM space_github_watched_repos
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id = ?`
+      )
+      .get(owner, repo, webhookRemoteId) as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
+  updateSharedAutoHook(params: {
+    owner: string;
+    repo: string;
+    webhookRemoteId: number;
+    webhookSecret: string;
+    webhookUrl: string;
+    webhookActive: boolean | null;
+    webhookLastCheckedAt: number;
+    webhookConfiguredAt: number;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos
+         SET webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
+             webhook_last_error = NULL, webhook_configured_at = ?, updated_at = ?
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id = ?`
+      )
+      .run(
+        params.webhookSecret,
+        params.webhookUrl,
+        params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
+        params.webhookLastCheckedAt,
+        params.webhookConfiguredAt,
+        Date.now(),
+        params.owner,
+        params.repo,
+        params.webhookRemoteId
+      );
+  }
+
   getWatchedRepoById(id: string): GitHubWatchedRepo | null {
     const row = this.db.prepare(`SELECT * FROM space_github_watched_repos WHERE id = ?`).get(id) as
       | Record<string, unknown>
