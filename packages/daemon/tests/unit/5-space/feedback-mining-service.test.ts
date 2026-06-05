@@ -162,6 +162,37 @@ describe('FeedbackMiningService', () => {
     expect(reliabilityCluster!.count).toBe(2);
   });
 
+  it('preserves raw content when summary is truncated', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Long content',
+      objective: 'Test truncation round-trip',
+    });
+
+    const longContent = 'a'.repeat(300);
+
+    const item = service.captureFeedback({
+      scopeId: scope.id,
+      source: 'github_issue',
+      url: 'https://github.com/neokai/neokai/issues/99',
+      content: longContent,
+      themes: ['bug'],
+    });
+
+    expect(item.content).toBe(longContent);
+    expect(item.content.length).toBe(300);
+
+    const evidence = evolutionRepo.getEvidence(item.evidenceId!);
+    expect(evidence!.summary.endsWith('...')).toBe(true);
+    expect(evidence!.summary.length).toBeLessThan(longContent.length);
+    expect(evidence!.metadata.rawContent).toBe(longContent);
+
+    const clusters = service.clusterFeedback(scope.id);
+    const clusterItem = clusters.find((c) => c.theme === 'bug');
+    expect(clusterItem).toBeDefined();
+  });
+
   it('ignores non-feedback evidence when clustering', () => {
     const scope = evolutionRepo.createScope({
       spaceId,
