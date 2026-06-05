@@ -109,7 +109,7 @@ export class SpaceActorRegistryAdapter {
     const longHorizonActors = (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? []).map(
       longHorizonAgentActor
     );
-    return [...workerActors, ...longHorizonActors];
+    return [...longHorizonActors, ...workerActors];
   }
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {

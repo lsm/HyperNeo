@@ -301,6 +301,13 @@ function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpSer
   return Object.keys(instance._registeredTools);
 }
 
+function getRegisteredTool(server: ReturnType<typeof createSpaceAgentMcpServer>, name: string) {
+  const instance = server.instance as unknown as {
+    _registeredTools: Record<string, { inputSchema: { parse: (value: unknown) => unknown } }>;
+  };
+  return instance._registeredTools[name];
+}
+
 describe('schema evolution setup', () => {
   test('createTables works before space_agents exists', () => {
     const db = new BunDatabase(':memory:');
@@ -356,6 +363,15 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('create_agent');
     expect(names).toContain('assign_agent_to_goal');
     expect(names).toContain('create_agent_reminder');
+    expect(() =>
+      getRegisteredTool(server, 'update_agent').inputSchema.parse({
+        agent_id: 'agent-1',
+        status: 'disabled',
+      })
+    ).not.toThrow();
+    expect(() =>
+      getRegisteredTool(server, 'list_agents').inputSchema.parse({ status: 'disabled' })
+    ).not.toThrow();
   });
 
   test('registers goal tools when goalService is configured', () => {
@@ -436,6 +452,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(created.agent.handle).toBe('scout');
     expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
 
+    const workerHandleCollision = JSON.parse(
+      (await handlers.create_agent({ name: 'Coder' })).content[0].text
+    );
+    expect(workerHandleCollision.success).toBe(true);
+    expect(workerHandleCollision.agent.handle).toBe('coder-2');
+
     const slugged = JSON.parse(
       (await handlers.create_agent({ name: 'QA/Review:@Lead' })).content[0].text
     );
@@ -505,6 +527,16 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(templated.success).toBe(true);
     expect(templated.agent.templateKey).toBe('Reviewer');
     expect(templated.agent.handle).toBe('reviewer-copy');
+    const templatedWorkerHandleCollision = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Coder',
+          name: 'Coder',
+        })
+      ).content[0].text
+    );
+    expect(templatedWorkerHandleCollision.success).toBe(true);
+    expect(templatedWorkerHandleCollision.agent.handle).toBe('coder-3');
     const duplicateTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
@@ -585,6 +617,14 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       'Check earlier',
       'Check progress',
     ]);
+    ctx.db
+      .prepare(`UPDATE space_long_horizon_agent_reminders SET status = 'fired' WHERE id = ?`)
+      .run(reminder.reminder.id);
+    const completedReminders = JSON.parse(
+      (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'done' })).content[0].text
+    );
+    expect(completedReminders.reminders).toHaveLength(1);
+    expect(completedReminders.reminders[0].status).toBe('done');
 
     const longHorizonAgent = ctx.longHorizonAgentRepo.create({
       id: 'lh-tools-agent',

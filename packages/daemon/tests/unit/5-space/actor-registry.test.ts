@@ -401,6 +401,30 @@ describe('SpaceActorRegistryAdapter', () => {
     }
   });
 
+  it('preserves long-horizon handle when shared-ID handles diverge', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    longHorizonAgentRepo.create({
+      id: worker.id,
+      spaceId: space.id,
+      handle: 'long-horizon-handle',
+      displayName: 'Long Horizon Agent',
+    });
+
+    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+
+    expect(actor?.handle).toBe('@long-horizon-handle');
+    expect(actor?.roles).toEqual([
+      'actor-role:legacy-worker',
+      'actor-role:long-horizon-handle',
+      'space-agent',
+    ]);
+  });
+
   it('marks non-active long-horizon agents unroutable even with stale sessions', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

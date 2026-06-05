@@ -492,6 +492,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       ...requireLongHorizonAgentRepo()
         .listBySpaceId(spaceId)
         .map((agent) => agent.handle),
+      ...spaceAgentManager.listBySpaceId(spaceId).map((agent) => agent.handle),
       ...RESERVED_SPACE_AGENT_HANDLES,
     ]);
   }
@@ -796,7 +797,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const reminders = requireLongHorizonAgentRepo()
           .listReminders(args.agent_id)
           .filter((reminder) => !status || reminder.status === status)
-          .sort((left, right) => dueTime(left) - dueTime(right));
+          .sort((left, right) => dueTime(left) - dueTime(right))
+          .map((reminder) => ({
+            ...reminder,
+            status: reminder.status === 'fired' ? 'done' : reminder.status,
+          }));
         return jsonResult({ success: true, reminders });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2971,7 +2976,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
   const handlers = createSpaceAgentToolHandlers(config);
 
-  const agentStatusSchema = z.enum(['active', 'paused', 'archived']);
+  const agentStatusSchema = z.enum(['active', 'paused', 'disabled', 'archived']);
   const thinkingLevelSchema = z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
   const settingSourcesSchema = z.array(z.enum(['user', 'project', 'local']));
   // oxlint-disable-next-line typescript/no-explicit-any -- SDK tool list is heterogeneous by schema.
