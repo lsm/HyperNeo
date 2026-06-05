@@ -424,11 +424,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     const webhookUrl = getConfiguredWebhookUrl();
     const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    const secret = generateWebhookSecret();
-    const hook =
-      existing?.webhookRemoteId && existing.webhookAutoRegistered
-        ? await this.updateRemoteWebhook(existing, webhookUrl, secret)
-        : await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+    const reusable = this.repo.getAutoRegisteredRepo(params.owner, params.repo, webhookUrl);
+    const secret = existing?.webhookAutoRegistered
+      ? generateWebhookSecret()
+      : (reusable?.webhookSecret ?? generateWebhookSecret());
+    const hook = await this.configureRemoteWebhook(params, existing, reusable, webhookUrl, secret);
     return this.repo.upsertWatchedRepo({
       spaceId: params.spaceId,
       owner: params.owner,
@@ -477,6 +477,27 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const result = this.repo.getWatchedRepoById(watched.id);
     if (!result) throw new Error('Repository was removed during webhook check');
     return result;
+  }
+
+  private async configureRemoteWebhook(
+    params: { owner: string; repo: string },
+    existing: GitHubWatchedRepo | null,
+    reusable: GitHubWatchedRepo | null,
+    webhookUrl: string,
+    secret: string
+  ): Promise<GitHubHookResponse> {
+    const source = existing?.webhookAutoRegistered ? existing : reusable;
+    if (!source?.webhookRemoteId) {
+      return await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+    }
+    try {
+      return await this.updateRemoteWebhook(source, webhookUrl, secret);
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 404) {
+        return await this.createRemoteWebhook(params.owner, params.repo, webhookUrl, secret);
+      }
+      throw error;
+    }
   }
 
   private async createRemoteWebhook(
@@ -534,13 +555,20 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async deleteRemoteWebhook(watched: GitHubWatchedRepo): Promise<void> {
-    if (!this.githubToken) return;
-    await this.githubFetch(
-      `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`,
-      {
-        method: 'DELETE',
-      }
-    );
+    if (!this.githubToken) {
+      throw new Error('GITHUB_TOKEN is required to delete GitHub webhooks');
+    }
+    try {
+      await this.githubFetch(
+        `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`,
+        {
+          method: 'DELETE',
+        }
+      );
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 404) return;
+      throw error;
+    }
   }
 
   private async githubFetch(path: string, init: RequestInit = {}): Promise<Response> {

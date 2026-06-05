@@ -244,6 +244,18 @@ export class GitHubEventExtensionRepository {
     return row ? this.rowToRepo(row) : null;
   }
 
+  getAutoRegisteredRepo(owner: string, repo: string, webhookUrl: string): GitHubWatchedRepo | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM space_github_watched_repos
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id IS NOT NULL AND webhook_secret IS NOT NULL AND webhook_url = ?
+         ORDER BY updated_at DESC LIMIT 1`
+      )
+      .get(owner, repo, webhookUrl) as Record<string, unknown> | undefined;
+    return row ? this.rowToRepo(row) : null;
+  }
+
   getWatchedRepoById(id: string): GitHubWatchedRepo | null {
     const row = this.db.prepare(`SELECT * FROM space_github_watched_repos WHERE id = ?`).get(id) as
       | Record<string, unknown>
