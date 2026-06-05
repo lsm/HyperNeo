@@ -73,6 +73,7 @@ import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
 
 const log = new Logger('space-agent-tools');
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
@@ -486,6 +487,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }).longHorizonAgent;
   }
 
+  function uniqueLongHorizonAgentHandle(name: string): string {
+    return slugifyWithinLimit(name, [
+      ...requireLongHorizonAgentRepo()
+        .listBySpaceId(spaceId)
+        .map((agent) => agent.handle),
+      ...RESERVED_SPACE_AGENT_HANDLES,
+    ]);
+  }
+
   function sourceFromTopicPattern(topicPattern: string): string {
     return topicPattern.split('/')[0] ?? '';
   }
@@ -571,7 +581,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         const agent = requireLongHorizonAgentRepo().create({
           spaceId,
-          handle: args.name.trim(),
+          handle: uniqueLongHorizonAgentHandle(args.name),
           displayName: args.name,
           instructions: args.custom_prompt ?? args.description ?? '',
           model: args.model ?? null,
@@ -611,7 +621,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         const agent = requireLongHorizonAgentRepo().create({
           spaceId,
-          handle: name.trim(),
+          handle: uniqueLongHorizonAgentHandle(name),
           displayName: name,
           templateKey: template.name,
           instructions: template.customPrompt ?? template.description,

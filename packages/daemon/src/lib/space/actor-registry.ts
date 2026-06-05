@@ -107,7 +107,7 @@ export class SpaceActorRegistryAdapter {
       .getBySpaceId(spaceId)
       .map((agent) => agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id)));
     const longHorizonActors = (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? []).map(
-      (agent) => longHorizonAgentActor(agent, this.findLongTermAgentSession(spaceId, agent.id))
+      longHorizonAgentActor
     );
     return [...workerActors, ...longHorizonActors];
   }
@@ -202,18 +202,14 @@ function agentActor(agent: SpaceAgent, session: Session | null): ActorRef {
   };
 }
 
-function longHorizonAgentActor(agent: SpaceLongHorizonAgent, session: Session | null): ActorRef {
+function longHorizonAgentActor(agent: SpaceLongHorizonAgent): ActorRef {
   return {
     actorId: `agent:${encodeActorIdComponent(agent.id)}`,
     kind: 'agent',
     spaceId: agent.spaceId,
     handle: `@${agent.handle}`,
     roles: unique(['space-agent', routingRole(agent.handle)]),
-    status: session
-      ? statusFromSession(session)
-      : agent.status === 'archived'
-        ? 'archived'
-        : 'inactive',
+    status: agent.status === 'active' ? 'active' : 'archived',
   };
 }
 

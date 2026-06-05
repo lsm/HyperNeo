@@ -301,7 +301,7 @@ describe('SpaceActorRegistryAdapter', () => {
       spaceId: space.id,
       handle: '@mcp-created-agent',
       roles: ['actor-role:mcp-created-agent', 'space-agent'],
-      status: 'inactive',
+      status: 'active',
     });
     expect(actors).toContainEqual({
       actorId: `agent:${reservedNameAgent.id}`,
@@ -399,6 +399,41 @@ describe('SpaceActorRegistryAdapter', () => {
     for (const actor of actors) {
       if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
     }
+  });
+
+  it('marks non-active long-horizon agents unroutable even with stale sessions', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const paused = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'paused-agent',
+      displayName: 'Paused Agent',
+      status: 'paused',
+    });
+    const disabled = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'disabled-agent',
+      displayName: 'Disabled Agent',
+      status: 'disabled',
+    });
+    const archived = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'archived-agent',
+      displayName: 'Archived Agent',
+      status: 'archived',
+    });
+    for (const agent of [paused, disabled, archived]) {
+      sessionRepo.createSession(
+        makeSession(longTermAgentSessionId(space.id, agent.id), { context: { spaceId: space.id } })
+      );
+    }
+
+    expect(registry.getActor(space.id, `agent:${paused.id}`)?.status).toBe('archived');
+    expect(registry.getActor(space.id, `agent:${disabled.id}`)?.status).toBe('archived');
+    expect(registry.getActor(space.id, `agent:${archived.id}`)?.status).toBe('archived');
   });
 
   it('returns row-backed inactive coordinator when no space chat session exists', () => {

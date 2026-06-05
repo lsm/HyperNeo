@@ -328,7 +328,7 @@ export class SpaceRuntimeService {
         queueForActivation: (actor: ActorRef, message: MessageRecord) => Promise<string | null>;
       }
     | undefined {
-    if (!this.config.sessionManager || !this.config.spaceAgentInboxRepo) return undefined;
+    if (!this.config.sessionManager) return undefined;
     return {
       deliverToSession: (actor, message) => this.deliverToLongTermAgent(actor, message),
       queueForActivation: (actor, message) => this.queueLongTermAgentMessage(actor, message),
@@ -383,9 +383,13 @@ export class SpaceRuntimeService {
     message: MessageRecord
   ): Promise<string | null> {
     const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
+    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
+    if (longHorizonAgent?.spaceId === actor.spaceId) {
+      return this.deliverToLongTermAgent(actor, message);
+    }
+    if (!inboxRepo) return null;
     const sourceSessionId = sourceSessionIdFromActorId(message.senderActorId);
     const { record } = inboxRepo.enqueue({
       spaceId: message.spaceId,

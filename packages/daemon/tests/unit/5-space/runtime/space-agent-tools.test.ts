@@ -433,7 +433,14 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(created.success).toBe(true);
     expect(created.agent.status).toBe('active');
+    expect(created.agent.handle).toBe('scout');
     expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+
+    const slugged = JSON.parse(
+      (await handlers.create_agent({ name: 'QA/Review:@Lead' })).content[0].text
+    );
+    expect(slugged.success).toBe(true);
+    expect(slugged.agent.handle).toBe('qa-review-lead');
 
     const blankCreateName = JSON.parse(
       (await handlers.create_agent({ name: '  ' })).content[0].text
@@ -497,7 +504,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(templated.success).toBe(true);
     expect(templated.agent.templateKey).toBe('Reviewer');
-    expect(templated.agent.handle).toBe('Reviewer Copy');
+    expect(templated.agent.handle).toBe('reviewer-copy');
     const duplicateTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
@@ -506,8 +513,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         })
       ).content[0].text
     );
-    expect(duplicateTemplate.success).toBe(false);
-    expect(duplicateTemplate.error).toContain('UNIQUE constraint failed');
+    expect(duplicateTemplate.success).toBe(true);
+    expect(duplicateTemplate.agent.handle).toBe('reviewer-copy-2');
 
     const blankTemplateName = JSON.parse(
       (
