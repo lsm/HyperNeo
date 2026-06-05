@@ -17,6 +17,7 @@ import type {
   SpaceLongHorizonAgentEventSubscriptionStatus,
 } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import {
   KNOWN_SOURCES,
   validateGlobPattern,
@@ -318,8 +319,39 @@ export function setupSpaceLongHorizonAgentHandlers(
     | 'removeLongHorizonAgentSubscriptions'
     | 'refreshLongHorizonSubscription'
     | 'removeLongHorizonSubscription'
-  >
+  >,
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
+  const publishAgentCreated = async (agent: SpaceLongHorizonAgent): Promise<void> => {
+    await internalEventBus
+      ?.publish('spaceLongHorizonAgent.created', {
+        sessionId: `space:${agent.spaceId}`,
+        spaceId: agent.spaceId,
+        agent,
+      })
+      .catch(() => {});
+  };
+
+  const publishAgentUpdated = async (agent: SpaceLongHorizonAgent): Promise<void> => {
+    await internalEventBus
+      ?.publish('spaceLongHorizonAgent.updated', {
+        sessionId: `space:${agent.spaceId}`,
+        spaceId: agent.spaceId,
+        agent,
+      })
+      .catch(() => {});
+  };
+
+  const publishAgentDeleted = async (spaceId: string, agentId: string): Promise<void> => {
+    await internalEventBus
+      ?.publish('spaceLongHorizonAgent.deleted', {
+        sessionId: `space:${spaceId}`,
+        spaceId,
+        agentId,
+      })
+      .catch(() => {});
+  };
+
   messageHub.onRequest('spaceLongHorizonAgent.listBuiltInTemplates', async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -380,6 +412,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       toolPermissions: params.toolPermissions,
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
+    await publishAgentCreated(agent);
     return { agent };
   });
 
@@ -430,6 +463,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       const refresh = runtimeService.refreshLongHorizonAgentSubscriptions(agent.spaceId, agent.id);
       if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
     }
+    await publishAgentUpdated(agent);
     return { agent };
   });
 
@@ -442,6 +476,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
     repo.delete(params.agentId);
+    await publishAgentDeleted(existing.spaceId, existing.id);
     return { success: true };
   });
 

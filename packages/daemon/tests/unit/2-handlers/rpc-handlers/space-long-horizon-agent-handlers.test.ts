@@ -46,6 +46,7 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
   };
   let spaceAgentManager: { listBySpaceId: ReturnType<typeof mock> };
+  let internalEventBus: { publish: ReturnType<typeof mock> };
 
   beforeEach(() => {
     hubData = createMockMessageHub();
@@ -101,12 +102,14 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
     };
     spaceAgentManager = { listBySpaceId: mock(() => []) };
+    internalEventBus = { publish: mock(async () => {}) };
     setupSpaceLongHorizonAgentHandlers(
       hubData.hub,
       createMockSpaceManager(),
       repo,
       spaceAgentManager as never,
-      runtimeService
+      runtimeService,
+      internalEventBus as never
     );
   });
 
@@ -176,6 +179,25 @@ describe('Space long-horizon agent handlers', () => {
       expect(result.agent.handle).toBe('coder-2');
       expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ handle: 'coder-2' }));
     });
+
+    it('publishes created events after successful RPC creates', async () => {
+      const result = await call<{ agent: { id: string; spaceId: string; handle: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.create',
+        {
+          id: 'visible-agent',
+          spaceId: 'space-1',
+          handle: 'observer',
+          displayName: 'Observer',
+        }
+      );
+
+      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceLongHorizonAgent.created', {
+        sessionId: 'space:space-1',
+        spaceId: 'space-1',
+        agent: result.agent,
+      });
+    });
   });
 
   describe('spaceLongHorizonAgent.update', () => {
@@ -229,7 +251,7 @@ describe('Space long-horizon agent handlers', () => {
       );
     });
 
-    it('refreshes durable subscriptions after policy updates', async () => {
+    it('refreshes durable subscriptions and publishes updated events after policy updates', async () => {
       const result = await call<{ agent: { id: string; status: string } }>(
         hubData.handlers,
         'spaceLongHorizonAgent.update',
@@ -259,6 +281,11 @@ describe('Space long-horizon agent handlers', () => {
         'space-1',
         'agent-1'
       );
+      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceLongHorizonAgent.updated', {
+        sessionId: 'space:space-1',
+        spaceId: 'space-1',
+        agent: result.agent,
+      });
     });
   });
 
@@ -279,6 +306,11 @@ describe('Space long-horizon agent handlers', () => {
         'agent-1'
       );
       expect(repo.delete).toHaveBeenCalledWith('agent-1');
+      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceLongHorizonAgent.deleted', {
+        sessionId: 'space:space-1',
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+      });
     });
   });
 
