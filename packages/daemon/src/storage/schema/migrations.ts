@@ -10553,6 +10553,15 @@ function runMigration153(db: BunDatabase): void {
  * Migration 154 — Copy legacy long-horizon ownership/automation data.
  */
 export function runMigration154(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm154_legacy_long_horizon_agent_data';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
   if (
     !tableExists(db, 'space_agent_goal_assignments') ||
     !tableExists(db, 'space_agent_forge_scope_assignments') ||
@@ -10562,4 +10571,8 @@ export function runMigration154(db: BunDatabase): void {
     return;
   }
   migrateLegacyLongHorizonAgentData(db);
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
 }

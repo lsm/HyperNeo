@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { runMigration153 } from '../../../../src/storage/schema/migrations.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
 function makeDb(): BunDatabase {
@@ -42,7 +43,7 @@ function seedScope(db: BunDatabase, id: string, spaceId: string): void {
 }
 
 describe('legacy long-horizon migration', () => {
-  test('copies rows with matching long-horizon agents and reports worker-only skips', () => {
+  test('backfills legacy agents, copies rows, and reports missing-agent skips', () => {
     const db = makeDb();
     seedSpace(db, 'space-a');
     seedWorker(db, 'shared-agent', 'space-a');
@@ -57,17 +58,44 @@ describe('legacy long-horizon migration', () => {
       displayName: 'Shared Agent',
     });
 
+    db.exec('PRAGMA foreign_keys = OFF');
     db.prepare(
       `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
-       VALUES (?, ?, ?, ?), (?, ?, ?, ?)`
-    ).run('space-a', 'shared-agent', 'goal-a', 100, 'space-a', 'worker-only', 'goal-a', 101);
+       VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`
+    ).run(
+      'space-a',
+      'shared-agent',
+      'goal-a',
+      100,
+      'space-a',
+      'worker-only',
+      'goal-a',
+      101,
+      'space-a',
+      'missing-agent',
+      'goal-a',
+      102
+    );
     db.prepare(
       `INSERT INTO space_agent_forge_scope_assignments (space_id, agent_id, scope_id, created_at)
-       VALUES (?, ?, ?, ?), (?, ?, ?, ?)`
-    ).run('space-a', 'shared-agent', 'scope-a', 200, 'space-a', 'worker-only', 'scope-a', 201);
+       VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`
+    ).run(
+      'space-a',
+      'shared-agent',
+      'scope-a',
+      200,
+      'space-a',
+      'worker-only',
+      'scope-a',
+      201,
+      'space-a',
+      'missing-agent',
+      'scope-a',
+      202
+    );
     db.prepare(
       `INSERT INTO space_agent_reminders (id, space_id, agent_id, message, remind_at, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'active', ?, ?), (?, ?, ?, ?, ?, 'active', ?, ?)`
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?), (?, ?, ?, ?, ?, 'active', ?, ?), (?, ?, ?, ?, ?, 'active', ?, ?)`
     ).run(
       'reminder-shared',
       'space-a',
@@ -82,17 +110,26 @@ describe('legacy long-horizon migration', () => {
       'Check worker',
       301,
       251,
-      261
+      261,
+      'reminder-missing',
+      'space-a',
+      'missing-agent',
+      'Check missing',
+      302,
+      252,
+      262
     );
+    db.exec('PRAGMA foreign_keys = ON');
 
     const report = migrateLegacyLongHorizonAgentData(db);
 
     expect(report).toEqual({
-      copiedGoals: 1,
+      backfilledAgents: 1,
+      copiedGoals: 2,
       skippedGoals: 1,
-      copiedForgeScopes: 1,
+      copiedForgeScopes: 2,
       skippedForgeScopes: 1,
-      copiedReminders: 1,
+      copiedReminders: 2,
       skippedReminders: 1,
     });
     expect(repo.listGoals('shared-agent')).toEqual([
@@ -110,9 +147,52 @@ describe('legacy long-horizon migration', () => {
         nextRunAt: 300,
       }),
     ]);
+    expect(repo.getById('worker-only')).toEqual(
+      expect.objectContaining({
+        id: 'worker-only',
+        templateKey: 'migration.legacy_space_agent',
+      })
+    );
+    expect(repo.listGoals('worker-only')).toEqual([
+      expect.objectContaining({ agentId: 'worker-only', goalId: 'goal-a' }),
+    ]);
+    expect(repo.listForgeScopes('worker-only')).toEqual([
+      expect.objectContaining({ agentId: 'worker-only', scopeId: 'scope-a' }),
+    ]);
+    expect(repo.listReminders('worker-only')).toEqual([
+      expect.objectContaining({ id: 'reminder-worker', title: 'Check worker' }),
+    ]);
+    expect(repo.getById('missing-agent')).toBeNull();
+    db.close();
+  });
+
+  test('schema migration runs only once so deleted canonical rows stay deleted', () => {
+    const db = makeDb();
+    seedSpace(db, 'space-a');
+    seedWorker(db, 'worker-only', 'space-a');
+    seedGoal(db, 'goal-a', 'space-a');
+
+    db.prepare(
+      `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
+       VALUES (?, ?, ?, ?)`
+    ).run('space-a', 'worker-only', 'goal-a', 100);
+
+    db.prepare(`DELETE FROM migration_markers WHERE key = ?`).run(
+      'm153_legacy_long_horizon_agent_data'
+    );
+    runMigration153(db);
+
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    expect(repo.listGoals('worker-only')).toEqual([
+      expect.objectContaining({ agentId: 'worker-only', goalId: 'goal-a' }),
+    ]);
+
+    repo.deleteGoalAssignment('worker-only', 'goal-a');
     expect(repo.listGoals('worker-only')).toEqual([]);
-    expect(repo.listForgeScopes('worker-only')).toEqual([]);
-    expect(repo.listReminders('worker-only')).toEqual([]);
+
+    runMigration153(db);
+
+    expect(repo.listGoals('worker-only')).toEqual([]);
     db.close();
   });
 });
