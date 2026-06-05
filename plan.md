@@ -13,6 +13,9 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 - **Event subscription auto-conversion:** remove worker-agent auto-conversion from `subscribe_agent_event`. Legacy ambiguous subscription aliases must require an existing long-horizon agent row and return `Expected long-horizon agent id, got worker agent id.` when only a worker row exists.
 - **Task assignment ID family:** `create_standalone_task.custom_agent_id` and `reassign_task.custom_agent_id` are worker-agent IDs only because workflow execution consumes `space_agents` worker configs. Both handlers must validate `expected: 'worker'` and reject LH-only IDs with `Expected worker agent id, got long-horizon agent id.`; `create_standalone_task` must stop silently dropping `custom_agent_id` and either persist it or reject unsupported input.
 - **Legacy MCP deprecation timeline:** legacy ambiguous names (`list_agents`, `create_agent`, `assign_agent_to_goal`, etc.) remain compatibility shims for one minor release after explicit worker/LH tools ship. During that release, tool descriptions and result payloads include deprecation guidance and replacement names; next minor release removes ambiguous ownership/automation aliases and keeps only worker-safe `*_agent` aliases if still required by old workflows.
+- **Legacy alias UX:** every legacy alias returns a `deprecation` field with replacement tool name and removal target, so agent transcripts show the correction even when tool descriptions are not read.
+- **Navigation vocabulary:** top-level Space Agents page becomes **Long-horizon agents**; Space Settings / Agents becomes **Worker agents**. Sidebar/bottom-tab/page headers must not use bare "Agents" when both views can be reached.
+- **Upgrade guidance:** docs/changelog must explain that old shadow LH rows are now independent, worker-only legacy ownership/reminder rows are skipped not promoted, and operators should create LH agents then reassign goals/reminders if needed.
 - **PR decomposition:** deliver as stacked PRs targeting `dev`: PR 1 validation + migration, PR 2 MCP boundary, PR 3 UI/RPC labels/flows, PR 4 docs/tests/cleanup.
 
 ## Work items
@@ -51,7 +54,7 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 
 **Priority:** high
 
-**Description:** Replace ambiguous ownership/automation tools with explicit long-horizon variants: `assign_long_horizon_agent_to_goal`, `unassign_long_horizon_agent_from_goal`, `assign_long_horizon_agent_to_forge_scope`, `unassign_long_horizon_agent_from_forge_scope`, `create_long_horizon_agent_reminder`, `list_long_horizon_agent_reminders`, `subscribe_long_horizon_agent_event`, `unsubscribe_long_horizon_agent_event`, and `list_long_horizon_agent_event_subscriptions`. All of these must validate `expected: 'long_horizon'`, write only canonical `space_long_horizon_agent_*` tables, and reject worker-only IDs with the exact wrong-ID error. Legacy ambiguous aliases may remain as compatibility shims, but they must now require existing LH rows and emit deprecation guidance in their tool descriptions.
+**Description:** Replace ambiguous ownership/automation tools with explicit long-horizon variants: `assign_long_horizon_agent_to_goal`, `unassign_long_horizon_agent_from_goal`, `assign_long_horizon_agent_to_forge_scope`, `unassign_long_horizon_agent_from_forge_scope`, `create_long_horizon_agent_reminder`, `list_long_horizon_agent_reminders`, `subscribe_long_horizon_agent_event`, `unsubscribe_long_horizon_agent_event`, and `list_long_horizon_agent_event_subscriptions`. Work Item 3 bridge removal/gating is a hard prerequisite: these handlers must not call `ensureLongHorizonAgentInSpace` or any replacement that auto-promotes worker IDs. All of these must validate `expected: 'long_horizon'`, write only canonical `space_long_horizon_agent_*` tables, and reject worker-only IDs with the exact wrong-ID error. Legacy ambiguous aliases may remain as compatibility shims, but they must now require existing LH rows and emit deprecation guidance in descriptions and result payloads.
 
 ### 7. Repair long-horizon RPC/backend coverage for UI
 
@@ -69,13 +72,13 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 
 **Priority:** high
 
-**Description:** Update Space Settings / Agents UI (`SpaceAgentList`, `SpaceAgentEditor`, tests) to label `space_agents` rows as **Space worker agents** or **worker agents**. Copy should explain these are reusable workflow worker configurations, not persistent long-horizon role-holders. Rename buttons, empty states, delete dialogs, workflow usage text, and any user-visible labels that currently say only "Agent" in this worker-agent context.
+**Description:** Update Space Settings / Agents UI (`SpaceAgentList`, `SpaceAgentEditor`, tests) to label `space_agents` rows as **Space worker agents** or **worker agents**. Remove or relocate LH-only affordances from this worker-agent page: Managed goals, Forge scopes, Reminders and events stat cards, and copy like "Coordinator is the default long-horizon Agent" must move to the LH page or be deleted. Copy should explain worker agents are reusable workflow worker configurations, not persistent long-horizon role-holders. Rename buttons, empty states, delete dialogs, workflow usage text, navigation labels, and any user-visible labels that currently say only "Agent" in this worker-agent context.
 
 ### 10. Clarify long-horizon agent UI flows and detail pages
 
 **Priority:** high
 
-**Description:** Update the Space Agents page backed by `SpaceLongHorizonAgents` to consistently label **Space long-horizon agents**. Remove the silent worker-agent detail fallback, or if backward compatibility requires it, display a clearly labeled worker-agent reference panel with a link to worker-agent settings. Verify create/update/list/delete flows are backed only by `space_long_horizon_agents` and show goals/Forges/reminders/subscriptions as long-horizon capabilities.
+**Description:** Update the Space Agents page backed by `SpaceLongHorizonAgents` to consistently label **Space long-horizon agents** in page header, sidebar/bottom tab, empty states, cards, and detail routes. Remove the silent worker-agent detail fallback; if an old route resolves only to a worker agent, show "Worker agent found, not long-horizon agent" with a link to Worker agents settings instead of rendering it as selected LH detail. Verify create/update/list/delete flows are backed only by `space_long_horizon_agents` and show goals/Forges/reminders/subscriptions as long-horizon capabilities.
 
 ### 11. Update docs, comments, and product language sweep
 
@@ -108,7 +111,7 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 - Work Item 3 depends on Work Items 1–2 so sync removal happens after existing legacy data is copied or reported skipped.
 - Work Item 4 depends on Work Item 3 so legacy `create_agent` can be safely documented as worker-only.
 - Work Item 5 depends on Work Item 1 and can run after PR 1 lands.
-- Work Item 6 depends on Work Items 1, 2, and 5 because ownership/automation tools need canonical LH storage and explicit LH lifecycle tools.
+- Work Item 6 depends on Work Items 1, 2, 3, and 5 because ownership/automation tools need canonical LH storage, explicit LH lifecycle tools, and removal/gating of worker-to-LH auto-bridge before validation can be trusted.
 - Work Item 7 depends on Work Items 5–6 because UI RPC coverage should match final long-horizon capabilities.
 - Work Item 8 depends on Work Item 1 and must land before task tools can safely accept custom worker-agent IDs.
 - Work Items 9–10 depend on terminology from Work Item 1 and should land after MCP/RPC names are settled.
@@ -127,7 +130,10 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 
 ## Open questions
 
-- Should skipped legacy ownership/reminder rows for worker-only IDs be exposed in UI/admin diagnostics, or is migration logging plus tests sufficient?
-- Should legacy ambiguous MCP tools emit deprecation warnings in result payloads, or is description-only guidance enough for compatibility?
-- Should the Space Agents page show a read-only worker-agent cross-reference section, or should worker agents live only under Space Settings / Agents?
 - Should long-horizon MCP tools be exposed to all Space member sessions or only coordinator/long-horizon sessions?
+
+## Resolved questions
+
+- **Skipped legacy worker-only ownership/reminder rows:** expose via migration report/logging and docs; no UI/admin diagnostics in this scope.
+- **Legacy ambiguous MCP UX:** emit deprecation warnings in result payloads plus descriptions for one minor release, then remove ambiguous ownership/automation aliases in the next minor release.
+- **Worker-agent cross-reference on LH page:** do not show read-only worker-agent lists on the LH page. Worker agents live under Space Settings / Worker agents; stale worker-only detail routes show a labeled mismatch panel with a link there.
