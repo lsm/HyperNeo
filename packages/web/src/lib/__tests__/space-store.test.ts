@@ -293,6 +293,11 @@ function makeMockHub() {
       if (method === 'spaceAgent.promoteSession') return { agent: makeAgent('promoted-agent') };
       if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
       if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+      if (method === 'spaceLongHorizonAgent.create') {
+        return {
+          agent: makeLongHorizonAgent((params?.id as string | undefined) ?? 'new-lh-agent'),
+        };
+      }
       if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
       if (method === 'spaceLongHorizonAgent.listSubscriptions') return { subscriptions: [] };
       if (method === 'spaceLongHorizonAgent.createSubscription') {
@@ -1462,6 +1467,29 @@ describe('SpaceStore — CRUD methods', () => {
       id: 'a1',
       spaceId: 'space-1',
     });
+  });
+
+  it('createLongHorizonAgent upserts RPC result already appended by created event', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    const created = makeLongHorizonAgent('new-lh-agent');
+    mockHub.request.mockImplementationOnce(async () => {
+      mockEventHandlers.get('spaceLongHorizonAgent.created')?.({
+        sessionId: 'space:space-1',
+        spaceId: 'space-1',
+        agent: created,
+      });
+      return { agent: created };
+    });
+
+    await spaceStore.createLongHorizonAgent({ id: 'new-lh-agent', handle: 'new-lh-agent' });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.create', {
+      spaceId: 'space-1',
+      id: 'new-lh-agent',
+      handle: 'new-lh-agent',
+    });
+    expect(spaceStore.longHorizonAgents.value.map((agent) => agent.id)).toEqual(['new-lh-agent']);
   });
 
   it('long-horizon subscription methods call RPC with current space', async () => {

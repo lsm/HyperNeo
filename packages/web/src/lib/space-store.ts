@@ -357,6 +357,19 @@ class SpaceStore {
    *  or deleted in place. */
   readonly workflowVersions = signal<Map<string, number>>(new Map());
 
+  private upsertLongHorizonAgent(agent: SpaceLongHorizonAgent): void {
+    const idx = this.longHorizonAgents.value.findIndex((current) => current.id === agent.id);
+    if (idx >= 0) {
+      this.longHorizonAgents.value = [
+        ...this.longHorizonAgents.value.slice(0, idx),
+        agent,
+        ...this.longHorizonAgents.value.slice(idx + 1),
+      ];
+    } else {
+      this.longHorizonAgents.value = [...this.longHorizonAgents.value, agent];
+    }
+  }
+
   private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
     const withoutSameId = tasks.filter((current) => current.id !== task.id);
     if (!task.workflowRunId) {
@@ -862,8 +875,7 @@ class SpaceStore {
       agent: SpaceLongHorizonAgent;
     }>('spaceLongHorizonAgent.created', (event) => {
       if (event.spaceId === spaceId) {
-        const exists = this.longHorizonAgents.value.some((agent) => agent.id === event.agent.id);
-        if (!exists) this.longHorizonAgents.value = [...this.longHorizonAgents.value, event.agent];
+        this.upsertLongHorizonAgent(event.agent);
       }
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentCreated);
@@ -875,16 +887,7 @@ class SpaceStore {
       agent: SpaceLongHorizonAgent;
     }>('spaceLongHorizonAgent.updated', (event) => {
       if (event.spaceId === spaceId) {
-        const idx = this.longHorizonAgents.value.findIndex((agent) => agent.id === event.agent.id);
-        if (idx >= 0) {
-          this.longHorizonAgents.value = [
-            ...this.longHorizonAgents.value.slice(0, idx),
-            event.agent,
-            ...this.longHorizonAgents.value.slice(idx + 1),
-          ];
-        } else {
-          this.longHorizonAgents.value = [...this.longHorizonAgents.value, event.agent];
-        }
+        this.upsertLongHorizonAgent(event.agent);
       }
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentUpdated);
@@ -2274,7 +2277,7 @@ class SpaceStore {
       'spaceLongHorizonAgent.create',
       { spaceId, ...params }
     );
-    this.longHorizonAgents.value = [...this.longHorizonAgents.value, agent];
+    this.upsertLongHorizonAgent(agent);
     return agent;
   }
 
