@@ -528,7 +528,11 @@ function rejectGitHubEntityPatternWithoutAction(topic: string): never {
 function ensureGitHubEntityAction(topic: string, entityAction: string): void {
   if (entityAction === '*') return;
   const dotIndex = entityAction.indexOf('.');
-  if (dotIndex <= 0 || dotIndex === entityAction.length - 1) {
+  if (
+    dotIndex <= 0 ||
+    dotIndex === entityAction.length - 1 ||
+    entityAction.indexOf('.', dotIndex + 1) !== -1
+  ) {
     rejectGitHubEntityPatternWithoutAction(topic);
   }
 }
@@ -1163,8 +1167,7 @@ export class SpaceRuntime {
       .listSubscriptions(agentId)
       .filter((subscription) => subscription.spaceId === spaceId);
     for (const subscription of subscriptions) {
-      const result = this.refreshLongHorizonSubscription(spaceId, subscription.id);
-      if (!result.success) return result;
+      this.refreshLongHorizonSubscription(spaceId, subscription.id);
     }
     return { success: true };
   }

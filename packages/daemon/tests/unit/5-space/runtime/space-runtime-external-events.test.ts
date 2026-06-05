@@ -393,6 +393,51 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   });
 
+  test('skips invalid existing long-horizon subscriptions during agent refresh', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-invalid-refresh',
+      spaceId: SPACE_ID,
+      handle: 'invalid-refresh-watcher',
+      displayName: 'Invalid Refresh Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'space/task.done',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+    await eventService.publish(makeEvent({ id: 'evt-after-invalid-refresh' }));
+    expect(longHorizonMessages).toHaveLength(1);
+  });
+
   test('refreshes trie entries after long-horizon agent status changes', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({

@@ -60,7 +60,11 @@ function rejectGitHubEntityPatternWithoutAction(topic: string): never {
 function ensureGitHubEntityAction(topic: string, entityAction: string): void {
   if (entityAction === '*') return;
   const dotIndex = entityAction.indexOf('.');
-  if (dotIndex <= 0 || dotIndex === entityAction.length - 1) {
+  if (
+    dotIndex <= 0 ||
+    dotIndex === entityAction.length - 1 ||
+    entityAction.indexOf('.', dotIndex + 1) !== -1
+  ) {
     rejectGitHubEntityPatternWithoutAction(topic);
   }
 }

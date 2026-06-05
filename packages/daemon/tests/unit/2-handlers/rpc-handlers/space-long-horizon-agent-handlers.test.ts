@@ -379,6 +379,16 @@ describe('Space long-horizon agent handlers', () => {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
+          topic: 'owner/repo/pull_request/42.opened.extra',
+        })
+      ).rejects.toThrow(
+        'GitHub topic "owner/repo/pull_request/42.opened.extra" must use dotted entity actions like "pull_request/42.opened"'
+      );
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          source: 'github',
           topic: 'owner/repo/pull_request/42.opened/extra/x',
         })
       ).rejects.toThrow(
