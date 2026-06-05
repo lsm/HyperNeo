@@ -10,6 +10,7 @@ import { NodeExecutionRepository } from '../../../src/storage/repositories/node-
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
@@ -44,6 +45,7 @@ describe('SpaceActorRegistryAdapter', () => {
   let spaceRepo: SpaceRepository;
   let sessionRepo: SessionRepository;
   let spaceAgentRepo: SpaceAgentRepository;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
@@ -57,6 +59,7 @@ describe('SpaceActorRegistryAdapter', () => {
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
     spaceAgentRepo = new SpaceAgentRepository(db);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -65,6 +68,7 @@ describe('SpaceActorRegistryAdapter', () => {
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,
@@ -123,6 +127,11 @@ describe('SpaceActorRegistryAdapter', () => {
     const agent = spaceAgentRepo.create({
       spaceId: space.id,
       name: 'Long Term Agent',
+    });
+    const longHorizonAgent = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'mcp-created-agent',
+      displayName: 'MCP Created Agent',
     });
     sessionRepo.createSession(
       makeSession(longTermAgentSessionId(space.id, agent.id), {
@@ -287,6 +296,14 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'active',
     });
     expect(actors).toContainEqual({
+      actorId: `agent:${longHorizonAgent.id}`,
+      kind: 'agent',
+      spaceId: space.id,
+      handle: '@mcp-created-agent',
+      roles: ['actor-role:mcp-created-agent', 'space-agent'],
+      status: 'inactive',
+    });
+    expect(actors).toContainEqual({
       actorId: `agent:${reservedNameAgent.id}`,
       kind: 'agent',
       spaceId: space.id,
@@ -411,6 +428,7 @@ describe('SpaceActorRegistryAdapter', () => {
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,

@@ -605,25 +605,30 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
       const name = args.name ?? template.name;
-      if (name.trim() === '') {
-        return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+      try {
+        if (name.trim() === '') {
+          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+        }
+        const agent = requireLongHorizonAgentRepo().create({
+          spaceId,
+          handle: name.trim(),
+          displayName: name,
+          templateKey: template.name,
+          instructions: template.customPrompt ?? template.description,
+          model: args.model ?? null,
+          provider: args.provider ?? null,
+          thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? null,
+          toolPermissions: template.tools.length > 0 ? { tools: template.tools } : {},
+        });
+        logAudit('create_agent_from_template', {
+          template_name: args.template_name,
+          name: args.name,
+        });
+        return jsonResult({ success: true, agent });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
       }
-      const agent = requireLongHorizonAgentRepo().create({
-        spaceId,
-        handle: name.trim(),
-        displayName: name,
-        templateKey: template.name,
-        instructions: template.customPrompt ?? template.description,
-        model: args.model ?? null,
-        provider: args.provider ?? null,
-        thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? null,
-        toolPermissions: template.tools.length > 0 ? { tools: template.tools } : {},
-      });
-      logAudit('create_agent_from_template', {
-        template_name: args.template_name,
-        name: args.name,
-      });
-      return jsonResult({ success: true, agent });
     },
 
     async update_agent(
@@ -641,17 +646,27 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const agent = requireLongHorizonAgentRepo().update(args.agent_id, {
           displayName: args.name,
           status:
-            args.status === 'active' || args.status === 'paused' || args.status === 'archived'
+            args.status === 'active' ||
+            args.status === 'paused' ||
+            args.status === 'disabled' ||
+            args.status === 'archived'
               ? args.status
               : undefined,
-          instructions: args.custom_prompt ?? args.description ?? undefined,
+          instructions:
+            args.custom_prompt !== undefined
+              ? (args.custom_prompt ?? '')
+              : args.description !== undefined
+                ? (args.description ?? '')
+                : undefined,
           model: args.model,
           thinkingLevel: args.thinking_level,
           provider: args.provider,
-          settingSources: args.setting_sources ?? undefined,
+          settingSources: args.setting_sources === undefined ? undefined : args.setting_sources,
           toolPermissions:
             args.tools === null ? {} : args.tools ? { tools: args.tools } : undefined,
         });
+        const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, args.agent_id);
+        if (!refresh.success) return jsonResult({ success: false, error: refresh.error });
         logAudit('update_agent', { agent_id: args.agent_id, status: args.status });
         return jsonResult({ success: true, agent });
       } catch (err) {

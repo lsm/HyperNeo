@@ -1,9 +1,17 @@
 import type { ActorRef, ActorStatus } from '../../../../messaging/src/types';
-import type { NodeExecution, Session, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type {
+  NodeExecution,
+  Session,
+  Space,
+  SpaceAgent,
+  SpaceLongHorizonAgent,
+  SpaceWorkflow,
+} from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import type { SessionRepository } from '../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -19,6 +27,7 @@ export interface SpaceActorRegistryRepositories {
   spaceRepo: SpaceRepository;
   sessionRepo: SessionRepository;
   spaceAgentRepo: SpaceAgentRepository;
+  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   workflowRepo: SpaceWorkflowRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
   nodeExecutionRepo: NodeExecutionRepository;
@@ -94,9 +103,13 @@ export class SpaceActorRegistryAdapter {
   }
 
   private agentActors(spaceId: string): ActorRef[] {
-    return this.repos.spaceAgentRepo
+    const workerActors = this.repos.spaceAgentRepo
       .getBySpaceId(spaceId)
       .map((agent) => agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id)));
+    const longHorizonActors = (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? []).map(
+      (agent) => longHorizonAgentActor(agent, this.findLongTermAgentSession(spaceId, agent.id))
+    );
+    return [...workerActors, ...longHorizonActors];
   }
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
@@ -186,6 +199,21 @@ function agentActor(agent: SpaceAgent, session: Session | null): ActorRef {
     handle,
     roles: unique(['space-agent', routingRole(agent.handle)]),
     status: session ? statusFromSession(session) : 'inactive',
+  };
+}
+
+function longHorizonAgentActor(agent: SpaceLongHorizonAgent, session: Session | null): ActorRef {
+  return {
+    actorId: `agent:${encodeActorIdComponent(agent.id)}`,
+    kind: 'agent',
+    spaceId: agent.spaceId,
+    handle: `@${agent.handle}`,
+    roles: unique(['space-agent', routingRole(agent.handle)]),
+    status: session
+      ? statusFromSession(session)
+      : agent.status === 'archived'
+        ? 'archived'
+        : 'inactive',
   };
 }
 

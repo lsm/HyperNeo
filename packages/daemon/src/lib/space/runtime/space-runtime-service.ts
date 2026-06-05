@@ -187,6 +187,7 @@ export interface SpaceRuntimeServiceConfig {
     spaceRepo: SpaceRepository;
     sessionRepo: SessionRepository;
     spaceAgentRepo: SpaceAgentRepository;
+    longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
     workflowRepo: SpaceWorkflowRepository;
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
@@ -613,6 +614,10 @@ export class SpaceRuntimeService {
     if (!sessionManager) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
+    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
+    if (longHorizonAgent?.spaceId === actor.spaceId) {
+      return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
+    }
     const agent = this.config.spaceAgentManager.getById(agentId);
     if (!agent || agent.spaceId !== actor.spaceId) return null;
     const space = await this.config.spaceManager.getSpace(actor.spaceId);
@@ -997,8 +1002,9 @@ export class SpaceRuntimeService {
       inboxRepo.expireStale();
       for (const space of await this.config.spaceManager.listSpaces()) {
         for (const row of inboxRepo.listPendingForSpace(space.id)) {
-          const agent = this.config.spaceAgentManager.getById(row.targetAgentId);
-          if (!agent || agent.spaceId !== space.id) continue;
+          const workerAgent = this.config.spaceAgentManager.getById(row.targetAgentId);
+          const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(row.targetAgentId);
+          if (workerAgent?.spaceId !== space.id && longHorizonAgent?.spaceId !== space.id) continue;
           void this.activateLongTermAgentAndFlush(
             {
               actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,

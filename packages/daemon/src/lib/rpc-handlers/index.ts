@@ -805,6 +805,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo: spaceWorkflowRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
       nodeExecutionRepo,

@@ -452,6 +452,20 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(updated.success).toBe(true);
     expect(updated.agent.thinkingLevel).toBe('think8k');
+    expect(updated.agent.instructions).toBe('Tracks product-quality signals');
+
+    const cleared = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          custom_prompt: null,
+          setting_sources: null,
+        })
+      ).content[0].text
+    );
+    expect(cleared.success).toBe(true);
+    expect(cleared.agent.instructions).toBe('');
+    expect(cleared.agent.settingSources).toBeNull();
 
     const blankUpdateName = JSON.parse(
       (
@@ -484,6 +498,16 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(templated.success).toBe(true);
     expect(templated.agent.templateKey).toBe('Reviewer');
     expect(templated.agent.handle).toBe('Reviewer Copy');
+    const duplicateTemplate = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Reviewer',
+          name: 'Reviewer Copy',
+        })
+      ).content[0].text
+    );
+    expect(duplicateTemplate.success).toBe(false);
+    expect(duplicateTemplate.error).toContain('UNIQUE constraint failed');
 
     const blankTemplateName = JSON.parse(
       (
@@ -595,6 +619,19 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(afterRelabel.subscriptions).toHaveLength(1);
     expect(afterRelabel.subscriptions[0].filter).toEqual({ label: 'PR triage' });
+
+    const staleBeforePause = ctx.runtime['topicTrie'].lookup(
+      'github/lsm/neokai/pull_request/opened'
+    );
+    expect(staleBeforePause.some((target) => target.kind === 'long_horizon_agent')).toBe(true);
+    const pausedSubscribedAgent = JSON.parse(
+      (await handlers.pause_agent({ agent_id: longHorizonAgent.id })).content[0].text
+    );
+    expect(pausedSubscribedAgent.success).toBe(true);
+    const staleAfterPause = ctx.runtime['topicTrie'].lookup(
+      'github/lsm/neokai/pull_request/opened'
+    );
+    expect(staleAfterPause.some((target) => target.kind === 'long_horizon_agent')).toBe(false);
 
     const removed = JSON.parse(
       (
