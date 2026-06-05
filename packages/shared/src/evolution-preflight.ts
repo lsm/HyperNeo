@@ -42,6 +42,14 @@ const WORKFLOW_ARTIFACT_EVIDENCE_KINDS = new Set([
   'artifact',
   ...RUNTIME_ERROR_EVIDENCE_KINDS,
 ]);
+const PUBLIC_FEEDBACK_EVIDENCE_KINDS = new Set([
+  'public_feedback',
+  'social_post',
+  'github_issue',
+  'community_discussion',
+  'livestream_chat',
+  'dogfood_reaction',
+]);
 const HIGH_CONFIDENCE_SCORE = 70;
 const MEDIUM_CONFIDENCE_SCORE = 45;
 const MAX_SCORE = 100;
@@ -49,6 +57,7 @@ const MAX_SCORE = 100;
 const TASK_CONTEXT_SCORE = 30;
 const WORKFLOW_ARTIFACT_SCORE = 30;
 const METRIC_CONTEXT_SCORE = 15;
+const PUBLIC_FEEDBACK_SCORE = 20;
 const NON_MANUAL_SCORE = 10;
 const OUTCOME_SCORE = 8;
 const MAX_OUTCOME_SCORE = 25;
@@ -75,6 +84,7 @@ export function scoreEvolutionEvidenceQuality(
     taskResults: evidence.filter((item) => TASK_EVIDENCE_KINDS.has(item.kind)).length,
     workflowArtifacts: evidence.filter((item) => WORKFLOW_ARTIFACT_EVIDENCE_KINDS.has(item.kind))
       .length,
+    publicFeedback: evidence.filter((item) => PUBLIC_FEEDBACK_EVIDENCE_KINDS.has(item.kind)).length,
     metricSnapshots: Math.max(
       selectedMetricSnapshots,
       (input.metricSnapshotCount ?? 0) > 0 ? 1 : 0
@@ -98,6 +108,10 @@ export function scoreEvolutionEvidenceQuality(
   if (counts.metricSnapshots > 0) {
     score += METRIC_CONTEXT_SCORE;
     reasons.push('Metric snapshot context can calibrate outcomes.');
+  }
+  if (counts.publicFeedback > 0) {
+    score += PUBLIC_FEEDBACK_SCORE;
+    reasons.push('Selected evidence includes public feedback.');
   }
   if (counts.outcomes > 0) {
     score += Math.min(MAX_OUTCOME_SCORE, counts.outcomes * OUTCOME_SCORE);

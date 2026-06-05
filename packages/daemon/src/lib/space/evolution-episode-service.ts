@@ -473,7 +473,7 @@ Return ONLY valid JSON with this shape:
   "title": "short episode title",
   "outcomeSummary": "what happened and why it matters",
   "findings": [
-    { "domain": "workflow|target_artifact|neokai_product", "kind": "friction|bug|optimization|missing_capability|new_opportunity", "impact": "low|medium|high", "confidence": 0.0, "evidence": ["evidence id or summary"], "proposedAction": "specific action" }
+    { "domain": "workflow|target_artifact|neokai_product", "kind": "friction|bug|optimization|missing_capability|new_opportunity|marketing_confusion|ux_gap", "impact": "low|medium|high", "confidence": 0.0, "evidence": ["evidence id or summary"], "proposedAction": "specific action" }
   ],
   "candidateLessons": [
     { "appliesTo": ["workflow|prompt|tool|ui"], "rule": "lesson candidate", "why": "supporting reason", "confidence": 0.0 }
