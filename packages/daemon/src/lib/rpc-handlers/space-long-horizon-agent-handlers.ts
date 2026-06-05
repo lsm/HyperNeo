@@ -25,6 +25,7 @@ import {
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import { slugifyWithinLimit } from '../space/slug';
 
 function rejectSlashSeparatedGitHubAction(topic: string): never {
   throw new Error(
@@ -187,6 +188,20 @@ function validateLongHorizonSubscriptionPattern(
   return pattern;
 }
 
+function resolveLongHorizonAgentCreateHandle(
+  repo: SpaceLongHorizonAgentRepository,
+  spaceId: string,
+  agentId: string,
+  handle: string
+): string {
+  const owner = repo.getByHandle(spaceId, handle);
+  if (!owner || owner.id === agentId) return handle;
+  return slugifyWithinLimit(
+    `${handle}-events`,
+    repo.listBySpaceId(spaceId).map((agent) => agent.handle)
+  );
+}
+
 function assertNoDuplicateLongHorizonSubscriptionPattern(
   repo: SpaceLongHorizonAgentRepository,
   agentId: string,
@@ -265,10 +280,16 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.handle) throw new Error('handle is required');
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+    const handle = resolveLongHorizonAgentCreateHandle(
+      repo,
+      params.spaceId,
+      params.id ?? '',
+      params.handle
+    );
     const agent = repo.create({
       id: params.id,
       spaceId: params.spaceId,
-      handle: params.handle,
+      handle,
       displayName: params.displayName,
       templateKey: params.templateKey,
       instructions: params.instructions,

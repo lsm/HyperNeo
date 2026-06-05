@@ -51,8 +51,13 @@ describe('Space long-horizon agent handlers', () => {
     repo = {
       ensureCoordinator: mock(() => {}),
       listBySpaceId: mock(() => []),
-      create: mock((params) => ({ id: 'agent-new', ...params, spaceId: params.spaceId })),
+      create: mock((params) => ({
+        id: params.id ?? 'agent-new',
+        ...params,
+        spaceId: params.spaceId,
+      })),
       getById: mock(() => ({ id: 'agent-1', spaceId: 'space-1' })),
+      getByHandle: mock(() => null),
       update: mock((agentId, params) => ({ id: agentId, spaceId: 'space-1', ...params })),
       delete: mock(() => {}),
       listReminders: mock(() => []),
@@ -95,6 +100,38 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
     };
     setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo, runtimeService);
+  });
+
+  describe('spaceLongHorizonAgent.create', () => {
+    it('uses a non-conflicting mirror handle when requested handle belongs to another row', async () => {
+      repo.getByHandle = mock(() => ({
+        id: 'standalone-agent',
+        spaceId: 'space-1',
+        handle: 'researcher',
+      })) as SpaceLongHorizonAgentRepository['getByHandle'];
+      repo.listBySpaceId = mock(() => [
+        { id: 'standalone-agent', spaceId: 'space-1', handle: 'researcher' },
+        { id: 'existing-events-agent', spaceId: 'space-1', handle: 'researcher-events' },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      const result = await call<{ agent: { id: string; handle: string } }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.create',
+        {
+          id: 'visible-agent',
+          spaceId: 'space-1',
+          handle: 'researcher',
+          displayName: 'Researcher',
+        }
+      );
+
+      expect(result.agent).toEqual(
+        expect.objectContaining({ id: 'visible-agent', handle: 'researcher-events-2' })
+      );
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'visible-agent', handle: 'researcher-events-2' })
+      );
+    });
   });
 
   describe('spaceLongHorizonAgent.update', () => {
