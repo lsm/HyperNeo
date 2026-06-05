@@ -11,6 +11,8 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 - **Existing shared IDs:** existing auto-created LH rows may already share IDs with worker agents because `ensureLongHorizonAgentInSpace` used worker IDs. Keep those IDs in place for backward compatibility, but classify them by table membership plus expected API family. Wrong-family validation must accept an explicit expected type and reject ambiguous/shared IDs when the requested operation is not valid for that family.
 - **Shadow-row sync:** remove `syncConvertedLongHorizonAgent` from worker-agent update paths. Existing shadow LH rows become independent long-horizon agents after migration; future worker edits no longer mutate persistent LH behavior.
 - **Event subscription auto-conversion:** remove worker-agent auto-conversion from `subscribe_agent_event`. Legacy ambiguous subscription aliases must require an existing long-horizon agent row and return `Expected long-horizon agent id, got worker agent id.` when only a worker row exists.
+- **Task assignment ID family:** `create_standalone_task.custom_agent_id` and `reassign_task.custom_agent_id` are worker-agent IDs only because workflow execution consumes `space_agents` worker configs. Both handlers must validate `expected: 'worker'` and reject LH-only IDs with `Expected worker agent id, got long-horizon agent id.`; `create_standalone_task` must stop silently dropping `custom_agent_id` and either persist it or reject unsupported input.
+- **Legacy MCP deprecation timeline:** legacy ambiguous names (`list_agents`, `create_agent`, `assign_agent_to_goal`, etc.) remain compatibility shims for one minor release after explicit worker/LH tools ship. During that release, tool descriptions and result payloads include deprecation guidance and replacement names; next minor release removes ambiguous ownership/automation aliases and keeps only worker-safe `*_agent` aliases if still required by old workflows.
 - **PR decomposition:** deliver as stacked PRs targeting `dev`: PR 1 validation + migration, PR 2 MCP boundary, PR 3 UI/RPC labels/flows, PR 4 docs/tests/cleanup.
 
 ## Work items
@@ -31,13 +33,13 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 
 **Priority:** high
 
-**Description:** Delete or disable `ensureLongHorizonAgentInSpace` conversion behavior in `space-agent-tools.ts` and remove `syncConvertedLongHorizonAgent` calls from worker-agent update handlers. Existing shared-ID LH rows stay as independent long-horizon rows; future worker updates no longer sync name/status/prompt/tools into them. Add tests proving `create_worker_agent`/legacy `create_agent` creates only `space_agents`, `update_worker_agent` does not mutate `space_long_horizon_agents`, and `subscribe_*` no longer auto-creates LH rows from worker IDs.
+**Description:** Delete `ensureLongHorizonAgentInSpace` conversion behavior in `space-agent-tools.ts` (around current line 523) or gate it behind a one-time migration-only path that is not registered in live MCP tools. Remove `syncConvertedLongHorizonAgent` calls from worker-agent update handlers. Existing shared-ID LH rows stay as independent long-horizon rows; future worker updates no longer sync name/status/prompt/tools into them. Add tests proving `create_worker_agent`/legacy `create_agent` creates only `space_agents`, `update_worker_agent` does not mutate `space_long_horizon_agents`, and `subscribe_*` no longer auto-creates LH rows from worker IDs.
 
 ### 4. Add explicit worker-agent MCP aliases and correct legacy descriptions
 
 **Priority:** high
 
-**Description:** In `space-agent-tools.ts`, add worker-agent tools `list_worker_agents`, `get_worker_agent`, `create_worker_agent`, `create_worker_agent_from_template`, `update_worker_agent`, `pause_worker_agent`, and `archive_worker_agent` backed by `SpaceAgentManager`. Keep legacy `list_agents`, `get_agent`, `create_agent`, `update_agent`, etc. as compatibility aliases for worker-agent config only, with descriptions that say "legacy alias for worker-agent config" and never mention long-horizon creation. Audit logs should record whether the explicit or legacy tool name was used.
+**Description:** In `space-agent-tools.ts`, add worker-agent tools `list_worker_agents`, `get_worker_agent`, `create_worker_agent`, `create_worker_agent_from_template`, `update_worker_agent`, `pause_worker_agent`, and `archive_worker_agent` backed by `SpaceAgentManager`. Keep legacy `list_agents`, `get_agent`, `create_agent`, `update_agent`, etc. as compatibility aliases for worker-agent config only for one minor release, with descriptions and result payload warnings that say "deprecated legacy alias for worker-agent config; use create_worker_agent/list_worker_agents/etc." and never mention long-horizon creation. Remove ambiguous ownership/automation aliases in the next minor release after explicit LH tools ship. Audit logs should record whether the explicit or legacy tool name was used.
 
 ### 5. Add explicit long-horizon MCP lifecycle tools
 
@@ -55,33 +57,39 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 
 **Priority:** normal
 
-**Description:** Expand `spaceLongHorizonAgent.*` RPC handlers to cover missing goal assignment, Forge-scope assignment, reminders, event subscriptions, and list helpers needed by the UI. Reuse canonical repository methods and the agent-family resolver, with consistent space ownership checks and runtime subscription refresh/remove paths. Keep RPC namespaces distinct: `spaceAgent.*` remains worker-agent config, `spaceLongHorizonAgent.*` remains persistent LH agents.
+**Description:** Expand `spaceLongHorizonAgent.*` RPC handlers to cover missing goal assignment, Forge-scope assignment, reminders, event subscriptions, and list helpers needed by the UI. Reuse canonical repository methods and the agent-family resolver, with consistent space ownership checks and runtime subscription refresh/remove paths. Add an acceptance criterion that all RPC handlers for both families (`spaceAgent.*` and `spaceLongHorizonAgent.*`) enforce `spaceId` ownership on get/update/delete/list and cannot operate cross-space by ID alone. Keep RPC namespaces distinct: `spaceAgent.*` remains worker-agent config, `spaceLongHorizonAgent.*` remains persistent LH agents.
 
-### 8. Rename worker-agent UI copy and settings affordances
+### 8. Fix task custom-agent assignment ID validation
+
+**Priority:** high
+
+**Description:** Update `create_standalone_task` and `reassign_task` in Space MCP handlers so `custom_agent_id` means worker-agent ID only. `reassign_task` must reject LH-only IDs with `Expected worker agent id, got long-horizon agent id.` and preserve existing worker-agent behavior. `create_standalone_task` currently accepts `custom_agent_id` in schema but drops it in the handler; fix by either persisting it through `SpaceTaskManager.createTask` if supported or returning a clear unsupported-field validation error until support exists. Add tests for worker ID accepted, LH ID rejected, missing ID rejected, and no silent drop.
+
+### 9. Rename worker-agent UI copy and settings affordances
 
 **Priority:** high
 
 **Description:** Update Space Settings / Agents UI (`SpaceAgentList`, `SpaceAgentEditor`, tests) to label `space_agents` rows as **Space worker agents** or **worker agents**. Copy should explain these are reusable workflow worker configurations, not persistent long-horizon role-holders. Rename buttons, empty states, delete dialogs, workflow usage text, and any user-visible labels that currently say only "Agent" in this worker-agent context.
 
-### 9. Clarify long-horizon agent UI flows and detail pages
+### 10. Clarify long-horizon agent UI flows and detail pages
 
 **Priority:** high
 
 **Description:** Update the Space Agents page backed by `SpaceLongHorizonAgents` to consistently label **Space long-horizon agents**. Remove the silent worker-agent detail fallback, or if backward compatibility requires it, display a clearly labeled worker-agent reference panel with a link to worker-agent settings. Verify create/update/list/delete flows are backed only by `space_long_horizon_agents` and show goals/Forges/reminders/subscriptions as long-horizon capabilities.
 
-### 10. Update docs, comments, and product language sweep
+### 11. Update docs, comments, and product language sweep
 
 **Priority:** normal
 
 **Description:** Sweep docs, comments, tool descriptions, prompt snippets, and changelog-adjacent copy for `space_agents`, "Space Agents", `create_agent`, "custom agent", and long-horizon references. Update user-facing/operator-facing wording and add a developer note explaining: worker agents = workflow configuration rows; long-horizon agents = persistent role-holders with goals/Forges/reminders/subscriptions. Include migration notes covering existing shared-ID LH rows becoming independent and legacy ownership rows copied/skipped.
 
-### 11. Add boundary and migration tests
+### 12. Add boundary and migration tests
 
 **Priority:** high
 
 **Description:** Add daemon unit tests for the resolver, migration copy/skip behavior, worker-agent MCP aliases, long-horizon MCP lifecycle tools, wrong-ID validation for goal/scope/reminder/subscription tools, and removal of auto-conversion/sync paths. Update existing `space-agent-tools.test.ts`, `space-agent-repository.test.ts`, `space-long-horizon-agent-repository.test.ts`, and `space-long-horizon-agent-handlers.test.ts`. Add/adjust web component tests for worker-agent settings labels and long-horizon page labels.
 
-### 12. Run focused verification and compatibility checks
+### 13. Run focused verification and compatibility checks
 
 **Priority:** high
 
@@ -91,8 +99,8 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 
 1. **PR 1 — validation + migration:** Work Items 1–3 and migration tests. Establish resolver, canonical storage migration, and removal of sync/auto-conversion coupling.
 2. **PR 2 — MCP boundary:** Work Items 4–6 and MCP tests. Add explicit worker/LH tool names, preserve legacy worker aliases, and enforce LH-only ownership/automation tools.
-3. **PR 3 — RPC + UI labels/flows:** Work Items 7–9 and web/RPC tests. Repair LH UI backend coverage and make both UI areas unambiguous.
-4. **PR 4 — docs + cleanup + verification:** Work Items 10–12. Complete docs, comments, migration notes, compatibility sweep, and final focused checks.
+3. **PR 3 — RPC/task assignment/UI labels/flows:** Work Items 7–10 and web/RPC tests. Repair LH UI backend coverage, enforce task assignment ID family, and make both UI areas unambiguous.
+4. **PR 4 — docs + cleanup + verification:** Work Items 11–13. Complete docs, comments, migration notes, compatibility sweep, and final focused checks.
 
 ## Dependencies
 
@@ -102,10 +110,11 @@ Clarify and enforce the product/API boundary between workflow-usable **Space wor
 - Work Item 5 depends on Work Item 1 and can run after PR 1 lands.
 - Work Item 6 depends on Work Items 1, 2, and 5 because ownership/automation tools need canonical LH storage and explicit LH lifecycle tools.
 - Work Item 7 depends on Work Items 5–6 because UI RPC coverage should match final long-horizon capabilities.
-- Work Items 8–9 depend on terminology from Work Item 1 and should land after MCP/RPC names are settled.
-- Work Item 10 depends on Work Items 3–9 so docs reflect final behavior.
-- Work Item 11 should be developed alongside Work Items 1–9 but completed before each PR merges.
-- Work Item 12 depends on Work Items 1–11.
+- Work Item 8 depends on Work Item 1 and must land before task tools can safely accept custom worker-agent IDs.
+- Work Items 9–10 depend on terminology from Work Item 1 and should land after MCP/RPC names are settled.
+- Work Item 11 depends on Work Items 3–10 so docs reflect final behavior.
+- Work Item 12 should be developed alongside Work Items 1–10 but completed before each PR merges.
+- Work Item 13 depends on Work Items 1–12.
 
 ## Out of scope
 
