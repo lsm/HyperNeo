@@ -834,6 +834,7 @@ describe('SpaceExternalEventsSettings', () => {
             ...repoResult.repositories[0],
             webhookRemoteId: 123,
             webhookActive: false,
+            webhookLastError: 'GitHub webhook URL does not match this NeoKai endpoint',
           },
         });
       }
@@ -845,7 +846,9 @@ describe('SpaceExternalEventsSettings', () => {
     fireEvent.click(getByText('Check webhook'));
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalledWith('GitHub webhook is inactive for acme/widgets');
+      expect(mockToastError).toHaveBeenCalledWith(
+        'GitHub webhook is inactive for acme/widgets: GitHub webhook URL does not match this NeoKai endpoint'
+      );
     });
     expect(mockToastSuccess).not.toHaveBeenCalledWith('GitHub webhook is active for acme/widgets');
   });

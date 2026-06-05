@@ -153,6 +153,17 @@ export class GitHubEventExtensionRepository {
     return this.getWatchedRepoById(id)!;
   }
 
+  clearWebhookRegistration(id: string): void {
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos
+         SET webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
+             webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(Date.now(), id);
+  }
+
   setRepoEnabled(spaceId: string, enabled: boolean): number {
     const now = Date.now();
     this.db

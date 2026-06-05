@@ -434,7 +434,11 @@ export function SpaceExternalEventsSettings({
       );
       if (!isActionCurrent(actionSpaceId)) return;
       if (result.watchedRepo?.webhookActive === false) {
-        toast.error(`GitHub webhook is inactive for ${repo.owner}/${repo.repo}`);
+        toast.error(
+          result.watchedRepo.webhookLastError
+            ? `GitHub webhook is inactive for ${repo.owner}/${repo.repo}: ${result.watchedRepo.webhookLastError}`
+            : `GitHub webhook is inactive for ${repo.owner}/${repo.repo}`
+        );
       } else {
         toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
       }
