@@ -2,9 +2,11 @@ import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import {
   navSectionSignal,
+  currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceViewModeSignal,
   currentSpaceTaskIdSignal,
+  currentSpaceSessionIdSignal,
   type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -172,11 +174,13 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
   const navSection = navSectionSignal.value;
   const spaceId = currentSpaceIdSignal.value;
+  const canonicalSpaceId = currentSpaceCanonicalIdSignal.value;
 
   const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 
   const spaceViewMode = currentSpaceViewModeSignal.value;
   const spaceTaskId = currentSpaceTaskIdSignal.value;
+  const spaceSessionId = currentSpaceSessionIdSignal.value;
 
   const tasks = spaceStore.tasks.value;
   const actionCount = tasks.filter(isActionRequired).length;
@@ -216,11 +220,23 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 
   const isTabActive = (id: TabItem['id']): boolean => {
     if (isInSpaceContext) {
+      const routeSpaceIds = [spaceId, canonicalSpaceId].filter((id): id is string => id !== null);
+      const isSpaceAgentSession = routeSpaceIds.some((id) => spaceSessionId === `space:chat:${id}`);
+      const isLongHorizonAgentSession =
+        spaceSessionId !== null &&
+        spaceStore.longHorizonAgents.value.some((agent) => agent.sessionId === spaceSessionId);
+
       if (id === 'space-settings') return spaceViewMode === 'configure';
-      if (id === 'space-sessions') return spaceViewMode === 'sessions';
-      if (id === 'space-agent') return spaceViewMode === 'agents';
-      if (id === 'space-tasks') return spaceViewMode === 'tasks' && spaceTaskId === null;
-      if (id === 'space-overview') return spaceViewMode === 'overview' && spaceTaskId === null;
+      if (id === 'space-sessions')
+        return (
+          spaceViewMode === 'sessions' ||
+          (!!spaceSessionId && !isSpaceAgentSession && !isLongHorizonAgentSession)
+        );
+      if (id === 'space-agent')
+        return spaceViewMode === 'agents' || isSpaceAgentSession || isLongHorizonAgentSession;
+      if (id === 'space-tasks') return spaceViewMode === 'tasks' || spaceTaskId !== null;
+      if (id === 'space-overview')
+        return spaceViewMode === 'overview' && spaceTaskId === null && spaceSessionId === null;
     }
     return navSection === id;
   };
