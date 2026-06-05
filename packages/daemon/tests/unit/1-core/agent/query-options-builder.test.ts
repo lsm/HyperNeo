@@ -168,69 +168,42 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('provider settings', () => {
-    it('should use the actual context window for full-size Codex models', () => {
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.5')).toEqual({
-        autoCompactWindow: 272_000,
+    it('should disable SDK auto-compaction for Codex bridge (non-Anthropic)', () => {
+      expect(buildProviderSettings('anthropic-codex')).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
       });
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.4')).toEqual({
-        autoCompactWindow: 272_000,
-      });
-    });
-
-    it('should use the actual context window for mini Codex models', () => {
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.4-mini')).toEqual({
-        autoCompactWindow: 128_000,
-      });
-      expect(buildProviderSettings('anthropic-codex', 'gpt-5.1-codex-mini')).toEqual({
-        autoCompactWindow: 128_000,
-      });
-    });
-
-    it('should resolve Codex aliases before applying SDK auto-compaction settings', () => {
-      expect(buildProviderSettings('anthropic-codex', 'codex-latest')).toEqual({
-        autoCompactWindow: 272_000,
-      });
-      expect(buildProviderSettings('anthropic-codex', 'codex-mini')).toEqual({
-        autoCompactWindow: 128_000,
-      });
-    });
-
-    it('should fail explicitly when Codex model metadata is unknown', () => {
-      expect(() => buildProviderSettings('anthropic-codex', 'gpt-unknown')).toThrow(
-        'Unknown Codex model auto-compact window: gpt-unknown'
-      );
     });
 
     it('should not override SDK auto-compaction settings for native anthropic provider', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
     });
 
-    it('should not override SDK auto-compaction settings when no contextWindow is known', () => {
-      expect(buildProviderSettings('glm', 'glm-5')).toBeUndefined();
-      expect(buildProviderSettings('openrouter', 'deepseek-v4')).toBeUndefined();
-    });
-
-    it('should set autoCompactWindow for non-native providers when contextWindow is known', () => {
-      expect(buildProviderSettings('openrouter', 'deepseek-v4', 1_000_000)).toEqual({
-        autoCompactWindow: 1_000_000,
+    it('should disable SDK auto-compaction for all non-native providers', () => {
+      expect(buildProviderSettings('openrouter')).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
       });
-      expect(buildProviderSettings('glm', 'glm-5', 128_000)).toEqual({
-        autoCompactWindow: 128_000,
+      expect(buildProviderSettings('glm')).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
       });
-      expect(buildProviderSettings('ollama', 'llama3', 128_000)).toEqual({
-        autoCompactWindow: 128_000,
+      expect(buildProviderSettings('ollama')).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+      });
+      expect(buildProviderSettings('kimi')).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
       });
     });
 
     it('should still return undefined for anthropic-copilot (native Anthropic API)', () => {
-      // anthropic-copilot routes to Anthropic API — SDK knows the context window
-      expect(
-        buildProviderSettings('anthropic-copilot', 'claude-sonnet-4.6', 200_000)
-      ).toBeUndefined();
+      expect(buildProviderSettings('anthropic-copilot')).toBeUndefined();
     });
   });
 
-  describe('auto-compact window via build()', () => {
+  describe('auto-compact settings via build()', () => {
     function registerOpenRouterProvider(): void {
       resetProviderRegistry();
       const registry = getProviderRegistry();
@@ -256,7 +229,7 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('should set autoCompactWindow for OpenRouter 1M context model', async () => {
+    it('should disable SDK auto-compaction for OpenRouter models', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -277,45 +250,27 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'deepseek-v4';
       const options = await builder.build();
-      expect(options.settings).toEqual({ autoCompactWindow: 1_000_000 });
+      expect(options.settings).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+      });
     });
 
-    it('should set autoCompactWindow for OpenRouter model with 128k context window', async () => {
-      registerOpenRouterProvider();
-      setModelsCache(
-        new Map([
-          [
-            'global',
-            [
-              {
-                id: 'qwen-2.5-72b',
-                name: 'Qwen 2.5 72B',
-                provider: 'openrouter',
-                contextWindow: 128_000,
-                available: true,
-              },
-            ],
-          ],
-        ])
-      );
-      mockSession.config.provider = 'openrouter';
-      mockSession.config.model = 'qwen-2.5-72b';
-      const options = await builder.build();
-      expect(options.settings).toEqual({ autoCompactWindow: 128_000 });
-    });
-
-    it('should leave settings undefined for native anthropic provider', async () => {
-      // Default mockSession uses anthropic provider
-      const options = await builder.build();
-      expect(options.settings).toBeUndefined();
-    });
-
-    it('should leave settings undefined when model context window is unknown', async () => {
+    it('should disable SDK auto-compaction for OpenRouter even when model is unknown', async () => {
       registerOpenRouterProvider();
       // Empty cache — model not found
       setModelsCache(new Map());
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
+      const options = await builder.build();
+      expect(options.settings).toEqual({
+        autoCompactEnabled: false,
+        autoCompactWindow: Number.MAX_SAFE_INTEGER,
+      });
+    });
+
+    it('should leave settings undefined for native anthropic provider', async () => {
+      // Default mockSession uses anthropic provider
       const options = await builder.build();
       expect(options.settings).toBeUndefined();
     });
