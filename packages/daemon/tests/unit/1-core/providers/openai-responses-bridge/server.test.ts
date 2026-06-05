@@ -1856,7 +1856,10 @@ describe('openai-responses-bridge server', () => {
 
     expect(resp.status).toBe(200);
     expect(capturedBody?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
-    expect(capturedBody?.include).toEqual(['reasoning.encrypted_content']);
+    expect(capturedBody?.include).toEqual([
+      'reasoning.encrypted_content',
+      'reasoning.summary_text',
+    ]);
   });
 
   it('maps think32k to xhigh on frontier models that support it', async () => {
@@ -2356,7 +2359,7 @@ describe('openai-responses-bridge server', () => {
     // Second request should include the cached reasoning item
     const secondBody = capturedBodies[1];
     expect(secondBody?.reasoning).toBeUndefined();
-    expect(secondBody?.include).toEqual(['reasoning.encrypted_content']);
+    expect(secondBody?.include).toEqual(['reasoning.encrypted_content', 'reasoning.summary_text']);
     const secondInput = secondBody?.input as Array<Record<string, unknown>>;
     expect(
       secondInput.some(

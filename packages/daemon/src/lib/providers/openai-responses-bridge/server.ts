@@ -603,8 +603,12 @@ function buildResponsesRequest(
     stream: true,
     ...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
     ...(reasoning ? { reasoning } : {}),
+    // encrypted_content is required for multi-turn stateless continuation.
+    // summary_text is required for the API to stream reasoning summary deltas
+    // (response.reasoning_summary_text.delta) that the bridge translates into
+    // Anthropic thinking SSE blocks. Without it, thinking blocks never appear.
     ...(reasoning || (reasoningItems && reasoningItems.length > 0)
-      ? { include: ['reasoning.encrypted_content'] }
+      ? { include: ['reasoning.encrypted_content', 'reasoning.summary_text'] }
       : {}),
   };
 }
