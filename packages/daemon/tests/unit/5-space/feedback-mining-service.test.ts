@@ -193,6 +193,64 @@ describe('FeedbackMiningService', () => {
     expect(clusterItem).toBeDefined();
   });
 
+  it('normalizes empty themes to unclear', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Empty themes',
+      objective: 'Test empty theme normalization',
+    });
+
+    const item = service.captureFeedback({
+      scopeId: scope.id,
+      source: 'social_post',
+      content: 'Some vague complaint',
+      themes: [],
+    });
+
+    expect(item.themes).toEqual(['unclear']);
+
+    const clusters = service.clusterFeedback(scope.id);
+    const unclearCluster = clusters.find((c) => c.theme === 'unclear');
+    expect(unclearCluster).toBeDefined();
+    expect(unclearCluster!.count).toBe(1);
+  });
+
+  it('does not let metadata override canonical fields', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Metadata override',
+      objective: 'Test canonical field authority',
+    });
+
+    const item = service.captureFeedback({
+      scopeId: scope.id,
+      source: 'github_issue',
+      content: 'Bug report',
+      themes: ['bug'],
+      sentiment: 'negative',
+      urgency: 'high',
+      metadata: {
+        source: 'social_post',
+        themes: ['ux_gap'],
+        sentiment: 'positive',
+        urgency: 'low',
+      },
+    });
+
+    expect(item.source).toBe('github_issue');
+    expect(item.themes).toEqual(['bug']);
+    expect(item.sentiment).toBe('negative');
+    expect(item.urgency).toBe('high');
+
+    const evidence = evolutionRepo.getEvidence(item.evidenceId!);
+    expect(evidence!.metadata.source).toBe('github_issue');
+    expect(evidence!.metadata.themes).toEqual(['bug']);
+    expect(evidence!.metadata.sentiment).toBe('negative');
+    expect(evidence!.metadata.urgency).toBe('high');
+  });
+
   it('ignores non-feedback evidence when clustering', () => {
     const scope = evolutionRepo.createScope({
       spaceId,

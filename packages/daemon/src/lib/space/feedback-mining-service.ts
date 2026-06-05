@@ -34,7 +34,7 @@ export class FeedbackMiningService {
 
   captureFeedback(params: CaptureFeedbackParams): FeedbackItem {
     const now = Date.now();
-    const themes = params.themes ?? ['unclear'];
+    const themes = params.themes && params.themes.length > 0 ? params.themes : ['unclear'];
     const sentiment = params.sentiment ?? DEFAULT_SENTIMENT;
     const urgency = params.urgency ?? DEFAULT_URGENCY;
 
@@ -45,6 +45,7 @@ export class FeedbackMiningService {
       sourceId: params.url ?? null,
       summary: buildFeedbackSummary(params),
       metadata: {
+        ...params.metadata,
         source: params.source,
         url: params.url ?? null,
         author: params.author ?? null,
@@ -53,7 +54,6 @@ export class FeedbackMiningService {
         themes,
         sentiment,
         urgency,
-        ...params.metadata,
       },
       createdAt: now,
     });

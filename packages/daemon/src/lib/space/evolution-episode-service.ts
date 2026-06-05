@@ -48,6 +48,8 @@ const FINDING_KINDS: EvolutionFindingKind[] = [
   'optimization',
   'missing_capability',
   'new_opportunity',
+  'marketing_confusion',
+  'ux_gap',
 ];
 const IMPACTS: EvolutionImpact[] = ['low', 'medium', 'high'];
 const LESSON_STATUSES: EvolutionLessonStatus[] = ['candidate', 'active', 'dismissed'];
