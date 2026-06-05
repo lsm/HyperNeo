@@ -945,4 +945,253 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // refreshToken() — stale credential clearing
+  // -------------------------------------------------------------------------
+
+  describe('refreshToken() stale credential clearing', () => {
+    let tmpDir: string;
+    let fetchSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(path.join(os.tmpdir(), 'neokai-refresh-test-'));
+      fetchSpy = spyOn(globalThis, 'fetch').mockRejectedValue(
+        new Error('fetch not mocked for this test')
+      );
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('clears stale credentials when token refresh fails with invalid_grant', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'invalid-refresh-token',
+        expires: Date.now() - 60_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"invalid_grant"}', {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      // Credentials should be cleared so the user is prompted to re-authenticate
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(false);
+      expect(await p.getApiKey()).toBeUndefined();
+      p.stopAllBridgeServers();
+    });
+
+    it('clears stale credentials when token refresh returns 400', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'revoked-refresh-token',
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"invalid_request"}', {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(false);
+      p.stopAllBridgeServers();
+    });
+
+    it('preserves credentials on transient refresh failures (network error)', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'valid-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      // Credentials should NOT be cleared on transient failures
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(true);
+      expect(await p.getApiKey()).toBe('valid-access-token');
+      p.stopAllBridgeServers();
+    });
+
+    it('preserves credentials on transient refresh failures (5xx)', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'valid-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"internal_error"}', {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(true);
+      p.stopAllBridgeServers();
+    });
+
+    it('preserves credentials on rate-limit refresh failures (429)', async () => {
+      const neokaiDir = path.join(tmpDir, 'neokai');
+      writeNeokaiAuth(neokaiDir, {
+        type: 'oauth',
+        access: 'valid-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response('{"error":"rate_limit"}', {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+      const refreshed = await p.refreshToken();
+
+      expect(refreshed).toBe(false);
+      const authStatus = await p.getAuthStatus();
+      expect(authStatus.isAuthenticated).toBe(true);
+      p.stopAllBridgeServers();
+    });
+  });
+
+  describe('setSessionThinkingConfig', () => {
+    function mockUpstreamFetch(capturedRef: { body?: Record<string, unknown> }) {
+      const originalFetch = globalThis.fetch.bind(globalThis);
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if (
+          typeof url === 'string' &&
+          (url.includes('api.openai.com') || url.includes('chatgpt.com'))
+        ) {
+          capturedRef.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return new Response(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              response: { usage: { input_tokens: 5, output_tokens: 1 }, output: [] },
+            })}\n\n`,
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+        return originalFetch(url, init);
+      });
+      return fetchSpy;
+    }
+
+    it('propagates thinking config to the active bridge server via side-channel', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-123' });
+
+      p.setSessionThinkingConfig('sess-123', 'think32k');
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toEqual({ effort: 'xhigh', summary: 'auto' });
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+
+    it('finds env-var-keyed bridge (cachedBridgeAuth is unset)', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-env-key' });
+      const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-env' });
+
+      p.setSessionThinkingConfig('sess-env', 'think16k');
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+
+    it('is a no-op when no bridge server is active', () => {
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      expect(() => p.setSessionThinkingConfig('sess-456', 'think16k')).not.toThrow();
+    });
+
+    it('clears config when thinking level is off or undefined', async () => {
+      const captured = { body: undefined as Record<string, unknown> | undefined };
+      const fetchSpy = mockUpstreamFetch(captured);
+      const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-789' });
+
+      p.setSessionThinkingConfig('sess-789', 'think32k');
+      p.setSessionThinkingConfig('sess-789', 'off');
+      p.setSessionThinkingConfig('sess-789', undefined);
+
+      const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Say hi.' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      expect(captured.body?.reasoning).toBeUndefined();
+
+      fetchSpy.mockRestore();
+      p.stopAllBridgeServers();
+    });
+  });
 });

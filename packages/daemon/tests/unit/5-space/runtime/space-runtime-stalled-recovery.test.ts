@@ -99,7 +99,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function buildLinearWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
-  nodes: Array<{ id: string; name: string; agentId: string }>,
+  nodes: Array<{ id: string; name: string; agentId: string; requireCodexApproval?: boolean }>,
   opts: {
     channels?: SpaceWorkflow['channels'];
     gates?: SpaceWorkflow['gates'];
@@ -1656,6 +1656,62 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Feature gate blocked handoff',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+      db.prepare(
+        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
+      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      expect(findExec(run.id, STEP_B)).toBeUndefined();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+    });
+
+    test('wildcard feature-backed gate uses recovered source node during restart recovery', async () => {
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT, requireCodexApproval: true },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'wildcard-to-review', from: '*', to: 'Review', gateId: 'feature-ready' },
+          ],
+          gates: [
+            {
+              id: 'feature-ready',
+              resetOnCycle: false,
+              fields: [
+                {
+                  name: 'approved',
+                  type: 'boolean',
+                  writers: [],
+                  check: { op: '==', value: true },
+                },
+              ],
+            },
+          ],
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Wildcard feature gate blocked handoff',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Wildcard feature gate blocked handoff',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,

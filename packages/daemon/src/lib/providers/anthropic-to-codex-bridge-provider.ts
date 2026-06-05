@@ -30,6 +30,7 @@ import type {
   ProviderOAuthFlowData,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
+import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import {
   type OpenAIResponsesBridgeAuth,
   type OpenAIResponsesBridgeServer,
@@ -88,15 +89,24 @@ export interface OpenAIOAuthToken {
   id_token?: string;
 }
 
+export type CodexRefreshResult =
+  | { ok: true; token: OpenAIOAuthToken }
+  | { ok: false; definitive: boolean };
+
 /**
  * Exchange a Codex/OpenAI OAuth refresh token for a new access token.
- * Returns the full token response, or null if the exchange fails for any reason.
+ *
+ * Returns `{ ok: true, token }` on success. On failure returns `{ ok: false,
+ * definitive }` where `definitive` is `true` when the refresh token itself is
+ * invalid/expired/revoked (4xx errors) and `false` for transient failures
+ * (network errors, timeouts, 5xx, 429).
+ *
  * Exported for provider auth discovery and online test setup helpers.
  */
 export async function refreshCodexToken(
   refreshToken: string,
   timeoutMs = 5000
-): Promise<OpenAIOAuthToken | null> {
+): Promise<CodexRefreshResult> {
   try {
     const response = await fetch(OAUTH_CONFIG.tokenUrl, {
       method: 'POST',
@@ -109,24 +119,30 @@ export async function refreshCodexToken(
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
-      logger.warn(
-        `AnthropicToCodexBridgeProvider: token refresh HTTP ${response.status}: ${await response.text()}`
-      );
-      return null;
+      const body = await response.text();
+      logger.warn(`AnthropicToCodexBridgeProvider: token refresh HTTP ${response.status}: ${body}`);
+      // 4xx (except 408/429) means the refresh token is invalid — definitive.
+      // 5xx and 429 are transient.
+      const definitive =
+        response.status >= 400 &&
+        response.status < 500 &&
+        response.status !== 408 &&
+        response.status !== 429;
+      return { ok: false, definitive };
     }
     const parsed = (await response.json()) as OpenAIOAuthToken;
     if (!parsed.access_token || typeof parsed.access_token !== 'string') {
       logger.warn('AnthropicToCodexBridgeProvider: token refresh response missing access_token');
-      return null;
+      return { ok: false, definitive: true };
     }
     if (typeof parsed.expires_in !== 'number') {
       logger.warn('AnthropicToCodexBridgeProvider: token refresh response missing expires_in');
-      return null;
+      return { ok: false, definitive: true };
     }
-    return parsed;
+    return { ok: true, token: parsed };
   } catch (error) {
     logger.warn('AnthropicToCodexBridgeProvider: token refresh network error:', error);
-    return null;
+    return { ok: false, definitive: false };
   }
 }
 
@@ -374,6 +390,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     ].join(':');
   }
 
+  /**
+   * Resolve the active bridge auth using the same precedence as buildSdkConfig:
+   *   1. OPENAI_API_KEY env var
+   *   2. Cached credentials file
+   *   3. cachedBridgeAuth (from prior OAuth flow)
+   */
+  private resolveBridgeAuth(): OpenAIResponsesBridgeAuth | undefined {
+    const envAuth = this.env.OPENAI_API_KEY
+      ? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
+      : undefined;
+    const fileAuth = this.cachedCredentials ? this.toBridgeAuth(this.cachedCredentials) : undefined;
+    return envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
+  }
+
   private modelAliases(): Record<string, string> {
     return Object.fromEntries(
       ANTHROPIC_CODEX_MODELS.flatMap((model) =>
@@ -398,21 +428,30 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       return undefined;
     }
 
-    const tokens = await this.tryRefreshCodexToken(credentials.refresh);
-    if (!tokens) {
-      logger.warn('AnthropicToCodexBridgeProvider: OAuth token refresh failed');
+    const result = await this.tryRefreshCodexToken(credentials.refresh);
+    if (!result.ok) {
+      if (result.definitive) {
+        logger.warn(
+          'AnthropicToCodexBridgeProvider: OAuth token refresh failed — clearing stale credentials'
+        );
+        await this.logout();
+      } else {
+        logger.warn(
+          'AnthropicToCodexBridgeProvider: OAuth token refresh transient failure — preserving credentials'
+        );
+      }
       return undefined;
     }
 
     const newCreds: StoredCredentials = {
       type: 'oauth',
-      access: tokens.access_token,
-      refresh: tokens.refresh_token || credentials.refresh,
-      expires: Date.now() + tokens.expires_in * 1000,
-      accountId: this.extractAccountId(tokens.access_token) ?? credentials.accountId,
-      planType: this.extractPlanType(tokens.access_token) ?? credentials.planType,
+      access: result.token.access_token,
+      refresh: result.token.refresh_token || credentials.refresh,
+      expires: Date.now() + result.token.expires_in * 1000,
+      accountId: this.extractAccountId(result.token.access_token) ?? credentials.accountId,
+      planType: this.extractPlanType(result.token.access_token) ?? credentials.planType,
       isFedrampAccount:
-        this.extractIsFedrampAccount(tokens.id_token ?? tokens.access_token) ??
+        this.extractIsFedrampAccount(result.token.id_token ?? result.token.access_token) ??
         credentials.isFedrampAccount,
     };
 
@@ -502,11 +541,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const sessionId = sessionConfig?.sessionId ?? 'default';
     // buildSdkConfig() is synchronous per the Provider interface.  The async
     // discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
-    const envAuth = this.env.OPENAI_API_KEY
-      ? ({ source: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
-      : undefined;
-    const fileAuth = this.cachedCredentials ? this.toBridgeAuth(this.cachedCredentials) : undefined;
-    const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
+    const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
     let bridgeServer = this.bridgeServers.get(bridgeKey);
@@ -565,6 +600,33 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       isAnthropicCompatible: true,
       apiVersion: 'v1',
     };
+  }
+
+  /**
+   * Propagate the session's thinking level to the Responses bridge.
+   *
+   * The Claude Code CLI handles thinking internally and does not include the
+   * thinking field in Anthropic Messages API request bodies. Without this
+   * side-channel the bridge has no way to know that reasoning should be
+   * forwarded to the OpenAI Responses API.
+   */
+  setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
+    const auth = this.resolveBridgeAuth();
+    const authKey = this.bridgeAuthCacheKey(auth);
+    const bridgeKey = `responses:${authKey}`;
+    const bridgeServer = this.bridgeServers.get(bridgeKey);
+    if (!bridgeServer?.setSessionThinkingConfig) return;
+
+    const tokens = THINKING_LEVEL_TOKENS[thinkingLevel as keyof typeof THINKING_LEVEL_TOKENS];
+    if (tokens === undefined) {
+      bridgeServer.setSessionThinkingConfig(sessionId, undefined);
+      return;
+    }
+
+    bridgeServer.setSessionThinkingConfig(sessionId, {
+      type: 'enabled',
+      budget_tokens: tokens,
+    });
   }
 
   /** Stop all bridge servers and reset cached auth state. Called at provider shutdown (e.g. tests). */
@@ -875,10 +937,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       // Prefer a fresh token before importing; if refresh fails, still import
       // existing tokens so NeoKai remains decoupled from ~/.codex/auth.json.
       const refreshed = await this.tryRefreshCodexToken(refreshToken);
-      if (refreshed) {
-        accessToken = refreshed.access_token;
-        refreshToken = refreshed.refresh_token || refreshToken;
-        expires = Date.now() + refreshed.expires_in * 1000;
+      if (refreshed.ok) {
+        accessToken = refreshed.token.access_token;
+        refreshToken = refreshed.token.refresh_token || refreshToken;
+        expires = Date.now() + refreshed.token.expires_in * 1000;
         logger.info(
           'AnthropicToCodexBridgeProvider: imported refreshed OAuth token from ~/.codex/auth.json'
         );
@@ -911,7 +973,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
    * Attempt to refresh a Codex/OpenAI OAuth token.
    * Delegates to the exported module-level refreshCodexToken() function.
    */
-  private tryRefreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
+  private tryRefreshCodexToken(refreshToken: string): Promise<CodexRefreshResult> {
     return refreshCodexToken(refreshToken);
   }
 

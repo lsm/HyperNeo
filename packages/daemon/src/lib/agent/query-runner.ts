@@ -298,6 +298,7 @@ export class QueryRunner {
           );
         }
       }
+
       if (!provider?.isAvailable) {
         // Fall back to checking Anthropic/GLM auth for SDK-based providers
         const { getProviderService } = await import('../provider-service');
@@ -333,6 +334,16 @@ export class QueryRunner {
       // Build query options
       optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
       let queryOptions = await optionsBuilder.build();
+
+      // Side-channel: propagate the session's effective thinking level to providers
+      // whose bridge/translation layer needs it (e.g. anthropic-codex, where the
+      // Claude Code CLI omits the thinking field from request bodies). Must run
+      // AFTER optionsBuilder.build() so the bridge server already exists.
+      if (provider?.setSessionThinkingConfig) {
+        const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
+        provider.setSessionThinkingConfig(session.id, effectiveThinkingLevel);
+      }
+
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
       // Structured log of MCP servers visible to this query. Critical for diagnosing

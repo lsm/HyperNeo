@@ -83,6 +83,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
       sessionId: 'space:lh:forge-steward',
       instructions: 'Watch Forge scopes.',
       autonomyLevel: 3,
+      provider: 'openrouter',
+      settingSources: ['project'],
       toolPermissions: { forge: { write: true } },
     });
 
@@ -94,6 +96,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
       sessionId: 'space:lh:forge-steward',
       instructions: 'Watch Forge scopes.',
       autonomyLevel: 3,
+      provider: 'openrouter',
+      settingSources: ['project'],
       toolPermissions: { forge: { write: true } },
     });
 
@@ -101,11 +105,15 @@ describe('SpaceLongHorizonAgentRepository', () => {
       repo.update(agent.id, {
         status: 'active',
         autonomyLevel: null,
+        provider: null,
+        settingSources: null,
         toolPermissions: null,
       })
     ).toMatchObject({
       status: 'active',
       autonomyLevel: null,
+      provider: null,
+      settingSources: null,
       toolPermissions: {},
     });
   });
@@ -208,5 +216,64 @@ describe('SpaceLongHorizonAgentRepository', () => {
       filter: { repo: 'lsm/neokai' },
       status: 'active',
     });
+  });
+
+  test('upserts, lists active, and deletes event subscriptions by route', () => {
+    const agent = repo.ensureCoordinator('space-1');
+
+    const created = repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'reviews' },
+      status: 'active',
+    });
+    const updated = repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'reviews' },
+      status: 'paused',
+    });
+
+    expect(updated.id).toBe(created.id);
+    expect(updated.status).toBe('paused');
+    expect(repo.listActiveSubscriptionsBySpace('space-1')).toHaveLength(0);
+
+    repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'reviews' },
+      status: 'active',
+    });
+    repo.upsertSubscription({
+      spaceId: 'space-1',
+      agentId: agent.id,
+      source: 'github',
+      topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+      filter: { label: 'triage' },
+      status: 'active',
+    });
+    expect(repo.listActiveSubscriptionsBySpace('space-1')).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        agentId: agent.id,
+        topic: 'github/lsm/neokai/pull_request/*.review_submitted',
+        filter: { label: 'triage' },
+        status: 'active',
+      }),
+    ]);
+
+    repo.deleteSubscriptionByRoute(
+      'space-1',
+      agent.id,
+      'github',
+      'github/lsm/neokai/pull_request/*.review_submitted'
+    );
+    expect(repo.listSubscriptions(agent.id)).toEqual([]);
   });
 });

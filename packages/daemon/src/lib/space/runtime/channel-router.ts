@@ -516,6 +516,7 @@ export class ChannelRouter {
       return { allowed: true };
     }
     const { channel, index } = match;
+    const gateSourceName = this.getChannelSourceName(workflow, channel, fromRole);
 
     const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
 
@@ -539,13 +540,18 @@ export class ChannelRouter {
     if (channel.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
 
       if (skipEval) {
         return { allowed: true };
       }
 
-      const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+      const gateResult = await this.evaluateGateById(
+        runId,
+        channel.gateId,
+        workflow,
+        gateSourceName
+      );
       return { allowed: gateResult.open, reason: gateResult.reason };
     }
 
@@ -639,6 +645,9 @@ export class ChannelRouter {
     const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
     const channel = match?.channel;
     const channelIndex = match?.index ?? -1;
+    const gateSourceName = channel
+      ? this.getChannelSourceName(workflow, channel, fromRole)
+      : undefined;
     const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
 
     // ── 2. Target resolution: agent name → DM, node name → fan-out ────────
@@ -689,10 +698,15 @@ export class ChannelRouter {
     if (channel?.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
 
       if (!skipEval) {
-        const gateResult = await this.evaluateGateById(runId, channel.gateId, workflow);
+        const gateResult = await this.evaluateGateById(
+          runId,
+          channel.gateId,
+          workflow,
+          gateSourceName
+        );
         if (gateResult.open) {
           this.cacheGateOpened(runId, channel.gateId, workflow);
         }
@@ -733,10 +747,15 @@ export class ChannelRouter {
     if (channel?.gateId) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
-        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow);
+        !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
 
       if (!skipEval) {
-        const postActivationGate = await this.evaluateGateById(runId, channel.gateId, workflow);
+        const postActivationGate = await this.evaluateGateById(
+          runId,
+          channel.gateId,
+          workflow,
+          gateSourceName
+        );
         if (postActivationGate.open) {
           this.cacheGateOpened(runId, channel.gateId, workflow);
         }
@@ -830,12 +849,27 @@ export class ChannelRouter {
       }
     }
 
-    // Evaluate the gate once (shared across all channels referencing it)
-    const gateResult = await this.evaluateGateById(runId, gateId, workflow);
-    if (gateResult.open) {
+    // Evaluate the gate per channel with source-scoped effective gate so that
+    // dynamic features on wildcard channels are evaluated against concrete
+    // source nodes instead of the literal '*'. With no sender attached to a
+    // gate-data write, wildcard channels only open when the gate is open for
+    // every possible source node.
+    const openChannels: typeof channels = [];
+    for (const ch of channels) {
+      const sourceNames = this.getGateDataChangeSourceNames(workflow, ch);
+      const results = await Promise.all(
+        sourceNames.map((sourceName) => this.evaluateGateById(runId, gateId, workflow, sourceName))
+      );
+      if (results.every((result) => result.open)) {
+        openChannels.push(ch);
+      }
+    }
+
+    if (openChannels.length > 0) {
       this.cacheGateOpened(runId, gateId, workflow);
     }
-    if (!gateResult.open) {
+
+    if (openChannels.length === 0) {
       // Notify caller when the gate is waiting for human approval. Only fires for
       // external-approval gates — those with an `approved` field with no declared
       // writers (i.e. only a human can set `approved: true`).
@@ -855,11 +889,12 @@ export class ChannelRouter {
       return [];
     }
 
-    // Determine if any of these channels are cyclic — if so, enforce the per-channel cap
-    // before activating any node (mirrors the guard in deliverMessage).
+    // Determine if any opened channels are cyclic — if so, enforce the
+    // per-channel cap before activating any node (mirrors the guard in
+    // deliverMessage). Only check channels that actually opened, so a closed
+    // cyclic channel sharing the gate does not block activation of an open one.
     const allChannels = workflow.channels ?? [];
-    let cyclicChannelMatch: { index: number; maxCycles: number } | null = null;
-    for (const ch of channels) {
+    for (const ch of openChannels) {
       const chIdx = allChannels.indexOf(ch);
       if (chIdx >= 0 && this.isChannelCyclicByIndex(chIdx, workflow)) {
         const maxCycles = ch.maxCycles ?? 5;
@@ -868,15 +903,23 @@ export class ChannelRouter {
             `Cyclic channel via gate "${gateId}" (index ${chIdx}) has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
           );
         }
-        cyclicChannelMatch = { index: chIdx, maxCycles };
       }
     }
 
-    // Gate is open → collect all unique node IDs that need activation.
-    // Multiple channels may point to the same target (e.g. fan-out via node name),
-    // so deduplicate before spawning to avoid redundant activateNode() calls.
+    // Only increment cycle counters for cyclic channels that actually opened.
+    let cyclicChannelMatch: { index: number; maxCycles: number } | null = null;
+    for (const ch of openChannels) {
+      const chIdx = allChannels.indexOf(ch);
+      if (chIdx >= 0 && this.isChannelCyclicByIndex(chIdx, workflow)) {
+        cyclicChannelMatch = { index: chIdx, maxCycles: ch.maxCycles ?? 5 };
+      }
+    }
+
+    // Gate is open for at least one channel → collect unique node IDs that
+    // need activation from the open channels only. Deduplicate before spawning
+    // to avoid redundant activateNode() calls.
     const nodeIdsToActivate = new Set<string>();
-    for (const channel of channels) {
+    for (const channel of openChannels) {
       const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
       for (const target of targets) {
         // Resolve target: first by agent name, then by node name (fan-out)
@@ -1032,10 +1075,29 @@ export class ChannelRouter {
    * For non-cyclic channels or cyclic channels whose gate does not reset,
    * the cached state is authoritative.
    */
+  private getChannelSourceName(
+    workflow: SpaceWorkflow,
+    channel: WorkflowChannel,
+    fromRole?: string
+  ): string {
+    if (channel.from !== '*') return channel.from;
+    if (!fromRole) return channel.from;
+    return this.findNodeByAgentName(workflow, fromRole)?.name ?? fromRole;
+  }
+
+  private getGateDataChangeSourceNames(
+    workflow: SpaceWorkflow,
+    channel: WorkflowChannel
+  ): string[] {
+    if (channel.from !== '*') return [channel.from];
+    return workflow.nodes.map((node) => node.name);
+  }
+
   private mustReevaluateGate(
     gateId: string,
     channelIsCyclic: boolean,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    sourceNodeName?: string
   ): boolean {
     // Check gate existence BEFORE the cyclic-channel shortcut — if the gate
     // definition was removed from the workflow (e.g. by a workflow edit),
@@ -1051,7 +1113,7 @@ export class ChannelRouter {
     //   independently of workflow.updatedAt). Caching such gates would create a
     //   fail-open path where a once-open gate bypasses evaluation even after
     //   script updates or external state changes.
-    const effectiveGateDef = getEffectiveGate(gateDef);
+    const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
 
     if (!channelIsCyclic) return false;
@@ -1115,9 +1177,12 @@ export class ChannelRouter {
   private async evaluateGateById(
     runId: string,
     gateId: string,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    sourceNodeName?: string
   ): Promise<GateEvalResult> {
-    const key = `${runId}:${gateId}`;
+    // Include source in the in-flight key so that unflagged and flagged
+    // sources do not share coalesced evaluations for the same gate.
+    const key = sourceNodeName ? `${runId}:${gateId}:${sourceNodeName}` : `${runId}:${gateId}`;
 
     // Coalescing: if an evaluation is already in-flight, await it,
     // then re-evaluate directly to ensure fresh data. This avoids
@@ -1128,11 +1193,11 @@ export class ChannelRouter {
     if (inflight) {
       await inflight;
       // Re-evaluate directly (bypass coalescing to avoid infinite loops)
-      return this.doEvaluateGate(runId, gateId, workflow);
+      return this.doEvaluateGate(runId, gateId, workflow, sourceNodeName);
     }
 
     // No in-flight evaluation — start a new one
-    const evalPromise = this.doEvaluateGate(runId, gateId, workflow);
+    const evalPromise = this.doEvaluateGate(runId, gateId, workflow, sourceNodeName);
     this.gateEvaluations.set(key, evalPromise);
 
     try {
@@ -1151,7 +1216,8 @@ export class ChannelRouter {
   private async doEvaluateGate(
     runId: string,
     gateId: string,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    sourceNodeName?: string
   ): Promise<GateEvalResult> {
     const storedGateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!storedGateDef) {
@@ -1173,7 +1239,7 @@ export class ChannelRouter {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }
-    gateDef = getEffectiveGate(gateDef);
+    gateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
 
     // Load runtime data from DB; fall back to computed defaults from fields
     const record = this.config.gateDataRepo?.get(runId, gateId);

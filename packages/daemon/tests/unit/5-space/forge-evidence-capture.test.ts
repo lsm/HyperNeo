@@ -134,6 +134,75 @@ describe('Forge evidence capture on task completion', () => {
     expect(artifactEvidence?.metadata.artifactCount).toBe(1);
   });
 
+  it('skips evidence capture for automation review tasks', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Automation skip',
+      objective: 'Do not capture automation task evidence',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Review Forge retrospective: Automation skip',
+      evolutionScopeId: scope.id,
+      labels: [
+        'forge',
+        'review',
+        'automation',
+        'automation:completed_task_threshold:threshold:1:run',
+      ],
+    });
+    const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+    await manager.setTaskStatus(task.id, 'done', { result: 'Reviewed' });
+
+    expect(evolutionRepo.listEvidence(scope.id)).toHaveLength(0);
+  });
+
+  it('still captures evidence for tasks with a generic automation label', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Generic automation label',
+      objective: 'Capture evidence for generic automation label',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'Generic automation task',
+      evolutionScopeId: scope.id,
+      labels: ['automation'],
+    });
+    const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+    await manager.setTaskStatus(task.id, 'done', { result: 'Done' });
+
+    expect(evolutionRepo.listEvidence(scope.id).some((item) => item.kind === 'task_result')).toBe(
+      true
+    );
+  });
+
+  it('captures evidence for user-defined automation labels like automation:ci', async () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'User automation label',
+      objective: 'Capture evidence for user automation labels',
+    });
+    const task = taskRepo.createTask({
+      spaceId,
+      title: 'CI automation task',
+      evolutionScopeId: scope.id,
+      labels: ['automation', 'automation:ci'],
+    });
+    const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
+
+    await manager.setTaskStatus(task.id, 'done', { result: 'Done' });
+
+    expect(evolutionRepo.listEvidence(scope.id).some((item) => item.kind === 'task_result')).toBe(
+      true
+    );
+  });
+
   it('captures trace-derived evidence through the normal task completion path', async () => {
     const manager = new SpaceTaskManager(db as never, spaceId, undefined, evolutionScopeService);
     const slowFailureScope = evolutionRepo.createScope({

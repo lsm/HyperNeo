@@ -61,6 +61,8 @@ export type OpenAIResponsesBridgeModel = {
 export type OpenAIResponsesBridgeServer = {
   port: number;
   baseUrlForSession?(sessionId: string): string;
+  /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
+  setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
   stop(): void;
 };
 
@@ -160,6 +162,10 @@ type ResponseContinuation = {
 type SessionReasoningEntry = {
   items: ResponsesReasoningItem[];
   cleanupTimer: ReturnType<typeof setTimeout>;
+};
+
+type SessionThinkingConfigEntry = {
+  thinking: AnthropicRequest['thinking'];
 };
 
 /**
@@ -1129,6 +1135,9 @@ export function createOpenAIResponsesBridgeServer(
   const continuations = new Map<string, ResponseContinuation>();
   // Per-session reasoning items for multi-turn continuation when store: false.
   const sessionReasoningItems = new Map<string, SessionReasoningEntry>();
+  // Per-session thinking config injected by the daemon when the Anthropic SDK client
+  // (Claude Code CLI) omits the thinking field from request bodies.
+  const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   // ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
@@ -1171,6 +1180,18 @@ export function createOpenAIResponsesBridgeServer(
       sessionReasoningItems.delete(sessionId);
     }, continuationTtlMs);
     sessionReasoningItems.set(sessionId, { items, cleanupTimer });
+  };
+
+  const deleteSessionThinkingConfig = (sessionId: string): void => {
+    sessionThinkingConfigs.delete(sessionId);
+  };
+
+  const storeSessionThinkingConfig = (
+    sessionId: string,
+    thinking: AnthropicRequest['thinking']
+  ): void => {
+    deleteSessionThinkingConfig(sessionId);
+    sessionThinkingConfigs.set(sessionId, { thinking });
   };
 
   const consumeContinuation = (
@@ -1231,6 +1252,14 @@ export function createOpenAIResponsesBridgeServer(
         body = (await req.json()) as AnthropicRequest;
       } catch {
         return sendJsonError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
+      }
+
+      // The Claude Code CLI handles thinking internally and does not include the
+      // thinking field in Anthropic Messages API requests. Merge the per-session
+      // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
+      const sessionThinkingEntry = sessionThinkingConfigs.get(route.sessionId);
+      if (sessionThinkingEntry?.thinking && !body.thinking) {
+        body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 
       if (!body.model || !Array.isArray(body.messages)) {
@@ -1392,6 +1421,9 @@ export function createOpenAIResponsesBridgeServer(
     port,
     baseUrlForSession: (sessionId: string) =>
       `http://127.0.0.1:${port}${SESSION_ROUTE_PREFIX}${encodeURIComponent(sessionId)}`,
+    setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
+      storeSessionThinkingConfig(sessionId, thinking);
+    },
     stop: () => {
       for (const continuation of continuations.values()) {
         clearTimeout(continuation.cleanupTimer);
@@ -1401,6 +1433,7 @@ export function createOpenAIResponsesBridgeServer(
         clearTimeout(entry.cleanupTimer);
       }
       sessionReasoningItems.clear();
+      sessionThinkingConfigs.clear();
       server.stop(true);
     },
   };

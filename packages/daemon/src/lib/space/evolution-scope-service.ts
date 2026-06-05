@@ -5,6 +5,7 @@ import type {
   EvidenceKind,
   EvidenceRef,
   EvolutionLesson,
+  EvolutionPolicy,
   EvolutionScope,
   EvolutionScopeListParams,
   MetricSnapshot,
@@ -33,6 +34,35 @@ import type {
 
 const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;
+
+export function mergeEvolutionPolicy(
+  policy: EvolutionPolicy,
+  patch: EvolutionPolicy
+): EvolutionPolicy {
+  const merged: EvolutionPolicy = { ...policy, ...patch };
+  for (const key of Object.keys(patch)) {
+    if (
+      patch[key as keyof EvolutionPolicy] === undefined ||
+      patch[key as keyof EvolutionPolicy] === null
+    ) {
+      delete (merged as Record<string, unknown>)[key];
+    }
+  }
+  const patchAutomation = patch.automation;
+  const isValidObject =
+    patchAutomation !== undefined &&
+    typeof patchAutomation === 'object' &&
+    !Array.isArray(patchAutomation) &&
+    patchAutomation !== null;
+  return {
+    ...merged,
+    automation: isValidObject
+      ? { ...policy.automation, ...patchAutomation }
+      : patchAutomation !== undefined
+        ? patchAutomation
+        : policy.automation,
+  };
+}
 
 function summarizeArtifactData(data: Record<string, unknown>): string {
   const text = stringifyArtifactField(data);
@@ -199,7 +229,14 @@ export class EvolutionScopeService {
     if (params.parentScopeId) {
       this.requireScopeInSpace(params.parentScopeId, existing.spaceId);
     }
-    return this.deps.evolutionRepo.updateScope(id, params);
+    const updateParams = params.policyPatch
+      ? {
+          ...params,
+          policy: mergeEvolutionPolicy(existing.policy, params.policyPatch),
+          policyPatch: undefined,
+        }
+      : params;
+    return this.deps.evolutionRepo.updateScope(id, updateParams);
   }
 
   resolveScopeForGoal(params: ResolveScopeForGoalParams): EvolutionScope | null {
@@ -298,6 +335,19 @@ export class EvolutionScopeService {
     const task = this.deps.taskRepo.getTask(params.taskId);
     if (!task) throw new Error(`Task not found: ${params.taskId}`);
     if (task.status !== 'done') return { scope: null, evidence: [] };
+    const forgeAutomationPrefixes = [
+      'automation:completed_task_threshold:',
+      'automation:self_nag:',
+      'automation:external_event:',
+    ];
+    if (
+      task.labels.includes('automation') &&
+      task.labels.some((label) =>
+        forgeAutomationPrefixes.some((prefix) => label.startsWith(prefix))
+      )
+    ) {
+      return { scope: null, evidence: [] };
+    }
 
     const scope = this.findScopeForTask(task.evolutionScopeId ?? null, task.goalId ?? null);
     if (!scope || scope.spaceId !== task.spaceId) return { scope: null, evidence: [] };

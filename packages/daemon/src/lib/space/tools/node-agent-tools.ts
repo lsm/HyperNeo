@@ -52,7 +52,7 @@ import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults, hasGateFeatures, resolveNodeAgents } from '@neokai/shared';
+import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -98,7 +98,7 @@ import type { SpaceTask } from '@neokai/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { getEffectiveGate } from '../runtime/gate-features';
+import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
 
 /**
  * Resolves the most recent PR URL for a workflow run by scanning gate
@@ -169,7 +169,7 @@ function normalizeAgentNameToken(value: string): string {
   return value.trim().toLowerCase();
 }
 
-async function evaluateTerminalGateFeatures(
+export async function evaluateTerminalGateFeatures(
   workflow: SpaceWorkflow | null,
   gateDataRepo: GateDataRepository,
   workflowRunId: string,
@@ -189,52 +189,79 @@ async function evaluateTerminalGateFeatures(
   // (to current node) are only included when there is exactly one incoming
   // channel total, so we do not falsely treat an unrelated incoming gate as the
   // traversed path when multiple paths converge on a shared terminal node.
-  let relevantGateIds: Set<string> | undefined;
+  // Maps gateId → all channel `from` values that matched, so source-scoped Codex
+  // injection uses the actual sender names (node name or agent slot) rather than
+  // the current node name. Multiple sources for the same gate are all evaluated.
+  const relevantGateSources = new Map<string, Set<string>>();
+  let scopingComputed = false;
   if (currentNodeId && workflow.channels) {
     const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
     if (currentNodeName) {
+      scopingComputed = true;
+      const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
+      const currentNodeAgentNames = new Set<string>();
+      if (currentNode) {
+        try {
+          for (const a of resolveNodeAgents(currentNode)) {
+            currentNodeAgentNames.add(a.name);
+          }
+        } catch {
+          // skip malformed node
+        }
+      }
       const incomingChannels = workflow.channels.filter((ch) => {
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        return toList.includes(currentNodeName) || toList.includes('*');
+        if (toList.includes(currentNodeName) || toList.includes('*')) return true;
+        return currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t));
       });
       const includeIncoming = incomingChannels.length === 1;
-      relevantGateIds = new Set(
-        workflow.channels
-          .filter((ch) => {
-            if (ch.from === currentNodeName || ch.from === '*') return true;
-            if (!includeIncoming) return false;
-            const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-            return toList.includes(currentNodeName) || toList.includes('*');
-          })
-          .map((ch) => ch.gateId)
-          .filter((id): id is string => !!id)
-      );
+      for (const ch of workflow.channels) {
+        if (!ch.gateId) continue;
+        const isOutgoing =
+          ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
+        let isIncoming = false;
+        if (includeIncoming) {
+          const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+          isIncoming =
+            toList.includes(currentNodeName) ||
+            toList.includes('*') ||
+            (currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t)));
+        }
+        if (isOutgoing || isIncoming) {
+          const set = relevantGateSources.get(ch.gateId) ?? new Set<string>();
+          set.add(ch.from === '*' ? currentNodeName : ch.from);
+          relevantGateSources.set(ch.gateId, set);
+        }
+      }
     }
   }
 
   for (const gate of workflow.gates ?? []) {
-    if (!hasGateFeatures(gate)) continue;
-    if (relevantGateIds && !relevantGateIds.has(gate.id)) continue;
-    const effectiveGate = getEffectiveGate(gate);
-    if (!effectiveGate.script) continue;
+    const sources = relevantGateSources.get(gate.id);
+    if (scopingComputed && !sources) continue;
+    for (const sourceName of sources ?? [undefined]) {
+      if (!hasInjectedGateFeature(gate, workflow, sourceName)) continue;
+      const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
+      if (!effectiveGate.script) continue;
 
-    const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
-    const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
-    const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
-      ...scriptContext,
-      gateId: gate.id,
-      gateData: data,
-      gateDataUpdatedIso: gateDataRecord
-        ? new Date(gateDataRecord.updatedAt).toISOString()
-        : undefined,
-      prUrl: freshPrUrl || scriptContext.prUrl,
-    });
-    if (!result.open) {
-      return jsonResult({
-        success: false,
-        error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+      const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
+      const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
+      const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
+        ...scriptContext,
         gateId: gate.id,
+        gateData: data,
+        gateDataUpdatedIso: gateDataRecord
+          ? new Date(gateDataRecord.updatedAt).toISOString()
+          : undefined,
+        prUrl: freshPrUrl || scriptContext.prUrl,
       });
+      if (!result.open) {
+        return jsonResult({
+          success: false,
+          error: result.reason ?? `Gate "${gate.id}" blocked terminal action.`,
+          gateId: gate.id,
+        });
+      }
     }
   }
 
@@ -464,6 +491,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     }
   };
   const uniqueTargetRefs = (values: string[]): string[] => [...new Set(values)];
+  const resolveCurrentGateSource = (gateId: string): string => {
+    if (!workflow) return myAgentName;
+    const fromRefs = new Set([myAgentName, myNodeName]);
+    const channel = (workflow.channels ?? []).find(
+      (ch) => ch.gateId === gateId && (ch.from === '*' || fromRefs.has(ch.from))
+    );
+    if (channel?.from === '*') return myNodeName;
+    return channel?.from ?? myNodeName;
+  };
 
   const agentNameAliases = new Set(
     [myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
@@ -893,7 +929,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                   workflowRunId
                 );
                 const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef),
+                  getEffectiveGate(gateDef, workflow, gatedChannel.from),
                   updated.data,
                   scriptExecutor,
                   scriptContext
@@ -1266,8 +1302,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
       const freshPrUrl = resolvePrUrlForRun(gateDataRepo, config.artifactRepo, workflowRunId);
+      const sourceName = resolveCurrentGateSource(gateId);
       const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef),
+        getEffectiveGate(gateDef, workflow ?? undefined, sourceName),
         currentData,
         scriptExecutor,
         scriptContext

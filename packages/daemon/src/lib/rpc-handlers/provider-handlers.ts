@@ -11,7 +11,9 @@ import type { ProviderRepository } from '../../storage/repositories/provider-rep
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import { syncProviderToRegistry, removeProviderFromRegistry } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
+import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 
 const VALID_PROVIDER_KINDS = new Set(['built_in', 'custom_endpoint']);
 const VALID_AUTH_TYPES = new Set(['api_key', 'oauth', 'none']);
@@ -108,10 +110,19 @@ export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+}
+
+async function clearCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>
+): Promise<void> {
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache();
+  internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
-  const { messageHub, providerRepo, credentialManager } = deps;
+  const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
 
   /** List all providers with live auth status from the registry. */
   messageHub.onRequest('providers.list', async () => {
@@ -171,6 +182,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           }
 
           // Sync to registry.
+          if (record.kind === 'built_in') {
+            const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+            await ensureBuiltInProviderRegistered(record.providerId);
+          }
           const creds = await credentialManager.getCredentials(record.providerId);
           await syncProviderToRegistry(record, creds);
         } catch (err) {
@@ -179,6 +194,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           providerRepo.deleteProvider(record.id);
           throw err;
         }
+
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
 
         return { success: true, provider: record };
       });
@@ -226,17 +243,29 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           const record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
 
-          // Re-sync to registry if config or credentials changed.
+          // Re-sync to registry if config, credentials, or enabled state changed.
           const shouldResync =
             data.credentials !== undefined ||
             updates.baseUrl !== undefined ||
             updates.customEndpointConfigJson !== undefined ||
-            updates.configJson !== undefined;
+            updates.configJson !== undefined ||
+            updates.isEnabled !== undefined;
 
           if (shouldResync) {
-            const creds = await credentialManager.getCredentials(record.providerId);
-            await syncProviderToRegistry(record, creds);
+            if (record.isEnabled === false) {
+              if (record.kind === 'built_in') {
+                markBuiltInProviderDisabled(record.providerId);
+              }
+              await removeProviderFromRegistry(record.providerId);
+            } else {
+              const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+              await ensureBuiltInProviderRegistered(record.providerId);
+              const creds = await credentialManager.getCredentials(record.providerId);
+              await syncProviderToRegistry(record, creds);
+            }
           }
+
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
 
           return { success: true, provider: record };
         });
@@ -250,12 +279,22 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     if (!record) throw new Error(`Provider ${data.id} not found`);
     const lock = record.kind === 'custom_endpoint' ? withCustomEndpointsLock : withProviderLock;
     return lock(async () => {
-      // DB-first: delete the row before touching the registry so a failure in
-      // credential removal doesn't leave a ghost record that resurrects on restart.
-      providerRepo.deleteProvider(data.id);
+      if (record.kind === 'built_in') {
+        // Built-ins cannot be truly deleted; keep the row disabled so the
+        // disabled state persists across daemon restarts.
+        providerRepo.updateProvider(data.id, { isEnabled: false });
+        markBuiltInProviderDisabled(record.providerId);
+      } else {
+        // DB-first: delete the row before touching the registry so a failure in
+        // credential removal doesn't leave a ghost record that resurrects on restart.
+        providerRepo.deleteProvider(data.id);
+      }
       await removeProviderFromRegistry(record.providerId);
-      await credentialManager.removeCredentials(record.providerId);
-
+      try {
+        await credentialManager.removeCredentials(record.providerId);
+      } finally {
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+      }
       return { success: true };
     });
   });

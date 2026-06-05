@@ -122,18 +122,46 @@ import { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-
 import { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import { SpaceGoalService } from '../space/goals/goal-service';
 import { ExternalEventExtensionConfigStore } from '../external-events/extension-config-store';
+import { mergeEvolutionPolicy } from '../space/evolution-scope-service';
 import {
   isHttpExtension,
   isRpcExtension,
   type ExternalEventExtensionManager,
 } from '../external-events/extension-manager';
-import type { ExternalEventExtensionContext } from '../external-events/types';
+import type {
+  ExternalEventDeliveryState,
+  ExternalEventExtensionContext,
+} from '../external-events/types';
+const EXTERNAL_EVENT_DELIVERY_STATES: ExternalEventDeliveryState[] = [
+  'pending',
+  'delivered',
+  'failed',
+];
+
+function validateCompletedTaskThreshold(policy: EvolutionScope['policy'] | undefined): void {
+  const automation = policy?.automation;
+  if (
+    automation !== undefined &&
+    (typeof automation !== 'object' || Array.isArray(automation) || automation === null)
+  ) {
+    throw new Error('Automation policy must be an object');
+  }
+  const threshold = automation?.completedTaskThreshold;
+  if (threshold !== undefined && (!Number.isInteger(threshold) || threshold <= 0)) {
+    throw new Error('Completed-task automation threshold must be a positive integer');
+  }
+}
 
 export function validateGoalAutomationSelfNagPolicy(params: {
   policy?: EvolutionScope['policy'];
 }): void {
+  validateCompletedTaskThreshold(params.policy);
+  const enabled = params.policy?.automation?.completedTaskAutomationEnabled;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new Error('completedTaskAutomationEnabled must be a boolean');
+  }
   const policy = readAutomationPolicyForScope({
-    policy: params.policy,
+    policy: params.policy ?? {},
   } as EvolutionScope);
   const expression = policy.selfNagCronExpression;
   if (!expression) return;
@@ -318,6 +346,32 @@ export interface RPCHandlerDependencies {
 const log = new Logger('rpc-handlers');
 
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
+  deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
+    const params = (data ?? {}) as {
+      spaceId?: string;
+      status?: ExternalEventDeliveryState;
+      eventId?: string;
+      agentName?: string;
+      limit?: number;
+      offset?: number;
+    };
+    if (!params.spaceId || typeof params.spaceId !== 'string') {
+      throw new Error('spaceId is required');
+    }
+    if (params.status && !EXTERNAL_EVENT_DELIVERY_STATES.includes(params.status)) {
+      throw new Error(`Invalid delivery status: ${params.status}`);
+    }
+    const deliveries = deps.externalEventStore.listDeliveryLog({
+      spaceId: params.spaceId,
+      status: params.status,
+      eventId: params.eventId,
+      agentName: params.agentName,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return { deliveries };
+  });
+
   deps.messageHub.onRequest('externalEvents.extensions.list', async () => {
     const extensions = [];
     for (const extension of deps.externalEventExtensionManager.getAll()) {
@@ -414,7 +468,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
   setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
-  setupAuthHandlers(deps.messageHub, deps.authManager, deps.credentialManager);
+  setupAuthHandlers(
+    deps.messageHub,
+    deps.authManager,
+    deps.credentialManager,
+    deps.internalEventBus
+  );
   registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
   registerSettingsHandlers(
     deps.messageHub,
@@ -437,6 +496,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     messageHub: deps.messageHub,
     providerRepo: deps.db.providers,
     credentialManager: providerCredentialManager,
+    internalEventBus: deps.internalEventBus,
   });
 
   setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
@@ -622,15 +682,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   };
 
   // Space agent handlers
-  setupSpaceAgentHandlers(
-    deps.messageHub,
-    deps.internalEventBus,
-    deps.spaceAgentManager,
-    deps.spaceManager,
-    deps.db
-  );
-  setupSpaceLongHorizonAgentHandlers(deps.messageHub, deps.spaceManager, longHorizonAgentRepo);
-
   setupSpaceWorkflowHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -702,6 +753,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionRepo: deps.db.evolution,
       cursorRepo: deps.db.goalAutomationCursors,
       episodeService: evolutionEpisodeService,
+      jobQueue: deps.jobQueue,
       taskCreatedEventHub: {
         publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
       },
@@ -713,7 +765,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
     beforeScopeUpdate: (existing, params) => {
       validateGoalAutomationSelfNagPolicy({
-        policy: params.policy ? { ...existing.policy, ...params.policy } : existing.policy,
+        policy: params.policyPatch
+          ? mergeEvolutionPolicy(existing.policy, params.policyPatch)
+          : params.policy
+            ? { ...existing.policy, ...params.policy }
+            : existing.policy,
       });
     },
     onScopeSaved: (scope) => {
@@ -779,6 +835,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
   });
 
+  setupSpaceAgentHandlers(
+    deps.messageHub,
+    deps.internalEventBus,
+    deps.spaceAgentManager,
+    deps.spaceManager,
+    deps.db,
+    spaceRuntimeService
+  );
+
   // Session handlers — registered here (after spaceRuntimeService is built) so
   // session.create can synchronously call attachSpaceToolsToMemberSession for
   // ad-hoc Space sessions. Doing this via the internalEventBus 'session.created' event
@@ -815,6 +880,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
   });
+
+  setupSpaceLongHorizonAgentHandlers(
+    deps.messageHub,
+    deps.spaceManager,
+    longHorizonAgentRepo,
+    spaceRuntimeService
+  );
 
   // Register Space RPC handlers now that spaceRuntimeService exists.
   // spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()

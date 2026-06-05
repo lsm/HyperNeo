@@ -156,7 +156,7 @@ describe('ProviderCredentialManager', () => {
     }
   });
 
-  it('removes credentials and clears provider auth state', async () => {
+  it('removes credentials without changing auth_type', async () => {
     const db = createDb();
     const store = new MemoryCredentialStore();
     const manager = new ProviderCredentialManager(store, db);
@@ -170,7 +170,9 @@ describe('ProviderCredentialManager', () => {
           'SELECT auth_type, health_status FROM providers WHERE provider_id = ?'
         )
         .get('glm');
-      expect(row).toEqual({ auth_type: 'none', health_status: 'unknown' });
+      // auth_type should remain 'api_key' so the UI still shows the correct
+      // auth controls (e.g., Login button for OAuth providers after logout).
+      expect(row).toEqual({ auth_type: 'api_key', health_status: 'healthy' });
     } finally {
       db.close();
     }

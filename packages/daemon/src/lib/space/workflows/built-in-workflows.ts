@@ -27,10 +27,12 @@ import type {
   GateScript,
   Gate,
   SpaceWorkflow,
+  WorkflowChannel,
   WorkflowNode,
 } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
 import { Logger } from '../../logger';
+import { isApprovalGate } from '../runtime/gate-features';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
@@ -1038,6 +1040,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       id: PD_PLAN_REVIEW_NODE,
       name: 'Plan Review',
+      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1171,7 +1174,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
           check: { op: 'count', match: 'approved', min: 4 },
         },
       ],
-      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1249,6 +1251,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: FULLSTACK_REVIEW_NODE,
       name: 'Review',
+      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1353,7 +1356,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
           check: { op: '==', value: true },
         },
       ],
-      features: { codex_review_bot: true },
       resetOnCycle: true,
     },
   ],
@@ -1481,9 +1483,12 @@ export interface SeedBuiltInWorkflowsResult {
  * Template matching is by node name + agent name. If a user renamed a node,
  * preserve its existing node-level route instead of clearing it.
  */
-function mergeNodeStructuralFieldsFromTemplate(
+export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'name' | 'agents' | 'postApproval'>[],
+  templateNodes: Pick<
+    WorkflowNode,
+    'name' | 'agents' | 'postApproval' | 'requireCodexApproval' | 'codexPollIntervalMs'
+  >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
@@ -1517,6 +1522,12 @@ function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
+      requireCodexApproval: templateNode
+        ? templateNode.requireCodexApproval
+        : node.requireCodexApproval,
+      codexPollIntervalMs: templateNode
+        ? templateNode.codexPollIntervalMs
+        : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateGuards = templateAgentsByKey.get(key);
@@ -1528,6 +1539,119 @@ function mergeNodeStructuralFieldsFromTemplate(
   });
 
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
+}
+
+/**
+ * When a gate still carries the legacy `codex_review_bot` feature (preserved
+ * during restamp for backward compatibility), set `requireCodexApproval: true`
+ * on the source node(s) for that gate's channels so the visual editor toggle
+ * reflects reality and the node-level config drives runtime injection.
+ *
+ * Also strips `codex_review_bot` from the gate features so the node toggle
+ * becomes the single source of truth and can be disabled by unchecking it.
+ */
+function migrateCodexFeatureToNodeToggle(
+  nodes: WorkflowNode[],
+  channels: WorkflowChannel[],
+  gates: Gate[]
+): { nodes: WorkflowNode[]; gates: Gate[] } {
+  // Only migrate gates that do not have a custom script. For scripted gates,
+  // dynamic injection is blocked so the node flag cannot replace the legacy
+  // feature; leaving them untouched preserves the legacy feature as the sole
+  // mechanism and keeps the checkbox as a single source of truth for
+  // non-scripted gates.
+  // Only migrate legacy features on approval gates — dynamic Codex injection
+  // requires isApprovalGate(), so migrating a non-approval gate would break it.
+  const codexGateIds = new Set(
+    gates
+      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
+      .map((g) => g.id)
+  );
+  // Scripted approval gates with legacy codex: strip node toggles so the UI
+  // doesn't show a misleading enabled checkbox for gates where dynamic
+  // injection is blocked and the legacy feature is the actual mechanism.
+  const scriptedCodexGateIds = new Set(
+    gates
+      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
+      .map((g) => g.id)
+  );
+
+  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
+    const result = new Set<string>();
+    for (const channel of channels) {
+      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
+      if (channel.from === '*') {
+        for (const node of nodes) result.add(node.id);
+        continue;
+      }
+      const nodeByName = nodes.find((n) => n.name === channel.from);
+      if (nodeByName) {
+        result.add(nodeByName.id);
+        continue;
+      }
+      for (const node of nodes) {
+        try {
+          const agents = resolveNodeAgents(node);
+          if (agents.some((a) => a.name === channel.from)) {
+            result.add(node.id);
+          }
+        } catch {
+          // skip malformed nodes
+        }
+      }
+    }
+    return result;
+  };
+
+  const nodesToFlag = collectSourceNodes(codexGateIds);
+  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
+
+  // Also strip toggles for nodes connected to ANY scripted approval gate
+  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
+  // is blocked for scripted approval gates, so a node toggle is misleading
+  // when the node sends through one.
+  const allScriptedApprovalGateIds = new Set(
+    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
+  );
+  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
+    nodesToUnflag.add(nodeId);
+  }
+
+  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
+  const migratedNodes = needsNodeChange
+    ? nodes.map((node) => {
+        if (nodesToUnflag.has(node.id)) {
+          const next = { ...node };
+          delete next.requireCodexApproval;
+          return next;
+        }
+        if (nodesToFlag.has(node.id)) {
+          return { ...node, requireCodexApproval: true };
+        }
+        return node;
+      })
+    : nodes;
+
+  const migratedGateIdsToStrip = new Set<string>();
+  for (const gateId of codexGateIds) {
+    const sources = collectSourceNodes(new Set([gateId]));
+    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
+    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
+  }
+
+  const migratedGates = gates.map((gate) => {
+    if (!gate.features?.codex_review_bot) return gate;
+    // Preserve legacy feature on gates that cannot be replaced by dynamic
+    // approval-gate injection.
+    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
+    const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
+    return {
+      ...gate,
+      features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
+    };
+  });
+
+  return { nodes: migratedNodes, gates: migratedGates };
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {
@@ -1626,15 +1750,24 @@ export function mergeGateStructuralFieldsFromTemplate(
       // script or poll, so feature-backed mechanisms do not silently override
       // custom gate logic at runtime. When copying is allowed, propagate the
       // template's features (including undefined when the template removed them).
+      // Preserve existing codex_review_bot feature during transition to node-level
+      // config so pre-existing workflows that relied on gate-level codex keep working.
       const shouldCopyFeatures = !gate.script && !gate.poll;
+      let nextFeatures: Gate['features'] | undefined;
+      if (shouldCopyFeatures) {
+        if (templateGate.features) {
+          nextFeatures = { ...templateGate.features };
+        }
+        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
+          nextFeatures = { codex_review_bot: true, ...nextFeatures };
+        }
+      } else {
+        nextFeatures = gate.features;
+      }
       return {
         ...gate,
         fields,
-        features: shouldCopyFeatures
-          ? templateGate.features
-            ? { ...templateGate.features }
-            : undefined
-          : gate.features,
+        features: nextFeatures,
       };
     })
     .concat(missingTemplateGates);
@@ -1748,7 +1881,11 @@ export function seedBuiltInWorkflows(
           row.nodes
         );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const hasNewTemplateNodes = mergedNodes.length > row.nodes.length;
+        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
+          mergedNodes,
+          mergedChannels ?? row.channels ?? [],
+          mergedGates ?? row.gates ?? []
+        );
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
 
         workflowManager.updateWorkflow(row.id, {
@@ -1756,14 +1893,11 @@ export function seedBuiltInWorkflows(
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: mergedGates,
-          ...(hasNewTemplateNodes ? { nodes: mergedNodes } : {}),
+          gates: migratedGates,
+          nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
         });
-        if (!hasNewTemplateNodes) {
-          workflowManager.updateWorkflowNodeToolGuards(row.id, mergedNodes);
-        }
         restamped.push(template.name);
         builtInSeederLog.info(
           `re-stamped built-in workflow '${template.name}' (id=${row.id}) ` +
@@ -1829,6 +1963,7 @@ export function seedBuiltInWorkflows(
           agentId: resolvedIds.get(a.agentId)!,
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
+        ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
       }));
 
       const startNodeId = nodeIdMap.get(template.startNodeId);
