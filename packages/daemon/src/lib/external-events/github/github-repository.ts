@@ -270,6 +270,7 @@ export class GitHubEventExtensionRepository {
   updateSharedAutoHook(params: {
     owner: string;
     repo: string;
+    previousWebhookRemoteId: number;
     webhookRemoteId: number;
     webhookSecret: string;
     webhookUrl: string;
@@ -280,12 +281,13 @@ export class GitHubEventExtensionRepository {
     this.db
       .prepare(
         `UPDATE space_github_watched_repos
-         SET webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
+         SET webhook_remote_id = ?, webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
              webhook_last_error = NULL, webhook_configured_at = ?, updated_at = ?
          WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
            AND webhook_remote_id = ?`
       )
       .run(
+        params.webhookRemoteId,
         params.webhookSecret,
         params.webhookUrl,
         params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
@@ -294,8 +296,30 @@ export class GitHubEventExtensionRepository {
         Date.now(),
         params.owner,
         params.repo,
-        params.webhookRemoteId
+        params.previousWebhookRemoteId
       );
+  }
+
+  updateSharedWebhookStatus(
+    owner: string,
+    repo: string,
+    webhookRemoteId: number,
+    status: {
+      active?: boolean | null;
+      lastCheckedAt?: number | null;
+      lastError?: string | null;
+    }
+  ): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM space_github_watched_repos
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id = ?`
+      )
+      .all(owner, repo, webhookRemoteId) as { id: string }[];
+    for (const row of rows) {
+      this.updateWebhookStatus(row.id, status);
+    }
   }
 
   getWatchedRepoById(id: string): GitHubWatchedRepo | null {

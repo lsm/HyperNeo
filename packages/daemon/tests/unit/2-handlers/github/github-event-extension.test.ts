@@ -464,6 +464,56 @@ describe('GitHubEventExtension', () => {
     await extension.stop();
   });
 
+  test('RPC autoConfigureWebhook encodes GitHub API repository path segments', async () => {
+    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
+    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: typeof url === 'string' || url instanceof URL ? String(url) : url.url,
+          init,
+        });
+        return new Response(
+          JSON.stringify({
+            id: 123,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space' },
+          }),
+          { status: 201 }
+        );
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: '../../orgs/acme',
+      });
+
+      expect(calls[0].url).toBe('https://api.github.com/repos/acme/..%2F..%2Forgs%2Facme/hooks');
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
+      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook creates GitHub hook and stores masked metadata', async () => {
     const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
     process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
@@ -863,6 +913,75 @@ describe('GitHubEventExtension', () => {
     }
   });
 
+  test('RPC autoConfigureWebhook updates shared rows after recreating stale hooks', async () => {
+    const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
+    process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          return new Response(JSON.stringify({ message: 'Not Found' }), {
+            status: 404,
+            statusText: 'Not Found',
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            id: 456,
+            active: true,
+            config: { url: 'https://example.com/webhook/github/space' },
+          }),
+          { status: 201 }
+        );
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      for (const spaceId of ['space-1', 'space-2']) {
+        extension.repo.upsertWatchedRepo({
+          spaceId,
+          owner: 'acme',
+          repo: 'widgets',
+          webhookSecret: 'shared-secret',
+          webhookEnabled: true,
+          pollingEnabled: false,
+          webhookRemoteId: 123,
+          webhookUrl: 'https://example.com/webhook/github/space',
+          webhookAutoRegistered: true,
+          webhookActive: true,
+        });
+      }
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.autoConfigureWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+
+      const first = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      const second = extension.repo.getWatchedRepo('space-2', 'acme', 'widgets')!;
+      expect(first.webhookRemoteId).toBe(456);
+      expect(second.webhookRemoteId).toBe(456);
+      expect(second.webhookSecret).toBe(first.webhookSecret);
+    } finally {
+      await extension.stop();
+      if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
+      else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   test('RPC autoConfigureWebhook keeps existing hook when replacement update fails', async () => {
     const previousPublicUrl = process.env.NEOKAI_PUBLIC_URL;
     process.env.NEOKAI_PUBLIC_URL = 'https://example.com';
@@ -917,6 +1036,67 @@ describe('GitHubEventExtension', () => {
       await extension.stop();
       if (previousPublicUrl === undefined) delete process.env.NEOKAI_PUBLIC_URL;
       else process.env.NEOKAI_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
+  test('RPC watchRepo cleans up auto-hook metadata when disabling webhooks', async () => {
+    const db = setupDb();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: typeof url === 'string' || url instanceof URL ? String(url) : url.url,
+          init,
+        });
+        return new Response('', { status: 204 });
+      }) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.repo.upsertWatchedRepo({
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookSecret: 'managed-secret',
+        webhookEnabled: true,
+        pollingEnabled: false,
+        webhookRemoteId: 123,
+        webhookUrl: 'https://example.com/webhook/github/space',
+        webhookAutoRegistered: true,
+        webhookActive: true,
+      });
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.watchRepo', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+        webhookEnabled: false,
+        pollingEnabled: true,
+      });
+
+      expect(calls.map((call) => `${call.init?.method ?? 'GET'} ${call.url}`)).toEqual([
+        'DELETE https://api.github.com/repos/acme/widgets/hooks/123',
+      ]);
+      const stored = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      expect(stored.webhookEnabled).toBe(false);
+      expect(stored.pollingEnabled).toBe(true);
+      expect(stored.webhookAutoRegistered).toBe(false);
+      expect(stored.webhookRemoteId).toBeNull();
+      expect(stored.webhookSecret).toBe('managed-secret');
+    } finally {
+      await extension.stop();
     }
   });
 
@@ -993,6 +1173,65 @@ describe('GitHubEventExtension', () => {
     ]);
     expect(extension.repo.listWatchedRepos('space-1')).toHaveLength(0);
     await extension.stop();
+  });
+
+  test('RPC checkWebhook propagates shared webhook status', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({
+            id: 123,
+            active: false,
+            events: ['pull_request', 'issue_comment'],
+            config: { url: 'https://example.com/webhook/github/space' },
+          }),
+          { status: 200 }
+        )) as typeof fetch,
+    });
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const context = {
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    try {
+      for (const spaceId of ['space-1', 'space-2']) {
+        extension.repo.upsertWatchedRepo({
+          spaceId,
+          owner: 'acme',
+          repo: 'widgets',
+          webhookSecret: 'shared-secret',
+          webhookEnabled: true,
+          pollingEnabled: false,
+          webhookRemoteId: 123,
+          webhookUrl: 'https://example.com/webhook/github/space',
+          webhookAutoRegistered: true,
+          webhookActive: true,
+        });
+      }
+      await extension.start(context);
+      extension.registerRpcHandlers(hub, context);
+
+      await clientHub.request('space.github.checkWebhook', {
+        spaceId: 'space-1',
+        owner: 'acme',
+        repo: 'widgets',
+      });
+
+      const first = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+      const second = extension.repo.getWatchedRepo('space-2', 'acme', 'widgets')!;
+      expect(first.webhookActive).toBe(false);
+      expect(second.webhookActive).toBe(false);
+      expect(second.webhookLastError).toBe('GitHub webhook is disabled');
+    } finally {
+      await extension.stop();
+    }
   });
 
   test('RPC checkWebhook does not require ignored push webhooks', async () => {

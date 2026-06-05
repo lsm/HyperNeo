@@ -128,7 +128,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const existing = this.repo.getWatchedRepo(params.spaceId, params.owner, params.repo);
       const replacingAutoSecret = Boolean(params.webhookSecret && existing?.webhookAutoRegistered);
-      if (replacingAutoSecret && existing?.webhookRemoteId) {
+      const disablingAutoWebhook = Boolean(
+        existing?.webhookAutoRegistered &&
+          existing.webhookEnabled &&
+          params.webhookEnabled === false
+      );
+      if ((replacingAutoSecret || disablingAutoWebhook) && existing?.webhookRemoteId) {
         await this.deleteRemoteWebhookIfUnshared(existing);
       }
       let watchedRepo = this.repo.upsertWatchedRepo({
@@ -140,7 +145,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         pollingEnabled: params.pollingEnabled,
         enabled: params.enabled,
       });
-      if (replacingAutoSecret) {
+      if (replacingAutoSecret || disablingAutoWebhook) {
         this.repo.clearWebhookRegistration(watchedRepo.id);
         watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
       }
@@ -434,10 +439,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const checkedAt = Date.now();
     const configuredAt = Date.now();
     const storedUrl = hook.config?.url ?? webhookUrl;
-    if (source?.webhookRemoteId && hook.id === source.webhookRemoteId) {
+    if (source?.webhookRemoteId) {
       this.repo.updateSharedAutoHook({
         owner: params.owner,
         repo: params.repo,
+        previousWebhookRemoteId: source.webhookRemoteId,
         webhookRemoteId: hook.id,
         webhookSecret: secret,
         webhookUrl: storedUrl,
@@ -478,13 +484,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     try {
       const hook = await this.getRemoteWebhook(watched);
       const error = validateRemoteHook(watched, hook);
-      this.repo.updateWebhookStatus(watched.id, {
+      this.updateWebhookStatus(watched, {
         active: !error,
         lastCheckedAt: Date.now(),
         lastError: error,
       });
     } catch (error) {
-      this.repo.updateWebhookStatus(watched.id, {
+      this.updateWebhookStatus(watched, {
         active: error instanceof GitHubApiError && error.status === 404 ? false : undefined,
         lastCheckedAt: Date.now(),
         lastError: error instanceof Error ? error.message : String(error),
@@ -494,6 +500,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const result = this.repo.getWatchedRepoById(watched.id);
     if (!result) throw new Error('Repository was removed during webhook check');
     return result;
+  }
+
+  private updateWebhookStatus(
+    watched: GitHubWatchedRepo,
+    status: {
+      active?: boolean | null;
+      lastCheckedAt?: number | null;
+      lastError?: string | null;
+    }
+  ): void {
+    if (watched.webhookAutoRegistered && watched.webhookRemoteId) {
+      this.repo.updateSharedWebhookStatus(
+        watched.owner,
+        watched.repo,
+        watched.webhookRemoteId,
+        status
+      );
+      return;
+    }
+    this.repo.updateWebhookStatus(watched.id, status);
   }
 
   private async configureRemoteWebhook(
@@ -521,7 +547,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     webhookUrl: string,
     secret: string
   ): Promise<GitHubHookResponse> {
-    const response = await this.githubFetch(`/repos/${owner}/${repo}/hooks`, {
+    const repoPath = gitHubRepoPath(owner, repo);
+    const response = await this.githubFetch(`/repos/${repoPath}/hooks`, {
       method: 'POST',
       body: JSON.stringify({
         name: 'web',
@@ -543,29 +570,26 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     webhookUrl: string,
     secret: string
   ): Promise<GitHubHookResponse> {
-    const response = await this.githubFetch(
-      `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({
-          active: true,
-          events: WEBHOOK_EVENTS,
-          config: {
-            url: webhookUrl,
-            content_type: 'json',
-            secret,
-            insecure_ssl: '0',
-          },
-        }),
-      }
-    );
+    const repoPath = gitHubRepoPath(watched.owner, watched.repo);
+    const response = await this.githubFetch(`/repos/${repoPath}/hooks/${watched.webhookRemoteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        active: true,
+        events: WEBHOOK_EVENTS,
+        config: {
+          url: webhookUrl,
+          content_type: 'json',
+          secret,
+          insecure_ssl: '0',
+        },
+      }),
+    });
     return (await response.json()) as GitHubHookResponse;
   }
 
   private async getRemoteWebhook(watched: GitHubWatchedRepo): Promise<GitHubHookResponse> {
-    const response = await this.githubFetch(
-      `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`
-    );
+    const repoPath = gitHubRepoPath(watched.owner, watched.repo);
+    const response = await this.githubFetch(`/repos/${repoPath}/hooks/${watched.webhookRemoteId}`);
     return (await response.json()) as GitHubHookResponse;
   }
 
@@ -584,13 +608,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!this.githubToken) {
       throw new Error('GITHUB_TOKEN is required to delete GitHub webhooks');
     }
+    const repoPath = gitHubRepoPath(watched.owner, watched.repo);
     try {
-      await this.githubFetch(
-        `/repos/${watched.owner}/${watched.repo}/hooks/${watched.webhookRemoteId}`,
-        {
-          method: 'DELETE',
-        }
-      );
+      await this.githubFetch(`/repos/${repoPath}/hooks/${watched.webhookRemoteId}`, {
+        method: 'DELETE',
+      });
     } catch (error) {
       if (error instanceof GitHubApiError && error.status === 404) return;
       throw error;
@@ -629,7 +651,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
     };
     const since = watermarks.committed ? new Date(watermarks.committed).toISOString() : undefined;
-    const base = `https://api.github.com/repos/${watched.owner}/${watched.repo}`;
+    const base = `https://api.github.com/repos/${gitHubRepoPath(watched.owner, watched.repo)}`;
     const endpoints = [
       { key: 'issue_comments', path: '/issues/comments' },
       { key: 'review_comments', path: '/pulls/comments' },
@@ -730,6 +752,10 @@ function generateWebhookSecret(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function gitHubRepoPath(owner: string, repo: string): string {
+  return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 
 function getConfiguredWebhookUrl(): string {
