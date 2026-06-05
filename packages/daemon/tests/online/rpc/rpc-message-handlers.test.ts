@@ -35,17 +35,13 @@ describe('Message RPC Handlers', () => {
     await daemon.waitForExit();
   }, 15_000);
 
-  async function createSession(workspacePath: string): Promise<string> {
+  async function createSessionWithMessages(title?: string): Promise<string> {
+    const workspacePath = mkdtempSync(join(tmpdir(), 'neokai-rpc-message-'));
     const { sessionId } = (await daemon.messageHub.request('session.create', {
       workspacePath,
+      title,
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
-    return sessionId;
-  }
-
-  async function createSessionWithMessages(): Promise<string> {
-    const workspacePath = mkdtempSync(join(tmpdir(), 'neokai-rpc-message-'));
-    const sessionId = await createSession(workspacePath);
 
     // Send a message — mock SDK will respond with assistant text + result
     await sendMessage(daemon, sessionId, 'Hello, world!');
@@ -128,13 +124,9 @@ describe('Message RPC Handlers', () => {
     test(
       'should export session as markdown by default',
       async () => {
-        const sessionId = await createSessionWithMessages();
-
-        // Set a title first for the export
-        await daemon.messageHub.request('session.update', {
-          sessionId,
-          title: 'Test Export Session',
-        });
+        // Pass title at creation so auto-title generation is skipped,
+        // avoiding a race where the async title job overwrites our title.
+        const sessionId = await createSessionWithMessages('Test Export Session');
 
         const result = (await daemon.messageHub.request('session.export', {
           sessionId,
