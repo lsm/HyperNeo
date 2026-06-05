@@ -4,6 +4,7 @@ import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
@@ -30,8 +31,9 @@ export class SpaceLongHorizonAgentRepository {
       .prepare(
         `INSERT INTO space_long_horizon_agents (
 					id, space_id, handle, display_name, template_key, status, session_id,
-					instructions, autonomy_level, model, thinking_level, tool_permissions_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					instructions, autonomy_level, model, thinking_level, provider, setting_sources,
+					tool_permissions_json, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -45,6 +47,8 @@ export class SpaceLongHorizonAgentRepository {
         params.autonomyLevel ?? null,
         params.model ?? null,
         params.thinkingLevel ?? null,
+        params.provider ?? null,
+        params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         JSON.stringify(params.toolPermissions ?? DEFAULT_TOOL_PERMISSIONS),
         now,
         now
@@ -149,6 +153,14 @@ export class SpaceLongHorizonAgentRepository {
     if (params.thinkingLevel !== undefined) {
       fields.push('thinking_level = ?');
       values.push(params.thinkingLevel ?? null);
+    }
+    if (params.provider !== undefined) {
+      fields.push('provider = ?');
+      values.push(params.provider ?? null);
+    }
+    if (params.settingSources !== undefined) {
+      fields.push('setting_sources = ?');
+      values.push(params.settingSources === null ? null : JSON.stringify(params.settingSources));
     }
     if (params.toolPermissions !== undefined) {
       fields.push('tool_permissions_json = ?');
@@ -374,6 +386,39 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToSubscription);
   }
 
+  updateSubscription(
+    subscriptionId: string,
+    params: UpdateSpaceLongHorizonAgentSubscriptionParams
+  ): SpaceLongHorizonAgentEventSubscription | null {
+    const existing = this.getSubscription(subscriptionId);
+    if (!existing) return null;
+    const nextSource = params.source ?? existing.source;
+    const nextTopic = params.topic ?? existing.topic;
+    const nextFilter = params.filter ?? existing.filter;
+    const nextStatus = params.status ?? existing.status;
+    this.db
+      .prepare(
+        `UPDATE space_long_horizon_agent_event_subscriptions
+           SET source = ?, topic = ?, filter_json = ?, status = ?, updated_at = ?
+           WHERE id = ?`
+      )
+      .run(
+        nextSource,
+        nextTopic,
+        JSON.stringify(nextFilter),
+        nextStatus,
+        Date.now(),
+        subscriptionId
+      );
+    return this.getSubscription(subscriptionId);
+  }
+
+  deleteSubscription(subscriptionId: string): void {
+    this.db
+      .prepare(`DELETE FROM space_long_horizon_agent_event_subscriptions WHERE id = ?`)
+      .run(subscriptionId);
+  }
+
   listActiveSubscriptionsBySpace(spaceId: string): SpaceLongHorizonAgentEventSubscription[] {
     const rows = this.db
       .prepare(
@@ -444,6 +489,10 @@ function rowToAgent(row: Record<string, unknown>): SpaceLongHorizonAgent {
     autonomyLevel: (row.autonomy_level as SpaceAgentAutonomyLevel | null) ?? null,
     model: (row.model as string | null) ?? null,
     thinkingLevel: (row.thinking_level as SpaceLongHorizonAgent['thinkingLevel']) ?? null,
+    provider: (row.provider as string | null) ?? null,
+    settingSources: row.setting_sources
+      ? (JSON.parse(row.setting_sources as string) as SpaceLongHorizonAgent['settingSources'])
+      : null,
     toolPermissions: parseObject(row.tool_permissions_json),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,

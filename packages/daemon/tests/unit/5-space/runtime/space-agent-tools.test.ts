@@ -652,7 +652,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       (
         await handlers.subscribe_agent_event({
           agent_id: legacyAgent.id,
-          topic_pattern: 'github/*/*/issues/*',
+          topic_pattern: 'github/*/*/pull_request/*.opened',
         })
       ).content[0].text
     );

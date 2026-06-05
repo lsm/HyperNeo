@@ -689,6 +689,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 151: Consolidate agent event subscriptions into long-horizon table.
   runMigration151(db);
+
+  // Migration 152: Preserve provider and setting sources on long-horizon agents.
+  runMigration152(db);
 }
 
 /**
@@ -10428,20 +10431,27 @@ export function runMigration151(db: BunDatabase): void {
     .get();
   if (!hasLegacy) return;
 
+  runMigration152(db);
+
   const now = Date.now();
   const hasSpaceAgentStatus = tableHasColumn(db, 'space_agents', 'status');
   const hasSpaceAgentCustomPrompt = tableHasColumn(db, 'space_agents', 'custom_prompt');
+  const hasSpaceAgentProvider = tableHasColumn(db, 'space_agents', 'provider');
+  const hasSpaceAgentSettingSources = tableHasColumn(db, 'space_agents', 'setting_sources');
   const statusExpr = hasSpaceAgentStatus
     ? `COALESCE(NULLIF(space_agents.status, ''), 'active')`
     : `'active'`;
   const instructionsExpr = hasSpaceAgentCustomPrompt
     ? `COALESCE(space_agents.custom_prompt, space_agents.instructions, space_agents.system_prompt, '')`
     : `COALESCE(space_agents.instructions, space_agents.system_prompt, '')`;
+  const providerExpr = hasSpaceAgentProvider ? `space_agents.provider` : `NULL`;
+  const settingSourcesExpr = hasSpaceAgentSettingSources ? `space_agents.setting_sources` : `NULL`;
 
   db.prepare(
     `INSERT OR IGNORE INTO space_long_horizon_agents (
       id, space_id, handle, display_name, template_key, status, session_id,
-      instructions, autonomy_level, model, thinking_level, tool_permissions_json, created_at, updated_at
+      instructions, autonomy_level, model, thinking_level, provider, setting_sources,
+      tool_permissions_json, created_at, updated_at
     )
     SELECT
       legacy.agent_id,
@@ -10465,6 +10475,8 @@ export function runMigration151(db: BunDatabase): void {
       NULL,
       space_agents.model,
       NULL,
+      ${providerExpr},
+      ${settingSourcesExpr},
       CASE
         WHEN space_agents.tools IS NULL OR space_agents.tools = '' OR space_agents.tools = '[]' THEN '{}'
         ELSE json_object('tools', json(space_agents.tools))
@@ -10497,4 +10509,17 @@ export function runMigration151(db: BunDatabase): void {
     JOIN space_long_horizon_agents agents ON agents.id = legacy.agent_id AND agents.space_id = legacy.space_id`
   ).run(now);
   db.exec(`DROP TABLE IF EXISTS space_agent_event_subscriptions`);
+}
+
+/**
+ * Migration 152 — Preserve provider and setting source policy on long-horizon agents.
+ */
+function runMigration152(db: BunDatabase): void {
+  if (!tableExists(db, 'space_long_horizon_agents')) return;
+  if (!tableHasColumn(db, 'space_long_horizon_agents', 'provider')) {
+    db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN provider TEXT DEFAULT NULL`);
+  }
+  if (!tableHasColumn(db, 'space_long_horizon_agents', 'setting_sources')) {
+    db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
+  }
 }

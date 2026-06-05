@@ -17,6 +17,10 @@ import { Database } from 'bun:sqlite';
 import type { MessageHub, SDKMessage, Session } from '@neokai/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import {
+  coordinatorLongHorizonAgentId,
+  SpaceLongHorizonAgentRepository,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -98,6 +102,7 @@ function createTestDatabaseFacade(db: Database) {
   const sessionRepo = new SessionRepository(db as any);
   const sdkMessageRepo = new SDKMessageRepository(db as any);
   return {
+    getDatabase: () => db,
     getSession: (id: string) => sessionRepo.getSession(id),
     getRenderableTextMessages: (sessionId: string, limit?: number) =>
       sdkMessageRepo.getRenderableTextMessages(sessionId, limit),
@@ -646,6 +651,119 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.customPrompt).toBe('New prompt');
     });
 
+    it('syncs matching long-horizon agent rows when handle and policy change', async () => {
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const longHorizonAgent = longHorizonRepo.create({
+        id: agentId,
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'original',
+        displayName: 'Original',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: agentId,
+        handle: 'renamed',
+        description: 'Short UI summary only',
+        provider: 'openrouter',
+        settingSources: ['project'],
+        tools: ['Read', 'Edit'],
+      });
+
+      expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
+        expect.objectContaining({
+          handle: 'renamed',
+          instructions: '',
+          provider: 'openrouter',
+          settingSources: ['project'],
+          toolPermissions: { tools: ['Read', 'Edit'] },
+        })
+      );
+    });
+
+    it('rejects handle changes that would break event-agent sync before mutating the agent', async () => {
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      longHorizonRepo.create({
+        id: agentId,
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'original',
+        displayName: 'Original',
+      });
+      longHorizonRepo.create({
+        id: 'standalone-lh-agent',
+        spaceId: 'space-1',
+        handle: 'taken-handle',
+        displayName: 'Standalone Agent',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: agentId,
+          handle: 'taken-handle',
+        })
+      ).rejects.toThrow(
+        'Long-horizon agent handle "taken-handle" is already used by standalone-lh-agent'
+      );
+
+      expect(manager.getById(agentId)).toEqual(
+        expect.objectContaining({ handle: visibleAgent?.handle })
+      );
+      expect(daemonData.publishMock).not.toHaveBeenCalled();
+    });
+
+    it('does not sync standalone long-horizon rows matched only by handle', async () => {
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const standaloneAgent = longHorizonRepo.create({
+        id: 'standalone-lh-agent',
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'original',
+        displayName: 'Standalone Agent',
+        instructions: 'Standalone prompt',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: agentId,
+        handle: 'renamed-visible',
+        customPrompt: 'Updated visible prompt',
+      });
+
+      expect(longHorizonRepo.getById(standaloneAgent.id)).toEqual(
+        expect.objectContaining({
+          handle: visibleAgent?.handle,
+          instructions: 'Standalone prompt',
+        })
+      );
+    });
+
+    it('syncs seeded coordinator long-horizon rows using normalized handle', async () => {
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Coordinator',
+        handle: 'space-coordinator',
+      });
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: created.agent.id,
+        customPrompt: 'Updated coordinator prompt',
+        tools: ['Read'],
+      });
+
+      expect(longHorizonRepo.getById(coordinator.id)).toEqual(
+        expect.objectContaining({
+          handle: 'coordinator',
+          instructions: 'Updated coordinator prompt',
+          toolPermissions: { tools: ['Read'] },
+        })
+      );
+    });
+
     it('emits spaceAgent.updated event', async () => {
       await call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'Updated' });
       await new Promise((r) => setTimeout(r, 0));
@@ -714,6 +832,85 @@ describe('Space Agent RPC Handlers', () => {
         id: agentId,
       });
       expect(result.success).toBe(true);
+    });
+
+    it('archives matching long-horizon agent rows before deleting specialists', async () => {
+      setupSpaceAgentHandlers(
+        hubData.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        { removeLongHorizonAgentSubscriptions: mock(() => {}) }
+      );
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const longHorizonAgent = longHorizonRepo.create({
+        id: agentId,
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'todelete',
+        displayName: 'ToDelete',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
+
+      expect(longHorizonRepo.getById(longHorizonAgent.id)?.status).toBe('archived');
+    });
+
+    it('does not archive standalone long-horizon rows matched only by handle', async () => {
+      setupSpaceAgentHandlers(
+        hubData.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        { removeLongHorizonAgentSubscriptions: mock(() => {}) }
+      );
+      const visibleAgent = manager.getById(agentId);
+      expect(visibleAgent).not.toBeNull();
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const standaloneAgent = longHorizonRepo.create({
+        id: 'standalone-lh-agent-delete',
+        spaceId: 'space-1',
+        handle: visibleAgent?.handle ?? 'todelete',
+        displayName: 'Standalone To Keep',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
+
+      expect(longHorizonRepo.getById(standaloneAgent.id)?.status).toBe('active');
+    });
+
+    it('archives seeded coordinator long-horizon rows using normalized handle', async () => {
+      const removeLongHorizonAgentSubscriptions = mock(() => {});
+      setupSpaceAgentHandlers(
+        hubData.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        { removeLongHorizonAgentSubscriptions }
+      );
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Coordinator',
+        handle: 'space-coordinator',
+      });
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+      const subscription = longHorizonRepo.createSubscription({
+        spaceId: 'space-1',
+        agentId: coordinator.id,
+        source: 'github',
+        topic: 'github/*/*/pull_request/*',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.delete', { id: created.agent.id });
+
+      expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('archived');
+      expect(longHorizonRepo.getSubscription(subscription.id)?.status).toBe('disabled');
+      expect(removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-1', coordinator.id);
     });
 
     it('emits spaceAgent.deleted event', async () => {
@@ -887,6 +1084,40 @@ describe('Space Agent RPC Handlers', () => {
           agentId: created.value.id,
         })
       ).rejects.toThrow('Agent not found');
+    });
+
+    it('syncs matching long-horizon event agents after template sync', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'old',
+        tools: ['Read'],
+        customPrompt: 'old',
+        templateName: 'Coder',
+        templateHash: 'stale',
+      });
+      if (!created.ok) throw new Error('create failed');
+      const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      const longHorizonAgent = longHorizonRepo.create({
+        id: created.value.id,
+        spaceId: 'space-1',
+        handle: created.value.handle,
+        displayName: created.value.name,
+        instructions: 'old',
+        toolPermissions: { tools: ['Read'] },
+      });
+
+      await call(hubData.handlers, 'spaceAgent.syncFromTemplate', {
+        spaceId: 'space-1',
+        agentId: created.value.id,
+      });
+
+      expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
+        expect.objectContaining({
+          instructions: expect.stringContaining('expert software engineer'),
+          toolPermissions: expect.objectContaining({ tools: expect.arrayContaining(['Edit']) }),
+        })
+      );
     });
 
     it('returns the updated agent and emits spaceAgent.updated', async () => {

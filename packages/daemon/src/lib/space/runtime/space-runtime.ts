@@ -44,7 +44,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import type { ExternalEvent } from '../../external-events/types';
-import { validateGlobPattern } from '../../external-events/topic-validator';
+import { KNOWN_SOURCES, validateGlobPattern } from '../../external-events/topic-validator';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -494,13 +494,149 @@ function legacyGitHubTopic(topic: string): string | null {
   return `${source}/${owner}/${repo}/${resource}.${entityAction.slice(dotIndex + 1)}`;
 }
 
+function rejectSlashSeparatedGitHubAction(topic: string): never {
+  throw new Error(
+    `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.closed"`
+  );
+}
+
+const GITHUB_EVENT_RESOURCES = new Set(['pull_request']);
+
+function isGitHubEventResource(resource: string): boolean {
+  return GITHUB_EVENT_RESOURCES.has(resource);
+}
+
+function ensureGitHubEventResource(topic: string, resource: string): void {
+  if (resource === '*' || isGitHubEventResource(resource)) return;
+  throw new Error(
+    `GitHub topic "${topic}" uses unsupported resource "${resource}"; supported resources: pull_request`
+  );
+}
+
+function splitDottedGitHubResource(segment: string): { resource: string; action: string } | null {
+  const dotIndex = segment.indexOf('.');
+  if (dotIndex <= 0 || dotIndex === segment.length - 1) return null;
+  return { resource: segment.slice(0, dotIndex), action: segment.slice(dotIndex + 1) };
+}
+
+function rejectGitHubEntityPatternWithoutAction(topic: string): never {
+  throw new Error(
+    `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.opened"`
+  );
+}
+
+function ensureGitHubEntityAction(topic: string, entityAction: string): void {
+  if (entityAction === '*') return;
+  const dotIndex = entityAction.indexOf('.');
+  if (
+    dotIndex <= 0 ||
+    dotIndex === entityAction.length - 1 ||
+    entityAction.indexOf('.', dotIndex + 1) !== -1
+  ) {
+    rejectGitHubEntityPatternWithoutAction(topic);
+  }
+}
+
+function composeGitHubSubscriptionPattern(source: string, topic: string): string {
+  const segments = topic.split('/');
+  const isSourcePrefixed = segments[0] === source;
+  const resourceSegments = isSourcePrefixed ? segments.slice(1) : segments;
+  const firstResourceSegment = resourceSegments[0] ?? '';
+  const firstDottedResource = splitDottedGitHubResource(firstResourceSegment);
+
+  if (isSourcePrefixed && segments.length === 6) rejectSlashSeparatedGitHubAction(topic);
+  if (!isSourcePrefixed && segments.length === 5) rejectSlashSeparatedGitHubAction(topic);
+  if (resourceSegments.length > 4) {
+    throw new Error(
+      `GitHub topic "${topic}" must match supported shape "owner/repo/pull_request/<id>.<action>"`
+    );
+  }
+  if (isSourcePrefixed && segments.length === 5) {
+    ensureGitHubEventResource(topic, segments[3] ?? '');
+    ensureGitHubEntityAction(topic, segments[4] ?? '');
+    return topic;
+  }
+  if (resourceSegments.length === 4) {
+    ensureGitHubEventResource(topic, resourceSegments[2] ?? '');
+    ensureGitHubEntityAction(topic, resourceSegments[3] ?? '');
+    return `${source}/${resourceSegments.join('/')}`;
+  }
+  if (isSourcePrefixed && resourceSegments.length === 3) {
+    const [first, second, third] = resourceSegments;
+    if (isGitHubEventResource(first ?? '')) {
+      ensureGitHubEntityAction(topic, `${second}.${third}`);
+      return `${source}/*/*/${first}/${second}.${third}`;
+    }
+    if (isGitHubEventResource(second ?? '')) {
+      ensureGitHubEntityAction(topic, third ?? '');
+      return `${source}/${source}/${first}/${second}/${third}`;
+    }
+  }
+  if (resourceSegments.length === 3) {
+    const [owner, repo, resource] = resourceSegments;
+    const dotted = splitDottedGitHubResource(resource ?? '');
+    if (dotted) {
+      ensureGitHubEventResource(topic, dotted.resource);
+      return `${source}/${owner}/${repo}/${dotted.resource}/*.${dotted.action}`;
+    }
+    if (!isGitHubEventResource(resource ?? '')) rejectSlashSeparatedGitHubAction(topic);
+    return `${source}/${owner}/${repo}/${resource}/*`;
+  }
+  if (resourceSegments.length === 2) {
+    const [resource, entityAction] = resourceSegments;
+    if (!isGitHubEventResource(resource ?? '')) {
+      const dottedEntityAction = splitDottedGitHubResource(entityAction ?? '');
+      if (isSourcePrefixed && dottedEntityAction) {
+        ensureGitHubEventResource(topic, dottedEntityAction.resource);
+        return `${source}/${source}/${resource}/${dottedEntityAction.resource}/*.${dottedEntityAction.action}`;
+      }
+      if (isSourcePrefixed && isGitHubEventResource(entityAction ?? '')) {
+        return `${source}/${source}/${resource}/${entityAction}/*`;
+      }
+      throw new Error(
+        `GitHub topic "${topic}" must include a resource segment like "owner/repo/pull_request"`
+      );
+    }
+    ensureGitHubEntityAction(topic, entityAction ?? '');
+    return `${source}/*/*/${resource}/${entityAction}`;
+  }
+  if (resourceSegments.length === 1) {
+    if (firstDottedResource) {
+      ensureGitHubEventResource(topic, firstDottedResource.resource);
+      return `${source}/*/*/${firstDottedResource.resource}/*.${firstDottedResource.action}`;
+    }
+    ensureGitHubEventResource(topic, firstResourceSegment);
+    return `${source}/*/*/${firstResourceSegment}/*`;
+  }
+  return `${source}/*/*/${topic}`;
+}
+
 function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const trimmedSource = source.trim();
   const trimmedTopic = topic.trim();
-  if (!trimmedSource || trimmedTopic.startsWith(`${trimmedSource}/`)) return trimmedTopic;
-  if (trimmedSource === 'github' && !trimmedTopic.startsWith('*/*/')) {
-    return `${trimmedSource}/*/*/${trimmedTopic}`;
+  if (!trimmedSource) return trimmedTopic;
+  const topicSource = trimmedTopic.split('/')[0] ?? '';
+  if (trimmedSource === 'github') {
+    const segments = trimmedTopic.split('/');
+    const isOwnerRepoShorthand =
+      segments.length === 3 ||
+      segments.length === 4 ||
+      (segments[0] === trimmedSource && (segments.length === 3 || segments.length === 4));
+    if (isOwnerRepoShorthand || topicSource === trimmedSource) {
+      return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
+    }
+  } else if (topicSource === trimmedSource) {
+    return trimmedTopic;
   }
+  const normalizedTopicSource = topicSource.toLowerCase();
+  if (
+    normalizedTopicSource === trimmedSource.toLowerCase() ||
+    KNOWN_SOURCES.has(normalizedTopicSource)
+  ) {
+    throw new Error(`Topic source "${topicSource}" does not match source "${trimmedSource}"`);
+  }
+  if (trimmedSource === 'github')
+    return composeGitHubSubscriptionPattern(trimmedSource, trimmedTopic);
   return `${trimmedSource}/${trimmedTopic}`;
 }
 
@@ -767,6 +903,8 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
+  private readonly cancelledLongHorizonDeliveries = new Set<string>();
+  private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
@@ -969,15 +1107,37 @@ export class SpaceRuntime {
         target.spaceId === spaceId &&
         target.subscriptionId === subscriptionId
     );
+    const previousPattern = this.longHorizonSubscriptionPatterns.get(subscriptionId);
     const subscription = repo.getSubscription(subscriptionId);
     if (!subscription || subscription.spaceId !== spaceId || subscription.status !== 'active') {
+      this.longHorizonSubscriptionPatterns.delete(subscriptionId);
+      this.clearLongHorizonRetries(
+        (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+      );
       return { success: true };
     }
     const agent = repo.getById(subscription.agentId);
-    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return { success: true };
-    const pattern = composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') {
+      this.longHorizonSubscriptionPatterns.delete(subscriptionId);
+      this.clearLongHorizonRetries(
+        (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+      );
+      return { success: true };
+    }
+    let pattern: string;
+    try {
+      pattern = composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
     const validation = validateGlobPattern(pattern);
     if (!validation.valid) return { success: false, error: validation.reason ?? 'invalid pattern' };
+    if (previousPattern && previousPattern.toLowerCase() !== pattern.toLowerCase()) {
+      this.clearLongHorizonRetries(
+        (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+      );
+    }
+    this.longHorizonSubscriptionPatterns.set(subscriptionId, pattern);
     this.topicTrie.insert(pattern, {
       kind: 'long_horizon_agent',
       spaceId: subscription.spaceId,
@@ -987,6 +1147,14 @@ export class SpaceRuntime {
       subscriptionId: subscription.id,
     });
     return { success: true };
+  }
+
+  hasPendingRetriesForAgent(spaceId: string, agentId: string): boolean {
+    for (const deliveryKey of this.externalEventRetryTimers.keys()) {
+      const target = this.parseLongHorizonDeliveryKey(deliveryKey);
+      if (target?.spaceId === spaceId && target.agentId === agentId) return true;
+    }
+    return false;
   }
 
   refreshLongHorizonAgentSubscriptions(
@@ -999,8 +1167,7 @@ export class SpaceRuntime {
       .listSubscriptions(agentId)
       .filter((subscription) => subscription.spaceId === spaceId);
     for (const subscription of subscriptions) {
-      const result = this.refreshLongHorizonSubscription(spaceId, subscription.id);
-      if (!result.success) return result;
+      this.refreshLongHorizonSubscription(spaceId, subscription.id);
     }
     return { success: true };
   }
@@ -1012,14 +1179,23 @@ export class SpaceRuntime {
         target.spaceId === spaceId &&
         target.subscriptionId === subscriptionId
     );
+    this.longHorizonSubscriptionPatterns.delete(subscriptionId);
+    this.clearLongHorizonRetries(
+      (target) => target.spaceId === spaceId && target.subscriptionId === subscriptionId
+    );
   }
 
   removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
-    this.topicTrie.remove(
-      (target) =>
+    this.topicTrie.remove((target) => {
+      const matches =
         isLongHorizonSubscriptionTarget(target) &&
         target.spaceId === spaceId &&
-        target.agentId === agentId
+        target.agentId === agentId;
+      if (matches) this.longHorizonSubscriptionPatterns.delete(target.subscriptionId);
+      return matches;
+    });
+    this.clearLongHorizonRetries(
+      (target) => target.spaceId === spaceId && target.agentId === agentId
     );
   }
 
@@ -1220,12 +1396,14 @@ export class SpaceRuntime {
         message: this.formatExternalEventMessage(event),
         idempotencyKey: deliveryKey,
       });
+      if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
       if (!result.delivered) throw new Error('long-horizon agent unavailable');
       this.clearExternalEventRetry(deliveryKey);
       store.markDeliveryDelivered(event.eventId, deliveryKey);
       store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
       store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
     } catch (err) {
+      if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
       const failureReason = err instanceof Error ? err.message : String(err);
       store.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: false,
@@ -1238,6 +1416,39 @@ export class SpaceRuntime {
       );
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
+      this.cancelledLongHorizonDeliveries.delete(deliveryKey);
+    }
+  }
+
+  private clearLongHorizonRetries(
+    predicate: (target: LongHorizonSubscriptionTarget) => boolean
+  ): void {
+    for (const deliveryKey of Array.from(this.externalEventRetryTimers.keys())) {
+      const target = this.parseLongHorizonDeliveryKey(deliveryKey);
+      if (!target || !predicate(target)) continue;
+      this.markLongHorizonRetryCancelled(deliveryKey);
+      this.clearExternalEventRetry(deliveryKey);
+    }
+    for (const deliveryKey of Array.from(this.externalEventDeliveriesInFlight)) {
+      const target = this.parseLongHorizonDeliveryKey(deliveryKey);
+      if (!target || !predicate(target)) continue;
+      this.cancelledLongHorizonDeliveries.add(deliveryKey);
+      this.markLongHorizonRetryCancelled(deliveryKey);
+    }
+  }
+
+  private markLongHorizonRetryCancelled(deliveryKey: string): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    try {
+      const eventId = store.getEventIdForDeliveryKey(deliveryKey);
+      store.markDeliveryFailed(eventId, deliveryKey, {
+        terminal: true,
+        reason: 'subscription_no_longer_active',
+      });
+      store.markEventFailedIfAllDeliveriesTerminal(eventId);
+    } catch {
+      return;
     }
   }
 
@@ -1894,6 +2105,33 @@ export class SpaceRuntime {
       target.agentId,
       target.subscriptionId,
     ]);
+  }
+
+  private parseLongHorizonDeliveryKey(deliveryKey: string): LongHorizonSubscriptionTarget | null {
+    try {
+      const parsed = JSON.parse(deliveryKey) as unknown;
+      if (!Array.isArray(parsed) || parsed.length !== 6 || parsed[0] !== 'long_horizon_agent') {
+        return null;
+      }
+      const [, , , spaceId, agentId, subscriptionId] = parsed;
+      if (
+        typeof spaceId !== 'string' ||
+        typeof agentId !== 'string' ||
+        typeof subscriptionId !== 'string'
+      ) {
+        return null;
+      }
+      return {
+        kind: 'long_horizon_agent',
+        spaceId,
+        agentId,
+        source: '',
+        topic: '',
+        subscriptionId,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private formatExternalEventMessage(event: ExternalEventPublishedPayload): string {
@@ -3433,16 +3671,26 @@ export class SpaceRuntime {
         const agent = subscription
           ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
           : null;
-        const target = subscription
-          ? {
-              kind: 'long_horizon_agent' as const,
+        let target: LongHorizonSubscriptionTarget | null = null;
+        if (subscription) {
+          try {
+            target = {
+              kind: 'long_horizon_agent',
               spaceId: longHorizonSpaceId,
               agentId: subscription.agentId,
               source: subscription.source,
               topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
               subscriptionId: subscription.id,
-            }
-          : null;
+            };
+          } catch (err) {
+            store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+              terminal: true,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+            store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+            continue;
+          }
+        }
         if (
           !subscription ||
           subscription.spaceId !== longHorizonSpaceId ||

@@ -354,6 +354,90 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
+  test('skips invalid persisted long-horizon subscriptions during rehydration', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-invalid-pattern',
+      spaceId: SPACE_ID,
+      handle: 'invalid-pattern-watcher',
+      displayName: 'Invalid Pattern Watcher',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'space/task.done',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await expect(runtime.rehydrateExecutors()).resolves.toBeUndefined();
+    expect(runtime.refreshLongHorizonSubscription(SPACE_ID, subscription.id)).toEqual({
+      success: false,
+      error: 'Topic source "space" does not match source "github"',
+    });
+  });
+
+  test('skips invalid existing long-horizon subscriptions during agent refresh', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-invalid-refresh',
+      spaceId: SPACE_ID,
+      handle: 'invalid-refresh-watcher',
+      displayName: 'Invalid Refresh Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'space/task.done',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+    await eventService.publish(makeEvent({ id: 'evt-after-invalid-refresh' }));
+    expect(longHorizonMessages).toHaveLength(1);
+  });
+
   test('refreshes trie entries after long-horizon agent status changes', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({
@@ -404,6 +488,169 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     await eventService.publish(makeEvent({ id: 'evt-after-pause' }));
     expect(longHorizonMessages).toHaveLength(1);
+  });
+
+  test('clears pending long-horizon retries after agent pause', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-paused-retry',
+      spaceId: SPACE_ID,
+      handle: 'paused-retry-watcher',
+      displayName: 'Paused Retry Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: false, error: 'temporary failure' };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await eventService.publish(makeEvent({ id: 'evt-paused-retry' }));
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(true);
+
+    repo.update(agent.id, { status: 'paused' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+    const delivery = eventStore.listDeliveries('evt-paused-retry')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(eventStore.getById('evt-paused-retry')?.state).toBe('failed');
+    expect(longHorizonMessages).toHaveLength(1);
+    await runtime.stop();
+  });
+
+  test('cancels long-horizon retry after subscription route changes', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-route-change',
+      spaceId: SPACE_ID,
+      handle: 'route-change-watcher',
+      displayName: 'Route Change Watcher',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: false };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    await eventService.publish(makeEvent({ id: 'evt-route-change' }));
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(true);
+
+    repo.updateSubscription(subscription.id, { topic: 'github/*/*/pull_request/*.closed' });
+    expect(runtime.refreshLongHorizonSubscription(SPACE_ID, subscription.id)).toEqual({
+      success: true,
+    });
+
+    const delivery = eventStore.listDeliveries('evt-route-change')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+    await runtime.stop();
+  });
+
+  test('cancels in-flight long-horizon delivery after agent pause', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-inflight-pause',
+      spaceId: SPACE_ID,
+      handle: 'inflight-pause-watcher',
+      displayName: 'Inflight Pause Watcher',
+    });
+    repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+    let resolveDelivery!: (value: { delivered: boolean }) => void;
+    let resolveStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        resolveStarted();
+        return new Promise<{ delivered: boolean }>((resolve) => {
+          resolveDelivery = resolve;
+        });
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+    const publishPromise = eventService.publish(makeEvent({ id: 'evt-inflight-pause' }));
+    await deliveryStarted;
+
+    repo.update(agent.id, { status: 'paused' });
+    expect(runtime.refreshLongHorizonAgentSubscriptions(SPACE_ID, agent.id)).toEqual({
+      success: true,
+    });
+
+    const delivery = eventStore.listDeliveries('evt-inflight-pause')[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('subscription_no_longer_active');
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+
+    resolveDelivery({ delivered: false });
+    await publishPromise;
+
+    expect(runtime.hasPendingRetriesForAgent(SPACE_ID, agent.id)).toBe(false);
+    expect(longHorizonMessages).toHaveLength(1);
+    expect(eventStore.getById('evt-inflight-pause')?.state).toBe('failed');
+    await runtime.stop();
   });
 
   test('removes trie entries after long-horizon agent deletion', async () => {
@@ -2018,6 +2265,58 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveryKey);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('marks invalid persisted pending long-horizon deliveries failed during rehydrate', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-invalid-pending',
+      spaceId: SPACE_ID,
+      handle: 'invalid-pending',
+      displayName: 'Invalid Pending',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: 'space/task.done',
+    });
+    const event = makeEvent({ id: 'evt-lh-invalid-pending' });
+    eventStore.store(event);
+    const deliveryKey = `lh:${subscription.id}:${event.id}`;
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: `long_horizon:${SPACE_ID}`,
+      taskId: subscription.id,
+      nodeId: agent.id,
+      agentName: agent.id,
+    });
+    eventStore.markDeliveryFailed(event.id, deliveryKey, {
+      terminal: false,
+      reason: 'long-horizon agent unavailable',
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await expect(runtime.rehydrateExecutors()).resolves.toBeUndefined();
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toBe('Topic source "space" does not match source "github"');
+    expect(longHorizonMessages).toHaveLength(0);
   });
 
   test('requeues persisted pending deliveries during runtime rehydrate', async () => {

@@ -648,13 +648,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   };
 
   // Space agent handlers
-  setupSpaceAgentHandlers(
-    deps.messageHub,
-    deps.internalEventBus,
-    deps.spaceAgentManager,
-    deps.spaceManager,
-    deps.db
-  );
   setupSpaceWorkflowHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -807,6 +800,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
   });
+
+  setupSpaceAgentHandlers(
+    deps.messageHub,
+    deps.internalEventBus,
+    deps.spaceAgentManager,
+    deps.spaceManager,
+    deps.db,
+    spaceRuntimeService
+  );
 
   // Session handlers — registered here (after spaceRuntimeService is built) so
   // session.create can synchronously call attachSpaceToolsToMemberSession for

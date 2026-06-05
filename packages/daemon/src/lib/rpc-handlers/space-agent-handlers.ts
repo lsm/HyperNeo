@@ -18,10 +18,15 @@ import type {
   SettingSource,
   SpaceAgent,
   SpaceAgentPromotionDraft,
+  SpaceLongHorizonAgent,
   ThinkingLevel,
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { Database } from '../../storage';
+import {
+  coordinatorLongHorizonAgentId,
+  SpaceLongHorizonAgentRepository,
+} from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -64,6 +69,83 @@ function extractTools(session: Session): string[] | undefined {
 
   const disallowed = new Set(disallowedTools);
   return KNOWN_TOOLS.filter((tool) => !disallowed.has(tool));
+}
+
+function isCoordinatorAgent(agent: SpaceAgent): boolean {
+  return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
+}
+
+function getLongHorizonAgentHandle(agent: SpaceAgent): string {
+  return isCoordinatorAgent(agent) ? 'coordinator' : agent.handle;
+}
+
+function findMatchingLongHorizonAgent(
+  repo: SpaceLongHorizonAgentRepository,
+  agent: SpaceAgent
+): SpaceLongHorizonAgent | null {
+  const byId = repo.getById(agent.id);
+  if (byId?.spaceId === agent.spaceId) return byId;
+  if (isCoordinatorAgent(agent)) {
+    const coordinator = repo.getById(coordinatorLongHorizonAgentId(agent.spaceId));
+    if (coordinator) return coordinator;
+  }
+  return null;
+}
+
+function archiveMatchingLongHorizonAgent(
+  db: Database,
+  runtimeService: {
+    removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
+  },
+  agent: SpaceAgent
+): void {
+  const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+  const longHorizonAgent = findMatchingLongHorizonAgent(repo, agent);
+  if (!longHorizonAgent) return;
+  runtimeService.removeLongHorizonAgentSubscriptions(agent.spaceId, longHorizonAgent.id);
+  for (const subscription of repo.listSubscriptions(longHorizonAgent.id)) {
+    repo.updateSubscription(subscription.id, { status: 'disabled' });
+  }
+  repo.update(longHorizonAgent.id, { status: 'archived' });
+}
+
+function assertCanSyncMatchingLongHorizonAgent(
+  db: Database,
+  previousAgent: SpaceAgent,
+  nextHandle: string
+): void {
+  const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+  const longHorizonAgent = findMatchingLongHorizonAgent(repo, previousAgent);
+  if (!longHorizonAgent) return;
+  const targetHandle = isCoordinatorAgent(previousAgent) ? 'coordinator' : nextHandle;
+  const handleOwner = repo.getByHandle(previousAgent.spaceId, targetHandle);
+  if (handleOwner && handleOwner.id !== longHorizonAgent.id) {
+    throw new Error(
+      `Long-horizon agent handle "${targetHandle}" is already used by ${handleOwner.id}`
+    );
+  }
+}
+
+function syncMatchingLongHorizonAgent(
+  db: Database,
+  agent: SpaceAgent,
+  previousAgent?: SpaceAgent | null
+): void {
+  const repo = new SpaceLongHorizonAgentRepository(db.getDatabase());
+  const longHorizonAgent =
+    findMatchingLongHorizonAgent(repo, agent) ??
+    (previousAgent ? findMatchingLongHorizonAgent(repo, previousAgent) : null);
+  if (!longHorizonAgent) return;
+  repo.update(longHorizonAgent.id, {
+    handle: getLongHorizonAgentHandle(agent),
+    displayName: agent.name,
+    instructions: agent.customPrompt ?? '',
+    model: agent.model ?? null,
+    thinkingLevel: agent.thinkingLevel ?? null,
+    provider: agent.provider ?? null,
+    settingSources: agent.settingSources ?? null,
+    toolPermissions: agent.tools && agent.tools.length > 0 ? { tools: agent.tools } : {},
+  });
 }
 
 function extractSettingSources(session: Session): SettingSource[] | undefined {
@@ -143,7 +225,10 @@ export function setupSpaceAgentHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
-  db: Database
+  db: Database,
+  runtimeService?: {
+    removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
+  }
 ): void {
   // spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
   messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
@@ -300,7 +385,11 @@ export function setupSpaceAgentHandlers(
 
     if (!params.id) throw new Error('id is required');
 
+    const previousAgent = spaceAgentManager.getById(params.id);
     const { id, ...updateFields } = params;
+    if (previousAgent && updateFields.handle !== undefined) {
+      assertCanSyncMatchingLongHorizonAgent(db, previousAgent, updateFields.handle);
+    }
     const result = await spaceAgentManager.update(id, {
       name: updateFields.name,
       handle: updateFields.handle,
@@ -314,6 +403,7 @@ export function setupSpaceAgentHandlers(
     });
 
     if (!result.ok) throw new Error(result.error);
+    syncMatchingLongHorizonAgent(db, result.value, previousAgent);
 
     internalEventBus
       .publish('spaceAgent.updated', {
@@ -368,6 +458,7 @@ export function setupSpaceAgentHandlers(
 
     const result = await spaceAgentManager.syncFromTemplate(params.agentId);
     if (!result.ok) throw new Error(result.error);
+    syncMatchingLongHorizonAgent(db, result.value);
 
     internalEventBus
       .publish('spaceAgent.updated', {
@@ -399,6 +490,7 @@ export function setupSpaceAgentHandlers(
       const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
       throw new Error(`${result.error}${detailsMsg}`);
     }
+    if (runtimeService) archiveMatchingLongHorizonAgent(db, runtimeService, existing);
 
     // Await the event so subscribers (e.g. StateManager) see it before the
     // handler returns — consistent with how room.delete emits room.deleted.
