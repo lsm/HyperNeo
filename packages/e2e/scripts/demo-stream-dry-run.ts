@@ -152,15 +152,23 @@ async function seedDemoTask(page: Page, spaceId: string): Promise<string | null>
         }
       }
 
-      // Create as blocked/human_input so the task renders SpaceTaskPane (thread
-      // tab visible) without entering the runnable open-task pipeline.
+      // Create as blocked so the task renders SpaceTaskPane (thread tab visible)
+      // without entering the runnable open-task pipeline.
       const task = (await hub.request('spaceTask.create', {
         spaceId,
         title,
         description: 'Harmless demo task used for UI dry-run only.',
         status: 'blocked',
-        blockReason: 'human_input_requested',
       })) as { id: string };
+
+      // spaceTask.create does not persist block_reason on INSERT; set it via
+      // update so the Tasks view buckets the task as human_input_requested.
+      await hub.request('spaceTask.update', {
+        spaceId,
+        taskId: task.id,
+        blockReason: 'human_input_requested',
+      });
+
       return task.id;
     },
     { spaceId, title: DEMO_TASK_TITLE }
