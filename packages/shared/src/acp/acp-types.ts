@@ -61,16 +61,16 @@ export interface AcpInitializeResult {
 }
 
 export interface AcpClientCapabilities {
-  fs?: boolean;
+  fs?: { readTextFile: boolean; writeTextFile: boolean };
   terminal?: boolean;
   experimental?: Record<string, unknown>;
 }
 
 export interface AcpAgentCapabilities {
-  streaming?: boolean;
-  thinking?: boolean;
-  fs?: boolean;
-  terminal?: boolean;
+  loadSession?: boolean;
+  mcpCapabilities?: { http: boolean; sse: boolean };
+  promptCapabilities?: { audio: boolean; embeddedContext: boolean; image: boolean };
+  sessionCapabilities?: { close?: {}; list?: {}; resume?: {} };
   experimental?: Record<string, unknown>;
 }
 
@@ -160,7 +160,8 @@ export interface AcpSessionLoadResult {
 
 export interface AcpSessionResumeParams {
   sessionId: string;
-  prompt: AcpContentBlock[];
+  cwd: string;
+  mcpServers?: AcpMcpServerConfig[];
   _meta?: object | null;
 }
 
@@ -289,13 +290,13 @@ export interface AcpToolCallUpdateUpdate {
 
 export interface AcpPlanUpdate {
   sessionUpdate: 'plan';
-  entries?: AcpPlanEntry[];
+  entries: AcpPlanEntry[];
 }
 
 export interface AcpPlanEntry {
   content: string;
-  status: 'pending' | 'in_progress' | 'done' | 'error';
-  priority?: number;
+  status: 'pending' | 'in_progress' | 'completed';
+  priority?: 'high' | 'medium' | 'low';
 }
 
 export interface AcpCurrentModeUpdate {
@@ -528,18 +529,23 @@ export interface AcpMcpStdioServerConfig {
   env?: AcpEnvVariable[];
 }
 
+export interface AcpHeader {
+  name: string;
+  value: string;
+}
+
 export interface AcpMcpHttpServerConfig {
   type: 'http';
   name: string;
   url: string;
-  headers?: Record<string, string>;
+  headers?: AcpHeader[];
 }
 
 export interface AcpMcpSseServerConfig {
   type: 'sse';
   name: string;
   url: string;
-  headers?: Record<string, string>;
+  headers?: AcpHeader[];
 }
 
 // ============================================================================
