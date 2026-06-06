@@ -238,6 +238,34 @@ describe('AcpTransport', () => {
     expect((notifications[0] as { method: string }).method).toBe('session/update');
   });
 
+  test('isolates notification handler failures', () => {
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      onNotification: () => {
+        throw new Error('notification boom');
+      },
+    });
+    const proc = lastMockProcess!;
+
+    // Should not throw
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { type: 'plan' } }) +
+          '\n'
+      )
+    );
+
+    // Stream parser is still healthy: a later response should process normally.
+    const promise = transport.sendRequest('test', {});
+    proc.stdout.emit(
+      'data',
+      Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }) + '\n')
+    );
+
+    expect(promise).resolves.toBeDefined();
+  });
+
   // -------------------------------------------------------------------------
   // Subprocess lifecycle
   // -------------------------------------------------------------------------

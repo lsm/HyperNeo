@@ -165,7 +165,11 @@ export class AcpTransport {
 
   private handleNotification(notification: AcpJsonRpcNotification): void {
     if (this.options.onNotification) {
-      this.options.onNotification(notification);
+      try {
+        this.options.onNotification(notification);
+      } catch (err) {
+        logger.error('Notification handler error:', (err as Error).message);
+      }
     }
   }
 

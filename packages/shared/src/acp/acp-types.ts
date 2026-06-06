@@ -41,7 +41,7 @@ export interface AcpJsonRpcError {
 
 export interface AcpInitializeParams {
   protocolVersion: number;
-  clientCapabilities: AcpClientCapabilities;
+  clientCapabilities?: AcpClientCapabilities;
   clientInfo?: {
     name: string;
     version: string;
@@ -169,7 +169,7 @@ export interface AcpSessionLoadParams {
 }
 
 export interface AcpSessionLoadResult {
-  sessionId: string;
+  sessionId?: string;
   modes?: AcpSessionModeState | null;
   configOptions?: AcpConfigOption[] | null;
   _meta?: object | null;
@@ -184,7 +184,7 @@ export interface AcpSessionResumeParams {
 }
 
 export interface AcpSessionResumeResult {
-  sessionId: string;
+  sessionId?: string;
   modes?: AcpSessionModeState | null;
   configOptions?: AcpConfigOption[] | null;
   _meta?: object | null;
@@ -309,19 +309,19 @@ export type AcpSessionUpdate =
 export interface AcpAgentMessageChunkUpdate {
   sessionUpdate: 'agent_message_chunk';
   content: AcpContentBlock;
-  messageId?: string;
+  messageId?: string | null;
 }
 
 export interface AcpUserMessageChunkUpdate {
   sessionUpdate: 'user_message_chunk';
   content: AcpContentBlock;
-  messageId?: string;
+  messageId?: string | null;
 }
 
 export interface AcpAgentThoughtChunkUpdate {
   sessionUpdate: 'agent_thought_chunk';
   content: AcpContentBlock;
-  messageId?: string;
+  messageId?: string | null;
 }
 
 export interface AcpToolCallUpdateNotification {
@@ -339,9 +339,9 @@ export interface AcpToolCallUpdateNotification {
 export interface AcpToolCallUpdateUpdate {
   sessionUpdate: 'tool_call_update';
   toolCallId: string;
-  status?: AcpToolCallStatus;
-  title?: string;
-  kind?: AcpToolKind;
+  status?: AcpToolCallStatus | null;
+  title?: string | null;
+  kind?: AcpToolKind | null;
   rawInput?: Record<string, unknown>;
   rawOutput?: unknown;
   content?: AcpToolCallContent[] | null;
@@ -371,8 +371,8 @@ export interface AcpConfigOptionUpdate {
 
 export interface AcpSessionInfoUpdate {
   sessionUpdate: 'session_info_update';
-  title?: string;
-  updatedAt?: string;
+  title?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface AcpUsageUpdate {
@@ -382,7 +382,7 @@ export interface AcpUsageUpdate {
   cost?: {
     amount: number;
     currency: string;
-  };
+  } | null;
 }
 
 export interface AcpAvailableCommandsUpdate {
