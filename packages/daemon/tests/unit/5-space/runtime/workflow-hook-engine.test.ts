@@ -1,0 +1,730 @@
+/**
+ * Unit tests for WorkflowHookEngine and wrapHandlerWithHooks.
+ *
+ * Covers all hook result types, chaining precedence, follow-up dispatch,
+ * param patching with re-validation, local state updates, script execution
+ * edge cases, and normalized user-state mapping.
+ */
+
+import { describe, test, expect, beforeEach } from 'bun:test';
+import {
+  WorkflowHookEngine,
+  wrapHandlerWithHooks,
+  type HookActionMeta,
+  type HookActionOutcome,
+} from '../../../../src/lib/space/runtime/workflow-hook-engine';
+import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
+import type { WorkflowHook, WorkflowHookResult, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
+import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
+
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
+
+class MockHookExecutor extends HookExecutor {
+  private results = new Map<string, WorkflowHookResult>();
+
+  constructor() {
+    super({ workspacePath: '/tmp' });
+  }
+
+  setResult(hookId: string, result: WorkflowHookResult): void {
+    this.results.set(hookId, result);
+  }
+
+  clear(): void {
+    this.results.clear();
+  }
+
+  override async execute(hook: WorkflowHook): Promise<{ result: WorkflowHookResult }> {
+    const result = this.results.get(hook.id);
+    if (!result) {
+      return { result: { type: 'allow' } };
+    }
+    return { result };
+  }
+}
+
+function makeMockNodeExecutionRepo(): NodeExecutionRepository {
+  return {
+    listByWorkflowRun: () => [
+      {
+        id: 'ne-coder-1',
+        workflowRunId: 'run-1',
+        workflowNodeId: 'node-coding',
+        agentName: 'coder',
+        agentSessionId: 'session-coder',
+        status: 'in_progress',
+      },
+    ],
+  } as unknown as NodeExecutionRepository;
+}
+
+function makeMockHookStateRepo(): WorkflowHookStateRepository {
+  const states = new Map<string, { version: number; localState: Record<string, unknown> }>();
+
+  return {
+    get: (runId: string, hookId: string) => {
+      const key = `${runId}:${hookId}`;
+      const s = states.get(key);
+      if (s) {
+        return {
+          runId,
+          hookId,
+          version: s.version,
+          localState: s.localState,
+          retryCount: 0,
+          voteMaps: {},
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+      }
+      return null;
+    },
+    ensure: (runId: string, hookId: string, defaults: Record<string, unknown> = {}) => {
+      const key = `${runId}:${hookId}`;
+      if (!states.has(key)) {
+        states.set(key, { version: 0, localState: { ...defaults } });
+      }
+      const s = states.get(key)!;
+      return {
+        runId,
+        hookId,
+        version: s.version,
+        localState: s.localState,
+        retryCount: 0,
+        voteMaps: {},
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+    },
+    update: (
+      runId: string,
+      hookId: string,
+      patch: { expectedVersion: number; localState?: Record<string, unknown> }
+    ) => {
+      const key = `${runId}:${hookId}`;
+      const s = states.get(key);
+      if (!s || s.version !== patch.expectedVersion) return null;
+      s.version += 1;
+      if (patch.localState) {
+        s.localState = { ...s.localState, ...patch.localState };
+      }
+      return {
+        runId,
+        hookId,
+        version: s.version,
+        localState: s.localState,
+        retryCount: 0,
+        voteMaps: {},
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+    },
+  } as unknown as WorkflowHookStateRepository;
+}
+
+function makeMockArtifactRepo(): WorkflowRunArtifactRepository {
+  return {
+    listByRun: () => [],
+  } as unknown as WorkflowRunArtifactRepository;
+}
+
+function makeWorkflow(hooks: WorkflowHook[]): SpaceWorkflow {
+  return {
+    id: 'wf-1',
+    spaceId: 'space-1',
+    name: 'Test Workflow',
+    startNodeId: 'node-coding',
+    endNodeId: 'node-review',
+    nodes: [
+      { id: 'node-coding', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+      {
+        id: 'node-review',
+        name: 'Review',
+        agents: [{ name: 'reviewer', agentId: 'agent-reviewer' }],
+      },
+    ],
+    channels: [{ id: 'ch-1', from: 'Coding', to: 'Review' }],
+    hooks,
+  };
+}
+
+function makeHook(overrides: Partial<WorkflowHook> & { id: string }): WorkflowHook {
+  return {
+    enabled: true,
+    sourceNode: 'Coding',
+    method: 'send_message',
+    classification: 'validation',
+    order: 0,
+    validator: { kind: 'built_in', id: 'pr_open' },
+    authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    ...overrides,
+  } as WorkflowHook;
+}
+
+function makeEngine(hooks: WorkflowHook[]): {
+  engine: WorkflowHookEngine;
+  mockExecutor: MockHookExecutor;
+} {
+  const mockExecutor = new MockHookExecutor();
+  const engine = new WorkflowHookEngine({
+    workflow: makeWorkflow(hooks),
+    workflowRunId: 'run-1',
+    nodeExecutionRepo: makeMockNodeExecutionRepo(),
+    artifactRepo: makeMockArtifactRepo(),
+    hookStateRepo: makeMockHookStateRepo(),
+    hookExecutor: mockExecutor,
+    workspacePath: '/tmp',
+  });
+  return { engine, mockExecutor };
+}
+
+const defaultMeta: HookActionMeta = {
+  sessionId: 'session-coder',
+  agentName: 'coder',
+  nodeId: 'node-coding',
+  taskId: 'task-1',
+};
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('WorkflowHookEngine', () => {
+  test('allow: no hooks registered → allow silently', async () => {
+    const { engine } = makeEngine([]);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+    expect(outcome.userState.status).toBe('allowed');
+  });
+
+  test('allow: hook returns allow → allow with debug record', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow', message: 'All good' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+    expect(outcome.executionLog[0].result.type).toBe('allow');
+    expect(outcome.userState.status).toBe('allowed');
+  });
+
+  test('block: validation hook returns block → action blocked', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'PR not open' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.blockedByHookId).toBe('hook-1');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toBe('PR not open');
+    expect(outcome.userState.hookId).toBe('hook-1');
+    expect(outcome.userState.method).toBe('send_message');
+  });
+
+  test('retryable_block: validation hook returns retryable_block → retryable error', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'CI pending',
+      retryAfterMs: 5000,
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('retryable_block');
+    expect(outcome.userState.status).toBe('waiting_on_hook_retry');
+    expect(outcome.userState.reason).toBe('CI pending');
+    expect(outcome.userState.retryAfterMs).toBe(5000);
+  });
+
+  test('block takes precedence over retryable_block', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', order: 1 }),
+      makeHook({ id: 'hook-2', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'Hard block' });
+    mockExecutor.setResult('hook-2', {
+      type: 'retryable_block',
+      reason: 'Soft block',
+      retryAfterMs: 1000,
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    // hook-2 runs first (order 0), returns retryable_block
+    // hook-1 runs next (order 1), returns block
+    // block takes precedence
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toBe('Hard block');
+  });
+
+  test('patch_params: single hook patches params', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'patch_params',
+      patch: { target: 'Review', extra: true },
+    });
+
+    const params = { target: 'Review', message: 'hi' };
+    const outcome = await engine.executeAction('send_message', params, defaultMeta);
+
+    expect(outcome.decision).toBe('patch_params');
+    expect(outcome.finalParams).toEqual({ target: 'Review', message: 'hi', extra: true });
+    expect(outcome.userState.status).toBe('patched');
+    expect(outcome.userState.patchedKeys).toContain('extra');
+  });
+
+  test('patch_params: multiple hooks apply sequentially', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect', order: 0 }),
+      makeHook({ id: 'hook-2', classification: 'side_effect', order: 1 }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { a: 1 } });
+    mockExecutor.setResult('hook-2', { type: 'patch_params', patch: { b: 2 } });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.finalParams).toEqual({ target: 'Review', a: 1, b: 2 });
+  });
+
+  test('validation hooks run before side-effect hooks', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-side', classification: 'side_effect', order: 0 }),
+      makeHook({ id: 'hook-val', classification: 'validation', order: 1 }),
+    ]);
+    mockExecutor.setResult('hook-val', { type: 'allow' });
+    mockExecutor.setResult('hook-side', { type: 'allow' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.executionLog[0].hookId).toBe('hook-val');
+    expect(outcome.executionLog[1].hookId).toBe('hook-side');
+  });
+
+  test('validation block skips all later side effects', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-val', classification: 'validation', order: 0 }),
+      makeHook({ id: 'hook-side', classification: 'side_effect', order: 1 }),
+    ]);
+    mockExecutor.setResult('hook-val', { type: 'block', reason: 'Stop' });
+    mockExecutor.setResult('hook-side', { type: 'patch_params', patch: { should: 'not_apply' } });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(Object.keys(outcome.finalParams)).not.toContain('should');
+  });
+
+  test('side_effect block is recorded but does not stop action', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'Side effect failed' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog[0].result.type).toBe('block');
+    expect(outcome.userState.status).toBe('allowed');
+  });
+
+  test('emit_follow_up: records follow-up request', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'emit_follow_up',
+      targetNode: 'Review',
+      message: 'Please review this',
+    });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('emit_follow_up');
+    expect(outcome.followUpRequest).toEqual({
+      targetNode: 'Review',
+      message: 'Please review this',
+    });
+    expect(outcome.userState.status).toBe('follow_up_emitted');
+    expect(outcome.userState.emittedActionIds).toContain('Review');
+  });
+
+  test('record_state: records state update', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'record_state', state: { count: 1 } });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('record_state');
+    expect(outcome.stateUpdates).toHaveLength(1);
+    expect(outcome.stateUpdates[0].hookId).toBe('hook-1');
+    expect(outcome.stateUpdates[0].state).toEqual({ count: 1 });
+    expect(outcome.userState.status).toBe('state_recorded');
+  });
+
+  test('hook matching respects method, sourceNode, and agentSlots', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({
+        id: 'hook-1',
+        method: 'send_message',
+        sourceNode: 'Coding',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+      makeHook({
+        id: 'hook-2',
+        method: 'save_artifact',
+        sourceNode: 'Coding',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+      makeHook({
+        id: 'hook-3',
+        method: 'send_message',
+        sourceNode: 'Coding',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['reviewer'] }],
+      }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'Blocked' });
+    mockExecutor.setResult('hook-2', { type: 'block', reason: 'Wrong method' });
+    mockExecutor.setResult('hook-3', { type: 'block', reason: 'Wrong slot' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('disabled hooks are not executed', async () => {
+    const { engine, mockExecutor } = makeEngine([makeHook({ id: 'hook-1', enabled: false })]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'Should not run' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('deterministic ordering by classification, order, id', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-c', classification: 'side_effect', order: 0 }),
+      makeHook({ id: 'hook-a', classification: 'validation', order: 1 }),
+      makeHook({ id: 'hook-b', classification: 'validation', order: 0 }),
+    ]);
+    mockExecutor.setResult('hook-a', { type: 'allow' });
+    mockExecutor.setResult('hook-b', { type: 'allow' });
+    mockExecutor.setResult('hook-c', { type: 'allow' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    const ids = outcome.executionLog.map((e) => e.hookId);
+    expect(ids).toEqual(['hook-b', 'hook-a', 'hook-c']);
+  });
+
+  test('hook-local state is loaded into context', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    hookStateRepo.ensure('run-1', 'hook-1', { counter: 5 });
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(
+      (capturedContext as { hookLocalState: Record<string, unknown> }).hookLocalState.counter
+    ).toBe(5);
+  });
+});
+
+describe('wrapHandlerWithHooks', () => {
+  test('allows action when engine returns allow', async () => {
+    const { engine } = makeEngine([]);
+    const handler = async (args: { target: string }) => ({
+      content: [
+        { type: 'text' as const, text: JSON.stringify({ success: true, target: args.target }) },
+      ],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ target: 'Review' });
+
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+    expect(JSON.parse(result.content[0].text).target).toBe('Review');
+  });
+
+  test('blocks action when engine returns block', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'block', reason: 'No go' });
+
+    const handler = async (args: { target: string }) => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ target: 'Review' });
+
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.error).toBe('No go');
+    expect(data.hookStatus).toBe('blocked_by_hook');
+  });
+
+  test('patches params and re-enters handler', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { extra: 'data' } });
+
+    const handler = async (args: { target: string; extra?: string }) => ({
+      content: [
+        { type: 'text' as const, text: JSON.stringify({ success: true, extra: args.extra }) },
+      ],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ target: 'Review' });
+
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.extra).toBe('data');
+  });
+
+  test('dispatches follow-up through handler pipeline', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'emit_follow_up',
+      targetNode: 'Review',
+      message: 'Check this',
+    });
+
+    const followUpHandler = async (args: { target: string; message: string }) => ({
+      content: [
+        { type: 'text' as const, text: JSON.stringify({ followUp: true, target: args.target }) },
+      ],
+    });
+
+    const mainHandler = async (args: { target: string }) => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const handlers: Record<string, (args: unknown) => Promise<ToolResult>> = {
+      send_message: followUpHandler,
+    };
+
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      mainHandler,
+      engine,
+      handlers,
+      defaultMeta
+    );
+    const result = await wrapped({ target: 'Review' });
+
+    // Main handler should still succeed after follow-up dispatch
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+  });
+
+  test('rejects recursive follow-up emission', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'emit_follow_up',
+      targetNode: 'Review',
+      message: 'Check this',
+    });
+
+    const mainHandler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const handlers: Record<string, (args: unknown) => Promise<ToolResult>> = {
+      send_message: mainHandler,
+    };
+
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      mainHandler,
+      engine,
+      handlers,
+      defaultMeta,
+      true
+    );
+    const result = await wrapped({ target: 'Review' });
+
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('Recursive follow-up emission rejected');
+  });
+
+  test('retryable block returns retryable error with metadata', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 3000,
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ target: 'Review' });
+
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.retryable).toBe(true);
+    expect(data.retryAfterMs).toBe(3000);
+    expect(data.hookStatus).toBe('waiting_on_hook_retry');
+  });
+});
+
+describe('HookExecutor script execution', () => {
+  test('malformed script output returns block', async () => {
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const hook = makeHook({
+      id: 'hook-script',
+      classification: 'validation',
+      validator: { kind: 'script', interpreter: 'bash', source: 'echo "not json"' },
+    });
+
+    const result = await executor.execute(hook, {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+      permittedExternalLookups: [],
+    });
+
+    expect(result.result.type).toBe('block');
+    expect(result.result.reason).toContain('non-JSON stdout');
+  });
+
+  test('script timeout returns block', async () => {
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const hook = makeHook({
+      id: 'hook-script',
+      classification: 'validation',
+      validator: { kind: 'script', interpreter: 'bash', source: 'sleep 10', timeoutMs: 50 },
+    });
+
+    const result = await executor.execute(hook, {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+      permittedExternalLookups: [],
+    });
+
+    expect(result.result.type).toBe('block');
+    expect(result.result.reason).toContain('timed out');
+  });
+
+  test('valid script stdout returns parsed result', async () => {
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const hook = makeHook({
+      id: 'hook-script',
+      classification: 'validation',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source: 'echo \'{ "type": "allow", "message": "ok" }\'',
+      },
+    });
+
+    const result = await executor.execute(hook, {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+      permittedExternalLookups: [],
+    });
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe('ok');
+  });
+});
