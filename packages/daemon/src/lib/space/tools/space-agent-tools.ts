@@ -855,6 +855,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           provider: args.provider,
         });
         if (!result.ok) return jsonResult({ success: false, error: result.error });
+        emitWorkerAgentCreated(result.value);
         logAudit('create_worker_agent_from_template', {
           template_name: args.template_name,
           name: args.name,
@@ -985,6 +986,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async update_agent(
       args: { agent_id: string } & LongHorizonAgentUpdateArgs
     ): Promise<ToolResult> {
+      // Legacy alias preserved compatibility for 'disabled' status (LH-only).
+      // Route status:'disabled' to the long-horizon update path.
+      if (args.status === 'disabled') {
+        return addDeprecation(
+          await this.update_long_horizon_agent(args),
+          'update_long_horizon_agent'
+        );
+      }
       return addDeprecation(await this.update_worker_agent(args), 'update_worker_agent');
     },
 
