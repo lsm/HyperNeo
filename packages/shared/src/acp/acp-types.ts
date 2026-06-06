@@ -448,7 +448,7 @@ export interface AcpTerminalOutputParams {
 export interface AcpTerminalOutputResult {
   output: string;
   truncated: boolean;
-  exitStatus?: number;
+  exitStatus?: { exitCode: number; signal?: string } | null;
   _meta?: object | null;
 }
 
