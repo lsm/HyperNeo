@@ -40,7 +40,7 @@ export interface AcpJsonRpcError {
 // ============================================================================
 
 export interface AcpInitializeParams {
-  protocolVersion: string;
+  protocolVersion: number;
   clientCapabilities: AcpClientCapabilities;
   clientInfo: {
     name: string;
@@ -50,7 +50,7 @@ export interface AcpInitializeParams {
 }
 
 export interface AcpInitializeResult {
-  protocolVersion: string;
+  protocolVersion: number;
   agentCapabilities: AcpAgentCapabilities;
   agentInfo: {
     name: string;
@@ -148,6 +148,7 @@ export interface AcpSessionLoadParams {
   sessionId: string;
   cwd: string;
   mcpServers: AcpMcpServerConfig[];
+  additionalDirectories?: string[];
   _meta?: object | null;
 }
 
@@ -166,7 +167,9 @@ export interface AcpSessionResumeParams {
 }
 
 export interface AcpSessionResumeResult {
-  stopReason: AcpStopReason;
+  sessionId: string;
+  modes?: AcpSessionModeState;
+  configOptions?: AcpConfigOption[];
   _meta?: object | null;
 }
 
@@ -174,7 +177,11 @@ export interface AcpSessionListResult {
   sessions: Array<{
     sessionId: string;
     cwd: string;
+    title?: string;
+    updatedAt?: string;
+    additionalDirectories?: string[];
   }>;
+  nextCursor?: string;
   _meta?: object | null;
 }
 
@@ -306,8 +313,7 @@ export interface AcpCurrentModeUpdate {
 
 export interface AcpConfigOptionUpdate {
   sessionUpdate: 'config_option_update';
-  configOption: AcpConfigOption;
-  value: unknown;
+  configOptions: AcpConfigOption[];
 }
 
 export interface AcpSessionInfoUpdate {
@@ -317,7 +323,7 @@ export interface AcpSessionInfoUpdate {
 
 export interface AcpAvailableCommandsUpdate {
   sessionUpdate: 'available_commands_update';
-  commands: AcpAvailableCommand[];
+  availableCommands: AcpAvailableCommand[];
 }
 
 export interface AcpAvailableCommand {
@@ -335,16 +341,53 @@ export interface AcpToolCall {
   title: string;
   rawInput: Record<string, unknown>;
   rawOutput?: unknown;
-  content?: AcpContentBlock[];
-  locations?: string[];
+  content?: AcpToolCallContent[];
+  locations?: AcpToolCallLocation[];
   status: AcpToolCallStatus;
 }
 
 export interface AcpToolCallUpdate {
   toolCallId: string;
-  status: AcpToolCallStatus;
-  output?: unknown;
-  error?: string;
+  status?: AcpToolCallStatus;
+  title?: string;
+  kind?: AcpToolKind;
+  rawInput?: Record<string, unknown>;
+  rawOutput?: unknown;
+  content?: AcpToolCallContent[];
+  locations?: AcpToolCallLocation[];
+}
+
+export type AcpToolCallContent =
+  | AcpToolCallTextContent
+  | AcpToolCallDiffContent
+  | AcpToolCallTerminalContent
+  | AcpToolCallResourceContent;
+
+export interface AcpToolCallTextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface AcpToolCallDiffContent {
+  type: 'diff';
+  original: string;
+  modified: string;
+}
+
+export interface AcpToolCallTerminalContent {
+  type: 'terminal';
+  terminalId: string;
+}
+
+export interface AcpToolCallResourceContent {
+  type: 'resource';
+  uri: string;
+}
+
+export interface AcpToolCallLocation {
+  uri: string;
+  line?: number;
+  column?: number;
 }
 
 export type AcpToolKind =
@@ -378,17 +421,13 @@ export interface AcpPermissionOption {
   kind: string;
 }
 
-export type AcpPermissionResponse =
+export type AcpPermissionResponseResult =
   | {
-      id: string;
       outcome: 'selected';
       optionId: string;
-      _meta?: object | null;
     }
   | {
-      id: string;
       outcome: 'cancelled';
-      _meta?: object | null;
     };
 
 // ============================================================================
@@ -417,7 +456,6 @@ export interface AcpFsWriteParams {
 }
 
 export interface AcpFsWriteResult {
-  error?: string;
   _meta?: object | null;
 }
 
@@ -526,7 +564,7 @@ export interface AcpMcpStdioServerConfig {
   name: string;
   command: string;
   args: string[];
-  env?: AcpEnvVariable[];
+  env: AcpEnvVariable[];
 }
 
 export interface AcpHeader {

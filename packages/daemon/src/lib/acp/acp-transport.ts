@@ -9,7 +9,7 @@ import type {
 } from '@neokai/shared';
 import { Logger } from '../logger';
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — long enough for session/prompt turns
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;
 
 const logger = new Logger('AcpTransport');
