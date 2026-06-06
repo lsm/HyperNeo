@@ -1516,7 +1516,9 @@ export type WorkflowHookMcpMethod =
   | 'send_message'
   | 'save_artifact'
   | 'create_standalone_task'
-  | 'mark_complete';
+  | 'mark_complete'
+  | 'submit_for_approval'
+  | 'approve_task';
 
 export type WorkflowHookValidatorId =
   | 'pr_open'
@@ -1646,6 +1648,34 @@ export interface WorkflowHook {
   authorizedCallers?: WorkflowHookAuthorizedCaller[];
   /** Human-only hooks can only run from explicit UI approval/retry actions, never agent MCP sessions. */
   humanOnly?: boolean;
+  /** Hook classification — determines execution order and failure semantics. */
+  classification: 'validation' | 'side_effect';
+  /** Execution order within classification (lower = earlier). Defaults to 0. */
+  order?: number;
+  /** Human-readable label for debugging and banner messages. */
+  label?: string;
+}
+
+export interface WorkflowHookUserState {
+  status:
+    | 'allowed'
+    | 'blocked_by_hook'
+    | 'waiting_on_hook_retry'
+    | 'patched'
+    | 'follow_up_emitted'
+    | 'state_recorded';
+  hookId?: string;
+  hookLabel?: string;
+  method?: string;
+  reason?: string;
+  remediation?: string;
+  sourceNode?: string;
+  targetNode?: string;
+  patchedKeys?: string[];
+  emittedActionIds?: string[];
+  retryAfterMs?: number;
+  retryCount?: number;
+  nextRetryAt?: number;
 }
 
 export interface Gate {
