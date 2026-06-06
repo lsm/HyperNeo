@@ -99,7 +99,8 @@ export interface AcpAuthenticateResult {
 
 export interface AcpSessionNewParams {
   cwd: string;
-  mcpServers?: AcpMcpServerConfig[];
+  mcpServers: AcpMcpServerConfig[];
+  additionalDirectories?: string[];
   _meta?: object | null;
 }
 
@@ -145,6 +146,8 @@ export interface AcpSessionCloseParams {
 
 export interface AcpSessionLoadParams {
   sessionId: string;
+  cwd: string;
+  mcpServers: AcpMcpServerConfig[];
   _meta?: object | null;
 }
 
@@ -182,7 +185,7 @@ export interface AcpSessionSetModeParams {
 
 export interface AcpSessionSetConfigOptionParams {
   sessionId: string;
-  configOptionId: string;
+  configId: string;
   value: unknown;
   _meta?: object | null;
 }
@@ -229,8 +232,10 @@ export interface AcpResourceContentBlock {
 export interface AcpResourceLinkContentBlock {
   type: 'resource_link';
   uri: string;
+  name: string;
   mimeType?: string;
-  title?: string;
+  description?: string;
+  size?: number;
 }
 
 // ============================================================================
@@ -257,16 +262,19 @@ export type AcpSessionUpdate =
 export interface AcpAgentMessageChunkUpdate {
   sessionUpdate: 'agent_message_chunk';
   content: AcpContentBlock;
+  messageId?: string;
 }
 
 export interface AcpUserMessageChunkUpdate {
   sessionUpdate: 'user_message_chunk';
   content: AcpContentBlock;
+  messageId?: string;
 }
 
 export interface AcpAgentThoughtChunkUpdate {
   sessionUpdate: 'agent_thought_chunk';
   content: AcpContentBlock;
+  messageId?: string;
 }
 
 export interface AcpToolCallUpdateNotification {
@@ -281,19 +289,18 @@ export interface AcpToolCallUpdateUpdate {
 
 export interface AcpPlanUpdate {
   sessionUpdate: 'plan';
-  plan: string;
   entries?: AcpPlanEntry[];
 }
 
 export interface AcpPlanEntry {
-  id: string;
-  description: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  content: string;
+  status: 'pending' | 'in_progress' | 'done' | 'error';
+  priority?: number;
 }
 
 export interface AcpCurrentModeUpdate {
   sessionUpdate: 'current_mode_update';
-  mode: AcpSessionMode;
+  currentModeId: string;
 }
 
 export interface AcpConfigOptionUpdate {
@@ -340,13 +347,16 @@ export interface AcpToolCallUpdate {
 }
 
 export type AcpToolKind =
-  | 'read_file'
-  | 'write_file'
-  | 'run_command'
-  | 'browse'
+  | 'read'
+  | 'edit'
+  | 'delete'
+  | 'move'
   | 'search'
-  | 'mcp'
-  | 'custom';
+  | 'execute'
+  | 'think'
+  | 'fetch'
+  | 'switch_mode'
+  | 'other';
 
 export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
@@ -355,16 +365,30 @@ export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'faile
 // ============================================================================
 
 export interface AcpPermissionRequest {
-  id: string;
-  message: string;
+  sessionId: string;
+  toolCall: AcpToolCall;
+  options: AcpPermissionOption[];
   _meta?: object | null;
 }
 
-export interface AcpPermissionResponse {
-  id: string;
-  outcome: 'allow' | 'deny';
-  _meta?: object | null;
+export interface AcpPermissionOption {
+  optionId: string;
+  name: string;
+  kind: string;
 }
+
+export type AcpPermissionResponse =
+  | {
+      id: string;
+      outcome: 'selected';
+      optionId: string;
+      _meta?: object | null;
+    }
+  | {
+      id: string;
+      outcome: 'cancelled';
+      _meta?: object | null;
+    };
 
 // ============================================================================
 // File System
@@ -436,8 +460,8 @@ export interface AcpTerminalWaitForExitParams {
 }
 
 export interface AcpTerminalWaitForExitResult {
-  exitStatus: number;
-  output: string;
+  exitCode: number;
+  signal?: string;
   _meta?: object | null;
 }
 
@@ -471,6 +495,7 @@ export interface AcpConfigOption {
   label: string;
   type: 'select';
   options: AcpConfigOptionChoice[];
+  currentValue: string;
   defaultValue?: unknown;
   description?: string;
   _meta?: object | null;
