@@ -41,20 +41,23 @@ export interface AcpJsonRpcError {
 
 export interface AcpInitializeParams {
   protocolVersion: string;
-  capabilities: AcpClientCapabilities;
+  clientCapabilities: AcpClientCapabilities;
   clientInfo: {
     name: string;
     version: string;
   };
+  _meta?: object | null;
 }
 
 export interface AcpInitializeResult {
   protocolVersion: string;
-  capabilities: AcpAgentCapabilities;
-  serverInfo: {
+  agentCapabilities: AcpAgentCapabilities;
+  agentInfo: {
     name: string;
     version: string;
   };
+  authMethods?: string[];
+  _meta?: object | null;
 }
 
 export interface AcpClientCapabilities {
@@ -70,12 +73,12 @@ export interface AcpAgentCapabilities {
 // ============================================================================
 
 export interface AcpAuthenticateParams {
-  credentials?: Record<string, unknown>;
+  methodId: string;
+  _meta?: object | null;
 }
 
 export interface AcpAuthenticateResult {
-  success: boolean;
-  error?: string;
+  _meta?: object | null;
 }
 
 // ============================================================================
@@ -85,24 +88,91 @@ export interface AcpAuthenticateResult {
 export interface AcpSessionNewParams {
   cwd: string;
   mcpServers?: AcpMcpServerConfig[];
+  _meta?: object | null;
 }
 
 export interface AcpSessionNewResult {
   sessionId: string;
-  modes: AcpSessionMode[];
-  configOptions: AcpConfigOption[];
+  modes?: AcpSessionModeState;
+  configOptions?: AcpConfigOption[];
+  _meta?: object | null;
+}
+
+export interface AcpSessionModeState {
+  currentModeId: string;
+  availableModes: AcpSessionMode[];
 }
 
 export interface AcpSessionPromptParams {
-  content: AcpContentBlock[];
+  sessionId: string;
+  prompt: AcpContentBlock[];
+  _meta?: object | null;
 }
 
+export type AcpStopReason =
+  | 'end_turn'
+  | 'max_tokens'
+  | 'max_turn_requests'
+  | 'refusal'
+  | 'cancelled';
+
 export interface AcpSessionPromptResult {
-  stopReason: 'end_turn' | 'tool_use' | 'error' | string;
+  stopReason: AcpStopReason;
+  _meta?: object | null;
 }
 
 export interface AcpSessionCancelParams {
   sessionId: string;
+  _meta?: object | null;
+}
+
+export interface AcpSessionCloseParams {
+  sessionId: string;
+  _meta?: object | null;
+}
+
+export interface AcpSessionLoadParams {
+  sessionId: string;
+  _meta?: object | null;
+}
+
+export interface AcpSessionLoadResult {
+  sessionId: string;
+  modes?: AcpSessionModeState;
+  configOptions?: AcpConfigOption[];
+  _meta?: object | null;
+}
+
+export interface AcpSessionResumeParams {
+  sessionId: string;
+  prompt: AcpContentBlock[];
+  _meta?: object | null;
+}
+
+export interface AcpSessionResumeResult {
+  stopReason: AcpStopReason;
+  _meta?: object | null;
+}
+
+export interface AcpSessionListResult {
+  sessions: Array<{
+    sessionId: string;
+    cwd: string;
+  }>;
+  _meta?: object | null;
+}
+
+export interface AcpSessionSetModeParams {
+  sessionId: string;
+  modeId: string;
+  _meta?: object | null;
+}
+
+export interface AcpSessionSetConfigOptionParams {
+  sessionId: string;
+  configOptionId: string;
+  value: unknown;
+  _meta?: object | null;
 }
 
 // ============================================================================
@@ -123,20 +193,16 @@ export interface AcpTextContentBlock {
 
 export interface AcpImageContentBlock {
   type: 'image';
-  source: {
-    type: 'base64' | 'url';
-    media_type: string;
-    data: string;
-  };
+  mimeType: string;
+  data: string;
+  uri?: string;
 }
 
 export interface AcpAudioContentBlock {
   type: 'audio';
-  source: {
-    type: 'base64' | 'url';
-    media_type: string;
-    data: string;
-  };
+  mimeType: string;
+  data: string;
+  uri?: string;
 }
 
 export interface AcpResourceContentBlock {
@@ -162,7 +228,12 @@ export interface AcpResourceLinkContentBlock {
 // Session Update Notifications
 // ============================================================================
 
-export type AcpUpdateNotification =
+export interface AcpSessionUpdateNotification {
+  sessionId: string;
+  update: AcpSessionUpdate;
+}
+
+export type AcpSessionUpdate =
   | AcpAgentMessageChunkUpdate
   | AcpAgentThoughtChunkUpdate
   | AcpToolCallUpdateNotification
@@ -173,68 +244,44 @@ export type AcpUpdateNotification =
   | AcpSessionInfoUpdate;
 
 export interface AcpAgentMessageChunkUpdate {
-  type: 'session/update';
-  update: {
-    type: 'agent_message_chunk';
-    chunk: AcpContentBlock;
-  };
+  sessionUpdate: 'agent_message_chunk';
+  content: AcpContentBlock;
 }
 
 export interface AcpAgentThoughtChunkUpdate {
-  type: 'session/update';
-  update: {
-    type: 'agent_thought_chunk';
-    chunk: AcpContentBlock;
-  };
+  sessionUpdate: 'agent_thought_chunk';
+  content: AcpContentBlock;
 }
 
 export interface AcpToolCallUpdateNotification {
-  type: 'session/update';
-  update: {
-    type: 'tool_call';
-    tool_call: AcpToolCall;
-  };
+  sessionUpdate: 'tool_call';
+  toolCall: AcpToolCall;
 }
 
 export interface AcpToolCallUpdateUpdate {
-  type: 'session/update';
-  update: {
-    type: 'tool_call_update';
-    tool_call_update: AcpToolCallUpdate;
-  };
+  sessionUpdate: 'tool_call_update';
+  toolCallUpdate: AcpToolCallUpdate;
 }
 
 export interface AcpPlanUpdate {
-  type: 'session/update';
-  update: {
-    type: 'plan';
-    plan: string;
-  };
+  sessionUpdate: 'plan';
+  plan: string;
 }
 
 export interface AcpCurrentModeUpdate {
-  type: 'session/update';
-  update: {
-    type: 'current_mode_update';
-    mode: AcpMode;
-  };
+  sessionUpdate: 'current_mode_update';
+  mode: AcpSessionMode;
 }
 
 export interface AcpConfigOptionUpdate {
-  type: 'session/update';
-  update: {
-    type: 'config_option_update';
-    configOption: AcpConfigOption;
-    value: unknown;
-  };
+  sessionUpdate: 'config_option_update';
+  configOption: AcpConfigOption;
+  value: unknown;
 }
 
 export interface AcpSessionInfoUpdate {
-  type: 'session/update';
-  update: {
-    type: 'session_info_update';
-    info: Record<string, unknown>;
-  };
+  sessionUpdate: 'session_info_update';
+  info: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -242,7 +289,7 @@ export interface AcpSessionInfoUpdate {
 // ============================================================================
 
 export interface AcpToolCall {
-  id: string;
+  toolCallId: string;
   kind: AcpToolKind;
   name: string;
   input: Record<string, unknown>;
@@ -250,13 +297,13 @@ export interface AcpToolCall {
 }
 
 export interface AcpToolCallUpdate {
-  id: string;
+  toolCallId: string;
   status: AcpToolCallStatus;
   output?: unknown;
   error?: string;
 }
 
-export type AcpToolKind = 'mcp' | 'native' | 'custom';
+export type AcpToolKind = 'read' | 'edit' | 'create' | 'delete' | 'run_command' | 'view' | 'custom';
 
 export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 
@@ -266,22 +313,14 @@ export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'faile
 
 export interface AcpPermissionRequest {
   id: string;
-  type: string;
-  resource: string;
-  action: string;
-  options: AcpPermissionOption[];
+  toolCall: AcpToolCall;
+  _meta?: object | null;
 }
 
 export interface AcpPermissionResponse {
   id: string;
-  granted: boolean;
-  option?: string;
-}
-
-export interface AcpPermissionOption {
-  label: string;
-  value: string;
-  description?: string;
+  outcome: 'allow' | 'deny' | 'allow_once';
+  _meta?: object | null;
 }
 
 // ============================================================================
@@ -289,24 +328,30 @@ export interface AcpPermissionOption {
 // ============================================================================
 
 export interface AcpFsReadParams {
+  sessionId: string;
   path: string;
-  offset?: number;
+  line?: number;
   limit?: number;
+  _meta?: object | null;
 }
 
 export interface AcpFsReadResult {
   content: string;
   mimeType?: string;
+  _meta?: object | null;
 }
 
 export interface AcpFsWriteParams {
+  sessionId: string;
   path: string;
   content: string;
+  _meta?: object | null;
 }
 
 export interface AcpFsWriteResult {
   success: boolean;
   error?: string;
+  _meta?: object | null;
 }
 
 // ============================================================================
@@ -314,51 +359,68 @@ export interface AcpFsWriteResult {
 // ============================================================================
 
 export interface AcpTerminalCreateParams {
+  sessionId: string;
   command: string;
+  args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  outputByteLimit?: number;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalCreateResult {
   terminalId: string;
   pid: number;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalOutputParams {
+  sessionId: string;
   terminalId: string;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalOutputResult {
   output: string;
   done: boolean;
   exitCode?: number;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalWaitForExitParams {
+  sessionId: string;
   terminalId: string;
   timeoutMs?: number;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalWaitForExitResult {
   exitCode: number;
   output: string;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalKillParams {
+  sessionId: string;
   terminalId: string;
   signal?: string;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalKillResult {
   success: boolean;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalReleaseParams {
+  sessionId: string;
   terminalId: string;
+  _meta?: object | null;
 }
 
 export interface AcpTerminalReleaseResult {
   success: boolean;
+  _meta?: object | null;
 }
 
 // ============================================================================
@@ -369,10 +431,17 @@ export interface AcpConfigOption {
   id: string;
   label: string;
   category: 'model' | 'thought_level' | 'other';
-  type: 'string' | 'number' | 'boolean' | 'enum';
-  options?: string[];
+  type: 'select';
+  options: AcpConfigOptionChoice[];
   defaultValue?: unknown;
   description?: string;
+  _meta?: object | null;
+}
+
+export interface AcpConfigOptionChoice {
+  label: string;
+  value: string;
+  group?: string;
 }
 
 // ============================================================================
@@ -384,12 +453,17 @@ export type AcpMcpServerConfig =
   | AcpMcpHttpServerConfig
   | AcpMcpSseServerConfig;
 
+export interface AcpEnvVariable {
+  key: string;
+  value: string;
+}
+
 export interface AcpMcpStdioServerConfig {
   type: 'stdio';
   name?: string;
   command: string;
-  args?: string[];
-  env?: Record<string, string>;
+  args: string[];
+  env?: AcpEnvVariable[];
 }
 
 export interface AcpMcpHttpServerConfig {
@@ -410,14 +484,20 @@ export interface AcpMcpSseServerConfig {
 // Modes
 // ============================================================================
 
-export interface AcpMode {
+export interface AcpSessionMode {
   id: string;
   name: string;
   description?: string;
 }
 
-export interface AcpSessionMode {
-  id: string;
-  name: string;
-  description?: string;
+// ============================================================================
+// Logout
+// ============================================================================
+
+export interface AcpLogoutParams {
+  _meta?: object | null;
+}
+
+export interface AcpLogoutResult {
+  _meta?: object | null;
 }

@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import type { AcpJsonRpcNotification, AcpJsonRpcRequest, AcpJsonRpcResponse } from '@neokai/shared';
+import { kill as processKill } from 'node:process';
+import type {
+  AcpJsonRpcError,
+  AcpJsonRpcNotification,
+  AcpJsonRpcRequest,
+  AcpJsonRpcResponse,
+} from '@neokai/shared';
 import { Logger } from '../logger';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -10,6 +16,7 @@ const logger = new Logger('AcpTransport');
 
 export interface AcpTransportCallbacks {
   onNotification?: (notification: AcpJsonRpcNotification) => void;
+  onRequest?: (request: AcpJsonRpcRequest) => void;
   onExit?: (code: number | null, signal: string | null) => void;
   onStderr?: (data: string) => void;
 }
@@ -40,6 +47,7 @@ export class AcpTransport {
   private pendingRequests = new Map<number | string, PendingRequest>();
   private buffer = '';
   private closed = false;
+  private processExited = false;
   private closePromise: Promise<void> | null = null;
   private closeResolve: (() => void) | null = null;
 
@@ -80,6 +88,7 @@ export class AcpTransport {
     proc.on('exit', (code, signal) => {
       logger.info(`ACP agent exited (code=${code}, signal=${signal})`);
       this.process = null;
+      this.processExited = true;
       this.rejectAllPending(new Error('ACP agent process exited'));
       if (this.options.onExit) {
         this.options.onExit(code, signal);
@@ -92,6 +101,7 @@ export class AcpTransport {
     proc.on('error', (err) => {
       logger.error('ACP agent process error:', err.message);
       this.process = null;
+      this.processExited = true;
       this.rejectAllPending(new Error(`ACP agent process error: ${err.message}`));
       if (this.options.onExit) {
         this.options.onExit(null, null);
@@ -118,7 +128,11 @@ export class AcpTransport {
         const message = JSON.parse(line) as AcpJsonRpcResponse | AcpJsonRpcNotification;
 
         if ('id' in message && message.id != null) {
-          this.handleResponse(message as AcpJsonRpcResponse);
+          if ('method' in message) {
+            this.handleRequest(message as AcpJsonRpcRequest);
+          } else {
+            this.handleResponse(message as AcpJsonRpcResponse);
+          }
         } else if ('method' in message) {
           this.handleNotification(message as AcpJsonRpcNotification);
         } else {
@@ -149,6 +163,15 @@ export class AcpTransport {
   private handleNotification(notification: AcpJsonRpcNotification): void {
     if (this.options.onNotification) {
       this.options.onNotification(notification);
+    }
+  }
+
+  private handleRequest(request: AcpJsonRpcRequest): void {
+    if (this.options.onRequest) {
+      this.options.onRequest(request);
+    } else {
+      logger.warn('Received inbound request but no onRequest handler:', request.method);
+      this.sendErrorResponse(request.id, { code: -32601, message: 'Method not found' });
     }
   }
 
@@ -222,8 +245,67 @@ export class AcpTransport {
   }
 
   /**
+   * Send a JSON-RPC response for an inbound request.
+   */
+  sendResponse(id: number | string, result: unknown): void {
+    if (this.closed || !this.process || this.processExited) {
+      logger.warn('Cannot send response: transport is closed or process has exited');
+      return;
+    }
+
+    const response: AcpJsonRpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result,
+    };
+
+    try {
+      this.process.stdin!.write(JSON.stringify(response) + '\n');
+    } catch (err) {
+      logger.error('Failed to write response:', (err as Error).message);
+    }
+  }
+
+  /**
+   * Send a JSON-RPC error response for an inbound request.
+   */
+  sendErrorResponse(id: number | string, error: AcpJsonRpcError): void {
+    if (this.closed || !this.process || this.processExited) {
+      logger.warn('Cannot send error response: transport is closed or process has exited');
+      return;
+    }
+
+    const response: AcpJsonRpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      error,
+    };
+
+    try {
+      this.process.stdin!.write(JSON.stringify(response) + '\n');
+    } catch (err) {
+      logger.error('Failed to write error response:', (err as Error).message);
+    }
+  }
+
+  private killProcess(signal: NodeJS.Signals): void {
+    const proc = this.process;
+    if (!proc) return;
+
+    if (process.platform !== 'win32' && proc.pid != null) {
+      try {
+        processKill(-proc.pid, signal);
+        return;
+      } catch {
+        // Fall back to single-process kill
+      }
+    }
+    proc.kill(signal);
+  }
+
+  /**
    * Close the transport.
-   * Sends SIGTERM, waits 5s, then SIGKILL if still running.
+   * Sends SIGTERM to the process group, waits 5s, then SIGKILL if still running.
    */
   close(): Promise<void> {
     if (this.closed) {
@@ -236,30 +318,26 @@ export class AcpTransport {
     this.closePromise = new Promise((resolve) => {
       this.closeResolve = resolve;
 
-      if (!this.process || this.process.killed) {
+      if (!this.process || this.processExited) {
         resolve();
         return;
       }
 
-      // SIGTERM → wait → SIGKILL
-      this.process.kill('SIGTERM');
+      // SIGTERM → wait → SIGKILL (process group on POSIX)
+      this.killProcess('SIGTERM');
 
       const killTimer = setTimeout(() => {
-        if (this.process && !this.process.killed) {
+        if (!this.processExited) {
           logger.warn('ACP agent did not exit after SIGTERM, sending SIGKILL');
-          this.process.kill('SIGKILL');
+          this.killProcess('SIGKILL');
         }
       }, CLOSE_SIGTERM_TIMEOUT_MS);
 
-      this.process.on('exit', () => {
-        clearTimeout(killTimer);
-        resolve();
-      });
-
-      this.process.on('error', () => {
-        clearTimeout(killTimer);
-        resolve();
-      });
+      // Exit/error handlers in spawnProcess() already call closeResolve.
+      // Clean up the timer when they fire.
+      const cleanup = () => clearTimeout(killTimer);
+      this.process.once('exit', cleanup);
+      this.process.once('error', cleanup);
     });
 
     return this.closePromise;

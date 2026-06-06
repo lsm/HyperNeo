@@ -23,6 +23,7 @@ class MockChildProcess extends EventEmitter {
   stdin = new MockStream() as unknown as Writable;
   stdout = new MockStream();
   stderr = new MockStream();
+  pid = 99999;
   killed = false;
   exitCode: number | null = null;
   signalCode: string | null = null;
@@ -352,5 +353,106 @@ describe('AcpTransport', () => {
     const promise = transport.sendRequest('slow', {});
 
     await expect(promise).rejects.toThrow('Request timed out after 50ms: slow');
+  });
+
+  // -------------------------------------------------------------------------
+  // Inbound requests
+  // -------------------------------------------------------------------------
+
+  test('dispatches inbound requests via onRequest callback', () => {
+    const requests: unknown[] = [];
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      onRequest: (r) => requests.push(r),
+    });
+    const proc = lastMockProcess!;
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 42,
+          method: 'fs/read_text_file',
+          params: { path: '/tmp' },
+        }) + '\n'
+      )
+    );
+
+    expect(requests.length).toBe(1);
+    const req = requests[0] as { id: number; method: string };
+    expect(req.id).toBe(42);
+    expect(req.method).toBe('fs/read_text_file');
+  });
+
+  test('auto-replies error when inbound request has no onRequest handler', () => {
+    const transport = new AcpTransport({ command: 'acp-agent' });
+    const proc = lastMockProcess!;
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 99, method: 'unknown', params: {} }) + '\n')
+    );
+
+    const lines = proc.stdin.written;
+    const last = JSON.parse(lines[lines.length - 1]);
+    expect(last.jsonrpc).toBe('2.0');
+    expect(last.id).toBe(99);
+    expect(last.error.code).toBe(-32601);
+  });
+
+  test('sendResponse writes JSON-RPC response to stdin', () => {
+    const transport = new AcpTransport({ command: 'acp-agent' });
+    const proc = lastMockProcess!;
+
+    transport.sendResponse(7, { ok: true });
+
+    const lines = proc.stdin.written;
+    const resp = JSON.parse(lines[0]);
+    expect(resp.jsonrpc).toBe('2.0');
+    expect(resp.id).toBe(7);
+    expect(resp.result).toEqual({ ok: true });
+  });
+
+  test('sendErrorResponse writes JSON-RPC error to stdin', () => {
+    const transport = new AcpTransport({ command: 'acp-agent' });
+    const proc = lastMockProcess!;
+
+    transport.sendErrorResponse(8, { code: -32600, message: 'Bad' });
+
+    const lines = proc.stdin.written;
+    const resp = JSON.parse(lines[0]);
+    expect(resp.jsonrpc).toBe('2.0');
+    expect(resp.id).toBe(8);
+    expect(resp.error.code).toBe(-32600);
+  });
+
+  // -------------------------------------------------------------------------
+  // Process group kill
+  // -------------------------------------------------------------------------
+
+  test('close falls back to direct kill when group kill fails', async () => {
+    const transport = new AcpTransport({ command: 'acp-agent' });
+    const proc = lastMockProcess!;
+    proc.pid = 12345;
+
+    let directKillSignal: string | null = null;
+    proc.kill = (signal?: NodeJS.Signals | number) => {
+      if (typeof signal === 'string') {
+        directKillSignal = signal;
+      }
+      proc.killed = true;
+      setTimeout(() => {
+        proc.emit('exit', proc.exitCode, signal as string);
+      }, 10);
+      return true;
+    };
+
+    const closePromise = transport.close();
+
+    await closePromise;
+
+    // In test env processKill(-12345) throws, so fallback to proc.kill is used
+    expect(directKillSignal).toBe('SIGTERM');
   });
 });
