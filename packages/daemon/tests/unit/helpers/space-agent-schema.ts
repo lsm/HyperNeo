@@ -165,6 +165,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			tags TEXT NOT NULL DEFAULT '[]',
 			channels TEXT,
 			gates TEXT,
+				hooks TEXT,
 			layout TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,

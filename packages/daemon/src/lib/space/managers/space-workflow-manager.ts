@@ -21,6 +21,7 @@ import type {
   WorkflowChannel,
   Gate,
 } from '@neokai/shared';
+import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
@@ -108,6 +109,8 @@ export class SpaceWorkflowManager {
     if (params.gates && params.gates.length > 0) {
       this.validateGates(params.gates);
     }
+
+    this.validateHooks(params.hooks ?? [], nodes);
 
     this.validateCodexApprovalAgainstScriptedGates(
       nodes,
@@ -334,6 +337,9 @@ export class SpaceWorkflowManager {
       params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);
     const effectiveGates =
       params.gates === undefined ? (existing.gates ?? []) : (params.gates ?? []);
+    const effectiveHooks =
+      params.hooks === undefined ? (existing.hooks ?? []) : (params.hooks ?? []);
+    this.validateHooks(effectiveHooks, effectiveNodes);
     this.validateCodexApprovalAgainstScriptedGates(
       effectiveNodes,
       effectiveChannels,
@@ -700,6 +706,13 @@ export class SpaceWorkflowManager {
       if (errors.length > 0) {
         throw new WorkflowValidationError(`gates[${gi}]: ${errors.join('; ')}`);
       }
+    }
+  }
+
+  private validateHooks(hooks: unknown[], nodes: WorkflowNodeInput[]): void {
+    const errors = validateWorkflowHooks(hooks, nodes);
+    if (errors.length > 0) {
+      throw new WorkflowValidationError(errors.join('; '));
     }
   }
 

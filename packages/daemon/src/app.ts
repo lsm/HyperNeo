@@ -47,6 +47,8 @@ import { migrateProvidersIfNeeded } from './lib/credential-discovery';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
+import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
+import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
@@ -169,6 +171,10 @@ export interface DaemonAppContext {
   taskAgentManager: TaskAgentManager;
   /** Space Worktree Manager — one git worktree per task, shared by all node agents */
   spaceWorktreeManager: SpaceWorktreeManager;
+  /** Persistent workflow hook-local state repository */
+  workflowHookStateRepository: WorkflowHookStateRepository;
+  /** Runtime helper for hook caller and result validation */
+  workflowHookRuntimeService: WorkflowHookRuntimeService;
   /** Persistent job queue repository */
   jobQueue: JobQueueRepository;
   /** Persistent job queue processor */
@@ -238,6 +244,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     // Initialize job queue
     const jobQueue = new JobQueueRepository(db.getDatabase());
+    const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
+    const workflowHookRuntimeService = new WorkflowHookRuntimeService();
     const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
     const jobProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
@@ -1077,6 +1085,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceRuntimeService,
       taskAgentManager,
       spaceWorktreeManager,
+      workflowHookStateRepository,
+      workflowHookRuntimeService,
       jobQueue,
       jobProcessor,
       appMcpManager,
