@@ -104,6 +104,23 @@ export class WorkflowHookEngine {
   constructor(private readonly config: WorkflowHookEngineConfig) {}
 
   /**
+   * Persist a single hook-local state update through the repository.
+   * Returns true on success, false on version conflict or error.
+   */
+  persistStateUpdate(hookId: string, state: Record<string, unknown>): boolean {
+    try {
+      const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
+      const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+        expectedVersion: repoState?.version ?? 0,
+        localState: state,
+      });
+      return result !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Execute the hook chain for an MCP action.
    *
    * @param methodName  The MCP method being invoked (e.g. 'send_message')
@@ -130,7 +147,8 @@ export class WorkflowHookEngine {
 
     const sortedHooks = this.sortHooks(hooks);
     const executionLog: HookExecutionRecord[] = [];
-    let currentParams = { ...params };
+    const originalParams = { ...params };
+    let currentParams = originalParams;
     let followUpRequest: { targetNode: string; message: string } | undefined;
     const stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }> = [];
     let blockedByValidation: {
@@ -248,6 +266,7 @@ export class WorkflowHookEngine {
       userState: this.buildAllowUserState(
         decision,
         methodName,
+        originalParams,
         currentParams,
         followUpRequest,
         stateUpdates,
@@ -391,6 +410,7 @@ export class WorkflowHookEngine {
   private buildAllowUserState(
     decision: HookActionOutcome['decision'],
     methodName: string,
+    originalParams: Record<string, unknown>,
     finalParams: Record<string, unknown>,
     followUpRequest: { targetNode: string; message: string } | undefined,
     _stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>,
@@ -409,10 +429,12 @@ export class WorkflowHookEngine {
     };
 
     if (decision === 'patch_params') {
-      base.patchedKeys = Object.keys(finalParams);
+      base.patchedKeys = Object.keys(finalParams).filter(
+        (k) => !(k in originalParams) || finalParams[k] !== originalParams[k]
+      );
     }
 
-    if (decision === 'emit_follow_up' && followUpRequest) {
+    if (followUpRequest) {
       base.emittedActionIds = [followUpRequest.targetNode];
     }
 
@@ -471,18 +493,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Persist state updates
     for (const update of outcome.stateUpdates) {
-      try {
-        const state = engine['config'].hookStateRepo.get(
-          engine['config'].workflowRunId,
-          update.hookId
-        );
-        await engine['config'].hookStateRepo.update(engine['config'].workflowRunId, update.hookId, {
-          expectedVersion: state?.version ?? 0,
-          localState: update.state,
-        });
-      } catch (err) {
+      const ok = engine.persistStateUpdate(update.hookId, update.state);
+      if (!ok) {
         log.warn(
-          `Failed to persist hook state for ${update.hookId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to persist hook state for ${update.hookId}: version conflict or repo error`
         );
       }
     }
@@ -533,23 +547,24 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       };
     }
 
-    // Handle follow-up dispatch
-    if (outcome.decision === 'emit_follow_up' && outcome.followUpRequest) {
-      if (isFollowUp) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: false,
-                error: 'Recursive follow-up emission rejected.',
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
+    // Reject recursive follow-up emission
+    if (outcome.followUpRequest && isFollowUp) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Recursive follow-up emission rejected.',
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
 
+    // Handle follow-up dispatch
+    if (outcome.followUpRequest) {
       const followUpMethod = 'send_message';
       if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
         return {
