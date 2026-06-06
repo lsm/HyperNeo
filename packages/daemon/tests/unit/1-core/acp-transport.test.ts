@@ -415,6 +415,32 @@ describe('AcpTransport', () => {
     expect(req.method).toBe('fs/read_text_file');
   });
 
+  test('treats id: null JSON-RPC messages as inbound requests', () => {
+    const requests: unknown[] = [];
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      onRequest: (r) => requests.push(r),
+    });
+    const proc = lastMockProcess!;
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: null,
+          method: 'terminal/create',
+          params: { command: 'ls' },
+        }) + '\n'
+      )
+    );
+
+    expect(requests.length).toBe(1);
+    const req = requests[0] as { id: null; method: string };
+    expect(req.id).toBeNull();
+    expect(req.method).toBe('terminal/create');
+  });
+
   test('auto-replies error when inbound request has no onRequest handler', () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;

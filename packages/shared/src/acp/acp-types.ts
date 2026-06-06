@@ -51,7 +51,7 @@ export interface AcpInitializeParams {
 
 export interface AcpInitializeResult {
   protocolVersion: number;
-  agentCapabilities: AcpAgentCapabilities;
+  agentCapabilities?: AcpAgentCapabilities;
   agentInfo: {
     name: string;
     version: string;
@@ -151,6 +151,10 @@ export interface AcpSessionCloseParams {
   _meta?: object | null;
 }
 
+export interface AcpSessionCloseResult {
+  _meta?: object | null;
+}
+
 export interface AcpSessionDeleteParams {
   sessionId: string;
   _meta?: object | null;
@@ -187,6 +191,12 @@ export interface AcpSessionResumeResult {
   sessionId?: string;
   modes?: AcpSessionModeState | null;
   configOptions?: AcpConfigOption[] | null;
+  _meta?: object | null;
+}
+
+export interface AcpSessionListParams {
+  cwd?: string;
+  cursor?: string;
   _meta?: object | null;
 }
 
@@ -345,7 +355,7 @@ export interface AcpToolCallUpdateUpdate {
   rawInput?: Record<string, unknown>;
   rawOutput?: unknown;
   content?: AcpToolCallContent[] | null;
-  locations?: AcpToolCallLocation[];
+  locations?: AcpToolCallLocation[] | null;
 }
 
 export interface AcpPlanUpdate {
@@ -479,7 +489,7 @@ export interface AcpPermissionRequest {
 export interface AcpPermissionOption {
   optionId: string;
   name: string;
-  kind: string;
+  kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
 }
 
 export type AcpPermissionResponseResult = {
@@ -588,6 +598,7 @@ export interface AcpConfigOption {
   type: 'select';
   options: AcpConfigOptionChoice[] | AcpConfigOptionGroup[];
   currentValue: string;
+  category?: string;
   defaultValue?: unknown;
   description?: string;
   _meta?: object | null;

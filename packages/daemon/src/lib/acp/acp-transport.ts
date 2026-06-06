@@ -130,14 +130,14 @@ export class AcpTransport {
       try {
         const message = JSON.parse(line) as AcpJsonRpcResponse | AcpJsonRpcNotification;
 
-        if ('id' in message && message.id != null) {
-          if ('method' in message) {
+        if ('method' in message) {
+          if ('id' in message) {
             this.handleRequest(message as AcpJsonRpcRequest);
           } else {
-            this.handleResponse(message as AcpJsonRpcResponse);
+            this.handleNotification(message as AcpJsonRpcNotification);
           }
-        } else if ('method' in message) {
-          this.handleNotification(message as AcpJsonRpcNotification);
+        } else if ('id' in message) {
+          this.handleResponse(message as AcpJsonRpcResponse);
         } else {
           logger.warn('Unrecognized JSON-RPC message:', line);
         }
