@@ -1,0 +1,350 @@
+/**
+ * Hook Executor
+ *
+ * Executes workflow hook validators (built-in or script) and returns a typed
+ * WorkflowHookResult. Script validators run in a restricted environment with
+ * credential stripping, timeout-based SIGKILL, and bounded stdout capture.
+ */
+
+import type {
+  WorkflowHook,
+  WorkflowHookResult,
+  WorkflowHookScriptValidator,
+  WorkflowHookValidatorId,
+} from '@neokai/shared';
+import {
+  collectWithMaxBuffer,
+  deepMergeWithDepthLimit,
+  MAX_BUFFER_BYTES,
+  parseJsonStdout,
+} from './gate-script-executor';
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/** Context provided to the hook executor for building script env vars. */
+export interface HookExecutorContext {
+  workspacePath: string;
+  runId: string;
+  hookId: string;
+  methodName: string;
+  params: Record<string, unknown>;
+  nodeId: string;
+  nodeName: string;
+  sessionId: string;
+  taskId: string;
+  targetNode?: string;
+  hookLocalState: Record<string, unknown>;
+  currentArtifacts: Record<string, unknown>[];
+  permittedExternalLookups: string[];
+}
+
+/** Result of executing a single hook validator. */
+export interface HookExecutorResult {
+  result: WorkflowHookResult;
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default timeout for hook scripts (30 seconds). */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Environment variable prefixes that are stripped from the restricted env. */
+const RESTRICTED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'GLM_', 'ZHIPU_', 'COPILOT_', 'NEOKAI_'];
+
+/** Environment variable keys matching this regex are stripped. */
+const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
+
+/** Keys that are always allowed regardless of prefix/pattern. */
+const ALLOWED_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_ENTERPRISE_TOKEN',
+  'GH_HOST',
+  'NEOKAI_VALIDATION_BASE_REF',
+]);
+
+// ---------------------------------------------------------------------------
+// Built-in validators
+// ---------------------------------------------------------------------------
+
+export type BuiltInValidatorFn = (context: HookExecutorContext) => Promise<WorkflowHookResult>;
+
+const BUILT_IN_VALIDATORS: Map<WorkflowHookValidatorId, BuiltInValidatorFn> = new Map();
+
+/** Register a built-in validator by ID. Overwrites existing entries. */
+export function registerBuiltInValidator(
+  id: WorkflowHookValidatorId,
+  fn: BuiltInValidatorFn
+): void {
+  BUILT_IN_VALIDATORS.set(id, fn);
+}
+
+// Default registrations — these are intentionally permissive stubs.
+// Production deployments should replace them with real checks.
+registerBuiltInValidator('pr_open', async () => ({ type: 'allow' }));
+registerBuiltInValidator('pr_mergeable', async () => ({ type: 'allow' }));
+registerBuiltInValidator('github_review_approved', async () => ({ type: 'allow' }));
+registerBuiltInValidator('codex_review_approved', async () => ({ type: 'allow' }));
+registerBuiltInValidator('artifact_exists', async () => ({ type: 'allow' }));
+registerBuiltInValidator('task_reported_status', async () => ({ type: 'allow' }));
+
+// ---------------------------------------------------------------------------
+// Environment builder
+// ---------------------------------------------------------------------------
+
+function buildHookRestrictedEnv(
+  context: HookExecutorContext,
+  scriptEnv?: Record<string, string>
+): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
+    if (value === undefined) continue;
+
+    if (ALLOWED_ENV_KEYS.has(key)) {
+      env[key] = value as string;
+      continue;
+    }
+
+    const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+    if (isPrefixRestricted) continue;
+
+    const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+    if (isKeyRestricted) continue;
+
+    env[key] = value as string;
+  }
+
+  // Inject hook-specific environment variables
+  env['NEOKAI_HOOK_ID'] = context.hookId;
+  env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
+  env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
+  env['NEOKAI_METHOD_NAME'] = context.methodName;
+  env['NEOKAI_NODE_ID'] = context.nodeId;
+  env['NEOKAI_NODE_NAME'] = context.nodeName;
+  env['NEOKAI_SESSION_ID'] = context.sessionId;
+  env['NEOKAI_TASK_ID'] = context.taskId;
+
+  if (context.targetNode) {
+    env['NEOKAI_TARGET_NODE'] = context.targetNode;
+  }
+
+  try {
+    env['NEOKAI_PARAMS_JSON'] = JSON.stringify(context.params);
+  } catch {
+    env['NEOKAI_PARAMS_JSON'] = '{}';
+  }
+
+  try {
+    env['NEOKAI_HOOK_LOCAL_STATE_JSON'] = JSON.stringify(context.hookLocalState);
+  } catch {
+    env['NEOKAI_HOOK_LOCAL_STATE_JSON'] = '{}';
+  }
+
+  try {
+    env['NEOKAI_CURRENT_ARTIFACTS_JSON'] = JSON.stringify(context.currentArtifacts);
+  } catch {
+    env['NEOKAI_CURRENT_ARTIFACTS_JSON'] = '[]';
+  }
+
+  if (context.permittedExternalLookups.length > 0) {
+    env['NEOKAI_PERMITTED_EXTERNAL_LOOKUPS'] = context.permittedExternalLookups.join(',');
+  }
+
+  // Merge user-specified env (cannot override injected vars)
+  if (scriptEnv) {
+    for (const [key, value] of Object.entries(scriptEnv)) {
+      if (
+        key.startsWith('NEOKAI_HOOK_') ||
+        key.startsWith('NEOKAI_WORKFLOW_') ||
+        key.startsWith('NEOKAI_NODE_') ||
+        key.startsWith('NEOKAI_SESSION_') ||
+        key.startsWith('NEOKAI_TASK_') ||
+        key.startsWith('NEOKAI_METHOD_') ||
+        key.startsWith('NEOKAI_CURRENT_') ||
+        key.startsWith('NEOKAI_PERMITTED_')
+      ) {
+        continue;
+      }
+      if (!ALLOWED_ENV_KEYS.has(key)) {
+        const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+        if (isPrefixRestricted) continue;
+        const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
+        if (isKeyRestricted) continue;
+      }
+      env[key] = value;
+    }
+  }
+
+  return env;
+}
+
+// ---------------------------------------------------------------------------
+// Script executor
+// ---------------------------------------------------------------------------
+
+/**
+ * Executes a hook script validator and returns the parsed WorkflowHookResult.
+ *
+ * Uses Bun.spawn in array form (no shell interpolation). Runs in a restricted
+ * environment with credential stripping, streaming maxBuffer enforcement, and
+ * timeout-based SIGKILL.
+ *
+ * Exit 0 with parseable JSON stdout → parsed WorkflowHookResult
+ * Non-zero / timeout / malformed stdout → block result with error reason
+ */
+export async function executeHookScript(
+  validator: WorkflowHookScriptValidator,
+  context: HookExecutorContext
+): Promise<HookExecutorResult> {
+  const timeoutMs = validator.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  let args: string[];
+  switch (validator.interpreter) {
+    case 'bash':
+      args = ['bash', '-c', validator.source];
+      break;
+    default:
+      return {
+        result: {
+          type: 'block',
+          reason: `Unknown interpreter: ${validator.interpreter as string}`,
+        },
+      };
+  }
+
+  const restrictedEnv = buildHookRestrictedEnv(context);
+
+  let proc;
+  try {
+    proc = Bun.spawn(args, {
+      cwd: context.workspacePath,
+      env: restrictedEnv,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      result: {
+        type: 'block',
+        reason: `Failed to spawn ${validator.interpreter}: ${message}`,
+      },
+    };
+  }
+
+  const [stdoutResult, stderrResult, exitCode] = await Promise.all([
+    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+    collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
+    (async () => {
+      let killed = false;
+      const killTimer = setTimeout(() => {
+        killed = true;
+        proc.kill('SIGKILL');
+      }, timeoutMs);
+
+      const code = await proc.exited;
+      clearTimeout(killTimer);
+
+      return { code, timedOut: killed };
+    })(),
+  ]);
+
+  if (exitCode.timedOut) {
+    return {
+      result: {
+        type: 'block',
+        reason: `Hook script timed out after ${timeoutMs}ms`,
+      },
+    };
+  }
+
+  if (exitCode.code !== 0) {
+    const stderrText = stderrResult.text.trim();
+    return {
+      result: {
+        type: 'block',
+        reason: stderrText || `Hook script exited with code ${exitCode.code}`,
+      },
+    };
+  }
+
+  // Exit 0 — parse JSON stdout as WorkflowHookResult
+  const parsed = parseJsonStdout(stdoutResult.text);
+  if (!parsed) {
+    return {
+      result: {
+        type: 'block',
+        reason: 'Hook script produced empty or non-JSON stdout',
+      },
+    };
+  }
+
+  // Validate that parsed result has a recognized type
+  const validTypes = new Set([
+    'allow',
+    'block',
+    'retryable_block',
+    'patch_params',
+    'emit_follow_up',
+    'record_state',
+  ]);
+  if (typeof parsed.type !== 'string' || !validTypes.has(parsed.type)) {
+    return {
+      result: {
+        type: 'block',
+        reason: `Hook script returned unrecognized result type: ${JSON.stringify(parsed.type)}`,
+      },
+    };
+  }
+
+  // Merge parsed data into the result shape
+  const result = deepMergeWithDepthLimit({}, parsed) as unknown as WorkflowHookResult;
+
+  return { result };
+}
+
+// ---------------------------------------------------------------------------
+// Hook Executor class
+// ---------------------------------------------------------------------------
+
+export interface HookExecutorConfig {
+  workspacePath: string;
+}
+
+export class HookExecutor {
+  constructor(private readonly config: HookExecutorConfig) {}
+
+  async execute(hook: WorkflowHook, context: HookExecutorContext): Promise<HookExecutorResult> {
+    const validator = hook.validator;
+
+    if (validator.kind === 'built_in') {
+      const fn = BUILT_IN_VALIDATORS.get(validator.id);
+      if (!fn) {
+        return {
+          result: {
+            type: 'block',
+            reason: `Built-in validator "${validator.id}" is not registered`,
+          },
+        };
+      }
+      const result = await fn(context);
+      return { result };
+    }
+
+    return executeHookScript(validator, context);
+  }
+}
