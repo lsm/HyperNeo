@@ -98,4 +98,68 @@ describe('ContextTracker', () => {
       expect(() => tracker.setModel('claude-opus-4-6')).not.toThrow();
     });
   });
+
+  describe('shouldCompact', () => {
+    it('returns false when no context info exists', () => {
+      expect(tracker.shouldCompact(200_000)).toBe(false);
+    });
+
+    it('returns false when usage is below 85% threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 100_000,
+        totalCapacity: 128_000,
+        percentUsed: 78,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(128_000)).toBe(false);
+    });
+
+    it('returns true when usage is at or above 85% threshold', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(128_000)).toBe(true);
+    });
+
+    it('returns false when cooldown has not elapsed', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompact(128_000, 60_000)).toBe(false);
+    });
+
+    it('returns true after cooldown elapses', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompact(128_000, 0)).toBe(true);
+    });
+
+    it('returns false for invalid context window', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'gpt-4',
+        totalUsed: 109_000,
+        totalCapacity: 128_000,
+        percentUsed: 85,
+        breakdown: {},
+      });
+      expect(tracker.shouldCompact(0)).toBe(false);
+      expect(tracker.shouldCompact(-1)).toBe(false);
+    });
+  });
 });
