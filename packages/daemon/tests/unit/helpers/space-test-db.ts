@@ -91,6 +91,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			tags TEXT NOT NULL DEFAULT '[]',
 			channels TEXT,
 			gates TEXT,
+				hooks TEXT,
 			layout TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
@@ -153,7 +154,42 @@ export function createSpaceTables(db: BunDatabase): void {
   );
 
   db.exec(`
-		CREATE TABLE IF NOT EXISTS gate_data (
+		CREATE TABLE IF NOT EXISTS workflow_hook_state (
+				run_id TEXT NOT NULL,
+				hook_id TEXT NOT NULL,
+				version INTEGER NOT NULL DEFAULT 0,
+				local_state TEXT NOT NULL DEFAULT '{}',
+				last_result TEXT,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				next_retry_at INTEGER,
+				vote_maps TEXT NOT NULL DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				PRIMARY KEY (run_id, hook_id),
+				FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+			)
+		`);
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_hook_state_run ON workflow_hook_state(run_id)`);
+
+  db.exec(`
+			CREATE TABLE IF NOT EXISTS workflow_hook_result_artifacts (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL,
+				hook_id TEXT NOT NULL,
+				version INTEGER NOT NULL,
+				result TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+			)
+		`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_hook_result_artifacts_run_hook ` +
+      `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
+  );
+
+  db.exec(`
+			CREATE TABLE IF NOT EXISTS gate_data (
 			run_id TEXT NOT NULL,
 			gate_id TEXT NOT NULL,
 			data TEXT NOT NULL DEFAULT '{}',

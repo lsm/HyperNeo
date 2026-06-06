@@ -2,8 +2,8 @@
  * ⚠️ IMPORTANT: GATE/CHANNEL FINGERPRINT RULES ⚠️
  *
  * This module computes a canonical hash of workflow templates for drift detection.
- * The fingerprint is derived from the FULL workflow structure — all gate fields,
- * channel fields, and node prompt fields are automatically included via exhaustive
+ * The fingerprint is derived from the FULL workflow structure — all hook fields,
+ * gate fields, channel fields, and node prompt fields are automatically included via exhaustive
  * JSON serialization.
  *
  * When adding new fields to Gate, GatePoll, Channel, or WorkflowNodeAgent types,
@@ -38,6 +38,11 @@ interface WorkflowFingerprint {
    * script, poll) are included automatically — no hand-crafted string format.
    */
   gates: string[];
+  /**
+   * Exhaustive JSON serialization of each workflow hook.
+   * All structurally-meaningful fields are included automatically.
+   */
+  hooks: string[];
   /**
    * Per-agent custom prompt entries, sorted. Format:
    * `<nodeName>|<agentName>|<customPrompt>` (empty string when absent).
@@ -169,6 +174,8 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  const hooks = (workflow.hooks ?? []).map((hook) => JSON.stringify(hook)).sort();
+
   // Serialize per-agent custom prompts.
   // Format: `<nodeName>|<agentName>|<customPrompt>` — empty string when absent.
   const nodePrompts = workflow.nodes
@@ -206,6 +213,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     nodeNames,
     channels,
     gates,
+    hooks,
     nodePrompts,
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,

@@ -131,6 +131,60 @@ const exportedWorkflowChannelSchema = z.object({
   gateId: z.string().optional(),
 });
 
+const workflowHookValidatorSchema = z.union([
+  z.object({ kind: z.literal('built_in'), id: z.string().min(1) }),
+  z.object({
+    kind: z.literal('script'),
+    interpreter: z.literal('bash'),
+    source: z.string().min(1),
+    timeoutMs: z.number().int().positive().optional(),
+    externalLookups: z.array(z.literal('github')).optional(),
+  }),
+]);
+
+const workflowHookSchema = z.object({
+  id: z.string().min(1),
+  enabled: z.boolean(),
+  sourceNode: z.string().min(1),
+  targetNode: z.string().min(1).optional(),
+  method: z.enum(['send_message', 'save_artifact', 'create_standalone_task', 'mark_complete']),
+  templateData: z.record(z.string(), z.unknown()).optional(),
+  validator: workflowHookValidatorSchema,
+  retry: z
+    .object({
+      maxAttempts: z.number().int().nonnegative(),
+      delayMs: z.number().int().nonnegative(),
+      backoffMultiplier: z.number().positive().optional(),
+    })
+    .optional(),
+  poll: z
+    .object({
+      intervalMs: z.number().int().positive(),
+      maxDurationMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+  localState: z
+    .object({
+      defaults: z.record(z.string(), z.unknown()).optional(),
+      recentResultRef: z
+        .object({
+          hookId: z.string().min(1),
+          key: z.string().min(1),
+        })
+        .optional(),
+    })
+    .optional(),
+  authorizedCallers: z
+    .array(
+      z.object({
+        sourceNode: z.string().min(1),
+        agentSlots: z.array(z.string().min(1)).optional(),
+      })
+    )
+    .optional(),
+  humanOnly: z.boolean().optional(),
+});
+
 const exportedWorkflowNodeSchema = z.object({
   agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
   name: z.string().min(1),
@@ -184,6 +238,7 @@ const exportedWorkflowBaseSchema = z.object({
   endNode: z.string().optional(),
   tags: z.array(z.string()),
   channels: z.array(exportedWorkflowChannelSchema).optional(),
+  hooks: z.array(workflowHookSchema).optional(),
   // Optional in schema for backward compatibility with v1 exports that predate
   // the completionAutonomyLevel field. Import code falls back to a sensible
   // default when the field is absent.
@@ -363,6 +418,9 @@ export function exportWorkflow(
       return exported;
     });
     result.channels = exportedChannels;
+  }
+  if (workflow.hooks && workflow.hooks.length > 0) {
+    result.hooks = workflow.hooks;
   }
   return result;
 }

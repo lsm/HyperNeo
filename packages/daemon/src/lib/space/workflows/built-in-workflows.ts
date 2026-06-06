@@ -1793,8 +1793,9 @@ export function mergeGateStructuralFieldsFromTemplate(
  *   checks land on pre-existing spaces. Missing template gates are appended.
  *   Existing checks, scripts, and gate topology remain untouched.
  * - Missing template channels are appended so newly-added built-in branches become
- *   reachable on pre-existing spaces. Existing channels, layout, and node rows
- *   are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
+ *   reachable on pre-existing spaces. Template hooks are copied from the built-in
+ *   template so hook-based runtime metadata lands during drift re-stamps. Existing
+ *   channels, layout, and node rows are not regenerated. Workflow IDs, node IDs, and persisted node-agent slots
  *   are stable identifiers for in-flight runs, so template drift must never
  *   replace node rows. Agent `toolGuards` are updated in-place on existing node
  *   configs instead.
@@ -1806,6 +1807,7 @@ const RESTAMP_FIELDS = [
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
   'gates(field writers + features in-place + missing template gates)',
   'channels(missing template channels)',
+  'hooks(template hooks)',
 ] as const;
 
 /**
@@ -1894,6 +1896,7 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
+          hooks: template.hooks ?? null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
@@ -1999,6 +2002,7 @@ export function seedBuiltInWorkflows(
           ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
           : undefined,
         gates: template.gates ? [...template.gates] : undefined,
+        hooks: template.hooks ? [...template.hooks] : undefined,
         layout: template.layout
           ? Object.fromEntries(
               Object.entries(template.layout).map(([templateNodeId, position]) => [
