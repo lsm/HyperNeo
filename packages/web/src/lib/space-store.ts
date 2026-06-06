@@ -29,6 +29,7 @@ import type {
   CreateSpaceTaskParams,
   CreateSpaceWorkflowParams,
   CreateSpaceLongHorizonAgentReminderParams,
+  CreateSpaceLongHorizonAgentSubscriptionParams,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
   MessageImage,
@@ -43,6 +44,7 @@ import type {
   SpaceGoalEvent,
   SpaceGoalListParams,
   SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentEventSubscription,
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentTemplate,
   SpaceTask,
@@ -57,6 +59,7 @@ import type {
   TaskScheduleTriggerType,
   UpdateSpaceAgentParams,
   UpdateSpaceLongHorizonAgentParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceGoalParams,
   UpdateSpaceParams,
   UpdateSpaceTaskParams,
@@ -82,6 +85,37 @@ export interface SpaceSessionSummary {
 export interface SpaceWithTasks extends Space {
   tasks: SpaceTask[];
   sessions: SpaceSessionSummary[];
+}
+
+export type ExternalEventDeliveryStatus = 'pending' | 'delivered' | 'failed';
+
+export interface SpaceExternalEventDeliveryLogRecord {
+  eventId: string;
+  deliveryKey: string;
+  workflowRunId: string;
+  taskId: string;
+  nodeId: string;
+  agentName: string;
+  state: ExternalEventDeliveryStatus;
+  failureReason: string | null;
+  deliveredAt: number | null;
+  updatedAt: number;
+  event: {
+    id: string;
+    spaceId: string;
+    topic: string;
+    occurredAt: number;
+    ingestedAt: number;
+    source: string;
+    sourceEventId?: string;
+    summary: string;
+    externalUrl?: string;
+    payload: Record<string, unknown>;
+    dedupeKey: string;
+  };
+  eventState: string;
+  eventCreatedAt: number;
+  eventUpdatedAt: number;
 }
 
 export interface SpaceAgentTemplate {
@@ -2035,6 +2069,36 @@ class SpaceStore {
     return result?.gateData ?? [];
   }
 
+  async listExternalEventDeliveries(
+    filters: {
+      spaceId?: string;
+      status?: ExternalEventDeliveryStatus | '';
+      agentName?: string;
+      eventId?: string;
+      limit?: number;
+      offset?: number;
+    } = {}
+  ): Promise<SpaceExternalEventDeliveryLogRecord[]> {
+    const spaceId = filters.spaceId ?? this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const result = await hub.request<{ deliveries: SpaceExternalEventDeliveryLogRecord[] }>(
+      'space.externalEvents.listDeliveries',
+      {
+        spaceId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.agentName ? { agentName: filters.agentName } : {}),
+        ...(filters.eventId ? { eventId: filters.eventId } : {}),
+        limit: filters.limit ?? 100,
+        offset: filters.offset ?? 0,
+      }
+    );
+    return result?.deliveries ?? [];
+  }
+
   /**
    * List all artifacts for a workflow run.
    */
@@ -2141,6 +2205,7 @@ class SpaceStore {
   // ========================================
 
   async createLongHorizonAgent(params: {
+    id?: string;
     handle: string;
     displayName?: string;
     templateKey?: string | null;
@@ -2148,6 +2213,10 @@ class SpaceStore {
     autonomyLevel?: number | null;
     model?: string | null;
     thinkingLevel?: string | null;
+    provider?: string | null;
+    settingSources?: SpaceLongHorizonAgent['settingSources'];
+    toolPermissions?: Record<string, unknown>;
+    status?: SpaceLongHorizonAgent['status'];
   }): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2216,6 +2285,54 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     await hub.request('spaceLongHorizonAgent.deleteReminder', { reminderId });
+  }
+
+  async listLongHorizonAgentSubscriptions(
+    agentId: string
+  ): Promise<SpaceLongHorizonAgentEventSubscription[]> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { subscriptions } = await hub.request<{
+      subscriptions: SpaceLongHorizonAgentEventSubscription[];
+    }>('spaceLongHorizonAgent.listSubscriptions', { agentId, spaceId });
+    return subscriptions ?? [];
+  }
+
+  async createLongHorizonAgentSubscription(
+    params: Omit<CreateSpaceLongHorizonAgentSubscriptionParams, 'spaceId'>
+  ): Promise<SpaceLongHorizonAgentEventSubscription> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { subscription } = await hub.request<{
+      subscription: SpaceLongHorizonAgentEventSubscription;
+    }>('spaceLongHorizonAgent.createSubscription', { spaceId, ...params });
+    return subscription;
+  }
+
+  async updateLongHorizonAgentSubscription(
+    subscriptionId: string,
+    params: UpdateSpaceLongHorizonAgentSubscriptionParams
+  ): Promise<SpaceLongHorizonAgentEventSubscription> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { subscription } = await hub.request<{
+      subscription: SpaceLongHorizonAgentEventSubscription;
+    }>('spaceLongHorizonAgent.updateSubscription', { subscriptionId, spaceId, ...params });
+    return subscription;
+  }
+
+  async deleteLongHorizonAgentSubscription(subscriptionId: string): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    await hub.request('spaceLongHorizonAgent.deleteSubscription', { subscriptionId, spaceId });
   }
 
   // ========================================

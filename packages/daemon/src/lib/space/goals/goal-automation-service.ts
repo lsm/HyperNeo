@@ -17,6 +17,7 @@ import type { EvolutionScopeService } from '../evolution-scope-service';
 import type { GoalAutomationExecutePayload } from '../../job-handlers/goal-automation-execute.handler';
 import { Logger } from '../../logger';
 
+export const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
 const DEFAULT_MAX_EVIDENCE_PER_EPISODE = 12;
 const log = new Logger('goal-automation-service');
 
@@ -65,13 +66,11 @@ export class GoalAutomationService {
     const policy = readAutomationPolicyForScope(scope);
     const threshold = readCompletedTaskThreshold(policy);
     if (threshold === null) return { enqueued: false, reason: 'disabled' };
+    if (goal.type !== 'recurring' && policy.completedTaskThreshold === undefined) {
+      return { enqueued: false, reason: 'disabled' };
+    }
     const triggerKey = completedTaskTriggerKey(threshold);
-    const cursor = this.deps.cursorRepo.get(
-      goal.id,
-      scope.id,
-      'completed_task_threshold',
-      triggerKey
-    );
+    const cursor = latestCompletedTaskCursor(this.deps.cursorRepo, goal.id, scope.id, triggerKey);
     const dueEvidence = selectEvidenceAfterCursor(
       this.deps.evolutionRepo.listEvidence(scope.id),
       cursor?.lastEvidenceCreatedAt ?? null,
@@ -173,6 +172,7 @@ export class GoalAutomationService {
       queue: GOAL_AUTOMATION_EXECUTE,
       payload,
       matchPayload: uniqueJobMatchPayload(payload),
+      activeStatuses: payload.triggerKind === 'completed_task_threshold' ? ['pending'] : undefined,
       maxRetries: 2,
     });
     if (!job) log.debug('goal automation job already pending', payload);
@@ -220,8 +220,42 @@ export function externalEventTriggerKey(
   return `event:${subscription.source ?? '*'}:${subscription.topic}`;
 }
 
+function latestCompletedTaskCursor(
+  cursorRepo: GoalAutomationCursorRepository,
+  goalId: string,
+  scopeId: string,
+  triggerKey: string
+) {
+  return newestCursor(
+    cursorRepo.get(goalId, scopeId, 'completed_task_threshold', triggerKey),
+    cursorRepo.getLatestForTriggerKind(goalId, scopeId, 'completed_task_threshold')
+  );
+}
+
+function newestCursor<
+  T extends {
+    lastEvidenceCreatedAt: number | null;
+    lastEvidenceId: string | null;
+    updatedAt: number;
+  },
+>(first: T | null, second: T | null): T | null {
+  if (!first) return second;
+  if (!second) return first;
+  const firstEvidence = first.lastEvidenceCreatedAt ?? 0;
+  const secondEvidence = second.lastEvidenceCreatedAt ?? 0;
+  if (firstEvidence !== secondEvidence) return firstEvidence > secondEvidence ? first : second;
+  const firstEvidenceId = first.lastEvidenceId ?? '';
+  const secondEvidenceId = second.lastEvidenceId ?? '';
+  if (firstEvidenceId !== secondEvidenceId) {
+    return firstEvidenceId.localeCompare(secondEvidenceId) >= 0 ? first : second;
+  }
+  return first.updatedAt >= second.updatedAt ? first : second;
+}
+
 export function readCompletedTaskThreshold(policy: GoalForgeAutomationPolicy): number | null {
+  if (policy.completedTaskAutomationEnabled === false) return null;
   const threshold = policy.completedTaskThreshold;
+  if (threshold === undefined) return DEFAULT_COMPLETED_TASK_THRESHOLD;
   if (typeof threshold !== 'number' || !Number.isFinite(threshold)) return null;
   const normalized = Math.floor(threshold);
   return normalized > 0 ? normalized : null;
@@ -233,6 +267,10 @@ function normalizePolicy(value: unknown): GoalForgeAutomationPolicy {
   return {
     completedTaskThreshold:
       typeof record.completedTaskThreshold === 'number' ? record.completedTaskThreshold : undefined,
+    completedTaskAutomationEnabled:
+      typeof record.completedTaskAutomationEnabled === 'boolean'
+        ? record.completedTaskAutomationEnabled
+        : undefined,
     selfNagCronExpression:
       typeof record.selfNagCronExpression === 'string'
         ? record.selfNagCronExpression.trim()
@@ -298,13 +336,16 @@ function filterMatches(
 }
 
 function uniqueJobMatchPayload(payload: GoalAutomationExecutePayload): Record<string, unknown> {
-  return {
+  const matchPayload: Record<string, unknown> = {
     goalId: payload.goalId,
     scopeId: payload.scopeId,
     triggerKind: payload.triggerKind,
     triggerKey: payload.triggerKey,
-    externalEventId: payload.externalEventId ?? null,
   };
+  if (payload.externalEventId !== undefined) {
+    matchPayload.externalEventId = payload.externalEventId;
+  }
+  return matchPayload;
 }
 
 function isActiveGoal(goal: SpaceGoal | null): goal is SpaceGoal {

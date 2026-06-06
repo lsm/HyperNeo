@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
+import {
+  EvolutionScopeService,
+  mergeEvolutionPolicy,
+} from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
@@ -71,6 +74,39 @@ describe('EvolutionScopeService', () => {
       objective: 'Reduce review churn over time',
     });
     expect(service.resolveScopeForGoal({ spaceGoalId: goal.id })?.id).toBe(scope.id);
+  });
+
+  it('merges policy patches into the stored policy', () => {
+    const scope = service.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Patch policy',
+      objective: 'Preserve concurrent settings',
+      policy: {
+        episodeJudgeModel: 'claude-sonnet-4-6',
+        episodeJudgeProvider: 'anthropic',
+        automation: {
+          completedTaskThreshold: 7,
+          selfNagCronExpression: '0 0 * * *',
+        },
+      },
+    });
+
+    const updated = service.updateScope(scope.id, {
+      policyPatch: {
+        automation: { completedTaskAutomationEnabled: false },
+      },
+    });
+
+    expect(updated?.policy).toEqual({
+      episodeJudgeModel: 'claude-sonnet-4-6',
+      episodeJudgeProvider: 'anthropic',
+      automation: {
+        completedTaskThreshold: 7,
+        completedTaskAutomationEnabled: false,
+        selfNagCronExpression: '0 0 * * *',
+      },
+    });
   });
 
   it('attaches scheduled goal task evidence by resolving scope through spaceGoalId', () => {
@@ -365,5 +401,60 @@ describe('EvolutionScopeService', () => {
         objective: 'Should fail',
       })
     ).toThrow(`SpaceGoal not found in space: ${otherGoal.id}`);
+  });
+});
+
+describe('mergeEvolutionPolicy', () => {
+  it('merges nested automation objects', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: { completedTaskAutomationEnabled: true } }
+    );
+    expect(merged.automation).toEqual({
+      completedTaskThreshold: 5,
+      completedTaskAutomationEnabled: true,
+    });
+  });
+
+  it('passes through non-object automation patch so validation can reject it', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: 'bad' as never }
+    );
+    expect(merged.automation).toBe('bad');
+  });
+
+  it('passes through null automation patch so validation can reject it', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: null as never }
+    );
+    expect(merged.automation).toBeNull();
+  });
+
+  it('passes through array automation patch so validation can reject it', () => {
+    const merged = mergeEvolutionPolicy(
+      { automation: { completedTaskThreshold: 5 } },
+      { automation: ['bad'] as never }
+    );
+    expect(merged.automation).toEqual(['bad']);
+  });
+
+  it('deletes top-level keys set to null in the patch', () => {
+    const merged = mergeEvolutionPolicy(
+      { episodeJudgeModel: 'claude-sonnet', maxActiveLessons: 3 },
+      { episodeJudgeModel: null as never }
+    );
+    expect(merged).not.toHaveProperty('episodeJudgeModel');
+    expect(merged.maxActiveLessons).toBe(3);
+  });
+
+  it('deletes top-level keys set to undefined in the patch', () => {
+    const merged = mergeEvolutionPolicy(
+      { episodeJudgeModel: 'claude-sonnet', maxActiveLessons: 3 },
+      { episodeJudgeModel: undefined }
+    );
+    expect(merged).not.toHaveProperty('episodeJudgeModel');
+    expect(merged.maxActiveLessons).toBe(3);
   });
 });

@@ -16,6 +16,7 @@ import type {
   Session,
   Space,
   SpaceAgent,
+  SpaceLongHorizonAgent,
   SpaceTask,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
@@ -44,6 +45,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
+import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
@@ -82,6 +84,8 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
   archive: false,
   sessionInfo: false,
 } as const;
+
+const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
 
 const CLAUDE_CODE_BUILTIN_TOOLS = [
   ...KNOWN_TOOLS,
@@ -292,6 +296,7 @@ export class SpaceRuntimeService {
           run,
         });
       },
+      deliverLongHorizonExternalEvent: (args) => this.deliverLongHorizonExternalEvent(args),
     });
   }
 
@@ -342,6 +347,24 @@ export class SpaceRuntimeService {
       },
       { spaceId, ...context }
     );
+  }
+
+  private async deliverLongHorizonExternalEvent(args: {
+    spaceId: string;
+    agentId: string;
+    message: string;
+    idempotencyKey: string;
+  }): Promise<{ delivered: boolean }> {
+    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
+      return { delivered: false };
+    }
+    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    if (session) {
+      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
+      return { delivered: true };
+    }
+    return { delivered: false };
   }
 
   private async deliverToLongTermAgent(
@@ -462,6 +485,127 @@ export class SpaceRuntimeService {
     this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
     await session.messageQueue.enqueueWithId(id, message);
     return id;
+  }
+
+  private buildLongHorizonAgentSessionConfig(
+    space: Space,
+    agent: SpaceLongHorizonAgent
+  ): Partial<Session['config']> {
+    const storedTools = Array.isArray(agent.toolPermissions.tools)
+      ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
+      : [];
+    const customTools = storedTools.length > 0 ? storedTools : undefined;
+    const customDisallowedBuiltins = customTools
+      ? CLAUDE_CODE_BUILTIN_TOOLS.filter((tool) => !customTools.includes(tool))
+      : [];
+    const agentKey = sanitizeLongTermAgentKey(agent.displayName);
+
+    return {
+      model:
+        agent.model ??
+        space.defaultModel ??
+        (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL),
+      provider: (agent.provider ?? undefined) as Session['config']['provider'],
+      thinkingLevel: agent.thinkingLevel ?? undefined,
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: agent.instructions,
+      },
+      features: LONG_TERM_AGENT_SESSION_FEATURES,
+      sdkToolsPreset: customTools,
+      allowedTools: customTools,
+      disallowedTools: customTools ? customDisallowedBuiltins : undefined,
+      agent: customTools ? agentKey : undefined,
+      agents: customTools
+        ? {
+            [agentKey]: {
+              description: `Long-horizon Space agent: ${agent.displayName}`,
+              disallowedTools: customDisallowedBuiltins,
+              model: 'inherit',
+              prompt: agent.instructions,
+            } satisfies AgentDefinition,
+          }
+        : undefined,
+      settingSources: agent.settingSources ?? space.settingSources,
+    };
+  }
+
+  private async refreshLongHorizonAgentSessionConfig(
+    session: AgentSession,
+    config: Partial<Session['config']>
+  ): Promise<void> {
+    const currentConfig = session.getSessionData().config;
+    const updates: Partial<Session['config']> = {
+      model: config.model,
+      provider: config.provider,
+      thinkingLevel: config.thinkingLevel,
+      systemPrompt: config.systemPrompt,
+      features: config.features,
+      sdkToolsPreset: config.sdkToolsPreset,
+      allowedTools: config.allowedTools,
+      disallowedTools: config.disallowedTools,
+      agent: config.agent,
+      agents: config.agents,
+      settingSources: config.settingSources,
+    };
+    const changed = Object.entries(updates).some(
+      ([key, value]) =>
+        JSON.stringify(currentConfig[key as keyof Session['config']]) !== JSON.stringify(value)
+    );
+    if (!changed) return;
+    await session.updateConfig(updates);
+    const result = await session.resetQuery({ restartQuery: true });
+    if (!result.success) {
+      throw new Error(result.error ?? 'Failed to refresh long-horizon agent session');
+    }
+  }
+
+  private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
+    const sessionManager = this.config.sessionManager;
+    const repo = this.config.longHorizonAgentRepo;
+    if (!sessionManager || !repo) return null;
+    const agent = repo.getById(agentId);
+    if (!agent || agent.spaceId !== spaceId || agent.status !== 'active') return null;
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    if (!space) return null;
+    const sessionId = longTermAgentSessionId(spaceId, agentId);
+    const config = this.buildLongHorizonAgentSessionConfig(space, agent);
+    let session = await sessionManager.getSessionAsync(sessionId);
+    if (!session) {
+      try {
+        await sessionManager.createSession({
+          sessionId,
+          workspacePath: space.workspacePath,
+          title: agent.displayName,
+          spaceId: space.id,
+          worktreeMode: 'direct',
+          config,
+        });
+      } catch (err) {
+        session = await sessionManager.getSessionAsync(sessionId);
+        if (!session) throw err;
+      }
+      session = session ?? (await sessionManager.getSessionAsync(sessionId));
+      if (!session) return null;
+    } else {
+      await this.refreshLongHorizonAgentSessionConfig(session, config);
+    }
+    if (agent.sessionId !== sessionId) repo.update(agent.id, { sessionId });
+    const currentMetadata = session.getSessionData().metadata;
+    this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+      metadata: {
+        ...currentMetadata,
+        promptProvenance: {
+          source: agent.templateKey ?? 'long_horizon_agent',
+          hash: agent.id,
+          agentId: agent.id,
+          agentName: agent.displayName,
+        },
+      },
+    });
+    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null);
+    return session;
   }
 
   private async ensureLongTermAgentSession(actor: ActorRef) {
@@ -655,6 +799,7 @@ export class SpaceRuntimeService {
     return createSpaceAgentMcpServer({
       spaceId: space.id,
       db: this.config.db,
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
       spaceManager: this.config.spaceManager,
@@ -1287,6 +1432,7 @@ export class SpaceRuntimeService {
     const mcpServer = createSpaceAgentMcpServer({
       spaceId: space.id,
       db: this.config.db,
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
       runtime: this.runtime,
       workflowManager: this.config.spaceWorkflowManager,
       spaceManager: this.config.spaceManager,
@@ -1412,6 +1558,7 @@ export class SpaceRuntimeService {
     const mcpServer = createSpaceAgentMcpServer({
       spaceId: space.id,
       db: this.config.db,
+      longHorizonAgentRepo: this.config.longHorizonAgentRepo,
       runtime: this.runtime,
       workflowManager: spaceWorkflowManager,
       spaceManager: this.config.spaceManager,
@@ -1584,6 +1731,28 @@ export class SpaceRuntimeService {
       this.start();
     }
     return this.runtime;
+  }
+
+  refreshLongHorizonAgentSubscriptions(
+    spaceId: string,
+    agentId: string
+  ): { success: boolean; error?: string } {
+    return this.runtime.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
+  }
+
+  refreshLongHorizonSubscription(
+    spaceId: string,
+    subscriptionId: string
+  ): { success: boolean; error?: string } {
+    return this.runtime.refreshLongHorizonSubscription(spaceId, subscriptionId);
+  }
+
+  removeLongHorizonSubscription(spaceId: string, subscriptionId: string): void {
+    this.runtime.removeLongHorizonSubscription(spaceId, subscriptionId);
+  }
+
+  removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void {
+    this.runtime.removeLongHorizonAgentSubscriptions(spaceId, agentId);
   }
 
   /**

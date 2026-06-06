@@ -259,6 +259,36 @@ describe('registerExpectedDelivery', () => {
     expect(deliveries[0]!.workflowRunId).toBe('run-1');
   });
 
+  test('lists delivery log rows with source event metadata and filters', () => {
+    store.store(EVENT_A);
+    store.store(EVENT_B);
+    store.registerExpectedDelivery('evt-a', 'dk-1', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.registerExpectedDelivery('evt-b', 'dk-2', {
+      workflowRunId: 'run-2',
+      taskId: 'task-2',
+      nodeId: 'node-2',
+      agentName: 'reviewer',
+    });
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'agent missing' });
+
+    const failed = store.listDeliveryLog({ spaceId: SPACE_ID, status: 'failed' });
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.eventId).toBe('evt-a');
+    expect(failed[0]!.event.topic).toBe(EVENT_A.topic);
+    expect(failed[0]!.event.payload).toEqual(EVENT_A.payload);
+    expect(failed[0]!.eventState).toBe('published');
+    expect(failed[0]!.failureReason).toBe('agent missing');
+
+    const reviewer = store.listDeliveryLog({ spaceId: SPACE_ID, agentName: 'reviewer' });
+    expect(reviewer).toHaveLength(1);
+    expect(reviewer[0]!.eventId).toBe('evt-b');
+  });
+
   test('is idempotent for duplicate registration', () => {
     store.store(EVENT_A);
     const target = {

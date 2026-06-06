@@ -48,8 +48,6 @@ import type { Database } from '../../storage/database';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
-import { getSessionModelInfo } from '../model-service.js';
-import { requireModelContextWindow } from '../providers/codex-models';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -191,43 +189,33 @@ export function ensureAgentTools(
  * anthropic        — native Anthropic API, SDK knows all model context windows.
  * anthropic-copilot — Copilot bridge still routes to Anthropic API.
  */
-const NATIVE_CONTEXT_WINDOW_PROVIDERS = ['anthropic', 'anthropic-copilot'];
+export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = ['anthropic', 'anthropic-copilot'];
 
 /**
  * Provider-specific SDK settings overrides.
  *
- * For the Codex bridge, looks up the model's actual context window so the
- * SDK auto-compacts at the right threshold.
- * For other non-native providers, the caller should supply the model's
- * actual contextWindow so the SDK auto-compacts at the right threshold.
+ * For native Anthropic providers the SDK already knows the correct context
+ * window and auto-compact behaviour — no override needed.
+ *
+ * For non-native providers (OpenRouter, Ollama, GLM, Codex bridge, etc.) the
+ * SDK assumes Claude's 200 k context window and auto-compacts prematurely.
+ * We disable SDK auto-compaction entirely here and let NeoKai trigger
+ * compaction at the correct threshold (see ContextTracker / SDKMessageHandler).
  */
-export function buildProviderSettings(
-  providerId: string,
-  modelId?: string,
-  contextWindow?: number
-): Options['settings'] {
-  if (providerId === 'anthropic-codex') {
-    if (!modelId) {
-      throw new Error(`Unknown Codex model auto-compact window: ${modelId ?? 'missing model'}`);
-    }
-    try {
-      const actualContextWindow = requireModelContextWindow(modelId);
-      return {
-        autoCompactWindow: actualContextWindow,
-      };
-    } catch {
-      throw new Error(`Unknown Codex model auto-compact window: ${modelId}`);
-    }
+export function buildProviderSettings(providerId: string): Options['settings'] {
+  if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+    return undefined;
   }
 
-  // For non-native providers where the SDK can't discover the actual context
-  // window (OpenRouter, Ollama, GLM, etc.), pass the model's contextWindow
-  // so auto-compact triggers at the right percentage of actual capacity.
-  if (!NATIVE_CONTEXT_WINDOW_PROVIDERS.includes(providerId) && contextWindow) {
-    return { autoCompactWindow: contextWindow };
-  }
-
-  return undefined;
+  // Disable SDK auto-compaction for all non-native providers.
+  // The SDK's internal 200 k assumption causes premature compaction on
+  // models with larger context windows (1 M, 272 k, etc.).
+  // NeoKai monitors getContextUsage() and enqueues /compact when the
+  // real context window approaches its limit.
+  return {
+    autoCompactEnabled: false,
+    autoCompactWindow: Number.MAX_SAFE_INTEGER,
+  };
 }
 
 /**
@@ -367,12 +355,6 @@ export class QueryOptionsBuilder {
     // here is the effective set for this session.
     const mergedMcpServers = this.mergeMcpServers(mcpServers, mcpServersFromSkills);
 
-    // Resolve model metadata so non-native providers get the correct
-    // autoCompactWindow (the SDK defaults to 200k when it can't discover
-    // the real context window, causing premature compaction on 1M models).
-    const modelInfo = await getSessionModelInfo(this.ctx.session);
-    const autoCompactWindow = modelInfo?.contextWindow;
-
     // Build final query options
     const queryOptions: Options = {
       // ============ Model & Execution ============
@@ -457,7 +439,7 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(providerId, config.model, autoCompactWindow),
+      settings: buildProviderSettings(providerId),
 
       // ============ Streaming ============
       includePartialMessages: config.includePartialMessages,

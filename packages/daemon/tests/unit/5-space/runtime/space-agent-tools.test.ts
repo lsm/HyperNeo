@@ -25,6 +25,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -132,6 +133,7 @@ interface TestCtx {
   runtime: SpaceRuntime;
   nodeExecutionRepo: NodeExecutionRepository;
   spaceManager: SpaceManager;
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   goalService: SpaceGoalService;
   evolutionRepo: EvolutionRepository;
   evolutionScopeService: EvolutionScopeService;
@@ -158,6 +160,7 @@ function makeCtx(): TestCtx {
   const nodeExecutionRepo = new NodeExecutionRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const spaceManager = new SpaceManager(db);
+  const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
   const runtime = new SpaceRuntime({
     db,
@@ -167,6 +170,7 @@ function makeCtx(): TestCtx {
     workflowRunRepo,
     taskRepo,
     nodeExecutionRepo,
+    longHorizonAgentRepo,
   });
 
   const taskManager = new SpaceTaskManager(db, spaceId);
@@ -245,6 +249,7 @@ function makeCtx(): TestCtx {
     runtime,
     nodeExecutionRepo,
     spaceManager,
+    longHorizonAgentRepo,
     goalService,
     evolutionRepo,
     evolutionScopeService,
@@ -264,6 +269,7 @@ function makeHandlers(ctx: TestCtx) {
     spaceAgentManager: ctx.agentManager,
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     spaceManager: ctx.spaceManager,
+    longHorizonAgentRepo: ctx.longHorizonAgentRepo,
     goalService: ctx.goalService,
     evolutionScopeService: ctx.evolutionScopeService,
     evolutionEpisodeService: ctx.evolutionEpisodeService,
@@ -541,11 +547,17 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(reminders.reminders).toHaveLength(1);
 
+    const longHorizonAgent = ctx.longHorizonAgentRepo.create({
+      id: 'lh-tools-agent',
+      spaceId: ctx.spaceId,
+      handle: '@tools-agent',
+      displayName: 'Tools Agent',
+    });
     expect(
       JSON.parse(
         (
           await handlers.subscribe_agent_event({
-            agent_id: agent.id,
+            agent_id: longHorizonAgent.id,
             topic_pattern: 'github/*/*/pull_request/*',
             label: 'PR activity',
           })
@@ -553,10 +565,131 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).success
     ).toBe(true);
     const subscriptions = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
     );
-    expect(subscriptions.subscriptions[0].topic_pattern).toBe('github/*/*/pull_request/*');
+    expect(subscriptions.subscriptions[0].topic).toBe('github/*/*/pull_request/*');
+    expect(subscriptions.subscriptions[0].filter).toEqual({ label: 'PR activity' });
 
+    const relabeled = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: longHorizonAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+          label: 'PR triage',
+        })
+      ).content[0].text
+    );
+    expect(relabeled.success).toBe(true);
+    const afterRelabel = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
+    );
+    expect(afterRelabel.subscriptions).toHaveLength(1);
+    expect(afterRelabel.subscriptions[0].filter).toEqual({ label: 'PR triage' });
+
+    const removed = JSON.parse(
+      (
+        await handlers.unsubscribe_agent_event({
+          agent_id: longHorizonAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(removed.success).toBe(true);
+    const afterUnsubscribe = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
+        .text
+    );
+    expect(afterUnsubscribe.subscriptions).toEqual([]);
+
+    const legacyAgent = JSON.parse(
+      (await handlers.create_agent({ name: 'Legacy list-only agent' })).content[0].text
+    ).agent;
+    ctx.longHorizonAgentRepo.create({
+      id: 'existing-lh-handle-conflict',
+      spaceId: ctx.spaceId,
+      handle: legacyAgent.handle ?? legacyAgent.name,
+      displayName: 'Existing handle conflict',
+    });
+    const listedLegacy = JSON.parse(
+      (await handlers.list_agent_event_subscriptions({ agent_id: legacyAgent.id })).content[0].text
+    );
+    expect(listedLegacy).toEqual({ success: true, subscriptions: [] });
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
+    const unsubscribedUnconvertedLegacy = JSON.parse(
+      (
+        await handlers.unsubscribe_agent_event({
+          agent_id: legacyAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(unsubscribedUnconvertedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toBeNull();
+    const subscribedLegacy = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: legacyAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*',
+        })
+      ).content[0].text
+    );
+    expect(subscribedLegacy.success).toBe(true);
+    ctx.agentManager.update(legacyAgent.id, {
+      status: 'paused',
+      customPrompt: 'Converted agent prompt',
+      tools: ['Read', 'Edit'],
+    });
+    ctx.longHorizonAgentRepo.deleteSubscriptionByRoute(
+      ctx.spaceId,
+      legacyAgent.id,
+      'github',
+      'github/*/*/pull_request/*'
+    );
+    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(legacyAgent.id);
+    const resubscribedLegacy = JSON.parse(
+      (
+        await handlers.subscribe_agent_event({
+          agent_id: legacyAgent.id,
+          topic_pattern: 'github/*/*/pull_request/*.opened',
+        })
+      ).content[0].text
+    );
+    expect(resubscribedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+      expect.objectContaining({
+        handle: `${legacyAgent.handle ?? legacyAgent.name}-${legacyAgent.id}`,
+        status: 'paused',
+        instructions: 'Converted agent prompt',
+        toolPermissions: { tools: ['Read', 'Edit'] },
+      })
+    );
+    const updatedConvertedLegacy = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: legacyAgent.id,
+          status: 'active',
+          custom_prompt: 'Updated converted prompt',
+          tools: ['Read'],
+        })
+      ).content[0].text
+    );
+    expect(updatedConvertedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+      expect.objectContaining({
+        status: 'active',
+        instructions: 'Updated converted prompt',
+        toolPermissions: { tools: ['Read'] },
+      })
+    );
+    const pausedConvertedLegacy = JSON.parse(
+      (await handlers.pause_agent({ agent_id: legacyAgent.id })).content[0].text
+    );
+    expect(pausedConvertedLegacy.success).toBe(true);
+    expect(ctx.longHorizonAgentRepo.getById(legacyAgent.id)).toEqual(
+      expect.objectContaining({ status: 'paused' })
+    );
     expect(
       JSON.parse(
         (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))

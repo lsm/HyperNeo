@@ -685,16 +685,25 @@ export default function ChatContainer({
   // Effects
   // ========================================
 
+  // Track whether this is a fresh mount (or remount) so we can force
+  // re-selection even when activeSessionId already matches. This prevents
+  // a race where the previous instance's cleanup deselects the session
+  // after the new instance has already started rendering.
+  const isNewMountRef = useRef(true);
+
   // Select session on mount or when sessionId changes
   // This is needed when ChatContainer is used outside the main navigation flow
   // (e.g., space agent overlays).
   // Skip when in pending-agent mode — no real session exists yet.
   useEffect(() => {
     if (pendingAgent) return;
-    // Only select if this sessionId is different from the current active session
-    if (sessionId && sessionId !== sessionStore.activeSessionId.value) {
+    // On a fresh mount/remount, always select so we claim ownership even
+    // if a previous instance left activeSessionId set to the same value.
+    // On re-renders, only select when the sessionId actually changed.
+    if (sessionId && (sessionId !== sessionStore.activeSessionId.value || isNewMountRef.current)) {
       sessionStore.select(sessionId);
     }
+    isNewMountRef.current = false;
     // Cleanup: deselect session when component unmounts
     return () => {
       const pendingChecks = pendingMessageVisibilityChecksRef.current;
@@ -702,12 +711,9 @@ export default function ChatContainer({
         clearTimeout(timer);
       }
       pendingChecks.clear();
-      // Defer cleanup so a newly-mounted ChatContainer can claim selection first.
-      setTimeout(() => {
-        if (sessionStore.activeSessionId.value === sessionId) {
-          sessionStore.select(null);
-        }
-      }, 0);
+      if (sessionStore.activeSessionId.value === sessionId) {
+        sessionStore.select(null);
+      }
     };
   }, [sessionId]);
 

@@ -270,6 +270,39 @@ function makeMockHub() {
       }
       if (method === 'spaceAgent.promoteSession') return { agent: makeAgent('promoted-agent') };
       if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
+      if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+      if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceLongHorizonAgent.listSubscriptions') return { subscriptions: [] };
+      if (method === 'spaceLongHorizonAgent.createSubscription') {
+        return {
+          subscription: {
+            id: 'sub-1',
+            spaceId: params?.spaceId,
+            agentId: params?.agentId,
+            source: params?.source,
+            topic: params?.topic,
+            filter: params?.filter ?? {},
+            status: params?.status ?? 'active',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        };
+      }
+      if (method === 'spaceLongHorizonAgent.updateSubscription') {
+        return {
+          subscription: {
+            id: params?.subscriptionId,
+            spaceId: params?.spaceId,
+            agentId: 'lh-1',
+            source: 'github',
+            topic: 'github/*/*/pull_request/*',
+            filter: {},
+            status: params?.status ?? 'active',
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        };
+      }
       // spaceWorkflow handlers return wrapped { workflow }
       if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
       if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
@@ -1335,6 +1368,41 @@ describe('SpaceStore — CRUD methods', () => {
 
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.delete', {
       id: 'a1',
+      spaceId: 'space-1',
+    });
+  });
+
+  it('long-horizon subscription methods call RPC with current space', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    await spaceStore.listLongHorizonAgentSubscriptions('lh-1');
+    await spaceStore.createLongHorizonAgentSubscription({
+      agentId: 'lh-1',
+      source: 'github',
+      topic: 'github/*/*/pull_request/*',
+      filter: { label: 'PRs' },
+    });
+    await spaceStore.updateLongHorizonAgentSubscription('sub-1', { status: 'paused' });
+    await spaceStore.deleteLongHorizonAgentSubscription('sub-1');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.listSubscriptions', {
+      agentId: 'lh-1',
+      spaceId: 'space-1',
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.createSubscription', {
+      agentId: 'lh-1',
+      source: 'github',
+      topic: 'github/*/*/pull_request/*',
+      filter: { label: 'PRs' },
+      spaceId: 'space-1',
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.updateSubscription', {
+      subscriptionId: 'sub-1',
+      spaceId: 'space-1',
+      status: 'paused',
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.deleteSubscription', {
+      subscriptionId: 'sub-1',
       spaceId: 'space-1',
     });
   });
