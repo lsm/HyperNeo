@@ -583,6 +583,26 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       .catch(() => {});
   }
 
+  function emitWorkerAgentCreated(agent: SpaceAgent): void {
+    internalEventBus
+      ?.publish('spaceAgent.created', {
+        sessionId: mySessionId ?? 'space-agent-tools',
+        spaceId,
+        agent,
+      })
+      .catch(() => {});
+  }
+
+  function emitWorkerAgentUpdated(agent: SpaceAgent): void {
+    internalEventBus
+      ?.publish('spaceAgent.updated', {
+        sessionId: mySessionId ?? 'space-agent-tools',
+        spaceId,
+        agent,
+      })
+      .catch(() => {});
+  }
+
   /** Helper to log MCP write operations to the audit log. */
   function logAudit(
     toolName: string,
@@ -788,6 +808,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           settingSources: args.setting_sources ?? undefined,
         });
         if (!result.ok) return jsonResult({ success: false, error: result.error });
+        emitWorkerAgentCreated(result.value);
         logAudit('create_worker_agent', { name: args.name, tools: args.tools });
         return jsonResult({ success: true, agent: result.value });
       } catch (err) {
@@ -882,6 +903,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           settingSources: args.setting_sources,
         });
         if (!result.ok) return jsonResult({ success: false, error: result.error });
+        emitWorkerAgentUpdated(result.value);
         logAudit('update_worker_agent', { agent_id: args.agent_id, status: args.status });
         return jsonResult({ success: true, agent: result.value });
       } catch (err) {
