@@ -202,7 +202,7 @@ export interface AcpSessionSetModeParams {
 export interface AcpSessionSetConfigOptionParams {
   sessionId: string;
   configId: string;
-  value: unknown;
+  value: string;
   _meta?: object | null;
 }
 
@@ -312,12 +312,26 @@ export interface AcpAgentThoughtChunkUpdate {
 
 export interface AcpToolCallUpdateNotification {
   sessionUpdate: 'tool_call';
-  toolCall: AcpToolCall;
+  toolCallId: string;
+  title: string;
+  kind?: AcpToolKind;
+  rawInput?: Record<string, unknown>;
+  rawOutput?: unknown;
+  content?: AcpToolCallContent[];
+  locations?: AcpToolCallLocation[];
+  status: AcpToolCallStatus;
 }
 
 export interface AcpToolCallUpdateUpdate {
   sessionUpdate: 'tool_call_update';
-  toolCallUpdate: AcpToolCallUpdate;
+  toolCallId: string;
+  status?: AcpToolCallStatus;
+  title?: string;
+  kind?: AcpToolKind;
+  rawInput?: Record<string, unknown>;
+  rawOutput?: unknown;
+  content?: AcpToolCallContent[];
+  locations?: AcpToolCallLocation[];
 }
 
 export interface AcpPlanUpdate {
@@ -352,7 +366,7 @@ export interface AcpUsageUpdate {
   size: number;
   used: number;
   cost?: {
-    value: number;
+    amount: number;
     currency: string;
   };
 }
@@ -376,9 +390,9 @@ export interface AcpAvailableCommand {
 
 export interface AcpToolCall {
   toolCallId: string;
-  kind: AcpToolKind;
+  kind?: AcpToolKind;
   title: string;
-  rawInput: Record<string, unknown>;
+  rawInput?: Record<string, unknown>;
   rawOutput?: unknown;
   content?: AcpToolCallContent[];
   locations?: AcpToolCallLocation[];
@@ -409,7 +423,7 @@ export interface AcpToolCallContentWrapper {
 export interface AcpToolCallDiffContent {
   type: 'diff';
   path: string;
-  oldText: string;
+  oldText: string | null;
   newText: string;
 }
 
@@ -419,9 +433,8 @@ export interface AcpToolCallTerminalContent {
 }
 
 export interface AcpToolCallLocation {
-  uri: string;
+  path: string;
   line?: number;
-  column?: number;
 }
 
 export type AcpToolKind =
@@ -523,7 +536,6 @@ export interface AcpTerminalOutputResult {
 export interface AcpTerminalWaitForExitParams {
   sessionId: string;
   terminalId: string;
-  timeoutMs?: number;
   _meta?: object | null;
 }
 
@@ -536,7 +548,6 @@ export interface AcpTerminalWaitForExitResult {
 export interface AcpTerminalKillParams {
   sessionId: string;
   terminalId: string;
-  signal?: string;
   _meta?: object | null;
 }
 
@@ -562,7 +573,7 @@ export interface AcpConfigOption {
   id: string;
   name: string;
   type: 'select';
-  options: AcpConfigOptionChoice[];
+  options: AcpConfigOptionChoice[] | AcpConfigOptionGroup[];
   currentValue: string;
   defaultValue?: unknown;
   description?: string;
@@ -572,6 +583,11 @@ export interface AcpConfigOption {
 export interface AcpConfigOptionChoice {
   name: string;
   value: string;
+}
+
+export interface AcpConfigOptionGroup {
+  group: string;
+  options: AcpConfigOptionChoice[];
 }
 
 // ============================================================================
