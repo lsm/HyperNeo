@@ -1,0 +1,621 @@
+/**
+ * Workflow Hook Engine
+ *
+ * Receives structured action context before selected node-agent MCP handlers
+ * execute. Snapshots matching enabled hooks, sorts by classification then order
+ * then id, and executes them serially in a single action-scoped pipeline.
+ *
+ * Hook result precedence:
+ *   - validation `block` stops the chain and blocks the action
+ *   - validation `retryable_block` stops the chain and blocks (retryable)
+ *   - `block` takes precedence over `retryable_block`
+ *   - side-effect failures are recorded but do not block
+ *   - multiple `patch_params` apply sequentially
+ *   - `emit_follow_up` dispatches through the handler pipeline (depth capped at 1)
+ *   - `record_state` persists hook-local state
+ */
+
+import type {
+  WorkflowHook,
+  WorkflowHookResult,
+  WorkflowHookUserState,
+  SpaceWorkflow,
+  WorkflowRunArtifact,
+} from '@neokai/shared';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { HookExecutor, HookExecutorContext } from './hook-executor';
+import { Logger } from '../../logger';
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/** Metadata about the current action, passed by the tool handler wrapper. */
+export interface HookActionMeta {
+  sessionId: string;
+  agentName: string;
+  nodeId: string;
+  taskId: string;
+  targetNode?: string;
+}
+
+/** Outcome of running the hook chain for a single MCP action. */
+export interface HookActionOutcome {
+  /** The most significant decision from the hook chain. */
+  decision:
+    | 'allow'
+    | 'block'
+    | 'retryable_block'
+    | 'patch_params'
+    | 'emit_follow_up'
+    | 'record_state';
+  /** Final params after all patch_params applied (or original if none). */
+  finalParams: Record<string, unknown>;
+  /** Follow-up action to dispatch, if any. */
+  followUpRequest?: { targetNode: string; message: string };
+  /** State updates to persist. */
+  stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>;
+  /** Normalized user-visible state for banners/debug UI. */
+  userState: WorkflowHookUserState;
+  /** Per-hook execution log for auditing. */
+  executionLog: HookExecutionRecord[];
+  /** The hook ID that caused a block, if any. */
+  blockedByHookId?: string;
+}
+
+/** Record of a single hook execution. */
+export interface HookExecutionRecord {
+  hookId: string;
+  classification: 'validation' | 'side_effect';
+  result: WorkflowHookResult;
+  timestamp: number;
+}
+
+/** Dependencies for the workflow hook engine. */
+export interface WorkflowHookEngineConfig {
+  workflow: SpaceWorkflow;
+  workflowRunId: string;
+  nodeExecutionRepo: NodeExecutionRepository;
+  artifactRepo?: WorkflowRunArtifactRepository;
+  hookStateRepo: WorkflowHookStateRepository;
+  hookExecutor: HookExecutor;
+  workspacePath?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const log = new Logger('workflow-hook-engine');
+
+/** Whitelisted MCP methods that may be used for follow-up actions. */
+const FOLLOW_UP_METHODS = new Set(['send_message']);
+
+/** Maximum follow-up execution latency budget (30 seconds default). */
+const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
+
+// ---------------------------------------------------------------------------
+// Engine
+// ---------------------------------------------------------------------------
+
+export class WorkflowHookEngine {
+  constructor(private readonly config: WorkflowHookEngineConfig) {}
+
+  /**
+   * Execute the hook chain for an MCP action.
+   *
+   * @param methodName  The MCP method being invoked (e.g. 'send_message')
+   * @param params      The raw params passed to the method
+   * @param meta        Caller identity metadata
+   * @returns           HookActionOutcome with decision, patched params, and user state
+   */
+  async executeAction(
+    methodName: string,
+    params: Record<string, unknown>,
+    meta: HookActionMeta
+  ): Promise<HookActionOutcome> {
+    const hooks = this.resolveMatchingHooks(methodName, meta);
+
+    if (hooks.length === 0) {
+      return {
+        decision: 'allow',
+        finalParams: params,
+        stateUpdates: [],
+        userState: { status: 'allowed' },
+        executionLog: [],
+      };
+    }
+
+    const sortedHooks = this.sortHooks(hooks);
+    const executionLog: HookExecutionRecord[] = [];
+    let currentParams = { ...params };
+    let followUpRequest: { targetNode: string; message: string } | undefined;
+    const stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }> = [];
+    let blockedByValidation: {
+      hookId: string;
+      result: WorkflowHookResult;
+      isRetryable: boolean;
+    } | null = null;
+
+    for (const hook of sortedHooks) {
+      // If a validation hook already returned non-retryable block, skip everything
+      if (blockedByValidation?.isRetryable === false) {
+        break;
+      }
+      // If a validation hook returned retryable_block, skip remaining side-effects
+      // but allow later validation hooks to run (so block can override retryable_block)
+      if (blockedByValidation && hook.classification === 'side_effect') {
+        break;
+      }
+
+      const context = await this.buildExecutorContext(hook, methodName, currentParams, meta);
+
+      let result: WorkflowHookResult;
+      try {
+        const execResult = await this.config.hookExecutor.execute(hook, context);
+        result = execResult.result;
+      } catch (err) {
+        log.warn(
+          `Hook executor threw for hook "${hook.id}" on ${methodName}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        result = {
+          type: 'block',
+          reason: 'Hook executor internal error',
+        };
+      }
+
+      executionLog.push({
+        hookId: hook.id,
+        classification: hook.classification,
+        result,
+        timestamp: Date.now(),
+      });
+
+      // Process result
+      switch (result.type) {
+        case 'allow':
+          break;
+
+        case 'block':
+          if (hook.classification === 'validation') {
+            blockedByValidation = { hookId: hook.id, result, isRetryable: false };
+          }
+          // side_effect block is recorded but does not stop
+          break;
+
+        case 'retryable_block':
+          if (hook.classification === 'validation') {
+            // block takes precedence over retryable_block
+            if (!blockedByValidation) {
+              blockedByValidation = { hookId: hook.id, result, isRetryable: true };
+            }
+          }
+          break;
+
+        case 'patch_params':
+          if (result.patch && typeof result.patch === 'object') {
+            currentParams = { ...currentParams, ...result.patch };
+          }
+          break;
+
+        case 'emit_follow_up':
+          if (result.targetNode && result.message) {
+            followUpRequest = { targetNode: result.targetNode, message: result.message };
+          }
+          break;
+
+        case 'record_state':
+          if (result.state && typeof result.state === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+          }
+          break;
+      }
+    }
+
+    // Determine final decision
+    if (blockedByValidation) {
+      const hook = sortedHooks.find((h) => h.id === blockedByValidation!.hookId)!;
+      const isRetryable = blockedByValidation.isRetryable;
+      const result = blockedByValidation.result;
+
+      return {
+        decision: isRetryable ? 'retryable_block' : 'block',
+        finalParams: currentParams,
+        stateUpdates,
+        userState: this.buildBlockUserState(hook, methodName, result, isRetryable, meta),
+        executionLog,
+        blockedByHookId: hook.id,
+      };
+    }
+
+    // Determine the most significant non-block decision
+    const hasPatch = !this.shallowEqual(params, currentParams);
+    const hasFollowUp = !!followUpRequest;
+    const hasState = stateUpdates.length > 0;
+
+    let decision: HookActionOutcome['decision'] = 'allow';
+    if (hasPatch) decision = 'patch_params';
+    else if (hasFollowUp) decision = 'emit_follow_up';
+    else if (hasState) decision = 'record_state';
+
+    return {
+      decision,
+      finalParams: currentParams,
+      followUpRequest,
+      stateUpdates,
+      userState: this.buildAllowUserState(
+        decision,
+        methodName,
+        currentParams,
+        followUpRequest,
+        stateUpdates,
+        executionLog
+      ),
+      executionLog,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Hook resolution
+  // -------------------------------------------------------------------------
+
+  private resolveMatchingHooks(methodName: string, meta: HookActionMeta): WorkflowHook[] {
+    const workflow = this.config.workflow;
+    if (!workflow?.hooks) return [];
+
+    const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+
+    return workflow.hooks.filter((hook) => {
+      if (!hook.enabled) return false;
+      if (hook.method !== methodName) return false;
+
+      // Match sourceNode — either the node name or agent name
+      if (hook.sourceNode !== nodeName && hook.sourceNode !== meta.agentName) return false;
+
+      // Authorized callers check
+      if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
+      if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
+
+      return hook.authorizedCallers.some((caller) => {
+        if (caller.sourceNode !== nodeName && caller.sourceNode !== meta.agentName) return false;
+        if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
+        return caller.agentSlots.includes(meta.agentName);
+      });
+    });
+  }
+
+  private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
+    return [...hooks].sort((a, b) => {
+      // Validation hooks first
+      if (a.classification !== b.classification) {
+        return a.classification === 'validation' ? -1 : 1;
+      }
+      // Then by order (lower first)
+      const orderA = a.order ?? 0;
+      const orderB = b.order ?? 0;
+      if (orderA !== orderB) return orderA - orderB;
+      // Then by id for determinism
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Context building
+  // -------------------------------------------------------------------------
+
+  private async buildExecutorContext(
+    hook: WorkflowHook,
+    methodName: string,
+    params: Record<string, unknown>,
+    meta: HookActionMeta
+  ): Promise<HookExecutorContext> {
+    const workflow = this.config.workflow;
+    const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+
+    // Load hook-local state
+    const hookState = this.config.hookStateRepo.ensure(
+      this.config.workflowRunId,
+      hook.id,
+      hook.localState?.defaults ?? {}
+    );
+
+    // Load current artifacts
+    let currentArtifacts: WorkflowRunArtifact[] = [];
+    try {
+      currentArtifacts = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
+    } catch {
+      // best effort
+    }
+
+    const permittedExternalLookups: string[] =
+      hook.validator.kind === 'script' ? (hook.validator.externalLookups ?? []) : [];
+
+    return {
+      workspacePath: this.config.workspacePath ?? '',
+      runId: this.config.workflowRunId,
+      hookId: hook.id,
+      methodName,
+      params,
+      nodeId: meta.nodeId,
+      nodeName,
+      sessionId: meta.sessionId,
+      taskId: meta.taskId,
+      targetNode: hook.targetNode ?? meta.targetNode,
+      hookLocalState: hookState.localState,
+      currentArtifacts: currentArtifacts.map((a) => ({
+        id: a.id,
+        nodeId: a.nodeId,
+        type: a.artifactType,
+        key: a.artifactKey,
+        data: a.data,
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+      })),
+      permittedExternalLookups,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // User state builders
+  // -------------------------------------------------------------------------
+
+  private buildBlockUserState(
+    hook: WorkflowHook,
+    methodName: string,
+    result: WorkflowHookResult,
+    isRetryable: boolean,
+    _meta: HookActionMeta
+  ): WorkflowHookUserState {
+    const base: WorkflowHookUserState = {
+      status: isRetryable ? 'waiting_on_hook_retry' : 'blocked_by_hook',
+      hookId: hook.id,
+      hookLabel: hook.label ?? hook.id,
+      method: methodName,
+      sourceNode: hook.sourceNode,
+      targetNode: hook.targetNode,
+    };
+
+    if (result.type === 'block' || result.type === 'retryable_block') {
+      base.reason = result.reason;
+      base.remediation = result.message;
+      if (result.type === 'retryable_block' && result.retryAfterMs !== undefined) {
+        base.retryAfterMs = result.retryAfterMs;
+      }
+    }
+
+    return base;
+  }
+
+  private buildAllowUserState(
+    decision: HookActionOutcome['decision'],
+    methodName: string,
+    finalParams: Record<string, unknown>,
+    followUpRequest: { targetNode: string; message: string } | undefined,
+    _stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>,
+    _executionLog: HookExecutionRecord[]
+  ): WorkflowHookUserState {
+    const base: WorkflowHookUserState = {
+      status:
+        decision === 'patch_params'
+          ? 'patched'
+          : decision === 'emit_follow_up'
+            ? 'follow_up_emitted'
+            : decision === 'record_state'
+              ? 'state_recorded'
+              : 'allowed',
+      method: methodName,
+    };
+
+    if (decision === 'patch_params') {
+      base.patchedKeys = Object.keys(finalParams);
+    }
+
+    if (decision === 'emit_follow_up' && followUpRequest) {
+      base.emittedActionIds = [followUpRequest.targetNode];
+    }
+
+    return base;
+  }
+
+  // -------------------------------------------------------------------------
+  // Helpers
+  // -------------------------------------------------------------------------
+
+  private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+    const keysA = Object.keys(a);
+    const keysB = Object.keys(b);
+    if (keysA.length !== keysB.length) return false;
+    for (const key of keysA) {
+      if (a[key] !== b[key]) return false;
+    }
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Handler wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap an MCP tool handler with the workflow hook engine.
+ *
+ * @param methodName      The MCP method name (e.g. 'send_message')
+ * @param handler         The original handler function
+ * @param engine          The hook engine (undefined = pass-through)
+ * @param handlers        The full handler map for follow-up dispatch
+ * @param meta            Caller identity metadata
+ * @param isFollowUp      Whether this call is itself a follow-up action
+ * @returns               A wrapped handler that runs hooks before the original
+ */
+export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
+  methodName: string,
+  handler: (args: T) => Promise<import('../tools/tool-result').ToolResult>,
+  engine: WorkflowHookEngine | undefined,
+  handlers: Record<
+    string,
+    (
+      ...args: unknown[]
+    ) =>
+      | Promise<import('../tools/tool-result').ToolResult>
+      | import('../tools/tool-result').ToolResult
+  >,
+  meta: HookActionMeta,
+  isFollowUp = false
+): (args: T) => Promise<import('../tools/tool-result').ToolResult> {
+  if (!engine) return handler;
+
+  return async (args: T) => {
+    const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
+
+    // Persist state updates
+    for (const update of outcome.stateUpdates) {
+      try {
+        const state = engine['config'].hookStateRepo.get(
+          engine['config'].workflowRunId,
+          update.hookId
+        );
+        await engine['config'].hookStateRepo.update(engine['config'].workflowRunId, update.hookId, {
+          expectedVersion: state?.version ?? 0,
+          localState: update.state,
+        });
+      } catch (err) {
+        log.warn(
+          `Failed to persist hook state for ${update.hookId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    // Handle block
+    if (outcome.decision === 'block') {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: outcome.userState.reason ?? 'Action blocked by hook.',
+              hookStatus: outcome.userState.status,
+              hookLabel: outcome.userState.hookLabel,
+              hookMethod: outcome.userState.method,
+              hookReason: outcome.userState.reason,
+              hookRemediation: outcome.userState.remediation,
+              sourceNode: outcome.userState.sourceNode,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Handle retryable block
+    if (outcome.decision === 'retryable_block') {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: outcome.userState.reason ?? 'Action blocked by hook (retryable).',
+              retryable: true,
+              retryAfterMs: outcome.userState.retryAfterMs,
+              hookStatus: outcome.userState.status,
+              hookLabel: outcome.userState.hookLabel,
+              hookMethod: outcome.userState.method,
+              hookReason: outcome.userState.reason,
+              hookRemediation: outcome.userState.remediation,
+              sourceNode: outcome.userState.sourceNode,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Handle follow-up dispatch
+    if (outcome.decision === 'emit_follow_up' && outcome.followUpRequest) {
+      if (isFollowUp) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: 'Recursive follow-up emission rejected.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const followUpMethod = 'send_message';
+      if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: `Follow-up method "${followUpMethod}" is not whitelisted.`,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const followUpHandler = handlers[followUpMethod];
+      if (!followUpHandler) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: `Follow-up handler "${followUpMethod}" not found.`,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Dispatch follow-up through the wrapped pipeline with timeout
+      const followUpPromise = wrapHandlerWithHooks(
+        followUpMethod,
+        followUpHandler as (
+          args: Record<string, unknown>
+        ) => Promise<import('../tools/tool-result').ToolResult>,
+        engine,
+        handlers,
+        { ...meta, targetNode: outcome.followUpRequest.targetNode },
+        true
+      )({
+        target: outcome.followUpRequest.targetNode,
+        message: outcome.followUpRequest.message,
+      } as unknown as Record<string, unknown>);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('Follow-up dispatch timed out')),
+          DEFAULT_FOLLOW_UP_TIMEOUT_MS
+        );
+      });
+
+      try {
+        await Promise.race([followUpPromise, timeoutPromise]);
+      } catch (err) {
+        log.warn(
+          `Follow-up dispatch timed out or failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+        // Task says "continues only after the follow-up action succeeds or fails"
+        // So we continue regardless, but we log the failure.
+      }
+    }
+
+    // Call original handler with final (potentially patched) params
+    return handler(outcome.finalParams as T);
+  };
+}
