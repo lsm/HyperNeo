@@ -17,6 +17,13 @@ export interface GitHubWatchedRepo {
   webhookEnabled: boolean;
   pollingEnabled: boolean;
   webhookSecret: string | null;
+  webhookRemoteId: number | null;
+  webhookUrl: string | null;
+  webhookAutoRegistered: boolean;
+  webhookActive: boolean | null;
+  webhookLastCheckedAt: number | null;
+  webhookLastError: string | null;
+  webhookConfiguredAt: number | null;
   lastWebhookAt: number | null;
   lastPollAt: number | null;
   pollCursor: PollCursor | null;
@@ -44,6 +51,13 @@ export class GitHubEventExtensionRepository {
     webhookEnabled?: boolean;
     pollingEnabled?: boolean;
     webhookSecret?: string | null;
+    webhookRemoteId?: number | null;
+    webhookUrl?: string | null;
+    webhookAutoRegistered?: boolean;
+    webhookActive?: boolean | null;
+    webhookLastCheckedAt?: number | null;
+    webhookLastError?: string | null;
+    webhookConfiguredAt?: number | null;
   }): GitHubWatchedRepo {
     const now = Date.now();
     const existing = this.getWatchedRepo(params.spaceId, params.owner, params.repo);
@@ -51,8 +65,11 @@ export class GitHubEventExtensionRepository {
       this.db
         .prepare(
           `UPDATE space_github_watched_repos
-					 SET enabled = ?, webhook_enabled = ?, polling_enabled = ?, webhook_secret = COALESCE(?, webhook_secret), updated_at = ?
-					 WHERE id = ?`
+						 SET enabled = ?, webhook_enabled = ?, polling_enabled = ?, webhook_secret = COALESCE(?, webhook_secret),
+						     webhook_remote_id = COALESCE(?, webhook_remote_id), webhook_url = COALESCE(?, webhook_url),
+						     webhook_auto_registered = ?, webhook_active = ?, webhook_last_checked_at = COALESCE(?, webhook_last_checked_at),
+						     webhook_last_error = ?, webhook_configured_at = COALESCE(?, webhook_configured_at), updated_at = ?
+						 WHERE id = ?`
         )
         .run(
           params.enabled === undefined ? (existing.enabled ? 1 : 0) : params.enabled ? 1 : 0,
@@ -71,6 +88,31 @@ export class GitHubEventExtensionRepository {
               ? 1
               : 0,
           params.webhookSecret ?? null,
+          params.webhookRemoteId ?? null,
+          params.webhookUrl ?? null,
+          params.webhookAutoRegistered === undefined
+            ? existing.webhookAutoRegistered
+              ? 1
+              : 0
+            : params.webhookAutoRegistered
+              ? 1
+              : 0,
+          params.webhookActive === undefined
+            ? existing.webhookActive === null
+              ? null
+              : existing.webhookActive
+                ? 1
+                : 0
+            : params.webhookActive === null
+              ? null
+              : params.webhookActive
+                ? 1
+                : 0,
+          params.webhookLastCheckedAt ?? null,
+          params.webhookLastError === undefined
+            ? existing.webhookLastError
+            : params.webhookLastError,
+          params.webhookConfiguredAt ?? null,
           now,
           existing.id
         );
@@ -81,8 +123,9 @@ export class GitHubEventExtensionRepository {
     this.db
       .prepare(
         `INSERT INTO space_github_watched_repos
-				 (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 (id, space_id, owner, repo, enabled, webhook_enabled, polling_enabled, webhook_secret, webhook_remote_id, webhook_url,
+					  webhook_auto_registered, webhook_active, webhook_last_checked_at, webhook_last_error, webhook_configured_at, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -93,10 +136,33 @@ export class GitHubEventExtensionRepository {
         params.webhookEnabled === false ? 0 : 1,
         params.pollingEnabled ? 1 : 0,
         params.webhookSecret ?? null,
+        params.webhookRemoteId ?? null,
+        params.webhookUrl ?? null,
+        params.webhookAutoRegistered ? 1 : 0,
+        params.webhookActive === undefined || params.webhookActive === null
+          ? null
+          : params.webhookActive
+            ? 1
+            : 0,
+        params.webhookLastCheckedAt ?? null,
+        params.webhookLastError ?? null,
+        params.webhookConfiguredAt ?? null,
         now,
         now
       );
     return this.getWatchedRepoById(id)!;
+  }
+
+  clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos
+         SET webhook_secret = CASE WHEN ? THEN NULL ELSE webhook_secret END,
+             webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
+             webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(options.clearSecret ? 1 : 0, Date.now(), id);
   }
 
   setRepoEnabled(spaceId: string, enabled: boolean): number {
@@ -145,11 +211,11 @@ export class GitHubEventExtensionRepository {
     return rows.map((r) => this.rowToRepo(r));
   }
 
-  listEnabledWebhookRepos(): GitHubWatchedRepo[] {
+  listWebhookValidationRepos(): GitHubWatchedRepo[] {
     return (
       this.db
         .prepare(
-          `SELECT * FROM space_github_watched_repos WHERE enabled = 1 AND webhook_enabled = 1 AND webhook_secret IS NOT NULL`
+          `SELECT * FROM space_github_watched_repos WHERE webhook_enabled = 1 AND webhook_secret IS NOT NULL`
         )
         .all() as Record<string, unknown>[]
     ).map((r) => this.rowToRepo(r));
@@ -179,6 +245,84 @@ export class GitHubEventExtensionRepository {
     return row ? this.rowToRepo(row) : null;
   }
 
+  getAutoRegisteredRepo(owner: string, repo: string, webhookUrl: string): GitHubWatchedRepo | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM space_github_watched_repos
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id IS NOT NULL AND webhook_secret IS NOT NULL AND webhook_url = ?
+         ORDER BY updated_at DESC LIMIT 1`
+      )
+      .get(owner, repo, webhookUrl) as Record<string, unknown> | undefined;
+    return row ? this.rowToRepo(row) : null;
+  }
+
+  countAutoRegisteredHookRefs(owner: string, repo: string, webhookRemoteId: number): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM space_github_watched_repos
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id = ?`
+      )
+      .get(owner, repo, webhookRemoteId) as { count: number } | undefined;
+    return row?.count ?? 0;
+  }
+
+  updateSharedAutoHook(params: {
+    owner: string;
+    repo: string;
+    previousWebhookRemoteId: number;
+    webhookRemoteId: number;
+    webhookSecret: string;
+    webhookUrl: string;
+    webhookActive: boolean | null;
+    webhookLastCheckedAt: number;
+    webhookConfiguredAt: number;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos
+         SET webhook_remote_id = ?, webhook_secret = ?, webhook_url = ?, webhook_active = ?, webhook_last_checked_at = ?,
+             webhook_last_error = NULL, webhook_configured_at = ?, updated_at = ?
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id = ?`
+      )
+      .run(
+        params.webhookRemoteId,
+        params.webhookSecret,
+        params.webhookUrl,
+        params.webhookActive === null ? null : params.webhookActive ? 1 : 0,
+        params.webhookLastCheckedAt,
+        params.webhookConfiguredAt,
+        Date.now(),
+        params.owner,
+        params.repo,
+        params.previousWebhookRemoteId
+      );
+  }
+
+  updateSharedWebhookStatus(
+    owner: string,
+    repo: string,
+    webhookRemoteId: number,
+    status: {
+      active?: boolean | null;
+      lastCheckedAt?: number | null;
+      lastError?: string | null;
+    }
+  ): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM space_github_watched_repos
+         WHERE lower(owner)=lower(?) AND lower(repo)=lower(?) AND webhook_auto_registered = 1
+           AND webhook_remote_id = ?`
+      )
+      .all(owner, repo, webhookRemoteId) as { id: string }[];
+    for (const row of rows) {
+      this.updateWebhookStatus(row.id, status);
+    }
+  }
+
   getWatchedRepoById(id: string): GitHubWatchedRepo | null {
     const row = this.db.prepare(`SELECT * FROM space_github_watched_repos WHERE id = ?`).get(id) as
       | Record<string, unknown>
@@ -202,6 +346,41 @@ export class GitHubEventExtensionRepository {
       .run(Date.now(), JSON.stringify(cursor), Date.now(), id);
   }
 
+  updateWebhookStatus(
+    id: string,
+    status: {
+      active?: boolean | null;
+      lastCheckedAt?: number | null;
+      lastError?: string | null;
+    }
+  ): void {
+    const existing = this.getWatchedRepoById(id);
+    if (!existing) return;
+    this.db
+      .prepare(
+        `UPDATE space_github_watched_repos
+         SET webhook_active = ?, webhook_last_checked_at = ?, webhook_last_error = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        status.active === undefined
+          ? existing.webhookActive === null
+            ? null
+            : existing.webhookActive
+              ? 1
+              : 0
+          : status.active === null
+            ? null
+            : status.active
+              ? 1
+              : 0,
+        status.lastCheckedAt ?? existing.webhookLastCheckedAt,
+        status.lastError === undefined ? existing.webhookLastError : status.lastError,
+        Date.now(),
+        id
+      );
+  }
+
   private rowToRepo(row: Record<string, unknown>): GitHubWatchedRepo {
     return {
       id: row.id as string,
@@ -212,6 +391,16 @@ export class GitHubEventExtensionRepository {
       webhookEnabled: row.webhook_enabled === 1,
       pollingEnabled: row.polling_enabled === 1,
       webhookSecret: (row.webhook_secret as string | null) ?? null,
+      webhookRemoteId: (row.webhook_remote_id as number | null) ?? null,
+      webhookUrl: (row.webhook_url as string | null) ?? null,
+      webhookAutoRegistered: row.webhook_auto_registered === 1,
+      webhookActive:
+        row.webhook_active === null || row.webhook_active === undefined
+          ? null
+          : row.webhook_active === 1,
+      webhookLastCheckedAt: (row.webhook_last_checked_at as number | null) ?? null,
+      webhookLastError: (row.webhook_last_error as string | null) ?? null,
+      webhookConfiguredAt: (row.webhook_configured_at as number | null) ?? null,
       lastWebhookAt: (row.last_webhook_at as number | null) ?? null,
       lastPollAt: (row.last_poll_at as number | null) ?? null,
       pollCursor: row.poll_cursor ? (JSON.parse(row.poll_cursor as string) as PollCursor) : null,
