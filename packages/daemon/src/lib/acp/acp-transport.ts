@@ -89,10 +89,13 @@ export class AcpTransport {
       logger.info(`ACP agent exited (code=${code}, signal=${signal})`);
       this.process = null;
       this.processExited = true;
-      this.rejectAllPending(new Error('ACP agent process exited'));
       if (this.options.onExit) {
         this.options.onExit(code, signal);
       }
+    });
+
+    proc.on('close', () => {
+      this.rejectAllPending(new Error('ACP agent process exited'));
       if (this.closeResolve) {
         this.closeResolve();
       }
@@ -168,7 +171,12 @@ export class AcpTransport {
 
   private handleRequest(request: AcpJsonRpcRequest): void {
     if (this.options.onRequest) {
-      this.options.onRequest(request);
+      try {
+        this.options.onRequest(request);
+      } catch (err) {
+        logger.error('Inbound request handler error:', (err as Error).message);
+        this.sendErrorResponse(request.id, { code: -32603, message: 'Internal error' });
+      }
     } else {
       logger.warn('Received inbound request but no onRequest handler:', request.method);
       this.sendErrorResponse(request.id, { code: -32601, message: 'Method not found' });

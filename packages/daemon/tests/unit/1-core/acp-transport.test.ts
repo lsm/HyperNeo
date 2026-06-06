@@ -33,9 +33,10 @@ class MockChildProcess extends EventEmitter {
       this.signalCode = signal;
     }
     this.killed = true;
-    // Simulate async exit
+    // Simulate async exit + stdio close
     setTimeout(() => {
       this.emit('exit', this.exitCode, this.signalCode);
+      this.emit('close', this.exitCode, this.signalCode);
     }, 10);
     return true;
   }
@@ -191,6 +192,7 @@ describe('AcpTransport', () => {
 
     const promise = transport.sendRequest('hang', {});
     proc.emit('exit', 1, 'SIGTERM');
+    proc.emit('close', 1, 'SIGTERM');
 
     await expect(promise).rejects.toThrow('ACP agent process exited');
   });
@@ -401,6 +403,30 @@ describe('AcpTransport', () => {
     expect(last.error.code).toBe(-32601);
   });
 
+  test('catches inbound handler failures and sends JSON-RPC error response', () => {
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      onRequest: () => {
+        throw new Error('handler boom');
+      },
+    });
+    const proc = lastMockProcess!;
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({ jsonrpc: '2.0', id: 77, method: 'fs/read_text_file', params: {} }) + '\n'
+      )
+    );
+
+    const lines = proc.stdin.written;
+    const last = JSON.parse(lines[lines.length - 1]);
+    expect(last.jsonrpc).toBe('2.0');
+    expect(last.id).toBe(77);
+    expect(last.error.code).toBe(-32603);
+    expect(last.error.message).toBe('Internal error');
+  });
+
   test('sendResponse writes JSON-RPC response to stdin', () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
@@ -444,6 +470,7 @@ describe('AcpTransport', () => {
       proc.killed = true;
       setTimeout(() => {
         proc.emit('exit', proc.exitCode, signal as string);
+        proc.emit('close', proc.exitCode, signal as string);
       }, 10);
       return true;
     };

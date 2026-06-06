@@ -151,6 +151,15 @@ export interface AcpSessionCloseParams {
   _meta?: object | null;
 }
 
+export interface AcpSessionDeleteParams {
+  sessionId: string;
+  _meta?: object | null;
+}
+
+export interface AcpSessionDeleteResult {
+  _meta?: object | null;
+}
+
 export interface AcpSessionLoadParams {
   sessionId: string;
   cwd: string;
@@ -342,7 +351,7 @@ export interface AcpPlanUpdate {
 export interface AcpPlanEntry {
   content: string;
   status: 'pending' | 'in_progress' | 'completed';
-  priority?: 'high' | 'medium' | 'low';
+  priority: 'high' | 'medium' | 'low';
 }
 
 export interface AcpCurrentModeUpdate {
