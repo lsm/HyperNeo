@@ -26,6 +26,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
+import { ChannelResolver } from './channel-resolver';
 import { Logger } from '../../logger';
 
 // ---------------------------------------------------------------------------
@@ -290,14 +291,55 @@ export class WorkflowHookEngine {
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
+    // Build slot-to-node translation map so agent names resolve to node names
+    const slotToNode = new Map<string, string>();
+    for (const node of workflow.nodes) {
+      for (const agent of node.agents ?? []) {
+        if (!slotToNode.has(agent.name)) {
+          slotToNode.set(agent.name, node.name);
+        }
+      }
+    }
+
+    const fromNode = slotToNode.get(meta.agentName) ?? nodeName;
+    const resolver = new ChannelResolver(workflow.channels ?? []);
+
     // Resolve action target(s) for send_message
     const actionTargets = new Set<string>();
     if (methodName === 'send_message') {
       const target = params.target;
-      if (typeof target === 'string') actionTargets.add(target);
-      else if (Array.isArray(target)) {
+      if (typeof target === 'string') {
+        if (target === '*') {
+          const permitted = resolver.getPermittedTargets(fromNode);
+          if (permitted.includes('*')) {
+            for (const node of workflow.nodes) {
+              actionTargets.add(node.name);
+            }
+          } else {
+            for (const t of permitted) {
+              actionTargets.add(t);
+            }
+          }
+        } else {
+          actionTargets.add(slotToNode.get(target) ?? target);
+        }
+      } else if (Array.isArray(target)) {
         for (const t of target) {
-          if (typeof t === 'string') actionTargets.add(t);
+          if (typeof t !== 'string') continue;
+          if (t === '*') {
+            const permitted = resolver.getPermittedTargets(fromNode);
+            if (permitted.includes('*')) {
+              for (const node of workflow.nodes) {
+                actionTargets.add(node.name);
+              }
+            } else {
+              for (const pt of permitted) {
+                actionTargets.add(pt);
+              }
+            }
+          } else {
+            actionTargets.add(slotToNode.get(t) ?? t);
+          }
         }
       }
     }

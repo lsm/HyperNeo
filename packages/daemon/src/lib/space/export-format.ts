@@ -155,6 +155,9 @@ const workflowHookSchema = z.object({
     'submit_for_approval',
     'approve_task',
   ]),
+  classification: z.enum(['validation', 'side_effect']).optional(),
+  order: z.number().optional(),
+  label: z.string().optional(),
   templateData: z.record(z.string(), z.unknown()).optional(),
   validator: workflowHookValidatorSchema,
   retry: z

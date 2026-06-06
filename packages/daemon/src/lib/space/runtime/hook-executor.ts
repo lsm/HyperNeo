@@ -18,6 +18,7 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
+import { validateWorkflowHookResult } from '../workflow-hook-validation';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -274,14 +275,17 @@ export async function executeHookScript(
     };
   }
 
+  const controller = new AbortController();
+  let killed = false;
+
   const [stdoutResult, stderrResult, exitCode] = await Promise.all([
-    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
-    collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
+    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal),
+    collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal),
     (async () => {
-      let killed = false;
       const killTimer = setTimeout(() => {
         killed = true;
         proc.kill('SIGKILL');
+        controller.abort();
       }, timeoutMs);
 
       const code = await proc.exited;
@@ -335,6 +339,17 @@ export async function executeHookScript(
       result: {
         type: 'block',
         reason: `Hook script returned unrecognized result type: ${JSON.stringify(parsed.type)}`,
+      },
+    };
+  }
+
+  // Validate required fields for the specific result type
+  const validationErrors = validateWorkflowHookResult(parsed);
+  if (validationErrors.length > 0) {
+    return {
+      result: {
+        type: 'block',
+        reason: `Hook script returned malformed result: ${validationErrors.join('; ')}`,
       },
     };
   }
