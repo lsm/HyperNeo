@@ -328,7 +328,7 @@ export interface AcpToolCallUpdateNotification {
   rawOutput?: unknown;
   content?: AcpToolCallContent[];
   locations?: AcpToolCallLocation[];
-  status: AcpToolCallStatus;
+  status?: AcpToolCallStatus;
 }
 
 export interface AcpToolCallUpdateUpdate {
@@ -538,7 +538,7 @@ export interface AcpTerminalOutputParams {
 export interface AcpTerminalOutputResult {
   output: string;
   truncated: boolean;
-  exitStatus?: { exitCode: number | null; signal?: string } | null;
+  exitStatus?: { exitCode: number | null; signal?: string | null } | null;
   _meta?: object | null;
 }
 
@@ -550,7 +550,7 @@ export interface AcpTerminalWaitForExitParams {
 
 export interface AcpTerminalWaitForExitResult {
   exitCode: number | null;
-  signal?: string;
+  signal?: string | null;
   _meta?: object | null;
 }
 
@@ -596,6 +596,7 @@ export interface AcpConfigOptionChoice {
 
 export interface AcpConfigOptionGroup {
   group: string;
+  name: string;
   options: AcpConfigOptionChoice[];
 }
 
