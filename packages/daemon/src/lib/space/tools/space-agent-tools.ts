@@ -35,6 +35,7 @@ import type {
   NodeExecution,
   SpaceGoalStatus,
   SpaceGoalType,
+  SpaceAgent,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
   SpaceTask,
@@ -57,6 +58,7 @@ import { Logger } from '../../logger';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { requireAgentFamily } from '../agents/agent-family-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
+import { computeAgentTemplateHash } from '../agents/agent-template-hash';
 import { getPresetAgentTemplates } from '../agents/seed-agents';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -209,6 +211,18 @@ function mcpReminderShape(reminder: {
     remind_at: remindAt,
     status: reminder.status === 'fired' ? 'done' : reminder.status,
   };
+}
+
+function addDeprecation(result: ToolResult, replacement: string): ToolResult {
+  const text = result.content[0]?.text;
+  if (!text) return result;
+  try {
+    const parsed = JSON.parse(text);
+    parsed.deprecation = { replacement, removal_target: 'next minor release' };
+    return jsonResult(parsed);
+  } catch {
+    return result;
+  }
 }
 
 /**
@@ -509,11 +523,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.longHorizonAgentRepo;
   }
 
-  function getLongHorizonAgentInSpace(agentId: string) {
-    const existing = requireLongHorizonAgentRepo().getById(agentId);
-    return existing?.spaceId === spaceId ? existing : null;
-  }
-
   function requireLongHorizonAgentInSpace(agentId: string) {
     return requireAgentFamily({
       spaceId,
@@ -597,7 +606,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   return {
-    async list_agents(args: {
+    async list_long_horizon_agents(args: {
       status?: SpaceLongHorizonAgentStatus;
       compact?: boolean;
     }): Promise<ToolResult> {
@@ -609,7 +618,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       });
     },
 
-    async get_agent(args: { agent_id: string }): Promise<ToolResult> {
+    async get_long_horizon_agent(args: { agent_id: string }): Promise<ToolResult> {
       try {
         const agent = requireLongHorizonAgentInSpace(args.agent_id);
         return jsonResult({ success: true, agent });
@@ -619,7 +628,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async create_agent(args: {
+    async create_long_horizon_agent(args: {
       name: string;
       description?: string;
       model?: string;
@@ -653,7 +662,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           toolPermissions: args.tools && args.tools.length > 0 ? { tools: args.tools } : {},
         });
         emitLongHorizonAgentCreated(agent);
-        logAudit('create_agent', { name: args.name, tools: args.tools });
+        logAudit('create_long_horizon_agent', { name: args.name, tools: args.tools });
         return jsonResult({ success: true, agent });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -661,55 +670,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async create_agent_from_template(args: {
-      template_name: string;
-      name?: string;
-      model?: string;
-      provider?: string;
-      thinking_level?: SpaceLongHorizonAgent['thinkingLevel'];
-    }): Promise<ToolResult> {
-      const template = getPresetAgentTemplates().find(
-        (candidate) => candidate.name.toLowerCase() === args.template_name.toLowerCase()
-      );
-      if (!template) {
-        return jsonResult({
-          success: false,
-          error: `Agent template not found: ${args.template_name}`,
-        });
-      }
-      const name = args.name ?? template.name;
-      try {
-        if (name.trim() === '') {
-          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
-        }
-        if (args.model) {
-          const modelError = await validateLongHorizonModel(args.model, args.provider);
-          if (modelError) return jsonResult({ success: false, error: modelError });
-        }
-        const agent = requireLongHorizonAgentRepo().create({
-          spaceId,
-          handle: uniqueLongHorizonAgentHandle(name),
-          displayName: name,
-          templateKey: template.name,
-          instructions: template.customPrompt ?? template.description,
-          model: args.model ?? null,
-          provider: args.provider ?? null,
-          thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? null,
-          toolPermissions: template.tools.length > 0 ? { tools: template.tools } : {},
-        });
-        emitLongHorizonAgentCreated(agent);
-        logAudit('create_agent_from_template', {
-          template_name: args.template_name,
-          name: args.name,
-        });
-        return jsonResult({ success: true, agent });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
-    },
-
-    async update_agent(
+    async update_long_horizon_agent(
       args: { agent_id: string } & LongHorizonAgentUpdateArgs
     ): Promise<ToolResult> {
       try {
@@ -754,7 +715,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, args.agent_id);
         if (!refresh.success) return jsonResult({ success: false, error: refresh.error });
         if (agent) emitLongHorizonAgentUpdated(agent);
-        logAudit('update_agent', { agent_id: args.agent_id, status: args.status });
+        logAudit('update_long_horizon_agent', { agent_id: args.agent_id, status: args.status });
         return jsonResult({ success: true, agent });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -762,20 +723,266 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
+    async pause_long_horizon_agent(args: { agent_id: string }): Promise<ToolResult> {
+      return this.update_long_horizon_agent({ agent_id: args.agent_id, status: 'paused' });
+    },
+
+    async archive_long_horizon_agent(args: { agent_id: string }): Promise<ToolResult> {
+      return this.update_long_horizon_agent({ agent_id: args.agent_id, status: 'archived' });
+    },
+
+    async list_worker_agents(args: {
+      status?: SpaceAgent['status'];
+      compact?: boolean;
+    }): Promise<ToolResult> {
+      const agents = spaceAgentManager.listBySpaceId(spaceId);
+      let filtered = agents;
+      if (args.status) filtered = agents.filter((a) => a.status === args.status);
+      return jsonResult({
+        success: true,
+        agents: args.compact
+          ? filtered.map((a) => ({ id: a.id, name: a.name, handle: a.handle, status: a.status }))
+          : filtered,
+      });
+    },
+
+    async get_worker_agent(args: { agent_id: string }): Promise<ToolResult> {
+      const agent = spaceAgentManager.getById(args.agent_id);
+      if (!agent || agent.spaceId !== spaceId) {
+        return jsonResult({ success: false, error: `Agent not found: ${args.agent_id}` });
+      }
+      return jsonResult({ success: true, agent });
+    },
+
+    async create_worker_agent(args: {
+      name: string;
+      description?: string;
+      model?: string;
+      thinking_level?: SpaceAgent['thinkingLevel'];
+      provider?: string;
+      custom_prompt?: string | null;
+      tools?: string[];
+      setting_sources?: SpaceAgent['settingSources'] | null;
+    }): Promise<ToolResult> {
+      try {
+        if (args.name.trim() === '') {
+          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+        }
+        if (args.tools) {
+          const toolError = validateTools(args.tools);
+          if (toolError) return jsonResult({ success: false, error: toolError });
+        }
+        if (args.model) {
+          const modelError = await validateLongHorizonModel(args.model, args.provider);
+          if (modelError) return jsonResult({ success: false, error: modelError });
+        }
+        const result = await spaceAgentManager.create({
+          spaceId,
+          name: args.name,
+          description: args.description,
+          model: args.model,
+          thinkingLevel: args.thinking_level,
+          provider: args.provider,
+          customPrompt: args.custom_prompt,
+          tools: args.tools,
+          settingSources: args.setting_sources ?? undefined,
+        });
+        if (!result.ok) return jsonResult({ success: false, error: result.error });
+        logAudit('create_worker_agent', { name: args.name, tools: args.tools });
+        return jsonResult({ success: true, agent: result.value });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async create_worker_agent_from_template(args: {
+      template_name: string;
+      name?: string;
+      model?: string;
+      provider?: string;
+      thinking_level?: SpaceAgent['thinkingLevel'];
+    }): Promise<ToolResult> {
+      const template = getPresetAgentTemplates().find(
+        (candidate) => candidate.name.toLowerCase() === args.template_name.toLowerCase()
+      );
+      if (!template) {
+        return jsonResult({
+          success: false,
+          error: `Agent template not found: ${args.template_name}`,
+        });
+      }
+      const name = args.name ?? template.name;
+      try {
+        if (name.trim() === '') {
+          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+        }
+        if (args.model) {
+          const modelError = await validateLongHorizonModel(args.model, args.provider);
+          if (modelError) return jsonResult({ success: false, error: modelError });
+        }
+        const result = await spaceAgentManager.create({
+          spaceId,
+          name,
+          description: template.description,
+          tools: template.tools,
+          thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? undefined,
+          customPrompt: template.customPrompt,
+          templateName: template.name,
+          templateHash: computeAgentTemplateHash(template),
+          model: args.model,
+          provider: args.provider,
+        });
+        if (!result.ok) return jsonResult({ success: false, error: result.error });
+        logAudit('create_worker_agent_from_template', {
+          template_name: args.template_name,
+          name: args.name,
+        });
+        return jsonResult({ success: true, agent: result.value });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async update_worker_agent(
+      args: { agent_id: string } & LongHorizonAgentUpdateArgs
+    ): Promise<ToolResult> {
+      try {
+        const existingAgent = spaceAgentManager.getById(args.agent_id);
+        if (!existingAgent || existingAgent.spaceId !== spaceId) {
+          return jsonResult({ success: false, error: `Agent not found: ${args.agent_id}` });
+        }
+        if (args.name !== undefined && args.name.trim() === '') {
+          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
+        }
+        if (args.tools) {
+          const toolError = validateTools(args.tools);
+          if (toolError) return jsonResult({ success: false, error: toolError });
+        }
+        const effectiveModel = args.model === undefined ? existingAgent.model : args.model;
+        const effectiveProvider =
+          args.provider === undefined ? existingAgent.provider : args.provider;
+        if (effectiveModel && (args.model !== undefined || args.provider !== undefined)) {
+          const modelError = await validateLongHorizonModel(effectiveModel, effectiveProvider);
+          if (modelError) return jsonResult({ success: false, error: modelError });
+        }
+        const result = await spaceAgentManager.update(args.agent_id, {
+          name: args.name,
+          status:
+            args.status === 'active' || args.status === 'paused' || args.status === 'archived'
+              ? args.status
+              : undefined,
+          description: args.description,
+          model: args.model,
+          thinkingLevel: args.thinking_level,
+          provider: args.provider,
+          customPrompt: args.custom_prompt,
+          tools: args.tools,
+          settingSources: args.setting_sources,
+        });
+        if (!result.ok) return jsonResult({ success: false, error: result.error });
+        logAudit('update_worker_agent', { agent_id: args.agent_id, status: args.status });
+        return jsonResult({ success: true, agent: result.value });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async pause_worker_agent(args: { agent_id: string }): Promise<ToolResult> {
+      return this.update_worker_agent({ agent_id: args.agent_id, status: 'paused' });
+    },
+
+    async archive_worker_agent(args: { agent_id: string }): Promise<ToolResult> {
+      return this.update_worker_agent({ agent_id: args.agent_id, status: 'archived' });
+    },
+
+    async list_agents(args: {
+      status?: SpaceLongHorizonAgentStatus;
+      compact?: boolean;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.list_worker_agents(args as { status?: SpaceAgent['status']; compact?: boolean }),
+        'list_worker_agents'
+      );
+    },
+
+    async get_agent(args: { agent_id: string }): Promise<ToolResult> {
+      return addDeprecation(await this.get_worker_agent(args), 'get_worker_agent');
+    },
+
+    async create_agent(args: {
+      name: string;
+      description?: string;
+      model?: string;
+      thinking_level?: SpaceLongHorizonAgent['thinkingLevel'];
+      provider?: string;
+      custom_prompt?: string | null;
+      tools?: string[];
+      setting_sources?: SpaceLongHorizonAgent['settingSources'] | null;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.create_worker_agent(
+          args as {
+            name: string;
+            description?: string;
+            model?: string;
+            thinking_level?: SpaceAgent['thinkingLevel'];
+            provider?: string;
+            custom_prompt?: string | null;
+            tools?: string[];
+            setting_sources?: SpaceAgent['settingSources'] | null;
+          }
+        ),
+        'create_worker_agent'
+      );
+    },
+
+    async create_agent_from_template(args: {
+      template_name: string;
+      name?: string;
+      model?: string;
+      provider?: string;
+      thinking_level?: SpaceLongHorizonAgent['thinkingLevel'];
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.create_worker_agent_from_template(
+          args as {
+            template_name: string;
+            name?: string;
+            model?: string;
+            provider?: string;
+            thinking_level?: SpaceAgent['thinkingLevel'];
+          }
+        ),
+        'create_worker_agent_from_template'
+      );
+    },
+
+    async update_agent(
+      args: { agent_id: string } & LongHorizonAgentUpdateArgs
+    ): Promise<ToolResult> {
+      return addDeprecation(await this.update_worker_agent(args), 'update_worker_agent');
+    },
+
     async pause_agent(args: { agent_id: string }): Promise<ToolResult> {
-      return this.update_agent({ agent_id: args.agent_id, status: 'paused' });
+      return addDeprecation(await this.pause_worker_agent(args), 'pause_worker_agent');
     },
 
     async archive_agent(args: { agent_id: string }): Promise<ToolResult> {
-      return this.update_agent({ agent_id: args.agent_id, status: 'archived' });
+      return addDeprecation(await this.archive_worker_agent(args), 'archive_worker_agent');
     },
 
-    async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
+    async assign_long_horizon_agent_to_goal(args: {
+      agent_id: string;
+      goal_id: string;
+    }): Promise<ToolResult> {
       try {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
         requireLongHorizonAgentRepo().assignGoal(args.agent_id, args.goal_id);
-        logAudit('assign_agent_to_goal', args);
+        logAudit('assign_long_horizon_agent_to_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -783,7 +990,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async unassign_agent_from_goal(args: {
+    async unassign_long_horizon_agent_from_goal(args: {
       agent_id: string;
       goal_id: string;
     }): Promise<ToolResult> {
@@ -791,7 +998,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
         requireLongHorizonAgentRepo().deleteGoalAssignment(args.agent_id, args.goal_id);
-        logAudit('unassign_agent_from_goal', args);
+        logAudit('unassign_long_horizon_agent_from_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -799,7 +1006,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async assign_agent_to_forge_scope(args: {
+    async assign_long_horizon_agent_to_forge_scope(args: {
       agent_id: string;
       scope_id: string;
     }): Promise<ToolResult> {
@@ -807,7 +1014,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireEvolutionScopeInSpace(args.scope_id);
         requireLongHorizonAgentRepo().assignForgeScope(args.agent_id, args.scope_id);
-        logAudit('assign_agent_to_forge_scope', args);
+        logAudit('assign_long_horizon_agent_to_forge_scope', args);
         return jsonResult({ success: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -815,7 +1022,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async unassign_agent_from_forge_scope(args: {
+    async unassign_long_horizon_agent_from_forge_scope(args: {
       agent_id: string;
       scope_id: string;
     }): Promise<ToolResult> {
@@ -823,7 +1030,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireEvolutionScopeInSpace(args.scope_id);
         requireLongHorizonAgentRepo().deleteForgeScopeAssignment(args.agent_id, args.scope_id);
-        logAudit('unassign_agent_from_forge_scope', args);
+        logAudit('unassign_long_horizon_agent_from_forge_scope', args);
         return jsonResult({ success: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -831,7 +1038,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async create_agent_reminder(args: {
+    async create_long_horizon_agent_reminder(args: {
       agent_id: string;
       message: string;
       remind_at: number;
@@ -848,7 +1055,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           status: 'active',
           createdBySession: mySessionId ?? null,
         });
-        logAudit('create_agent_reminder', { agent_id: args.agent_id, remind_at: args.remind_at });
+        logAudit('create_long_horizon_agent_reminder', {
+          agent_id: args.agent_id,
+          remind_at: args.remind_at,
+        });
         return jsonResult({ success: true, reminder: mcpReminderShape(reminder) });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -856,7 +1066,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async list_agent_reminders(args: {
+    async list_long_horizon_agent_reminders(args: {
       agent_id: string;
       status?: 'active' | 'done' | 'cancelled';
     }): Promise<ToolResult> {
@@ -882,7 +1092,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async subscribe_agent_event(args: {
+    async subscribe_long_horizon_agent_event(args: {
       agent_id: string;
       topic_pattern: string;
       label?: string;
@@ -906,7 +1116,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (!refresh.success) {
           return jsonResult({ success: false, error: refresh.error ?? 'invalid pattern' });
         }
-        logAudit('subscribe_agent_event', args);
+        logAudit('subscribe_long_horizon_agent_event', args);
         return jsonResult({ success: true, subscription });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -914,14 +1124,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async unsubscribe_agent_event(args: {
+    async unsubscribe_long_horizon_agent_event(args: {
       agent_id: string;
       topic_pattern: string;
       label?: string;
     }): Promise<ToolResult> {
       try {
-        const agent = getLongHorizonAgentInSpace(args.agent_id);
-        if (!agent) return jsonResult({ success: true });
+        requireLongHorizonAgentInSpace(args.agent_id);
         const repo = requireLongHorizonAgentRepo();
         const source = sourceFromTopicPattern(args.topic_pattern);
         const subscription = repo.getSubscriptionByRoute(
@@ -932,7 +1141,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         );
         repo.deleteSubscriptionByRoute(spaceId, args.agent_id, source, args.topic_pattern);
         if (subscription) runtime.removeLongHorizonSubscription(spaceId, subscription.id);
-        logAudit('unsubscribe_agent_event', args);
+        logAudit('unsubscribe_long_horizon_agent_event', args);
         return jsonResult({ success: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -940,16 +1149,104 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    async list_agent_event_subscriptions(args: { agent_id: string }): Promise<ToolResult> {
+    async list_long_horizon_agent_event_subscriptions(args: {
+      agent_id: string;
+    }): Promise<ToolResult> {
       try {
-        const agent = getLongHorizonAgentInSpace(args.agent_id);
-        if (!agent) return jsonResult({ success: true, subscriptions: [] });
+        requireLongHorizonAgentInSpace(args.agent_id);
         const subscriptions = requireLongHorizonAgentRepo().listSubscriptions(args.agent_id);
         return jsonResult({ success: true, subscriptions });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });
       }
+    },
+
+    async assign_agent_to_goal(args: { agent_id: string; goal_id: string }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.assign_long_horizon_agent_to_goal(args),
+        'assign_long_horizon_agent_to_goal'
+      );
+    },
+
+    async unassign_agent_from_goal(args: {
+      agent_id: string;
+      goal_id: string;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.unassign_long_horizon_agent_from_goal(args),
+        'unassign_long_horizon_agent_from_goal'
+      );
+    },
+
+    async assign_agent_to_forge_scope(args: {
+      agent_id: string;
+      scope_id: string;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.assign_long_horizon_agent_to_forge_scope(args),
+        'assign_long_horizon_agent_to_forge_scope'
+      );
+    },
+
+    async unassign_agent_from_forge_scope(args: {
+      agent_id: string;
+      scope_id: string;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.unassign_long_horizon_agent_from_forge_scope(args),
+        'unassign_long_horizon_agent_from_forge_scope'
+      );
+    },
+
+    async create_agent_reminder(args: {
+      agent_id: string;
+      message: string;
+      remind_at: number;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.create_long_horizon_agent_reminder(args),
+        'create_long_horizon_agent_reminder'
+      );
+    },
+
+    async list_agent_reminders(args: {
+      agent_id: string;
+      status?: 'active' | 'done' | 'cancelled';
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.list_long_horizon_agent_reminders(args),
+        'list_long_horizon_agent_reminders'
+      );
+    },
+
+    async subscribe_agent_event(args: {
+      agent_id: string;
+      topic_pattern: string;
+      label?: string;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.subscribe_long_horizon_agent_event(args),
+        'subscribe_long_horizon_agent_event'
+      );
+    },
+
+    async unsubscribe_agent_event(args: {
+      agent_id: string;
+      topic_pattern: string;
+      label?: string;
+    }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.unsubscribe_long_horizon_agent_event(args),
+        'unsubscribe_long_horizon_agent_event'
+      );
+    },
+
+    async list_agent_event_subscriptions(args: { agent_id: string }): Promise<ToolResult> {
+      return addDeprecation(
+        await this.list_long_horizon_agent_event_subscriptions(args),
+        'list_long_horizon_agent_event_subscriptions'
+      );
     },
 
     /**
@@ -3355,12 +3652,283 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
   ];
 
+  const workerAgentStatusSchema = z.enum(['active', 'paused', 'archived']);
+
   // Long-horizon agent tools need database-backed assignment metadata.
   if (config.db) {
     tools.unshift(
+      // Explicit worker-agent tools
+      tool(
+        'list_worker_agents',
+        'List workflow worker agent configs in this space. These are lightweight agent definitions referenced by workflow nodes, not persistent long-horizon agents.',
+        {
+          status: workerAgentStatusSchema.optional().describe('Filter by agent lifecycle status'),
+          compact: z.boolean().optional().describe('Return compact agent summaries'),
+        },
+        (args) => handlers.list_worker_agents(args)
+      ),
+      tool(
+        'get_worker_agent',
+        'Get one workflow worker agent config by ID.',
+        { agent_id: z.string().describe('Worker agent ID') },
+        (args) => handlers.get_worker_agent(args)
+      ),
+      tool(
+        'create_worker_agent',
+        'Create a workflow worker agent config. Worker agents are lightweight definitions used by workflow nodes; they do not have goals, reminders, or event subscriptions. For persistent long-horizon agents, use create_long_horizon_agent.',
+        {
+          name: z.string().min(1).describe('Agent name, unique within the space'),
+          description: z.string().optional().describe('Agent specialization summary'),
+          model: z.string().optional().describe('Model override'),
+          thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
+          provider: z.string().optional().describe('Provider override'),
+          custom_prompt: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Operator prompt for this agent'),
+          tools: z.array(z.string()).optional().describe('Tool allowlist override'),
+          setting_sources: settingSourcesSchema
+            .nullable()
+            .optional()
+            .describe('Settings sources for this agent'),
+        },
+        (args) => handlers.create_worker_agent(args)
+      ),
+      tool(
+        'create_worker_agent_from_template',
+        'Create a workflow worker agent config from a built-in preset template.',
+        {
+          template_name: z.string().describe('Preset template name such as Coder, Reviewer, or QA'),
+          name: z
+            .string()
+            .optional()
+            .describe('Optional new agent name; defaults to template name'),
+          model: z.string().optional().describe('Model override'),
+          provider: z.string().optional().describe('Provider override'),
+          thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
+        },
+        (args) => handlers.create_worker_agent_from_template(args)
+      ),
+      tool(
+        'update_worker_agent',
+        'Update a workflow worker agent config. Worker agents are lightweight definitions used by workflow nodes.',
+        {
+          agent_id: z.string().describe('Worker agent ID'),
+          name: z.string().optional().describe('New agent name'),
+          status: workerAgentStatusSchema.optional().describe('Lifecycle status'),
+          description: z.string().nullable().optional().describe('New description'),
+          model: z.string().nullable().optional().describe('Model override, or null to clear'),
+          thinking_level: thinkingLevelSchema
+            .nullable()
+            .optional()
+            .describe('Thinking level override, or null to clear'),
+          provider: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Provider override, or null to clear'),
+          custom_prompt: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Prompt override, or null to clear'),
+          tools: z
+            .array(z.string())
+            .nullable()
+            .optional()
+            .describe('Tool allowlist override, or null to clear'),
+          setting_sources: settingSourcesSchema
+            .nullable()
+            .optional()
+            .describe('Settings sources override, or null to clear'),
+        },
+        (args) => handlers.update_worker_agent(args)
+      ),
+      tool(
+        'pause_worker_agent',
+        'Pause a workflow worker agent config without deleting it.',
+        { agent_id: z.string().describe('Worker agent ID') },
+        (args) => handlers.pause_worker_agent(args)
+      ),
+      tool(
+        'archive_worker_agent',
+        'Archive a workflow worker agent config.',
+        { agent_id: z.string().describe('Worker agent ID') },
+        (args) => handlers.archive_worker_agent(args)
+      ),
+
+      // Explicit long-horizon agent tools
+      tool(
+        'list_long_horizon_agents',
+        'List persistent long-horizon Space agents in this space. These agents have goals, Forge scopes, reminders, and event subscriptions.',
+        {
+          status: agentStatusSchema.optional().describe('Filter by agent lifecycle status'),
+          compact: z.boolean().optional().describe('Return compact agent summaries'),
+        },
+        (args) => handlers.list_long_horizon_agents(args)
+      ),
+      tool(
+        'get_long_horizon_agent',
+        'Get one persistent long-horizon Space agent by ID.',
+        { agent_id: z.string().describe('Long-horizon agent ID') },
+        (args) => handlers.get_long_horizon_agent(args)
+      ),
+      tool(
+        'create_long_horizon_agent',
+        'Create a persistent long-horizon Space agent with goals, Forge scopes, reminders, and event subscriptions. Tool-permission changes are validated against the known tool allowlist.',
+        {
+          name: z.string().min(1).describe('Agent name, unique within the space'),
+          description: z.string().optional().describe('Agent specialization summary'),
+          model: z.string().optional().describe('Model override'),
+          thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
+          provider: z.string().optional().describe('Provider override'),
+          custom_prompt: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Operator prompt for this agent'),
+          tools: z.array(z.string()).optional().describe('Tool allowlist override'),
+          setting_sources: settingSourcesSchema
+            .nullable()
+            .optional()
+            .describe('Settings sources for this agent'),
+        },
+        (args) => handlers.create_long_horizon_agent(args)
+      ),
+      tool(
+        'update_long_horizon_agent',
+        'Update a persistent long-horizon Space agent. Autonomy/tool-permission escalation is limited by manager validation and audited.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          name: z.string().optional().describe('New agent name'),
+          status: agentStatusSchema.optional().describe('Lifecycle status'),
+          description: z.string().nullable().optional().describe('New description'),
+          model: z.string().nullable().optional().describe('Model override, or null to clear'),
+          thinking_level: thinkingLevelSchema
+            .nullable()
+            .optional()
+            .describe('Thinking level override, or null to clear'),
+          provider: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Provider override, or null to clear'),
+          custom_prompt: z
+            .string()
+            .nullable()
+            .optional()
+            .describe('Prompt override, or null to clear'),
+          tools: z
+            .array(z.string())
+            .nullable()
+            .optional()
+            .describe('Tool allowlist override, or null to clear'),
+          setting_sources: settingSourcesSchema
+            .nullable()
+            .optional()
+            .describe('Settings sources override, or null to clear'),
+        },
+        (args) => handlers.update_long_horizon_agent(args)
+      ),
+      tool(
+        'pause_long_horizon_agent',
+        'Pause a persistent long-horizon Space agent without deleting it.',
+        { agent_id: z.string().describe('Long-horizon agent ID') },
+        (args) => handlers.pause_long_horizon_agent(args)
+      ),
+      tool(
+        'archive_long_horizon_agent',
+        'Archive a persistent long-horizon Space agent.',
+        { agent_id: z.string().describe('Long-horizon agent ID') },
+        (args) => handlers.archive_long_horizon_agent(args)
+      ),
+      tool(
+        'assign_long_horizon_agent_to_goal',
+        'Assign a persistent long-horizon Space agent to a goal.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          goal_id: z.string().describe('Goal ID'),
+        },
+        (args) => handlers.assign_long_horizon_agent_to_goal(args)
+      ),
+      tool(
+        'unassign_long_horizon_agent_from_goal',
+        'Remove a persistent long-horizon Space agent goal assignment.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          goal_id: z.string().describe('Goal ID'),
+        },
+        (args) => handlers.unassign_long_horizon_agent_from_goal(args)
+      ),
+      tool(
+        'assign_long_horizon_agent_to_forge_scope',
+        'Assign a persistent long-horizon Space agent to a Forge scope.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          scope_id: z.string().describe('Forge scope ID'),
+        },
+        (args) => handlers.assign_long_horizon_agent_to_forge_scope(args)
+      ),
+      tool(
+        'unassign_long_horizon_agent_from_forge_scope',
+        'Remove a persistent long-horizon Space agent Forge scope assignment.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          scope_id: z.string().describe('Forge scope ID'),
+        },
+        (args) => handlers.unassign_long_horizon_agent_from_forge_scope(args)
+      ),
+      tool(
+        'create_long_horizon_agent_reminder',
+        'Create a reminder for a persistent long-horizon Space agent.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          message: z.string().min(1).describe('Reminder message'),
+          remind_at: z.number().int().describe('Reminder timestamp in ms since epoch'),
+        },
+        (args) => handlers.create_long_horizon_agent_reminder(args)
+      ),
+      tool(
+        'list_long_horizon_agent_reminders',
+        'List reminders for a persistent long-horizon Space agent.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          status: z.enum(['active', 'done', 'cancelled']).optional().describe('Reminder status'),
+        },
+        (args) => handlers.list_long_horizon_agent_reminders(args)
+      ),
+      tool(
+        'subscribe_long_horizon_agent_event',
+        'Record an external-event subscription for a persistent long-horizon Space agent.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          topic_pattern: z.string().describe('External event topic glob pattern'),
+          label: z.string().optional().describe('Human-readable subscription label'),
+        },
+        (args) => handlers.subscribe_long_horizon_agent_event(args)
+      ),
+      tool(
+        'unsubscribe_long_horizon_agent_event',
+        'Remove an external-event subscription from a persistent long-horizon Space agent.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          topic_pattern: z.string().describe('External event topic glob pattern'),
+          label: z.string().optional().describe('Human-readable subscription label'),
+        },
+        (args) => handlers.unsubscribe_long_horizon_agent_event(args)
+      ),
+      tool(
+        'list_long_horizon_agent_event_subscriptions',
+        'List external-event subscriptions for a persistent long-horizon Space agent.',
+        { agent_id: z.string().describe('Long-horizon agent ID') },
+        (args) => handlers.list_long_horizon_agent_event_subscriptions(args)
+      ),
+
+      // Legacy compatibility aliases (deprecated — remove next minor release)
       tool(
         'list_agents',
-        'List long-horizon Space agents in this space.',
+        '[Deprecated] Legacy alias for list_worker_agents. Use list_worker_agents or list_long_horizon_agents instead. Removal target: next minor release.',
         {
           status: agentStatusSchema.optional().describe('Filter by agent lifecycle status'),
           compact: z.boolean().optional().describe('Return compact agent summaries'),
@@ -3369,13 +3937,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'get_agent',
-        'Get one long-horizon Space agent by ID.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        '[Deprecated] Legacy alias for get_worker_agent. Use get_worker_agent or get_long_horizon_agent instead. Removal target: next minor release.',
+        { agent_id: z.string().describe('Agent ID') },
         (args) => handlers.get_agent(args)
       ),
       tool(
         'create_agent',
-        'Create a custom long-horizon Space agent. Tool-permission changes are validated against the known tool allowlist.',
+        '[Deprecated] Legacy alias for create_worker_agent. Use create_worker_agent or create_long_horizon_agent instead. Removal target: next minor release.',
         {
           name: z.string().min(1).describe('Agent name, unique within the space'),
           description: z.string().optional().describe('Agent specialization summary'),
@@ -3397,7 +3965,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'create_agent_from_template',
-        'Create a long-horizon Space agent from a built-in preset template.',
+        '[Deprecated] Legacy alias for create_worker_agent_from_template. Use create_worker_agent_from_template instead. Removal target: next minor release.',
         {
           template_name: z.string().describe('Preset template name such as Coder, Reviewer, or QA'),
           name: z
@@ -3412,9 +3980,9 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'update_agent',
-        'Update a long-horizon Space agent. Autonomy/tool-permission escalation is limited by manager validation and audited.',
+        '[Deprecated] Legacy alias for update_worker_agent. Use update_worker_agent or update_long_horizon_agent instead. Removal target: next minor release.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Agent ID'),
           name: z.string().optional().describe('New agent name'),
           status: agentStatusSchema.optional().describe('Lifecycle status'),
           description: z.string().nullable().optional().describe('New description'),
@@ -3447,51 +4015,57 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'pause_agent',
-        'Pause a long-horizon Space agent without deleting it.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        '[Deprecated] Legacy alias for pause_worker_agent. Use pause_worker_agent or pause_long_horizon_agent instead. Removal target: next minor release.',
+        { agent_id: z.string().describe('Agent ID') },
         (args) => handlers.pause_agent(args)
       ),
       tool(
         'archive_agent',
-        'Archive a long-horizon Space agent.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        '[Deprecated] Legacy alias for archive_worker_agent. Use archive_worker_agent or archive_long_horizon_agent instead. Removal target: next minor release.',
+        { agent_id: z.string().describe('Agent ID') },
         (args) => handlers.archive_agent(args)
       ),
       tool(
         'assign_agent_to_goal',
-        'Assign a long-horizon Space agent to a goal.',
-        { agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
+        '[Deprecated] Legacy alias for assign_long_horizon_agent_to_goal. Requires an existing long-horizon agent. Use assign_long_horizon_agent_to_goal instead. Removal target: next minor release.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          goal_id: z.string().describe('Goal ID'),
+        },
         (args) => handlers.assign_agent_to_goal(args)
       ),
       tool(
         'unassign_agent_from_goal',
-        'Remove a long-horizon Space agent goal assignment.',
-        { agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
+        '[Deprecated] Legacy alias for unassign_long_horizon_agent_from_goal. Requires an existing long-horizon agent. Use unassign_long_horizon_agent_from_goal instead. Removal target: next minor release.',
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          goal_id: z.string().describe('Goal ID'),
+        },
         (args) => handlers.unassign_agent_from_goal(args)
       ),
       tool(
         'assign_agent_to_forge_scope',
-        'Assign a long-horizon Space agent to a Forge scope.',
+        '[Deprecated] Legacy alias for assign_long_horizon_agent_to_forge_scope. Requires an existing long-horizon agent. Use assign_long_horizon_agent_to_forge_scope instead. Removal target: next minor release.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           scope_id: z.string().describe('Forge scope ID'),
         },
         (args) => handlers.assign_agent_to_forge_scope(args)
       ),
       tool(
         'unassign_agent_from_forge_scope',
-        'Remove a long-horizon Space agent Forge scope assignment.',
+        '[Deprecated] Legacy alias for unassign_long_horizon_agent_from_forge_scope. Requires an existing long-horizon agent. Use unassign_long_horizon_agent_from_forge_scope instead. Removal target: next minor release.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           scope_id: z.string().describe('Forge scope ID'),
         },
         (args) => handlers.unassign_agent_from_forge_scope(args)
       ),
       tool(
         'create_agent_reminder',
-        'Create a reminder for a long-horizon Space agent.',
+        '[Deprecated] Legacy alias for create_long_horizon_agent_reminder. Requires an existing long-horizon agent. Use create_long_horizon_agent_reminder instead. Removal target: next minor release.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           message: z.string().min(1).describe('Reminder message'),
           remind_at: z.number().int().describe('Reminder timestamp in ms since epoch'),
         },
@@ -3499,16 +4073,16 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'list_agent_reminders',
-        'List reminders for a long-horizon Space agent.',
+        '[Deprecated] Legacy alias for list_long_horizon_agent_reminders. Requires an existing long-horizon agent. Use list_long_horizon_agent_reminders instead. Removal target: next minor release.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           status: z.enum(['active', 'done', 'cancelled']).optional().describe('Reminder status'),
         },
         (args) => handlers.list_agent_reminders(args)
       ),
       tool(
         'subscribe_agent_event',
-        'Record an external-event subscription for a long-horizon Space agent.',
+        '[Deprecated] Legacy alias for subscribe_long_horizon_agent_event. Requires an existing long-horizon agent. Use subscribe_long_horizon_agent_event instead. Removal target: next minor release.',
         {
           agent_id: z.string().describe('Long-horizon agent ID'),
           topic_pattern: z.string().describe('External event topic glob pattern'),
@@ -3518,7 +4092,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'unsubscribe_agent_event',
-        'Remove an external-event subscription from a long-horizon Space agent.',
+        '[Deprecated] Legacy alias for unsubscribe_long_horizon_agent_event. Requires an existing long-horizon agent. Use unsubscribe_long_horizon_agent_event instead. Removal target: next minor release.',
         {
           agent_id: z.string().describe('Long-horizon agent ID'),
           topic_pattern: z.string().describe('External event topic glob pattern'),
@@ -3528,7 +4102,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'list_agent_event_subscriptions',
-        'List external-event subscriptions for a long-horizon Space agent.',
+        '[Deprecated] Legacy alias for list_long_horizon_agent_event_subscriptions. Requires an existing long-horizon agent. Use list_long_horizon_agent_event_subscriptions instead. Removal target: next minor release.',
         { agent_id: z.string().describe('Long-horizon agent ID') },
         (args) => handlers.list_agent_event_subscriptions(args)
       )

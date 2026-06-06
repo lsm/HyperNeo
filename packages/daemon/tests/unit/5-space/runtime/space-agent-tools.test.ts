@@ -84,10 +84,14 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
+  const handle = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
   db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
+    `INSERT INTO space_agents (id, space_id, name, handle, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, ?, '', null, '[]', '', ?, ?)`
+  ).run(agentId, spaceId, name, handle, Date.now(), Date.now());
 }
 
 // ---------------------------------------------------------------------------
@@ -387,17 +391,27 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     });
 
     const names = getRegisteredToolNames(server);
+    expect(names).toContain('create_long_horizon_agent');
+    expect(names).toContain('create_worker_agent');
+    expect(names).toContain('assign_long_horizon_agent_to_goal');
+    expect(names).toContain('create_long_horizon_agent_reminder');
     expect(names).toContain('create_agent');
     expect(names).toContain('assign_agent_to_goal');
     expect(names).toContain('create_agent_reminder');
     expect(() =>
-      expectToolInputParses(server, 'update_agent', {
+      expectToolInputParses(server, 'update_long_horizon_agent', {
         agent_id: 'agent-1',
         status: 'disabled',
       })
     ).not.toThrow();
     expect(() =>
-      expectToolInputParses(server, 'list_agents', { status: 'disabled' })
+      expectToolInputParses(server, 'list_long_horizon_agents', { status: 'disabled' })
+    ).not.toThrow();
+    expect(() =>
+      expectToolInputParses(server, 'update_worker_agent', {
+        agent_id: 'agent-1',
+        status: 'paused',
+      })
     ).not.toThrow();
   });
 
@@ -465,12 +479,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     ctx.db.close();
   });
 
-  test('creates, updates, pauses, archives, and templates agents', async () => {
+  test('creates, updates, pauses, and archives long-horizon agents', async () => {
     const handlers = makeHandlers(ctx);
 
     const created = JSON.parse(
       (
-        await handlers.create_agent({
+        await handlers.create_long_horizon_agent({
           name: 'Scout',
           description: 'Tracks quality signals',
           tools: ['Read', 'Grep'],
@@ -483,26 +497,26 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
 
     const workerHandleCollision = JSON.parse(
-      (await handlers.create_agent({ name: 'Coder' })).content[0].text
+      (await handlers.create_long_horizon_agent({ name: 'Coder' })).content[0].text
     );
     expect(workerHandleCollision.success).toBe(true);
     expect(workerHandleCollision.agent.handle).toBe('coder-2');
 
     const slugged = JSON.parse(
-      (await handlers.create_agent({ name: 'QA/Review:@Lead' })).content[0].text
+      (await handlers.create_long_horizon_agent({ name: 'QA/Review:@Lead' })).content[0].text
     );
     expect(slugged.success).toBe(true);
     expect(slugged.agent.handle).toBe('qa-review-lead');
 
     const blankCreateName = JSON.parse(
-      (await handlers.create_agent({ name: '  ' })).content[0].text
+      (await handlers.create_long_horizon_agent({ name: '  ' })).content[0].text
     );
     expect(blankCreateName.success).toBe(false);
     expect(blankCreateName.error).toBe('Agent name cannot be empty');
 
     const updated = JSON.parse(
       (
-        await handlers.update_agent({
+        await handlers.update_long_horizon_agent({
           agent_id: created.agent.id,
           description: 'Tracks product-quality signals',
           thinking_level: 'think8k',
@@ -515,7 +529,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const cleared = JSON.parse(
       (
-        await handlers.update_agent({
+        await handlers.update_long_horizon_agent({
           agent_id: created.agent.id,
           custom_prompt: null,
           setting_sources: null,
@@ -528,7 +542,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const blankUpdateName = JSON.parse(
       (
-        await handlers.update_agent({
+        await handlers.update_long_horizon_agent({
           agent_id: created.agent.id,
           name: '  ',
         })
@@ -538,58 +552,30 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(blankUpdateName.error).toBe('Agent name cannot be empty');
 
     const paused = JSON.parse(
-      (await handlers.pause_agent({ agent_id: created.agent.id })).content[0].text
+      (await handlers.pause_long_horizon_agent({ agent_id: created.agent.id })).content[0].text
     );
     expect(paused.agent.status).toBe('paused');
     const archived = JSON.parse(
-      (await handlers.archive_agent({ agent_id: created.agent.id })).content[0].text
+      (await handlers.archive_long_horizon_agent({ agent_id: created.agent.id })).content[0].text
     );
     expect(archived.agent.status).toBe('archived');
 
-    const templated = JSON.parse(
+    const directCreated = JSON.parse(
       (
-        await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
+        await handlers.create_long_horizon_agent({
           name: 'Reviewer Copy',
+          description: 'Code review specialist',
+          tools: ['Read', 'Grep'],
         })
       ).content[0].text
     );
-    expect(templated.success).toBe(true);
-    expect(templated.agent.templateKey).toBe('Reviewer');
-    expect(templated.agent.handle).toBe('reviewer-copy');
-    const templatedWorkerHandleCollision = JSON.parse(
-      (
-        await handlers.create_agent_from_template({
-          template_name: 'Coder',
-          name: 'Coder',
-        })
-      ).content[0].text
-    );
-    expect(templatedWorkerHandleCollision.success).toBe(true);
-    expect(templatedWorkerHandleCollision.agent.handle).toBe('coder-3');
-    const duplicateTemplate = JSON.parse(
-      (
-        await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
-          name: 'Reviewer Copy',
-        })
-      ).content[0].text
-    );
-    expect(duplicateTemplate.success).toBe(true);
-    expect(duplicateTemplate.agent.handle).toBe('reviewer-copy-2');
+    expect(directCreated.success).toBe(true);
+    expect(directCreated.agent.displayName).toBe('Reviewer Copy');
+    expect(directCreated.agent.handle).toBe('reviewer-copy');
 
-    const blankTemplateName = JSON.parse(
-      (
-        await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
-          name: '  ',
-        })
-      ).content[0].text
+    const listed = JSON.parse(
+      (await handlers.list_long_horizon_agents({ status: 'archived' })).content[0].text
     );
-    expect(blankTemplateName.success).toBe(false);
-    expect(blankTemplateName.error).toBe('Agent name cannot be empty');
-
-    const listed = JSON.parse((await handlers.list_agents({ status: 'archived' })).content[0].text);
     expect(listed.agents.map((agent: { id: string }) => agent.id)).toContain(created.agent.id);
   });
 
@@ -618,7 +604,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const invalidCreate = JSON.parse(
       (
-        await handlers.create_agent({
+        await handlers.create_long_horizon_agent({
           name: 'Bad Model',
           model: 'not-a-model',
           provider: 'anthropic',
@@ -632,8 +618,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const invalidTemplate = JSON.parse(
       (
-        await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
+        await handlers.create_long_horizon_agent({
+          name: 'Template Test',
           model: 'not-a-model',
         })
       ).content[0].text
@@ -644,11 +630,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
 
     const created = JSON.parse(
-      (await handlers.create_agent({ name: 'Valid Model' })).content[0].text
+      (await handlers.create_long_horizon_agent({ name: 'Valid Model' })).content[0].text
     );
     const invalidUpdate = JSON.parse(
       (
-        await handlers.update_agent({
+        await handlers.update_long_horizon_agent({
           agent_id: created.agent.id,
           model: 'not-a-model',
           provider: 'anthropic',
@@ -662,7 +648,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const providerOnlyTarget = JSON.parse(
       (
-        await handlers.create_agent({
+        await handlers.create_long_horizon_agent({
           name: 'Provider Switch',
           model: 'sonnet',
           provider: 'anthropic',
@@ -671,7 +657,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     const invalidProviderOnlyUpdate = JSON.parse(
       (
-        await handlers.update_agent({
+        await handlers.update_long_horizon_agent({
           agent_id: providerOnlyTarget.agent.id,
           provider: 'openrouter',
         })
@@ -692,7 +678,9 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       mySessionId: 'mcp-session',
     });
 
-    const created = JSON.parse((await handlers.create_agent({ name: 'Notifier' })).content[0].text);
+    const created = JSON.parse(
+      (await handlers.create_long_horizon_agent({ name: 'Notifier' })).content[0].text
+    );
     expect(created.success).toBe(true);
     expect(publish).toHaveBeenCalledWith('spaceLongHorizonAgent.created', {
       sessionId: 'mcp-session',
@@ -702,7 +690,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const updated = JSON.parse(
       (
-        await handlers.update_agent({
+        await handlers.update_long_horizon_agent({
           agent_id: created.agent.id,
           name: 'Notifier Renamed',
         })
@@ -719,7 +707,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   test('manages agent assignments, reminders, and event subscriptions', async () => {
     const handlers = makeHandlers(ctx);
     const agent = JSON.parse(
-      (await handlers.create_agent({ name: 'Manager' })).content[0].text
+      (await handlers.create_long_horizon_agent({ name: 'Manager' })).content[0].text
     ).agent;
     const goal = JSON.parse(
       (await handlers.create_goal({ title: 'Goal', description: 'Desc' })).content[0].text
@@ -736,20 +724,24 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     expect(
       JSON.parse(
-        (await handlers.assign_agent_to_goal({ agent_id: agent.id, goal_id: goal.id })).content[0]
-          .text
+        (await handlers.assign_long_horizon_agent_to_goal({ agent_id: agent.id, goal_id: goal.id }))
+          .content[0].text
       ).success
     ).toBe(true);
     expect(
       JSON.parse(
-        (await handlers.assign_agent_to_forge_scope({ agent_id: agent.id, scope_id: scope.id }))
-          .content[0].text
+        (
+          await handlers.assign_long_horizon_agent_to_forge_scope({
+            agent_id: agent.id,
+            scope_id: scope.id,
+          })
+        ).content[0].text
       ).success
     ).toBe(true);
 
     const reminder = JSON.parse(
       (
-        await handlers.create_agent_reminder({
+        await handlers.create_long_horizon_agent_reminder({
           agent_id: agent.id,
           message: 'Check progress',
           remind_at: Date.now() + 60_000,
@@ -759,14 +751,14 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(reminder.success).toBe(true);
     expect(reminder.reminder.message).toBe('Check progress');
     expect(reminder.reminder.remind_at).toBe(reminder.reminder.runAt);
-    await handlers.create_agent_reminder({
+    await handlers.create_long_horizon_agent_reminder({
       agent_id: agent.id,
       message: 'Check earlier',
       remind_at: reminder.reminder.remind_at - 1_000,
     });
     const reminders = JSON.parse(
-      (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
-        .text
+      (await handlers.list_long_horizon_agent_reminders({ agent_id: agent.id, status: 'active' }))
+        .content[0].text
     );
     expect(reminders.reminders.map((item: { message: string }) => item.message)).toEqual([
       'Check earlier',
@@ -779,7 +771,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       .prepare(`UPDATE space_long_horizon_agent_reminders SET status = 'fired' WHERE id = ?`)
       .run(reminder.reminder.id);
     const completedReminders = JSON.parse(
-      (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'done' })).content[0].text
+      (await handlers.list_long_horizon_agent_reminders({ agent_id: agent.id, status: 'done' }))
+        .content[0].text
     );
     expect(completedReminders.reminders).toHaveLength(1);
     expect(completedReminders.reminders[0].status).toBe('done');
@@ -793,7 +786,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(
       JSON.parse(
         (
-          await handlers.subscribe_agent_event({
+          await handlers.subscribe_long_horizon_agent_event({
             agent_id: longHorizonAgent.id,
             topic_pattern: 'github/*/*/pull_request/*',
             label: 'PR activity',
@@ -802,15 +795,18 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).success
     ).toBe(true);
     const subscriptions = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
-        .text
+      (
+        await handlers.list_long_horizon_agent_event_subscriptions({
+          agent_id: longHorizonAgent.id,
+        })
+      ).content[0].text
     );
     expect(subscriptions.subscriptions[0].topic).toBe('github/*/*/pull_request/*');
     expect(subscriptions.subscriptions[0].filter).toEqual({ label: 'PR activity' });
 
     const relabeled = JSON.parse(
       (
-        await handlers.subscribe_agent_event({
+        await handlers.subscribe_long_horizon_agent_event({
           agent_id: longHorizonAgent.id,
           topic_pattern: 'github/*/*/pull_request/*',
           label: 'PR triage',
@@ -819,8 +815,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(relabeled.success).toBe(true);
     const afterRelabel = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
-        .text
+      (
+        await handlers.list_long_horizon_agent_event_subscriptions({
+          agent_id: longHorizonAgent.id,
+        })
+      ).content[0].text
     );
     expect(afterRelabel.subscriptions).toHaveLength(1);
     expect(afterRelabel.subscriptions[0].filter).toEqual({ label: 'PR triage' });
@@ -830,7 +829,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(staleBeforePause.some((target) => target.kind === 'long_horizon_agent')).toBe(true);
     const pausedSubscribedAgent = JSON.parse(
-      (await handlers.pause_agent({ agent_id: longHorizonAgent.id })).content[0].text
+      (await handlers.pause_long_horizon_agent({ agent_id: longHorizonAgent.id })).content[0].text
     );
     expect(pausedSubscribedAgent.success).toBe(true);
     const staleAfterPause = ctx.runtime['topicTrie'].lookup(
@@ -840,7 +839,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const removed = JSON.parse(
       (
-        await handlers.unsubscribe_agent_event({
+        await handlers.unsubscribe_long_horizon_agent_event({
           agent_id: longHorizonAgent.id,
           topic_pattern: 'github/*/*/pull_request/*',
         })
@@ -848,8 +847,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(removed.success).toBe(true);
     const afterUnsubscribe = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: longHorizonAgent.id })).content[0]
-        .text
+      (
+        await handlers.list_long_horizon_agent_event_subscriptions({
+          agent_id: longHorizonAgent.id,
+        })
+      ).content[0].text
     );
     expect(afterUnsubscribe.subscriptions).toEqual([]);
 
@@ -861,24 +863,31 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     if (!workerOnlyAgent.ok) throw new Error(workerOnlyAgent.error);
 
     const listedWorkerOnly = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: workerOnlyAgent.value.id }))
-        .content[0].text
+      (
+        await handlers.list_long_horizon_agent_event_subscriptions({
+          agent_id: workerOnlyAgent.value.id,
+        })
+      ).content[0].text
     );
-    expect(listedWorkerOnly).toEqual({ success: true, subscriptions: [] });
+    expect(listedWorkerOnly.success).toBe(false);
+    expect(listedWorkerOnly.error).toBe('Expected long-horizon agent id, got worker agent id.');
     expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
     const unsubscribedWorkerOnly = JSON.parse(
       (
-        await handlers.unsubscribe_agent_event({
+        await handlers.unsubscribe_long_horizon_agent_event({
           agent_id: workerOnlyAgent.value.id,
           topic_pattern: 'github/*/*/pull_request/*',
         })
       ).content[0].text
     );
-    expect(unsubscribedWorkerOnly.success).toBe(true);
+    expect(unsubscribedWorkerOnly.success).toBe(false);
+    expect(unsubscribedWorkerOnly.error).toBe(
+      'Expected long-horizon agent id, got worker agent id.'
+    );
     expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
     const subscribedWorkerOnly = JSON.parse(
       (
-        await handlers.subscribe_agent_event({
+        await handlers.subscribe_long_horizon_agent_event({
           agent_id: workerOnlyAgent.value.id,
           topic_pattern: 'github/*/*/pull_request/*',
         })
@@ -898,7 +907,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
     const subscribedShared = JSON.parse(
       (
-        await handlers.subscribe_agent_event({
+        await handlers.subscribe_long_horizon_agent_event({
           agent_id: workerOnlyAgent.value.id,
           topic_pattern: 'github/*/*/pull_request/*',
         })
@@ -920,14 +929,22 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(
       JSON.parse(
-        (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))
-          .content[0].text
+        (
+          await handlers.unassign_long_horizon_agent_from_goal({
+            agent_id: agent.id,
+            goal_id: goal.id,
+          })
+        ).content[0].text
       ).success
     ).toBe(true);
     expect(
       JSON.parse(
-        (await handlers.unassign_agent_from_forge_scope({ agent_id: agent.id, scope_id: scope.id }))
-          .content[0].text
+        (
+          await handlers.unassign_long_horizon_agent_from_forge_scope({
+            agent_id: agent.id,
+            scope_id: scope.id,
+          })
+        ).content[0].text
       ).success
     ).toBe(true);
   });
@@ -938,7 +955,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const missing = JSON.parse((await handlers.get_agent({ agent_id: missingId })).content[0].text);
     expect(missing.success).toBe(false);
-    expect(missing.error).toBe(`Long-horizon agent not found: ${missingId}`);
+    expect(missing.error).toBe(`Agent not found: ${missingId}`);
 
     const otherSpaceId = 'other-space';
     seedSpaceRow(ctx.db, otherSpaceId);
@@ -953,11 +970,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       ).content[0].text
     );
     expect(crossSpace.success).toBe(false);
-    expect(crossSpace.error).toBe('Long-horizon agent not found: agent-other-space');
+    expect(crossSpace.error).toBe('Agent not found: agent-other-space');
 
     const missingReminder = JSON.parse(
       (
-        await handlers.create_agent_reminder({
+        await handlers.create_long_horizon_agent_reminder({
           agent_id: missingId,
           message: 'No target',
           remind_at: Date.now(),
@@ -989,15 +1006,19 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     ).goal;
 
     const assignment = JSON.parse(
-      (await handlers.assign_agent_to_goal({ agent_id: 'no-db-agent', goal_id: goal.id }))
-        .content[0].text
+      (
+        await handlers.assign_long_horizon_agent_to_goal({
+          agent_id: 'no-db-agent',
+          goal_id: goal.id,
+        })
+      ).content[0].text
     );
     expect(assignment.success).toBe(false);
     expect(assignment.error).toBe('Long-horizon agent management not available');
 
     const reminder = JSON.parse(
       (
-        await handlers.create_agent_reminder({
+        await handlers.create_long_horizon_agent_reminder({
           agent_id: 'no-db-agent',
           message: 'No DB',
           remind_at: Date.now(),
@@ -1009,7 +1030,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
 
     const subscription = JSON.parse(
       (
-        await handlers.subscribe_agent_event({
+        await handlers.subscribe_long_horizon_agent_event({
           agent_id: 'no-db-agent',
           topic_pattern: 'github/*',
         })
@@ -1017,6 +1038,112 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(subscription.success).toBe(false);
     expect(subscription.error).toBe('Long-horizon agent management not available');
+  });
+});
+
+describe('createSpaceAgentToolHandlers — worker agent tools', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('creates, lists, gets, updates, pauses, and archives worker agents', async () => {
+    const handlers = makeHandlers(ctx);
+
+    const created = JSON.parse(
+      (
+        await handlers.create_worker_agent({
+          name: 'Scout',
+          description: 'Tracks quality signals',
+          tools: ['Read', 'Grep'],
+        })
+      ).content[0].text
+    );
+    expect(created.success).toBe(true);
+    expect(created.agent.status).toBe('active');
+    expect(created.agent.handle).toBe('scout');
+    expect(created.agent.tools).toEqual(['Read', 'Grep']);
+
+    const listed = JSON.parse((await handlers.list_worker_agents({})).content[0].text);
+    expect(listed.agents.map((a: { id: string }) => a.id)).toContain(created.agent.id);
+
+    const got = JSON.parse(
+      (await handlers.get_worker_agent({ agent_id: created.agent.id })).content[0].text
+    );
+    expect(got.agent.id).toBe(created.agent.id);
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_worker_agent({
+          agent_id: created.agent.id,
+          description: 'Updated description',
+        })
+      ).content[0].text
+    );
+    expect(updated.success).toBe(true);
+    expect(updated.agent.description).toBe('Updated description');
+
+    const paused = JSON.parse(
+      (await handlers.pause_worker_agent({ agent_id: created.agent.id })).content[0].text
+    );
+    expect(paused.agent.status).toBe('paused');
+
+    const archived = JSON.parse(
+      (await handlers.archive_worker_agent({ agent_id: created.agent.id })).content[0].text
+    );
+    expect(archived.agent.status).toBe('archived');
+  });
+
+  test('creates worker agent from template', async () => {
+    const handlers = makeHandlers(ctx);
+
+    const templated = JSON.parse(
+      (
+        await handlers.create_worker_agent_from_template({
+          template_name: 'Reviewer',
+          name: 'Reviewer Copy',
+        })
+      ).content[0].text
+    );
+    expect(templated.success).toBe(true);
+    expect(templated.agent.templateName).toBe('Reviewer');
+
+    const second = JSON.parse(
+      (
+        await handlers.create_worker_agent_from_template({
+          template_name: 'Planner',
+          name: 'Planner Copy',
+        })
+      ).content[0].text
+    );
+    expect(second.success).toBe(true);
+    expect(second.agent.templateName).toBe('Planner');
+  });
+
+  test('legacy aliases return deprecation payload', async () => {
+    const handlers = makeHandlers(ctx);
+
+    const created = JSON.parse(
+      (await handlers.create_worker_agent({ name: 'Legacy Test' })).content[0].text
+    );
+    expect(created.success).toBe(true);
+
+    const legacyGet = JSON.parse(
+      (await handlers.get_agent({ agent_id: created.agent.id })).content[0].text
+    );
+    expect(legacyGet.deprecation).toEqual({
+      replacement: 'get_worker_agent',
+      removal_target: 'next minor release',
+    });
+
+    const legacyList = JSON.parse((await handlers.list_agents({})).content[0].text);
+    expect(legacyList.deprecation).toEqual({
+      replacement: 'list_worker_agents',
+      removal_target: 'next minor release',
+    });
   });
 });
 
