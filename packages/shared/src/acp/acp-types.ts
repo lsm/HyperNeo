@@ -55,7 +55,7 @@ export interface AcpInitializeResult {
   agentInfo: {
     name: string;
     version: string;
-  };
+  } | null;
   authMethods?: AcpAuthMethod[];
   _meta?: object | null;
 }
@@ -349,9 +349,12 @@ export interface AcpSessionInfoUpdate {
 
 export interface AcpUsageUpdate {
   sessionUpdate: 'usage_update';
-  inputTokens?: number;
-  outputTokens?: number;
-  totalCost?: number;
+  size: number;
+  used: number;
+  cost?: {
+    value: number;
+    currency: string;
+  };
 }
 
 export interface AcpAvailableCommandsUpdate {
@@ -441,7 +444,7 @@ export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'faile
 
 export interface AcpPermissionRequest {
   sessionId: string;
-  toolCall: AcpToolCall;
+  toolCall: AcpToolCallUpdate;
   options: AcpPermissionOption[];
   _meta?: object | null;
 }
@@ -492,7 +495,7 @@ export interface AcpFsWriteResult {
 export interface AcpTerminalCreateParams {
   sessionId: string;
   command: string;
-  args: string[];
+  args?: string[];
   cwd?: string;
   env?: AcpEnvVariable[];
   outputByteLimit?: number;
@@ -557,7 +560,7 @@ export interface AcpTerminalReleaseResult {
 
 export interface AcpConfigOption {
   id: string;
-  label: string;
+  name: string;
   type: 'select';
   options: AcpConfigOptionChoice[];
   currentValue: string;
@@ -567,7 +570,7 @@ export interface AcpConfigOption {
 }
 
 export interface AcpConfigOptionChoice {
-  label: string;
+  name: string;
   value: string;
 }
 
