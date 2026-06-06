@@ -16,12 +16,14 @@ export interface AcpJsonRpcRequest<T = unknown> {
   params?: T;
 }
 
-export interface AcpJsonRpcResponse<T = unknown> {
+interface AcpJsonRpcResponseBase {
   jsonrpc: '2.0';
   id: number | string | null;
-  result?: T;
-  error?: AcpJsonRpcError;
 }
+
+export type AcpJsonRpcResponse<T = unknown> =
+  | ({ result: T } & AcpJsonRpcResponseBase)
+  | ({ error: AcpJsonRpcError } & AcpJsonRpcResponseBase);
 
 export interface AcpJsonRpcNotification<T = unknown> {
   jsonrpc: '2.0';
@@ -72,11 +74,11 @@ export interface AcpAgentCapabilities {
   mcpCapabilities?: { http: boolean; sse: boolean };
   promptCapabilities?: { audio: boolean; embeddedContext: boolean; image: boolean };
   sessionCapabilities?: {
-    close?: {};
-    delete?: {};
-    list?: {};
-    resume?: {};
-    additionalDirectories?: {};
+    close?: {} | null;
+    delete?: {} | null;
+    list?: {} | null;
+    resume?: {} | null;
+    additionalDirectories?: {} | null;
   };
   experimental?: Record<string, unknown>;
 }
@@ -244,6 +246,8 @@ export type AcpContentBlock =
 export interface AcpTextContentBlock {
   type: 'text';
   text: string;
+  annotations?: unknown;
+  _meta?: object | null;
 }
 
 export interface AcpImageContentBlock {
@@ -251,12 +255,16 @@ export interface AcpImageContentBlock {
   mimeType: string;
   data: string;
   uri?: string;
+  annotations?: unknown;
+  _meta?: object | null;
 }
 
 export interface AcpAudioContentBlock {
   type: 'audio';
   mimeType: string;
   data: string;
+  annotations?: unknown;
+  _meta?: object | null;
 }
 
 export interface AcpResourceContentBlockBase {
@@ -265,6 +273,8 @@ export interface AcpResourceContentBlockBase {
     uri: string;
     mimeType?: string;
   };
+  annotations?: unknown;
+  _meta?: object | null;
 }
 
 export interface AcpResourceTextContentBlock extends AcpResourceContentBlockBase {
@@ -293,6 +303,8 @@ export interface AcpResourceLinkContentBlock {
   mimeType?: string | null;
   description?: string | null;
   size?: number | null;
+  annotations?: unknown;
+  _meta?: object | null;
 }
 
 // ============================================================================
@@ -631,7 +643,6 @@ export interface AcpEnvVariable {
 }
 
 export interface AcpMcpStdioServerConfig {
-  type: 'stdio';
   name: string;
   command: string;
   args: string[];
