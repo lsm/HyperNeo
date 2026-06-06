@@ -643,6 +643,7 @@ export interface AcpEnvVariable {
 }
 
 export interface AcpMcpStdioServerConfig {
+  type: 'stdio';
   name: string;
   command: string;
   args: string[];
