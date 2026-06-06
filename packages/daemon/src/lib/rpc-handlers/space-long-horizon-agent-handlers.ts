@@ -17,15 +17,17 @@ import type {
   SpaceLongHorizonAgentEventSubscriptionStatus,
 } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import {
   KNOWN_SOURCES,
   validateGlobPattern,
   validateSource,
 } from '../external-events/topic-validator';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { slugifyWithinLimit } from '../space/slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug';
 
 function rejectSlashSeparatedGitHubAction(topic: string): never {
   throw new Error(
@@ -190,16 +192,92 @@ function validateLongHorizonSubscriptionPattern(
 
 function resolveLongHorizonAgentCreateHandle(
   repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager: SpaceAgentManager | undefined,
   spaceId: string,
   agentId: string,
   handle: string
 ): string {
-  const owner = repo.getByHandle(spaceId, handle);
-  if (!owner || owner.id === agentId) return handle;
-  return slugifyWithinLimit(
-    `${handle}-events`,
-    repo.listBySpaceId(spaceId).map((agent) => agent.handle)
+  const normalized = slugifyWithinLimit(
+    handle,
+    reservedLongHorizonHandles(repo, spaceAgentManager, spaceId, agentId)
   );
+  if (normalized !== handle) return normalized;
+
+  const handleError = validateLongHorizonAgentHandle(
+    repo,
+    spaceAgentManager,
+    spaceId,
+    normalized,
+    agentId
+  );
+  if (handleError) throw new Error(handleError);
+  return normalized;
+}
+
+function validateLongHorizonAgentUpdateHandle(
+  repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager: SpaceAgentManager | undefined,
+  spaceId: string,
+  agentId: string,
+  handle: string
+): string {
+  const trimmed = handle.trim();
+  const handleError = validateLongHorizonAgentHandle(
+    repo,
+    spaceAgentManager,
+    spaceId,
+    trimmed,
+    agentId,
+    handle
+  );
+  if (handleError) throw new Error(handleError);
+  return trimmed;
+}
+
+function validateLongHorizonAgentHandle(
+  repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager: SpaceAgentManager | undefined,
+  spaceId: string,
+  handle: string,
+  excludeId: string,
+  rawHandle = handle
+): string | null {
+  if (rawHandle !== handle) return 'Agent handle must not have leading or trailing whitespace';
+  const slugError = validateSlug(handle);
+  if (slugError) return `Invalid agent handle: ${slugError}`;
+  if (
+    RESERVED_SPACE_AGENT_HANDLES.includes(handle as (typeof RESERVED_SPACE_AGENT_HANDLES)[number])
+  ) {
+    return `Agent handle "${handle}" is reserved`;
+  }
+  const longHorizonOwner = repo.getByHandle(spaceId, handle);
+  if (longHorizonOwner && longHorizonOwner.id !== excludeId) {
+    return `An agent with handle "${handle}" already exists in this Space`;
+  }
+  const workerOwner = spaceAgentManager
+    ?.listBySpaceId(spaceId)
+    .find((agent) => agent.handle === handle && agent.id !== excludeId);
+  if (workerOwner) return `An agent with handle "${handle}" already exists in this Space`;
+  return null;
+}
+
+function reservedLongHorizonHandles(
+  repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager: SpaceAgentManager | undefined,
+  spaceId: string,
+  excludeId: string
+): string[] {
+  return [
+    ...repo
+      .listBySpaceId(spaceId)
+      .filter((agent) => agent.id !== excludeId)
+      .map((agent) => agent.handle),
+    ...(spaceAgentManager
+      ?.listBySpaceId(spaceId)
+      .filter((agent) => agent.id !== excludeId)
+      .map((agent) => agent.handle) ?? []),
+    ...RESERVED_SPACE_AGENT_HANDLES,
+  ];
 }
 
 function assertNoDuplicateLongHorizonSubscriptionPattern(
@@ -234,14 +312,46 @@ export function setupSpaceLongHorizonAgentHandlers(
   messageHub: MessageHub,
   spaceManager: SpaceManager,
   repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager?: SpaceAgentManager,
   runtimeService?: Pick<
     SpaceRuntimeService,
     | 'refreshLongHorizonAgentSubscriptions'
     | 'removeLongHorizonAgentSubscriptions'
     | 'refreshLongHorizonSubscription'
     | 'removeLongHorizonSubscription'
-  >
+  >,
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
+  const publishAgentCreated = async (agent: SpaceLongHorizonAgent): Promise<void> => {
+    await internalEventBus
+      ?.publish('spaceLongHorizonAgent.created', {
+        sessionId: `space:${agent.spaceId}`,
+        spaceId: agent.spaceId,
+        agent,
+      })
+      .catch(() => {});
+  };
+
+  const publishAgentUpdated = async (agent: SpaceLongHorizonAgent): Promise<void> => {
+    await internalEventBus
+      ?.publish('spaceLongHorizonAgent.updated', {
+        sessionId: `space:${agent.spaceId}`,
+        spaceId: agent.spaceId,
+        agent,
+      })
+      .catch(() => {});
+  };
+
+  const publishAgentDeleted = async (spaceId: string, agentId: string): Promise<void> => {
+    await internalEventBus
+      ?.publish('spaceLongHorizonAgent.deleted', {
+        sessionId: `space:${spaceId}`,
+        spaceId,
+        agentId,
+      })
+      .catch(() => {});
+  };
+
   messageHub.onRequest('spaceLongHorizonAgent.listBuiltInTemplates', async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -282,6 +392,7 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
     const handle = resolveLongHorizonAgentCreateHandle(
       repo,
+      spaceAgentManager,
       params.spaceId,
       params.id ?? '',
       params.handle
@@ -301,6 +412,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       toolPermissions: params.toolPermissions,
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
     });
+    await publishAgentCreated(agent);
     return { agent };
   });
 
@@ -320,14 +432,22 @@ export function setupSpaceLongHorizonAgentHandlers(
       status?: string;
     };
     if (!params.agentId) throw new Error('agentId is required');
-    if (params.spaceId) {
-      const existing = repo.getById(params.agentId);
-      if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
-      if (existing.spaceId !== params.spaceId)
-        throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
-    }
+    const existing = repo.getById(params.agentId);
+    if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId)
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    const handle =
+      params.handle === undefined
+        ? undefined
+        : validateLongHorizonAgentUpdateHandle(
+            repo,
+            spaceAgentManager,
+            existing.spaceId,
+            params.agentId,
+            params.handle
+          );
     const agent = repo.update(params.agentId, {
-      handle: params.handle,
+      handle,
       displayName: params.displayName,
       instructions: params.instructions,
       autonomyLevel: params.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null | undefined,
@@ -343,6 +463,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       const refresh = runtimeService.refreshLongHorizonAgentSubscriptions(agent.spaceId, agent.id);
       if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
     }
+    await publishAgentUpdated(agent);
     return { agent };
   });
 
@@ -355,6 +476,7 @@ export function setupSpaceLongHorizonAgentHandlers(
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
     repo.delete(params.agentId);
+    await publishAgentDeleted(existing.spaceId, existing.id);
     return { success: true };
   });
 

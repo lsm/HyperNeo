@@ -805,6 +805,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo: spaceWorkflowRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
       nodeExecutionRepo,
@@ -885,7 +886,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.spaceManager,
     longHorizonAgentRepo,
-    spaceRuntimeService
+    deps.spaceAgentManager,
+    spaceRuntimeService,
+    deps.internalEventBus
   );
 
   // Register Space RPC handlers now that spaceRuntimeService exists.

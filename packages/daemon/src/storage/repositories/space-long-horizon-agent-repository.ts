@@ -207,6 +207,12 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToGoalLink);
   }
 
+  deleteGoalAssignment(agentId: string, goalId: string): void {
+    this.db
+      .prepare(`DELETE FROM space_long_horizon_agent_goals WHERE agent_id = ? AND goal_id = ?`)
+      .run(agentId, goalId);
+  }
+
   assignForgeScope(
     agentId: string,
     scopeId: string,
@@ -231,6 +237,14 @@ export class SpaceLongHorizonAgentRepository {
       )
       .all(agentId) as Record<string, unknown>[];
     return rows.map(rowToForgeScopeLink);
+  }
+
+  deleteForgeScopeAssignment(agentId: string, scopeId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM space_long_horizon_agent_forge_scopes WHERE agent_id = ? AND scope_id = ?`
+      )
+      .run(agentId, scopeId);
   }
 
   createReminder(params: CreateSpaceLongHorizonAgentReminderParams): SpaceLongHorizonAgentReminder {

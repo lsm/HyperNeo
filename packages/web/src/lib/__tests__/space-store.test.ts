@@ -17,6 +17,7 @@ import type {
   SpaceAgent,
   SpaceGoal,
   SpaceGoalEvent,
+  SpaceLongHorizonAgent,
   SpaceTask,
   SpaceTaskActivityMember,
   SpaceWorkflow,
@@ -165,6 +166,27 @@ function makeAgent(id: string): SpaceAgent {
   };
 }
 
+function makeLongHorizonAgent(id: string): SpaceLongHorizonAgent {
+  return {
+    id,
+    spaceId: 'space-1',
+    handle: id,
+    displayName: `Long Horizon Agent ${id}`,
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
 function makeWorkflow(id: string): SpaceWorkflow {
   return {
     id,
@@ -271,6 +293,11 @@ function makeMockHub() {
       if (method === 'spaceAgent.promoteSession') return { agent: makeAgent('promoted-agent') };
       if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
       if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
+      if (method === 'spaceLongHorizonAgent.create') {
+        return {
+          agent: makeLongHorizonAgent((params?.id as string | undefined) ?? 'new-lh-agent'),
+        };
+      }
       if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
       if (method === 'spaceLongHorizonAgent.listSubscriptions') return { subscriptions: [] };
       if (method === 'spaceLongHorizonAgent.createSubscription') {
@@ -560,6 +587,9 @@ describe('SpaceStore — event subscriptions auto-cleanup', () => {
     expect(mockEventHandlers.has('spaceAgent.created')).toBe(true);
     expect(mockEventHandlers.has('spaceAgent.updated')).toBe(true);
     expect(mockEventHandlers.has('spaceAgent.deleted')).toBe(true);
+    expect(mockEventHandlers.has('spaceLongHorizonAgent.created')).toBe(true);
+    expect(mockEventHandlers.has('spaceLongHorizonAgent.updated')).toBe(true);
+    expect(mockEventHandlers.has('spaceLongHorizonAgent.deleted')).toBe(true);
     expect(mockEventHandlers.has('spaceWorkflow.created')).toBe(true);
     expect(mockEventHandlers.has('spaceWorkflow.updated')).toBe(true);
     expect(mockEventHandlers.has('spaceWorkflow.deleted')).toBe(true);
@@ -864,6 +894,73 @@ describe('SpaceStore — spaceAgent events', () => {
     handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeAgent('a1') });
 
     expect(spaceStore.agents.value.length).toBe(0);
+  });
+});
+
+describe('SpaceStore — spaceLongHorizonAgent events', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('appends new long-horizon agent on created event', async () => {
+    await spaceStore.selectSpace('space-1');
+    const agent = makeLongHorizonAgent('lh1');
+
+    const handler = mockEventHandlers.get('spaceLongHorizonAgent.created');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
+
+    expect(spaceStore.longHorizonAgents.value).toContainEqual(agent);
+  });
+
+  it('does not append duplicate long-horizon agents on created event', async () => {
+    await spaceStore.selectSpace('space-1');
+    const agent = makeLongHorizonAgent('lh1');
+    spaceStore.longHorizonAgents.value = [agent];
+
+    const handler = mockEventHandlers.get('spaceLongHorizonAgent.created');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
+
+    expect(spaceStore.longHorizonAgents.value).toHaveLength(1);
+  });
+
+  it('replaces long-horizon agent on updated event', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.longHorizonAgents.value = [
+      { ...makeLongHorizonAgent('lh1'), displayName: 'Old Name' },
+    ];
+
+    const updated = { ...makeLongHorizonAgent('lh1'), displayName: 'New Name' };
+    const handler = mockEventHandlers.get('spaceLongHorizonAgent.updated');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agent: updated });
+
+    expect(spaceStore.longHorizonAgents.value[0].displayName).toBe('New Name');
+  });
+
+  it('appends long-horizon agent on updated event when not loaded yet', async () => {
+    await spaceStore.selectSpace('space-1');
+    const agent = makeLongHorizonAgent('lh1');
+
+    const handler = mockEventHandlers.get('spaceLongHorizonAgent.updated');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
+
+    expect(spaceStore.longHorizonAgents.value).toContainEqual(agent);
+  });
+
+  it('removes long-horizon agent on deleted event', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('lh1'), makeLongHorizonAgent('lh2')];
+
+    const handler = mockEventHandlers.get('spaceLongHorizonAgent.deleted');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agentId: 'lh1' });
+
+    expect(spaceStore.longHorizonAgents.value.map((a) => a.id)).toEqual(['lh2']);
+  });
+
+  it('ignores long-horizon agent events for a different space', async () => {
+    await spaceStore.selectSpace('space-1');
+    const handler = mockEventHandlers.get('spaceLongHorizonAgent.created');
+    handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeLongHorizonAgent('lh1') });
+
+    expect(spaceStore.longHorizonAgents.value.length).toBe(0);
   });
 });
 
@@ -1370,6 +1467,29 @@ describe('SpaceStore — CRUD methods', () => {
       id: 'a1',
       spaceId: 'space-1',
     });
+  });
+
+  it('createLongHorizonAgent upserts RPC result already appended by created event', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    const created = makeLongHorizonAgent('new-lh-agent');
+    mockHub.request.mockImplementationOnce(async () => {
+      mockEventHandlers.get('spaceLongHorizonAgent.created')?.({
+        sessionId: 'space:space-1',
+        spaceId: 'space-1',
+        agent: created,
+      });
+      return { agent: created };
+    });
+
+    await spaceStore.createLongHorizonAgent({ id: 'new-lh-agent', handle: 'new-lh-agent' });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.create', {
+      spaceId: 'space-1',
+      id: 'new-lh-agent',
+      handle: 'new-lh-agent',
+    });
+    expect(spaceStore.longHorizonAgents.value.map((agent) => agent.id)).toEqual(['new-lh-agent']);
   });
 
   it('long-horizon subscription methods call RPC with current space', async () => {
