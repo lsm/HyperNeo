@@ -545,6 +545,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_agent_memory_fts_data',
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
+  // Migration bookkeeping — internal one-time migration markers.
+  'migration_markers',
   // Dropped tables (no longer exist in schema)
   'space_session_groups',
   'space_session_group_members',

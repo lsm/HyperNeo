@@ -580,7 +580,11 @@ function buildResponsesRequest(
   body: AnthropicRequest,
   model: string,
   continuation?: { previousResponseId: string; input: ResponsesInputItem[] },
-  options: { includeMaxOutputTokens?: boolean; includeParallelToolCalls?: boolean } = {},
+  options: {
+    includeMaxOutputTokens?: boolean;
+    includeParallelToolCalls?: boolean;
+    isChatgptOAuth?: boolean;
+  } = {},
   reasoningItems?: ResponsesReasoningItem[]
 ): ResponsesRequest {
   const instructions = extractSystemText(body.system) || undefined;
@@ -603,8 +607,17 @@ function buildResponsesRequest(
     stream: true,
     ...(includeParallelToolCalls ? { parallel_tool_calls: false } : {}),
     ...(reasoning ? { reasoning } : {}),
+    // encrypted_content is required for multi-turn stateless continuation.
+    // summary_text is required for the standard OpenAI API to stream reasoning
+    // summary deltas (response.reasoning_summary_text.delta). The ChatGPT Codex
+    // endpoint rejects summary_text, so keep it off that path.
     ...(reasoning || (reasoningItems && reasoningItems.length > 0)
-      ? { include: ['reasoning.encrypted_content'] }
+      ? {
+          include: [
+            'reasoning.encrypted_content',
+            ...(options.isChatgptOAuth ? [] : ['reasoning.summary_text']),
+          ],
+        }
       : {}),
   };
 }
@@ -1144,6 +1157,7 @@ export function createOpenAIResponsesBridgeServer(
   const buildOpts = {
     includeMaxOutputTokens: !isChatgptOAuth,
     includeParallelToolCalls: !isChatgptOAuth,
+    isChatgptOAuth,
   };
 
   const deleteContinuation = (sessionId: string, callId: string): void => {
@@ -1257,8 +1271,10 @@ export function createOpenAIResponsesBridgeServer(
       // The Claude Code CLI handles thinking internally and does not include the
       // thinking field in Anthropic Messages API requests. Merge the per-session
       // thinking config injected by the daemon so reasoning is forwarded to OpenAI.
+      // If the SDK sends a non-enabled thinking payload (e.g. {type:'adaptive'}),
+      // override it with the session's explicit enabled config.
       const sessionThinkingEntry = sessionThinkingConfigs.get(route.sessionId);
-      if (sessionThinkingEntry?.thinking && !body.thinking) {
+      if (sessionThinkingEntry?.thinking && (!body.thinking || body.thinking.type !== 'enabled')) {
         body = { ...body, thinking: sessionThinkingEntry.thinking };
       }
 

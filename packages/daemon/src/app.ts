@@ -49,6 +49,7 @@ import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
 import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
+import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
@@ -297,7 +298,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
 
     // Initialize Space agent manager
-    const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db.getDatabase()));
+    const spaceAgentManager = new SpaceAgentManager(
+      new SpaceAgentRepository(db.getDatabase()),
+      new SpaceLongHorizonAgentRepository(db.getDatabase())
+    );
 
     // Initialize Space manager
     const spaceRepo = earlySpaceRepo;

@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -695,6 +696,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 153: Add workflow hook config and per-run hook state storage.
   runMigration153(db);
+
+  // Migration 154: Store GitHub webhook auto-registration state.
+  runMigration154(db);
+
+  // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
+  runMigration155(db);
 }
 
 /**
@@ -10567,4 +10574,50 @@ function runMigration152(db: BunDatabase): void {
   if (!tableHasColumn(db, 'space_long_horizon_agents', 'setting_sources')) {
     db.exec(`ALTER TABLE space_long_horizon_agents ADD COLUMN setting_sources TEXT DEFAULT NULL`);
   }
+}
+
+function runMigration154(db: BunDatabase): void {
+  if (!tableExists(db, 'space_github_watched_repos')) return;
+  const columns: Array<[string, string]> = [
+    ['webhook_remote_id', 'INTEGER'],
+    ['webhook_url', 'TEXT'],
+    ['webhook_auto_registered', 'INTEGER NOT NULL DEFAULT 0'],
+    ['webhook_active', 'INTEGER'],
+    ['webhook_last_checked_at', 'INTEGER'],
+    ['webhook_last_error', 'TEXT'],
+    ['webhook_configured_at', 'INTEGER'],
+  ];
+  for (const [name, definition] of columns) {
+    if (!tableHasColumn(db, 'space_github_watched_repos', name)) {
+      db.exec(`ALTER TABLE space_github_watched_repos ADD COLUMN ${name} ${definition}`);
+    }
+  }
+}
+
+/**
+ * Migration 154 — Copy legacy long-horizon ownership/automation data.
+ */
+export function runMigration155(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm154_legacy_long_horizon_agent_data';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
+  if (
+    !tableExists(db, 'space_agent_goal_assignments') ||
+    !tableExists(db, 'space_agent_forge_scope_assignments') ||
+    !tableExists(db, 'space_agent_reminders') ||
+    !tableExists(db, 'space_long_horizon_agents')
+  ) {
+    return;
+  }
+  migrateLegacyLongHorizonAgentData(db);
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
 }

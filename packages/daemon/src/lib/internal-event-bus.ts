@@ -692,6 +692,17 @@ interface ClientForwardingEvents {
     agent: import('@neokai/shared').SpaceAgent;
   };
   'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
+  'spaceLongHorizonAgent.created': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@neokai/shared').SpaceLongHorizonAgent;
+  };
+  'spaceLongHorizonAgent.updated': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@neokai/shared').SpaceLongHorizonAgent;
+  };
+  'spaceLongHorizonAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
   'spaceWorkflow.created': {
     sessionId: string;
     spaceId: string;
