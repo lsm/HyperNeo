@@ -172,7 +172,13 @@ export class AcpTransport {
   private handleRequest(request: AcpJsonRpcRequest): void {
     if (this.options.onRequest) {
       try {
-        this.options.onRequest(request);
+        const result = this.options.onRequest(request) as unknown;
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          (result as Promise<unknown>).catch((err) => {
+            logger.error('Inbound request handler error:', (err as Error).message);
+            this.sendErrorResponse(request.id, { code: -32603, message: 'Internal error' });
+          });
+        }
       } catch (err) {
         logger.error('Inbound request handler error:', (err as Error).message);
         this.sendErrorResponse(request.id, { code: -32603, message: 'Internal error' });

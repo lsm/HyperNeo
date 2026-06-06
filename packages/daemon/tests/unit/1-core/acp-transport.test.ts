@@ -427,6 +427,32 @@ describe('AcpTransport', () => {
     expect(last.error.message).toBe('Internal error');
   });
 
+  test('catches rejected async inbound handler and sends JSON-RPC error response', async () => {
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      onRequest: async () => {
+        throw new Error('async handler boom');
+      },
+    });
+    const proc = lastMockProcess!;
+
+    proc.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({ jsonrpc: '2.0', id: 78, method: 'terminal/create', params: {} }) + '\n'
+      )
+    );
+
+    await Promise.resolve();
+
+    const lines = proc.stdin.written;
+    const last = JSON.parse(lines[lines.length - 1]);
+    expect(last.jsonrpc).toBe('2.0');
+    expect(last.id).toBe(78);
+    expect(last.error.code).toBe(-32603);
+    expect(last.error.message).toBe('Internal error');
+  });
+
   test('sendResponse writes JSON-RPC response to stdin', () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;

@@ -42,10 +42,10 @@ export interface AcpJsonRpcError {
 export interface AcpInitializeParams {
   protocolVersion: number;
   clientCapabilities: AcpClientCapabilities;
-  clientInfo: {
+  clientInfo?: {
     name: string;
     version: string;
-  };
+  } | null;
   _meta?: object | null;
 }
 
@@ -113,8 +113,8 @@ export interface AcpSessionNewParams {
 
 export interface AcpSessionNewResult {
   sessionId: string;
-  modes?: AcpSessionModeState;
-  configOptions?: AcpConfigOption[];
+  modes?: AcpSessionModeState | null;
+  configOptions?: AcpConfigOption[] | null;
   _meta?: object | null;
 }
 
@@ -170,8 +170,8 @@ export interface AcpSessionLoadParams {
 
 export interface AcpSessionLoadResult {
   sessionId: string;
-  modes?: AcpSessionModeState;
-  configOptions?: AcpConfigOption[];
+  modes?: AcpSessionModeState | null;
+  configOptions?: AcpConfigOption[] | null;
   _meta?: object | null;
 }
 
@@ -185,8 +185,8 @@ export interface AcpSessionResumeParams {
 
 export interface AcpSessionResumeResult {
   sessionId: string;
-  modes?: AcpSessionModeState;
-  configOptions?: AcpConfigOption[];
+  modes?: AcpSessionModeState | null;
+  configOptions?: AcpConfigOption[] | null;
   _meta?: object | null;
 }
 
@@ -194,11 +194,11 @@ export interface AcpSessionListResult {
   sessions: Array<{
     sessionId: string;
     cwd: string;
-    title?: string;
-    updatedAt?: string;
+    title?: string | null;
+    updatedAt?: string | null;
     additionalDirectories?: string[];
   }>;
-  nextCursor?: string;
+  nextCursor?: string | null;
   _meta?: object | null;
 }
 
@@ -212,6 +212,11 @@ export interface AcpSessionSetConfigOptionParams {
   sessionId: string;
   configId: string;
   value: string;
+  _meta?: object | null;
+}
+
+export interface AcpSessionSetConfigOptionResult {
+  configOptions: AcpConfigOption[];
   _meta?: object | null;
 }
 
@@ -339,7 +344,7 @@ export interface AcpToolCallUpdateUpdate {
   kind?: AcpToolKind;
   rawInput?: Record<string, unknown>;
   rawOutput?: unknown;
-  content?: AcpToolCallContent[];
+  content?: AcpToolCallContent[] | null;
   locations?: AcpToolCallLocation[];
 }
 
@@ -495,7 +500,6 @@ export interface AcpFsReadParams {
 
 export interface AcpFsReadResult {
   content: string;
-  mimeType?: string;
   _meta?: object | null;
 }
 
