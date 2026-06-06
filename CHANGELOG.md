@@ -4,7 +4,7 @@ All notable changes to NeoKai will be documented in this file.
 
 ## [0.36.0] - 2026-06-02
 
-Auto-fetch model list from custom endpoints, refresh models on provider changes, Forge completed-task automation and task-result backfill, Codex auth reliability fixes, long-horizon event subscription rehydration, agent event subscription UI, external event delivery log UI, and mobile Space tab fixes. 17 commits since v0.35.0.
+Auto-fetch model list from custom endpoints, refresh models on provider changes, Forge completed-task automation and task-result backfill, Codex auth reliability fixes, long-horizon event subscription rehydration, agent event subscription UI, external event delivery log UI, auto-configure GitHub webhooks for spaces, and mobile Space tab fixes. 18 commits since v0.35.0.
 
 ### Added
 
@@ -16,6 +16,7 @@ Auto-fetch model list from custom endpoints, refresh models on provider changes,
 - **Long-horizon event subscription rehydration**: Event subscriptions for long-horizon agents are now rehydrated across daemon restarts
 - **Agent event subscription UI**: New settings UI for managing agent event subscriptions
 - **External event delivery log UI**: New UI for viewing external event delivery logs and subscription status
+- **Auto-configure GitHub webhooks for spaces**: Spaces can now auto-configure GitHub webhooks for push, PR, and issue events, with repository discovery and webhook status UI
 
 ### Fixed
 
