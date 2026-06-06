@@ -1756,6 +1756,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     handlers.send_message = wrap('send_message', handlers.send_message);
     handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
     handlers.approve_task = wrap('approve_task', handlers.approve_task);
+    handlers.create_standalone_task = wrap(
+      'create_standalone_task',
+      handlers.create_standalone_task
+    );
   }
 
   return handlers;

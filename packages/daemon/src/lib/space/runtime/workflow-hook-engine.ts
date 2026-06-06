@@ -133,7 +133,7 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const hooks = this.resolveMatchingHooks(methodName, meta);
+    const hooks = this.resolveMatchingHooks(methodName, params, meta);
 
     if (hooks.length === 0) {
       return {
@@ -164,7 +164,7 @@ export class WorkflowHookEngine {
       }
       // If a validation hook returned retryable_block, skip remaining side-effects
       // but allow later validation hooks to run (so block can override retryable_block)
-      if (blockedByValidation && hook.classification === 'side_effect') {
+      if (blockedByValidation && (hook.classification ?? 'validation') === 'side_effect') {
         break;
       }
 
@@ -186,7 +186,7 @@ export class WorkflowHookEngine {
 
       executionLog.push({
         hookId: hook.id,
-        classification: hook.classification,
+        classification: hook.classification ?? 'validation',
         result,
         timestamp: Date.now(),
       });
@@ -197,14 +197,14 @@ export class WorkflowHookEngine {
           break;
 
         case 'block':
-          if (hook.classification === 'validation') {
+          if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
           // side_effect block is recorded but does not stop
           break;
 
         case 'retryable_block':
-          if (hook.classification === 'validation') {
+          if ((hook.classification ?? 'validation') === 'validation') {
             // block takes precedence over retryable_block
             if (!blockedByValidation) {
               blockedByValidation = { hookId: hook.id, result, isRetryable: true };
@@ -280,11 +280,27 @@ export class WorkflowHookEngine {
   // Hook resolution
   // -------------------------------------------------------------------------
 
-  private resolveMatchingHooks(methodName: string, meta: HookActionMeta): WorkflowHook[] {
+  private resolveMatchingHooks(
+    methodName: string,
+    params: Record<string, unknown>,
+    meta: HookActionMeta
+  ): WorkflowHook[] {
     const workflow = this.config.workflow;
     if (!workflow?.hooks) return [];
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+
+    // Resolve action target(s) for send_message
+    const actionTargets = new Set<string>();
+    if (methodName === 'send_message') {
+      const target = params.target;
+      if (typeof target === 'string') actionTargets.add(target);
+      else if (Array.isArray(target)) {
+        for (const t of target) {
+          if (typeof t === 'string') actionTargets.add(t);
+        }
+      }
+    }
 
     return workflow.hooks.filter((hook) => {
       if (!hook.enabled) return false;
@@ -292,6 +308,13 @@ export class WorkflowHookEngine {
 
       // Match sourceNode — either the node name or agent name
       if (hook.sourceNode !== nodeName && hook.sourceNode !== meta.agentName) return false;
+
+      // Match targetNode when declared — skip if action target does not match
+      if (hook.targetNode) {
+        if (methodName === 'send_message' && actionTargets.size > 0) {
+          if (!actionTargets.has(hook.targetNode)) return false;
+        }
+      }
 
       // Authorized callers check
       if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
@@ -307,9 +330,11 @@ export class WorkflowHookEngine {
 
   private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
     return [...hooks].sort((a, b) => {
+      const aClass = a.classification ?? 'validation';
+      const bClass = b.classification ?? 'validation';
       // Validation hooks first
-      if (a.classification !== b.classification) {
-        return a.classification === 'validation' ? -1 : 1;
+      if (aClass !== bClass) {
+        return aClass === 'validation' ? -1 : 1;
       }
       // Then by order (lower first)
       const orderA = a.order ?? 0;
@@ -340,10 +365,11 @@ export class WorkflowHookEngine {
       hook.localState?.defaults ?? {}
     );
 
-    // Load current artifacts
+    // Load current artifacts — bounded to last 50 to avoid oversized env
     let currentArtifacts: WorkflowRunArtifact[] = [];
     try {
-      currentArtifacts = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
+      const all = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
+      currentArtifacts = all.slice(-50);
     } catch {
       // best effort
     }
@@ -460,6 +486,23 @@ export class WorkflowHookEngine {
 // Handler wrapper
 // ---------------------------------------------------------------------------
 
+/** Symbol stored on wrapped handlers to retrieve the original unwrapped function. */
+const RAW_HANDLER = Symbol('rawHandler');
+
+/** Helper to build a typed ToolResult from inline hook responses. */
+function hookResult(
+  data: Record<string, unknown>,
+  isError = false
+): import('../tools/tool-result').ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(data) }], isError };
+}
+
+type AnyToolResult = import('../tools/tool-result').ToolResult;
+
+type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<AnyToolResult>) & {
+  [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;
+};
+
 /**
  * Wrap an MCP tool handler with the workflow hook engine.
  *
@@ -473,22 +516,15 @@ export class WorkflowHookEngine {
  */
 export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   methodName: string,
-  handler: (args: T) => Promise<import('../tools/tool-result').ToolResult>,
+  handler: (args: T) => Promise<AnyToolResult>,
   engine: WorkflowHookEngine | undefined,
-  handlers: Record<
-    string,
-    (
-      ...args: unknown[]
-    ) =>
-      | Promise<import('../tools/tool-result').ToolResult>
-      | import('../tools/tool-result').ToolResult
-  >,
+  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>,
   meta: HookActionMeta,
   isFollowUp = false
-): (args: T) => Promise<import('../tools/tool-result').ToolResult> {
+) {
   if (!engine) return handler;
 
-  return async (args: T) => {
+  const wrapped = async (args: T) => {
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
     // Persist state updates
@@ -503,106 +539,85 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Handle block
     if (outcome.decision === 'block') {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: false,
-              error: outcome.userState.reason ?? 'Action blocked by hook.',
-              hookStatus: outcome.userState.status,
-              hookLabel: outcome.userState.hookLabel,
-              hookMethod: outcome.userState.method,
-              hookReason: outcome.userState.reason,
-              hookRemediation: outcome.userState.remediation,
-              sourceNode: outcome.userState.sourceNode,
-            }),
-          },
-        ],
-        isError: true,
-      };
+      return hookResult(
+        {
+          success: false,
+          error: outcome.userState.reason ?? 'Action blocked by hook.',
+          hookStatus: outcome.userState.status,
+          hookLabel: outcome.userState.hookLabel,
+          hookMethod: outcome.userState.method,
+          hookReason: outcome.userState.reason,
+          hookRemediation: outcome.userState.remediation,
+          sourceNode: outcome.userState.sourceNode,
+        },
+        true
+      );
     }
 
     // Handle retryable block
     if (outcome.decision === 'retryable_block') {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: false,
-              error: outcome.userState.reason ?? 'Action blocked by hook (retryable).',
-              retryable: true,
-              retryAfterMs: outcome.userState.retryAfterMs,
-              hookStatus: outcome.userState.status,
-              hookLabel: outcome.userState.hookLabel,
-              hookMethod: outcome.userState.method,
-              hookReason: outcome.userState.reason,
-              hookRemediation: outcome.userState.remediation,
-              sourceNode: outcome.userState.sourceNode,
-            }),
-          },
-        ],
-        isError: true,
-      };
+      return hookResult(
+        {
+          success: false,
+          error: outcome.userState.reason ?? 'Action blocked by hook (retryable).',
+          retryable: true,
+          retryAfterMs: outcome.userState.retryAfterMs,
+          hookStatus: outcome.userState.status,
+          hookLabel: outcome.userState.hookLabel,
+          hookMethod: outcome.userState.method,
+          hookReason: outcome.userState.reason,
+          hookRemediation: outcome.userState.remediation,
+          sourceNode: outcome.userState.sourceNode,
+        },
+        true
+      );
     }
 
     // Reject recursive follow-up emission
     if (outcome.followUpRequest && isFollowUp) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: false,
-              error: 'Recursive follow-up emission rejected.',
-            }),
-          },
-        ],
-        isError: true,
-      };
+      return hookResult(
+        {
+          success: false,
+          error: 'Recursive follow-up emission rejected.',
+        },
+        true
+      );
     }
 
     // Handle follow-up dispatch
     if (outcome.followUpRequest) {
       const followUpMethod = 'send_message';
       if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: false,
-                error: `Follow-up method "${followUpMethod}" is not whitelisted.`,
-              }),
-            },
-          ],
-          isError: true,
-        };
+        return hookResult(
+          {
+            success: false,
+            error: `Follow-up method "${followUpMethod}" is not whitelisted.`,
+          },
+          true
+        );
       }
 
       const followUpHandler = handlers[followUpMethod];
       if (!followUpHandler) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: false,
-                error: `Follow-up handler "${followUpMethod}" not found.`,
-              }),
-            },
-          ],
-          isError: true,
-        };
+        return hookResult(
+          {
+            success: false,
+            error: `Follow-up handler "${followUpMethod}" not found.`,
+          },
+          true
+        );
       }
+
+      // Unwrap if the handler was already wrapped to avoid double-wrapping
+      const rawFollowUpHandler =
+        ((followUpHandler as unknown as WrappedHandler<Record<string, unknown>>)[RAW_HANDLER] as
+          | ((args: Record<string, unknown>) => Promise<AnyToolResult>)
+          | undefined) ?? followUpHandler;
 
       // Dispatch follow-up through the wrapped pipeline with timeout
       const followUpPromise = wrapHandlerWithHooks(
         followUpMethod,
-        followUpHandler as (
-          args: Record<string, unknown>
-        ) => Promise<import('../tools/tool-result').ToolResult>,
+        rawFollowUpHandler as (args: Record<string, unknown>) => Promise<AnyToolResult>,
         engine,
         handlers,
         { ...meta, targetNode: outcome.followUpRequest.targetNode },
@@ -633,4 +648,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // Call original handler with final (potentially patched) params
     return handler(outcome.finalParams as T);
   };
+
+  (wrapped as unknown as WrappedHandler<T>)[RAW_HANDLER] = handler;
+  return wrapped;
 }

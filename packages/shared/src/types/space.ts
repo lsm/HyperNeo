@@ -1648,8 +1648,8 @@ export interface WorkflowHook {
   authorizedCallers?: WorkflowHookAuthorizedCaller[];
   /** Human-only hooks can only run from explicit UI approval/retry actions, never agent MCP sessions. */
   humanOnly?: boolean;
-  /** Hook classification — determines execution order and failure semantics. */
-  classification: 'validation' | 'side_effect';
+  /** Hook classification — determines execution order and failure semantics. Defaults to 'validation'. */
+  classification?: 'validation' | 'side_effect';
   /** Execution order within classification (lower = earlier). Defaults to 0. */
   order?: number;
   /** Human-readable label for debugging and banner messages. */

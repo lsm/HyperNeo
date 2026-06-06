@@ -60,7 +60,7 @@ const RESTRICTED_ENV_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', 'GLM_', 'ZHIPU_', 'COP
 const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 
 /** Keys that are always allowed regardless of prefix/pattern. */
-const ALLOWED_ENV_KEYS = new Set([
+const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'PATH',
   'HOME',
   'USER',
@@ -68,12 +68,16 @@ const ALLOWED_ENV_KEYS = new Set([
   'LANG',
   'TERM',
   'TMPDIR',
+  'NEOKAI_VALIDATION_BASE_REF',
+]);
+
+/** GitHub credential keys — only injected when hook declares externalLookups: ['github']. */
+const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_TOKEN',
   'GITHUB_TOKEN',
   'GH_ENTERPRISE_TOKEN',
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
-  'NEOKAI_VALIDATION_BASE_REF',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -92,14 +96,27 @@ export function registerBuiltInValidator(
   BUILT_IN_VALIDATORS.set(id, fn);
 }
 
-// Default registrations — these are intentionally permissive stubs.
-// Production deployments should replace them with real checks.
-registerBuiltInValidator('pr_open', async () => ({ type: 'allow' }));
-registerBuiltInValidator('pr_mergeable', async () => ({ type: 'allow' }));
-registerBuiltInValidator('github_review_approved', async () => ({ type: 'allow' }));
-registerBuiltInValidator('codex_review_approved', async () => ({ type: 'allow' }));
-registerBuiltInValidator('artifact_exists', async () => ({ type: 'allow' }));
-registerBuiltInValidator('task_reported_status', async () => ({ type: 'allow' }));
+// Default registrations — fail closed until a real validator is wired.
+// Production deployments should replace these with actual checks.
+const NOT_IMPLEMENTED = 'Built-in validator not yet implemented';
+registerBuiltInValidator('pr_open', async () => ({ type: 'block', reason: NOT_IMPLEMENTED }));
+registerBuiltInValidator('pr_mergeable', async () => ({ type: 'block', reason: NOT_IMPLEMENTED }));
+registerBuiltInValidator('github_review_approved', async () => ({
+  type: 'block',
+  reason: NOT_IMPLEMENTED,
+}));
+registerBuiltInValidator('codex_review_approved', async () => ({
+  type: 'block',
+  reason: NOT_IMPLEMENTED,
+}));
+registerBuiltInValidator('artifact_exists', async () => ({
+  type: 'block',
+  reason: NOT_IMPLEMENTED,
+}));
+registerBuiltInValidator('task_reported_status', async () => ({
+  type: 'block',
+  reason: NOT_IMPLEMENTED,
+}));
 
 // ---------------------------------------------------------------------------
 // Environment builder
@@ -111,11 +128,20 @@ function buildHookRestrictedEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {};
 
+  const permitGithub = context.permittedExternalLookups.includes('github');
+
   for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
     if (value === undefined) continue;
 
-    if (ALLOWED_ENV_KEYS.has(key)) {
+    if (ALWAYS_ALLOWED_ENV_KEYS.has(key)) {
       env[key] = value as string;
+      continue;
+    }
+
+    if (GITHUB_LOOKUP_ENV_KEYS.has(key)) {
+      if (permitGithub) {
+        env[key] = value as string;
+      }
       continue;
     }
 
@@ -179,7 +205,9 @@ function buildHookRestrictedEnv(
       ) {
         continue;
       }
-      if (!ALLOWED_ENV_KEYS.has(key)) {
+      const isAllowed =
+        ALWAYS_ALLOWED_ENV_KEYS.has(key) || (GITHUB_LOOKUP_ENV_KEYS.has(key) && permitGithub);
+      if (!isAllowed) {
         const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
         if (isPrefixRestricted) continue;
         const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);

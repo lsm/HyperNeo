@@ -180,7 +180,11 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
 
     if (typeof hook.enabled !== 'boolean') errors.push(`${loc}.enabled: expected boolean`);
 
-    if (hook.classification !== 'validation' && hook.classification !== 'side_effect') {
+    if (
+      hook.classification !== undefined &&
+      hook.classification !== 'validation' &&
+      hook.classification !== 'side_effect'
+    ) {
       errors.push(`${loc}.classification: expected "validation" or "side_effect"`);
     }
 
