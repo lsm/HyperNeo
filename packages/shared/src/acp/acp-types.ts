@@ -11,7 +11,7 @@
 
 export interface AcpJsonRpcRequest<T = unknown> {
   jsonrpc: '2.0';
-  id: number | string;
+  id: number | string | null;
   method: string;
   params?: T;
 }
@@ -67,7 +67,7 @@ export interface AcpClientCapabilities {
 }
 
 export interface AcpAgentCapabilities {
-  auth?: { logout?: {} };
+  auth?: { logout?: {} | null };
   loadSession?: boolean;
   mcpCapabilities?: { http: boolean; sse: boolean };
   promptCapabilities?: { audio: boolean; embeddedContext: boolean; image: boolean };
@@ -195,8 +195,8 @@ export interface AcpSessionResumeResult {
 }
 
 export interface AcpSessionListParams {
-  cwd?: string;
-  cursor?: string;
+  cwd?: string | null;
+  cursor?: string | null;
   _meta?: object | null;
 }
 
@@ -289,9 +289,10 @@ export interface AcpResourceLinkContentBlock {
   type: 'resource_link';
   uri: string;
   name: string;
-  mimeType?: string;
-  description?: string;
-  size?: number;
+  title?: string | null;
+  mimeType?: string | null;
+  description?: string | null;
+  size?: number | null;
 }
 
 // ============================================================================
@@ -404,8 +405,8 @@ export interface AcpAvailableCommand {
   name: string;
   description: string;
   input?: {
-    hint?: string;
-  };
+    hint: string;
+  } | null;
 }
 
 // ============================================================================
@@ -503,8 +504,8 @@ export type AcpPermissionResponseResult = {
 export interface AcpFsReadParams {
   sessionId: string;
   path: string;
-  line?: number;
-  limit?: number;
+  line?: number | null;
+  limit?: number | null;
   _meta?: object | null;
 }
 
@@ -532,9 +533,9 @@ export interface AcpTerminalCreateParams {
   sessionId: string;
   command: string;
   args?: string[];
-  cwd?: string;
+  cwd?: string | null;
   env?: AcpEnvVariable[];
-  outputByteLimit?: number;
+  outputByteLimit?: number | null;
   _meta?: object | null;
 }
 

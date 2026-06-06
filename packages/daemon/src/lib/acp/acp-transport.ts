@@ -265,7 +265,7 @@ export class AcpTransport {
   /**
    * Send a JSON-RPC response for an inbound request.
    */
-  sendResponse(id: number | string, result: unknown): void {
+  sendResponse(id: number | string | null, result: unknown): void {
     if (this.closed || !this.process || this.processExited) {
       logger.warn('Cannot send response: transport is closed or process has exited');
       return;
@@ -287,7 +287,7 @@ export class AcpTransport {
   /**
    * Send a JSON-RPC error response for an inbound request.
    */
-  sendErrorResponse(id: number | string, error: AcpJsonRpcError): void {
+  sendErrorResponse(id: number | string | null, error: AcpJsonRpcError): void {
     if (this.closed || !this.process || this.processExited) {
       logger.warn('Cannot send error response: transport is closed or process has exited');
       return;
