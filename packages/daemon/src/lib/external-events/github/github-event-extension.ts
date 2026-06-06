@@ -42,6 +42,7 @@ interface GitHubHookResponse {
   events?: string[];
   config?: {
     url?: string;
+    content_type?: string;
   };
 }
 
@@ -146,7 +147,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         enabled: params.enabled,
       });
       if (replacingAutoSecret || disablingAutoWebhook) {
-        this.repo.clearWebhookRegistration(watchedRepo.id);
+        this.repo.clearWebhookRegistration(watchedRepo.id, { clearSecret: disablingAutoWebhook });
         watchedRepo = this.repo.getWatchedRepoById(watchedRepo.id) ?? watchedRepo;
       }
       await this.persistSpaceConfig(context, watchedRepo.spaceId);
@@ -191,6 +192,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     hub.onRequest('space.github.checkWebhook', async (data) => {
       await assertRpcConfigEnabled(context, this.sourceId);
+      await assertWebhookCapabilityEnabled(context, this.sourceId);
       const params = data as { spaceId?: string; owner?: string; repo?: string };
       if (!params.spaceId || !params.owner || !params.repo) {
         throw new Error('spaceId, owner and repo are required');
@@ -257,12 +259,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (!this.context)
       return Response.json({ error: 'GitHub extension not started' }, { status: 503 });
     const global = await this.context.config.getGlobalConfig(this.sourceId);
-    if (!global.globallyEnabled || global.capabilities.webhooks === false) {
-      return Response.json(
-        { message: 'Event ignored', reason: 'github_extension_disabled' },
-        { status: 202 }
-      );
-    }
+    const webhooksEnabled = global.globallyEnabled && global.capabilities.webhooks !== false;
 
     const signature = req.headers.get('X-Hub-Signature-256');
     const eventType = req.headers.get('X-GitHub-Event');
@@ -273,13 +270,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     const raw = await req.text();
     const signatureMatchedRepos: GitHubWatchedRepo[] = [];
-    for (const repo of this.repo.listEnabledWebhookRepos()) {
+    for (const repo of this.repo.listWebhookValidationRepos()) {
       if (repo.webhookSecret && (await verifySignature(raw, signature, repo.webhookSecret))) {
         signatureMatchedRepos.push(repo);
       }
     }
     if (signatureMatchedRepos.length === 0) {
       return Response.json({ error: 'Invalid signature' }, { status: 401 });
+    }
+    if (!webhooksEnabled) {
+      return Response.json(
+        { message: 'Event ignored', reason: 'github_extension_disabled' },
+        { status: 202 }
+      );
     }
 
     let payload: unknown;
@@ -303,6 +306,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     let published = 0;
     for (const repo of validForRepo) {
+      if (!repo.enabled) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
       await this.publishEvent(repo.spaceId, normalized, this.context);
@@ -720,7 +724,11 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
   if (watched.webhookUrl && hook.config?.url !== watched.webhookUrl) {
     return 'GitHub webhook URL does not match this NeoKai endpoint';
   }
+  if (hook.config?.content_type !== 'json') {
+    return 'GitHub webhook content type must be JSON';
+  }
   const events = new Set(hook.events ?? []);
+  if (events.has('*')) return null;
   const missingEvents = REQUIRED_WEBHOOK_EVENTS.filter((event) => !events.has(event));
   if (missingEvents.length > 0) {
     return `GitHub webhook is missing events: ${missingEvents.join(', ')}`;

@@ -976,7 +976,7 @@ function GitHubRepoRow({
               size="sm"
               variant="secondary"
               loading={false}
-              disabled={disabled || webhookBusy}
+              disabled={disabled || webhookBusy || !webhooksEnabled}
               onClick={onCheckWebhook}
             >
               Check webhook

@@ -153,15 +153,16 @@ export class GitHubEventExtensionRepository {
     return this.getWatchedRepoById(id)!;
   }
 
-  clearWebhookRegistration(id: string): void {
+  clearWebhookRegistration(id: string, options: { clearSecret?: boolean } = {}): void {
     this.db
       .prepare(
         `UPDATE space_github_watched_repos
-         SET webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
+         SET webhook_secret = CASE WHEN ? THEN NULL ELSE webhook_secret END,
+             webhook_remote_id = NULL, webhook_url = NULL, webhook_auto_registered = 0, webhook_active = NULL,
              webhook_last_checked_at = NULL, webhook_last_error = NULL, webhook_configured_at = NULL, updated_at = ?
          WHERE id = ?`
       )
-      .run(Date.now(), id);
+      .run(options.clearSecret ? 1 : 0, Date.now(), id);
   }
 
   setRepoEnabled(spaceId: string, enabled: boolean): number {
@@ -210,11 +211,11 @@ export class GitHubEventExtensionRepository {
     return rows.map((r) => this.rowToRepo(r));
   }
 
-  listEnabledWebhookRepos(): GitHubWatchedRepo[] {
+  listWebhookValidationRepos(): GitHubWatchedRepo[] {
     return (
       this.db
         .prepare(
-          `SELECT * FROM space_github_watched_repos WHERE enabled = 1 AND webhook_enabled = 1 AND webhook_secret IS NOT NULL`
+          `SELECT * FROM space_github_watched_repos WHERE webhook_enabled = 1 AND webhook_secret IS NOT NULL`
         )
         .all() as Record<string, unknown>[]
     ).map((r) => this.rowToRepo(r));

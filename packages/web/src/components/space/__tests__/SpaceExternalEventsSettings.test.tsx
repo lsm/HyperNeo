@@ -655,7 +655,11 @@ describe('SpaceExternalEventsSettings', () => {
           settings: {},
         });
       }
-      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.listWatchedRepos') {
+        return Promise.resolve({
+          repositories: [{ ...repoResult.repositories[0], webhookRemoteId: 123 }],
+        });
+      }
       return Promise.resolve({});
     });
     const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
@@ -663,6 +667,7 @@ describe('SpaceExternalEventsSettings', () => {
 
     expect(getByText('Auto-configure')).toHaveProperty('disabled', true);
     expect(getByText('Auto-configure webhook')).toHaveProperty('disabled', true);
+    expect(getByText('Check webhook')).toHaveProperty('disabled', true);
   });
 
   it('auto-configures new repositories without a manual secret when polling is disabled', async () => {
