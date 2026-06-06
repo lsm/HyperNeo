@@ -1,6 +1,6 @@
 {
   "name": "@neokai/desktop",
-  "version": "0.35.0",
+  "version": "0.36.0",
   "private": true,
   "description": "Kai Desktop App - Tauri wrapper bundling the neokai daemon as a sidecar",
   "scripts": {
