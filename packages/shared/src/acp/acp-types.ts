@@ -67,10 +67,17 @@ export interface AcpClientCapabilities {
 }
 
 export interface AcpAgentCapabilities {
+  auth?: { logout?: {} };
   loadSession?: boolean;
   mcpCapabilities?: { http: boolean; sse: boolean };
   promptCapabilities?: { audio: boolean; embeddedContext: boolean; image: boolean };
-  sessionCapabilities?: { close?: {}; list?: {}; resume?: {} };
+  sessionCapabilities?: {
+    close?: {};
+    delete?: {};
+    list?: {};
+    resume?: {};
+    additionalDirectories?: {};
+  };
   experimental?: Record<string, unknown>;
 }
 
@@ -163,6 +170,7 @@ export interface AcpSessionResumeParams {
   sessionId: string;
   cwd: string;
   mcpServers?: AcpMcpServerConfig[];
+  additionalDirectories?: string[];
   _meta?: object | null;
 }
 
@@ -227,15 +235,31 @@ export interface AcpAudioContentBlock {
   data: string;
 }
 
-export interface AcpResourceContentBlock {
+export interface AcpResourceContentBlockBase {
   type: 'resource';
   resource: {
     uri: string;
     mimeType?: string;
-    text?: string;
-    blob?: string;
   };
 }
+
+export interface AcpResourceTextContentBlock extends AcpResourceContentBlockBase {
+  resource: {
+    uri: string;
+    mimeType?: string;
+    text: string;
+  };
+}
+
+export interface AcpResourceBlobContentBlock extends AcpResourceContentBlockBase {
+  resource: {
+    uri: string;
+    mimeType?: string;
+    blob: string;
+  };
+}
+
+export type AcpResourceContentBlock = AcpResourceTextContentBlock | AcpResourceBlobContentBlock;
 
 export interface AcpResourceLinkContentBlock {
   type: 'resource_link';
@@ -265,6 +289,7 @@ export type AcpSessionUpdate =
   | AcpCurrentModeUpdate
   | AcpConfigOptionUpdate
   | AcpSessionInfoUpdate
+  | AcpUsageUpdate
   | AcpAvailableCommandsUpdate;
 
 export interface AcpAgentMessageChunkUpdate {
@@ -318,7 +343,15 @@ export interface AcpConfigOptionUpdate {
 
 export interface AcpSessionInfoUpdate {
   sessionUpdate: 'session_info_update';
-  info: Record<string, unknown>;
+  title?: string;
+  updatedAt?: string;
+}
+
+export interface AcpUsageUpdate {
+  sessionUpdate: 'usage_update';
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCost?: number;
 }
 
 export interface AcpAvailableCommandsUpdate {
@@ -329,6 +362,9 @@ export interface AcpAvailableCommandsUpdate {
 export interface AcpAvailableCommand {
   name: string;
   description: string;
+  input?: {
+    hint?: string;
+  };
 }
 
 // ============================================================================
@@ -358,30 +394,25 @@ export interface AcpToolCallUpdate {
 }
 
 export type AcpToolCallContent =
-  | AcpToolCallTextContent
+  | AcpToolCallContentWrapper
   | AcpToolCallDiffContent
-  | AcpToolCallTerminalContent
-  | AcpToolCallResourceContent;
+  | AcpToolCallTerminalContent;
 
-export interface AcpToolCallTextContent {
-  type: 'text';
-  text: string;
+export interface AcpToolCallContentWrapper {
+  type: 'content';
+  content: AcpContentBlock;
 }
 
 export interface AcpToolCallDiffContent {
   type: 'diff';
-  original: string;
-  modified: string;
+  path: string;
+  oldText: string;
+  newText: string;
 }
 
 export interface AcpToolCallTerminalContent {
   type: 'terminal';
   terminalId: string;
-}
-
-export interface AcpToolCallResourceContent {
-  type: 'resource';
-  uri: string;
 }
 
 export interface AcpToolCallLocation {
@@ -421,14 +452,9 @@ export interface AcpPermissionOption {
   kind: string;
 }
 
-export type AcpPermissionResponseResult =
-  | {
-      outcome: 'selected';
-      optionId: string;
-    }
-  | {
-      outcome: 'cancelled';
-    };
+export type AcpPermissionResponseResult = {
+  outcome: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' };
+};
 
 // ============================================================================
 // File System
@@ -487,7 +513,7 @@ export interface AcpTerminalOutputParams {
 export interface AcpTerminalOutputResult {
   output: string;
   truncated: boolean;
-  exitStatus?: { exitCode: number; signal?: string } | null;
+  exitStatus?: { exitCode: number | null; signal?: string } | null;
   _meta?: object | null;
 }
 
@@ -499,7 +525,7 @@ export interface AcpTerminalWaitForExitParams {
 }
 
 export interface AcpTerminalWaitForExitResult {
-  exitCode: number;
+  exitCode: number | null;
   signal?: string;
   _meta?: object | null;
 }
@@ -576,14 +602,14 @@ export interface AcpMcpHttpServerConfig {
   type: 'http';
   name: string;
   url: string;
-  headers?: AcpHeader[];
+  headers: AcpHeader[];
 }
 
 export interface AcpMcpSseServerConfig {
   type: 'sse';
   name: string;
   url: string;
-  headers?: AcpHeader[];
+  headers: AcpHeader[];
 }
 
 // ============================================================================
