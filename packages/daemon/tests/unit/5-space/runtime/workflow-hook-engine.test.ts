@@ -618,6 +618,7 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
+    hookStateRepo.ensure('run-1', 'hook-1');
     hookStateRepo.update('run-1', 'hook-1', {
       expectedVersion: 0,
       retryCount: 2,
