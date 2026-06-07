@@ -134,6 +134,11 @@ describe('SpaceLongHorizonAgents', () => {
     expect(detail.textContent).toContain('Worker agent found');
     expect(detail.textContent).toContain('@research is a worker agent, not a long-horizon agent.');
     expect(detail.textContent).toContain('Go to Worker agents settings');
+
+    const link = detail.querySelector('button');
+    expect(link).toBeTruthy();
+    fireEvent.click(link!);
+    expect(mockNavigateToSpaceConfigure).toHaveBeenCalledWith('space-1', 'agents');
   });
 
   it('uses the route space id for agent session navigation', () => {

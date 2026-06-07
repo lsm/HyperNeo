@@ -648,6 +648,11 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.agentId) throw new Error('agentId is required');
     if (!params.source?.trim()) throw new Error('source is required');
     if (!params.topic?.trim()) throw new Error('topic is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
     const source = params.source.trim();
     const topic = params.topic.trim();
     const pattern = validateLongHorizonSubscriptionPattern(source, topic);

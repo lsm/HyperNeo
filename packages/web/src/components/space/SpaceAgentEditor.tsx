@@ -298,9 +298,7 @@ export function SpaceAgentEditor({
 
         {isPromotion && promotionDraft && (
           <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
-            <p class="font-medium">
-              Review generated long-horizon profile before creating long-horizon agent.
-            </p>
+            <p class="font-medium">Review generated worker agent profile before creating.</p>
             <p class="mt-1 text-xs text-blue-200/80">
               Draft uses recent renderable messages from "{promotionDraft.sourceSessionTitle}" as
               standing context instead of copying raw chat history.
@@ -562,7 +560,7 @@ export function SpaceAgentEditor({
         {/* Custom Prompt */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-2">
-            {isPromotion ? 'Long-Horizon Profile' : 'Custom Prompt'}
+            {isPromotion ? 'Worker Agent Profile' : 'Custom Prompt'}
             <span class="text-gray-400 text-xs ml-2">
               (optional — appended after NeoKai contract)
             </span>
@@ -587,11 +585,7 @@ export function SpaceAgentEditor({
             Cancel
           </Button>
           <Button type="submit" loading={saving} fullWidth>
-            {isEdit
-              ? 'Save Changes'
-              : isPromotion
-                ? 'Create Long-Horizon Agent'
-                : 'Create worker agent'}
+            {isEdit ? 'Save Changes' : isPromotion ? 'Create Worker Agent' : 'Create worker agent'}
           </Button>
         </div>
       </form>
