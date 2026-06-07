@@ -310,7 +310,7 @@ describe('WorkflowHookEngine', () => {
 
   test('patch_params: single hook patches params', async () => {
     const { engine, mockExecutor } = makeEngine([
-      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+      makeHook({ id: 'hook-1', classification: 'validation' }),
     ]);
     mockExecutor.setResult('hook-1', {
       type: 'patch_params',
@@ -328,8 +328,8 @@ describe('WorkflowHookEngine', () => {
 
   test('patch_params: multiple hooks apply sequentially', async () => {
     const { engine, mockExecutor } = makeEngine([
-      makeHook({ id: 'hook-1', classification: 'side_effect', order: 0 }),
-      makeHook({ id: 'hook-2', classification: 'side_effect', order: 1 }),
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+      makeHook({ id: 'hook-2', classification: 'validation', order: 1 }),
     ]);
     mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { a: 1 } });
     mockExecutor.setResult('hook-2', { type: 'patch_params', patch: { b: 2 } });
