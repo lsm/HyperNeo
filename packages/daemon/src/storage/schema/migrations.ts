@@ -10576,7 +10576,7 @@ function runMigration152(db: BunDatabase): void {
   }
 }
 
-function runMigration154(db: BunDatabase): void {
+export function runMigration154(db: BunDatabase): void {
   if (!tableExists(db, 'space_github_watched_repos')) return;
   const columns: Array<[string, string]> = [
     ['webhook_remote_id', 'INTEGER'],
