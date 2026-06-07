@@ -1,5 +1,5 @@
 /**
- * Custom Agent Factory
+ * Worker Agent Factory
  *
  * Creates `AgentSessionInit` from a visible `SpaceAgent` + workflow slot configuration.
  * Runtime behavior must be WYSIWYG: code provides structure and context, while agent
@@ -177,7 +177,7 @@ export interface CustomAgentConfig {
 }
 
 /**
- * Build the runtime system prompt text for a custom agent.
+ * Build the runtime system prompt text for a worker agent.
  *
  * The NeoKai system contract (tool rules, completion semantics) is applied first by the
  * SDK preset; then the agent's `customPrompt` is appended, followed by any slot expansion.
@@ -230,7 +230,7 @@ function hashPrompt(prompt: string): string {
 }
 
 /**
- * Build the initial user message for a custom agent session.
+ * Build the initial user message for a worker agent session.
  *
  * Contains factual task/workflow/space context only.
  * Behavioral prompt (persona, operating procedure) lives in the system prompt.
@@ -550,7 +550,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
   const customTools =
     customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
-  // Built-in tools the custom agent should NOT have (everything not in its
+  // Built-in tools the worker agent should NOT have (everything not in its
   // configured tool list). Expressed as a denylist so MCP tools — which are
   // never part of `customTools` — are not collaterally excluded.
   const customDisallowedBuiltins = customTools
@@ -584,7 +584,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   if (customTools) {
     const agentKey = sanitizeAgentKey(customAgent.name);
     const agentDef: AgentDefinition = {
-      description: customAgent.description ?? `Custom agent: ${customAgent.name}`,
+      description: customAgent.description ?? `Worker agent: ${customAgent.name}`,
       // Do NOT set `tools`. An AgentDefinition's `tools` is a strict allowlist;
       // since `customTools` only ever contains built-in tool names, setting it
       // here silently excludes every MCP tool (node-agent, fetch-mcp, …) that is

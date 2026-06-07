@@ -1422,7 +1422,7 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
  * The returned objects have empty `id` and `spaceId` fields and use role names
  * (e.g., `'planner'`, `'coder'`, `'general'`) as `agentId` placeholders.
  * They are templates, not persisted entities. Call `seedBuiltInWorkflows`
- * to persist them with real SpaceAgent IDs for a given space.
+ * to persist them with real worker agent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // CODING_WORKFLOW is first so it becomes the default workflow selected by

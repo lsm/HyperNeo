@@ -5,7 +5,7 @@
  *
  * Responsibilities:
  * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
- * - Protect custom agents that are referenced by nodes
+ * - Protect worker agents that are referenced by nodes
  *
  * Workflow selection: either explicit workflowId provided by the caller, or
  * AI auto-select at runtime via list_workflows + start_workflow_run. There is
@@ -52,7 +52,7 @@ export function isReservedWorkflowAgentName(name: string): boolean {
 
 /**
  * Minimal interface the manager needs from SpaceAgentManager to validate
- * custom agent references in workflow nodes.
+ * worker agent references in workflow nodes.
  */
 export interface SpaceAgentLookup {
   /** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
@@ -395,7 +395,7 @@ export class SpaceWorkflowManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Returns all workflows whose nodes reference the given custom agent.
+   * Returns all workflows whose nodes reference the given worker agent.
    * Used by SpaceAgentManager to block deletion of in-use agents.
    */
   getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
