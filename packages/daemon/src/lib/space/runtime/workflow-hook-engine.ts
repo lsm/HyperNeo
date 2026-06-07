@@ -105,15 +105,20 @@ export class WorkflowHookEngine {
   constructor(private readonly config: WorkflowHookEngineConfig) {}
 
   /**
-   * Persist a single hook-local state update through the repository.
-   * Returns true on success, false on version conflict or error.
+   * Persist a single hook-local state update (and optional last result) through
+   * the repository. Returns true on success, false on version conflict or error.
    */
-  persistStateUpdate(hookId: string, state: Record<string, unknown>): boolean {
+  persistStateUpdate(
+    hookId: string,
+    state: Record<string, unknown>,
+    lastResult?: WorkflowHookResult
+  ): boolean {
     try {
       const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
       const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
         expectedVersion: repoState?.version ?? 0,
         localState: state,
+        lastResult,
       });
       return result !== null;
     } catch {
@@ -213,11 +218,19 @@ export class WorkflowHookEngine {
           }
           break;
 
-        case 'patch_params':
+        case 'patch_params': {
+          const classification = hook.classification ?? 'validation';
+          if (classification === 'side_effect') {
+            log.warn(
+              `Hook "${hook.id}" returned patch_params but is a side_effect; patch ignored.`
+            );
+            break;
+          }
           if (result.patch && typeof result.patch === 'object') {
             currentParams = { ...currentParams, ...result.patch };
           }
           break;
+        }
 
         case 'emit_follow_up':
           if (result.targetNode && result.message) {
@@ -569,12 +582,28 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   const wrapped = async (args: T) => {
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Persist state updates
+    // Batch persist hook state updates and execution results.
+    // Each hook gets at most one repo write to avoid version conflicts.
+    const updatesByHook = new Map<
+      string,
+      { state: Record<string, unknown>; result?: WorkflowHookResult }
+    >();
     for (const update of outcome.stateUpdates) {
-      const ok = engine.persistStateUpdate(update.hookId, update.state);
+      updatesByHook.set(update.hookId, { state: update.state });
+    }
+    for (const record of outcome.executionLog) {
+      const existing = updatesByHook.get(record.hookId);
+      if (existing) {
+        existing.result = record.result;
+      } else {
+        updatesByHook.set(record.hookId, { state: {}, result: record.result });
+      }
+    }
+    for (const [hookId, { state, result }] of updatesByHook) {
+      const ok = engine.persistStateUpdate(hookId, state, result);
       if (!ok) {
         log.warn(
-          `Failed to persist hook state for ${update.hookId}: version conflict or repo error`
+          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
         );
       }
     }
@@ -615,19 +644,14 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       );
     }
 
-    // Reject recursive follow-up emission
-    if (outcome.followUpRequest && isFollowUp) {
-      return hookResult(
-        {
-          success: false,
-          error: 'Recursive follow-up emission rejected.',
-        },
-        true
-      );
+    // Skip nested follow-up emission — only one level of follow-up is allowed
+    const nestedFollowUpSuppressed = outcome.followUpRequest && isFollowUp;
+    if (nestedFollowUpSuppressed) {
+      log.warn('Nested follow-up emission suppressed during follow-up dispatch.');
     }
 
     // Handle follow-up dispatch
-    if (outcome.followUpRequest) {
+    if (outcome.followUpRequest && !nestedFollowUpSuppressed) {
       const followUpMethod = 'send_message';
       if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
         return hookResult(

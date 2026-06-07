@@ -64,7 +64,10 @@ function makeMockNodeExecutionRepo(): NodeExecutionRepository {
 }
 
 function makeMockHookStateRepo(): WorkflowHookStateRepository {
-  const states = new Map<string, { version: number; localState: Record<string, unknown> }>();
+  const states = new Map<
+    string,
+    { version: number; localState: Record<string, unknown>; lastResult?: WorkflowHookResult }
+  >();
 
   return {
     get: (runId: string, hookId: string) => {
@@ -76,6 +79,7 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
           hookId,
           version: s.version,
           localState: s.localState,
+          lastResult: s.lastResult,
           retryCount: 0,
           voteMaps: {},
           createdAt: Date.now(),
@@ -95,6 +99,7 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
         hookId,
         version: s.version,
         localState: s.localState,
+        lastResult: s.lastResult,
         retryCount: 0,
         voteMaps: {},
         createdAt: Date.now(),
@@ -104,7 +109,11 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
     update: (
       runId: string,
       hookId: string,
-      patch: { expectedVersion: number; localState?: Record<string, unknown> }
+      patch: {
+        expectedVersion: number;
+        localState?: Record<string, unknown>;
+        lastResult?: WorkflowHookResult;
+      }
     ) => {
       const key = `${runId}:${hookId}`;
       const s = states.get(key);
@@ -113,11 +122,15 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
       if (patch.localState) {
         s.localState = { ...s.localState, ...patch.localState };
       }
+      if (patch.lastResult !== undefined) {
+        s.lastResult = patch.lastResult;
+      }
       return {
         runId,
         hookId,
         version: s.version,
         localState: s.localState,
+        lastResult: s.lastResult,
         retryCount: 0,
         voteMaps: {},
         createdAt: Date.now(),
@@ -404,6 +417,21 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.userState.status).toBe('state_recorded');
   });
 
+  test('side_effect patch_params is ignored', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'patch_params',
+      patch: { extra: 'value' },
+    });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.finalParams).toEqual({ target: 'Review' });
+  });
+
   test('hook matching respects method, sourceNode, and agentSlots', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({
@@ -528,7 +556,7 @@ describe('wrapHandlerWithHooks', () => {
 
   test('patches params and re-enters handler', async () => {
     const { engine, mockExecutor } = makeEngine([
-      makeHook({ id: 'hook-1', classification: 'side_effect' }),
+      makeHook({ id: 'hook-1', classification: 'validation' }),
     ]);
     mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { extra: 'data' } });
 
@@ -544,6 +572,41 @@ describe('wrapHandlerWithHooks', () => {
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(true);
     expect(data.extra).toBe('data');
+  });
+
+  test('persists hook results to state repo', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({ id: 'hook-1', classification: 'validation' }),
+        makeHook({ id: 'hook-2', classification: 'side_effect' }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    mockExecutor.setResult('hook-2', { type: 'record_state', state: { count: 1 } });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review' });
+
+    const state1 = hookStateRepo.get('run-1', 'hook-1');
+    expect(state1?.lastResult?.type).toBe('allow');
+
+    const state2 = hookStateRepo.get('run-1', 'hook-2');
+    expect(state2?.lastResult?.type).toBe('record_state');
+    expect(state2?.localState).toEqual({ count: 1 });
   });
 
   test('dispatches follow-up through handler pipeline', async () => {
@@ -584,7 +647,7 @@ describe('wrapHandlerWithHooks', () => {
     expect(data.success).toBe(true);
   });
 
-  test('rejects recursive follow-up emission', async () => {
+  test('suppresses nested follow-up emission but still calls handler', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', classification: 'side_effect' }),
     ]);
@@ -613,8 +676,7 @@ describe('wrapHandlerWithHooks', () => {
     const result = await wrapped({ target: 'Review' });
 
     const data = JSON.parse(result.content[0].text);
-    expect(data.success).toBe(false);
-    expect(data.error).toContain('Recursive follow-up emission rejected');
+    expect(data.success).toBe(true);
   });
 
   test('retryable block returns retryable error with metadata', async () => {
