@@ -517,6 +517,112 @@ describe('WorkflowHookEngine', () => {
       (capturedContext as { hookLocalState: Record<string, unknown> }).hookLocalState.counter
     ).toBe(5);
   });
+
+  test('recentResultRef injects referenced hook result into local state', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    hookStateRepo.update('run-1', 'ref-hook', {
+      expectedVersion: 0,
+      lastResult: { type: 'block', reason: 'Prior block' },
+    });
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'side_effect',
+          localState: {
+            defaults: { foo: 'bar' },
+            recentResultRef: { hookId: 'ref-hook', key: 'priorResult' },
+          },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    const localState = (capturedContext as { hookLocalState: Record<string, unknown> })
+      .hookLocalState;
+    expect(localState.foo).toBe('bar');
+    expect((localState.priorResult as WorkflowHookResult).type).toBe('block');
+  });
+
+  test('send_message target patch is ignored', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation' }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'patch_params',
+      patch: { target: 'Deploy', extra: true },
+    });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('patch_params');
+    expect(outcome.finalParams).toEqual({ target: 'Review', extra: true });
+  });
+
+  test('@worker address target is parsed to node name for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:run-1/Review/reviewer' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('retryable_block honors maxAttempts and converts to hard block', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    hookStateRepo.update('run-1', 'hook-1', {
+      expectedVersion: 0,
+      retryCount: 2,
+    });
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          retry: { maxAttempts: 2, delayMs: 1000 },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'retryable_block', reason: 'Retry me' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {

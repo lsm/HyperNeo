@@ -28,6 +28,7 @@ import type { WorkflowHookStateRepository } from '../../../storage/repositories/
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
 import { Logger } from '../../logger';
+import { parseAddress } from '../../../../../messaging/src/address';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -209,14 +210,37 @@ export class WorkflowHookEngine {
           // side_effect block is recorded but does not stop
           break;
 
-        case 'retryable_block':
+        case 'retryable_block': {
           if ((hook.classification ?? 'validation') === 'validation') {
             // block takes precedence over retryable_block
             if (!blockedByValidation) {
-              blockedByValidation = { hookId: hook.id, result, isRetryable: true };
+              const retryConfig = hook.retry;
+              const maxAttempts = retryConfig?.maxAttempts ?? 0;
+              const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+              const currentRetryCount = hookState?.retryCount ?? 0;
+
+              if (maxAttempts > 0 && currentRetryCount >= maxAttempts) {
+                blockedByValidation = { hookId: hook.id, result, isRetryable: false };
+              } else {
+                blockedByValidation = { hookId: hook.id, result, isRetryable: true };
+                const delayMs = retryConfig?.delayMs ?? 0;
+                const backoffMultiplier = retryConfig?.backoffMultiplier ?? 1;
+                const nextRetryAt =
+                  Date.now() + delayMs * Math.pow(backoffMultiplier, currentRetryCount);
+                try {
+                  this.config.hookStateRepo.update(this.config.workflowRunId, hook.id, {
+                    expectedVersion: hookState?.version ?? 0,
+                    retryCount: currentRetryCount + 1,
+                    nextRetryAt,
+                  });
+                } catch {
+                  // best-effort retry state persistence
+                }
+              }
             }
           }
           break;
+        }
 
         case 'patch_params': {
           const classification = hook.classification ?? 'validation';
@@ -227,7 +251,15 @@ export class WorkflowHookEngine {
             break;
           }
           if (result.patch && typeof result.patch === 'object') {
-            currentParams = { ...currentParams, ...result.patch };
+            const patch = { ...result.patch };
+            // Disallow routing field patches to prevent target bypass
+            if (methodName === 'send_message' && 'target' in patch) {
+              log.warn(
+                `Hook "${hook.id}" tried to patch send_message target; target change ignored.`
+              );
+              delete patch.target;
+            }
+            currentParams = { ...currentParams, ...patch };
           }
           break;
         }
@@ -334,7 +366,7 @@ export class WorkflowHookEngine {
             }
           }
         } else {
-          actionTargets.add(slotToNode.get(target) ?? target);
+          actionTargets.add(this.resolveTargetToNode(target, slotToNode));
         }
       } else if (Array.isArray(target)) {
         for (const t of target) {
@@ -351,7 +383,7 @@ export class WorkflowHookEngine {
               }
             }
           } else {
-            actionTargets.add(slotToNode.get(t) ?? t);
+            actionTargets.add(this.resolveTargetToNode(t, slotToNode));
           }
         }
       }
@@ -420,6 +452,16 @@ export class WorkflowHookEngine {
       hook.localState?.defaults ?? {}
     );
 
+    // Resolve recentResultRef from referenced hook state
+    let hookLocalState = hookState.localState;
+    if (hook.localState?.recentResultRef) {
+      const ref = hook.localState.recentResultRef;
+      const refState = this.config.hookStateRepo.get(this.config.workflowRunId, ref.hookId);
+      if (refState?.lastResult !== undefined) {
+        hookLocalState = { ...hookLocalState, [ref.key]: refState.lastResult };
+      }
+    }
+
     // Load current artifacts — bounded to last 50 to avoid oversized env
     let currentArtifacts: WorkflowRunArtifact[] = [];
     try {
@@ -437,13 +479,13 @@ export class WorkflowHookEngine {
       runId: this.config.workflowRunId,
       hookId: hook.id,
       methodName,
-      params,
+      params: this.boundParams(params),
       nodeId: meta.nodeId,
       nodeName,
       sessionId: meta.sessionId,
       taskId: meta.taskId,
       targetNode: hook.targetNode ?? meta.targetNode,
-      hookLocalState: hookState.localState,
+      hookLocalState,
       currentArtifacts: currentArtifacts.map((a) => ({
         id: a.id,
         nodeId: a.nodeId,
@@ -455,6 +497,21 @@ export class WorkflowHookEngine {
       })),
       permittedExternalLookups,
     };
+  }
+
+  /**
+   * Return a bounded projection of action params to avoid oversized env.
+   * Large `data` fields are replaced with a placeholder; long messages truncated.
+   */
+  private boundParams(params: Record<string, unknown>): Record<string, unknown> {
+    const clone = { ...params };
+    if (clone.data !== undefined) {
+      clone.data = '[truncated: large data field omitted from hook env]';
+    }
+    if (typeof clone.message === 'string' && clone.message.length > 4096) {
+      clone.message = clone.message.slice(0, 4096) + '...[truncated]';
+    }
+    return clone;
   }
 
   // -------------------------------------------------------------------------
@@ -525,6 +582,20 @@ export class WorkflowHookEngine {
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  private resolveTargetToNode(target: string, slotToNode: Map<string, string>): string {
+    if (target.startsWith('@worker:')) {
+      try {
+        const addr = parseAddress(target);
+        if (addr.kind === 'worker') {
+          return addr.nodeId;
+        }
+      } catch {
+        // fall through to raw target
+      }
+    }
+    return slotToNode.get(target) ?? target;
+  }
 
   private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
     const keysA = Object.keys(a);
