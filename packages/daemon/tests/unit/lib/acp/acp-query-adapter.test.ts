@@ -1,0 +1,254 @@
+/**
+ * AcpQueryAdapter Tests
+ *
+ * Unit tests for the Query-contract adapter that bridges ACP notifications
+ * to SDKMessage iteration.
+ */
+
+import { describe, expect, test, mock } from 'bun:test';
+import type { AcpSessionUpdateNotification, AcpContentBlock } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+
+// ---------------------------------------------------------------------------
+// Mock AcpClient
+// ---------------------------------------------------------------------------
+
+class MockAcpClient {
+  private sessionId: string;
+  private notifications: AcpSessionUpdateNotification[] = [];
+  cancel = mock(() => {});
+  close = mock(() => {});
+
+  constructor(sessionId: string) {
+    this.sessionId = sessionId;
+  }
+
+  getSessionId() {
+    return this.sessionId;
+  }
+
+  queueNotification(notification: AcpSessionUpdateNotification) {
+    this.notifications.push(notification);
+  }
+
+  async *sendPrompt(_prompt: AcpContentBlock[]): AsyncGenerator<AcpSessionUpdateNotification> {
+    for (const n of this.notifications) {
+      yield n;
+    }
+  }
+}
+
+const { AcpQueryAdapter } = await import('../../../../src/lib/acp/acp-query-adapter');
+
+describe('AcpQueryAdapter', () => {
+  // -------------------------------------------------------------------------
+  // Construction
+  // -------------------------------------------------------------------------
+
+  test('throws when client has no session', () => {
+    class EmptyClient {
+      getSessionId() {
+        return undefined;
+      }
+    }
+    expect(() => new (AcpQueryAdapter as unknown as new (client: unknown, prompt: unknown) => AcpQueryAdapter)(
+      new EmptyClient(),
+      [],
+    )).toThrow('AcpClient has no active session');
+  });
+
+  // -------------------------------------------------------------------------
+  // Iteration
+  // -------------------------------------------------------------------------
+
+  test('yields translated assistant messages from chunks', async () => {
+    const client = new MockAcpClient('sess-1');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    client.queueNotification({
+      sessionId: 'sess-1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hi there' } },
+    });
+    client.queueNotification({
+      sessionId: 'sess-1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '!' } },
+    });
+
+    const messages: SDKMessage[] = [];
+    const iterator = adapter[Symbol.asyncIterator]();
+
+    // First message should be the accumulated text
+    const msg1 = await iterator.next();
+    expect(msg1.done).toBe(false);
+    expect(msg1.value.type).toBe('assistant');
+    expect((msg1.value as { message: { content: { text: string }[] } }).message.content[0].text).toBe('Hi there!');
+
+    // Result message
+    const msg2 = await iterator.next();
+    expect(msg2.done).toBe(false);
+    expect(msg2.value.type).toBe('result');
+
+    // Done
+    const msg3 = await iterator.next();
+    expect(msg3.done).toBe(true);
+  });
+
+  test('yields tool_use message on tool_call', async () => {
+    const client = new MockAcpClient('sess-2');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'do it' },
+    ]);
+
+    client.queueNotification({
+      sessionId: 'sess-2',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tc-1',
+        title: 'Bash',
+        rawInput: { command: 'ls' },
+      },
+    });
+
+    const iterator = adapter[Symbol.asyncIterator]();
+    const msg = await iterator.next();
+    expect(msg.done).toBe(false);
+    expect(msg.value.type).toBe('assistant');
+    const content = (msg.value as { message: { content: { type: string }[] } }).message.content;
+    expect(content[0].type).toBe('tool_use');
+  });
+
+  test('yields tool_progress on tool_call_update', async () => {
+    const client = new MockAcpClient('sess-3');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'go' },
+    ]);
+
+    client.queueNotification({
+      sessionId: 'sess-3',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tc-2',
+        title: 'Build',
+        status: 'in_progress',
+      },
+    });
+
+    const iterator = adapter[Symbol.asyncIterator]();
+    const msg = await iterator.next();
+    expect(msg.done).toBe(false);
+    expect(msg.value.type).toBe('tool_progress');
+    expect((msg.value as { tool_use_id: string }).tool_use_id).toBe('tc-2');
+  });
+
+  test('stops iteration when interrupted', async () => {
+    const client = new MockAcpClient('sess-4');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    client.queueNotification({
+      sessionId: 'sess-4',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Partial' } },
+    });
+
+    const iterator = adapter[Symbol.asyncIterator]();
+    const msg1 = await iterator.next();
+    expect(msg1.value.type).toBe('assistant');
+
+    await adapter.interrupt();
+
+    // After interrupt, subsequent next() should yield result and complete
+    const msg2 = await iterator.next();
+    expect(msg2.value.type).toBe('result');
+    expect(msg2.done).toBe(false);
+
+    const msg3 = await iterator.next();
+    expect(msg3.done).toBe(true);
+  });
+
+  test('returns early when closed before iteration', async () => {
+    const client = new MockAcpClient('sess-5');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    adapter.close();
+
+    const messages: SDKMessage[] = [];
+    for await (const msg of adapter) {
+      messages.push(msg);
+    }
+    expect(messages.length).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Interrupt / close
+  // -------------------------------------------------------------------------
+
+  test('interrupt calls client.cancel', async () => {
+    const client = new MockAcpClient('sess-6');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    await adapter.interrupt();
+    expect(client.cancel).toHaveBeenCalled();
+  });
+
+  test('interrupt is idempotent', async () => {
+    const client = new MockAcpClient('sess-7');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    await adapter.interrupt();
+    await adapter.interrupt();
+    expect(client.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test('close calls client.close', () => {
+    const client = new MockAcpClient('sess-8');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    adapter.close();
+    expect(client.close).toHaveBeenCalled();
+  });
+
+  test('close is idempotent', () => {
+    const client = new MockAcpClient('sess-9');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    adapter.close();
+    adapter.close();
+    expect(client.close).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Properties
+  // -------------------------------------------------------------------------
+
+  test('sessionId getter returns client sessionId', () => {
+    const client = new MockAcpClient('sess-10');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    expect(adapter.sessionId).toBe('sess-10');
+  });
+
+  test('setMcpServers resolves immediately', async () => {
+    const client = new MockAcpClient('sess-11');
+    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
+      { type: 'text', text: 'hello' },
+    ]);
+
+    await adapter.setMcpServers();
+    // No-op: should resolve without error
+  });
+});
