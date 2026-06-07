@@ -26,18 +26,18 @@ Previously, `space_agents` attempted to serve both roles. This caused drift: upd
 
 ### Shared-ID Long-Horizon Rows Are Now Independent
 
-Before the split, some Spaces had `space_agents` rows that shared an ID with a `space_long_horizon_agents` row. After migration (Migration 154), these rows remain linked by ID but are fully independent:
+Before the split, some Spaces had `space_agents` rows that shared an ID with a `space_long_horizon_agents` row. After migration (Migration 155), these rows remain linked by ID but are fully independent:
 
 - Updating the **worker agent** does **not** sync to the long-horizon agent.
 - Updating the **long-horizon agent** does **not** sync to the worker agent.
 - Deleting the worker agent does **not** archive the long-horizon agent.
-- Handle collisions are resolved independently (a worker can change its handle even if a long-horizon agent uses the same handle, and vice versa).
+- Handles are deduplicated across both tables; `SpaceAgentManager.validateHandle` checks `longHorizonHandleTaken()` to prevent collisions.
 
 Operators who want both rows to stay in sync must update each manually.
 
 ### Legacy Ownership Rows: Copied or Skipped
 
-Migration 154 backfills `space_long_horizon_agents` from legacy assignment tables (`space_agent_goal_assignments`, `space_agent_forge_scope_assignments`, `space_agent_reminders`):
+Migration 155 backfills `space_long_horizon_agents` from legacy assignment tables (`space_agent_goal_assignments`, `space_agent_forge_scope_assignments`, `space_agent_reminders`):
 
 - **Backfilled**: Every `space_agents` row that had at least one legacy assignment gets a matching long-horizon row.
 - **Copied**: Goals, Forge scopes, and reminders tied to a backfilled agent are copied to the new long-horizon tables.

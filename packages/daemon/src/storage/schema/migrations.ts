@@ -10595,7 +10595,7 @@ export function runMigration154(db: BunDatabase): void {
 }
 
 /**
- * Migration 154 — Copy legacy long-horizon ownership/automation data.
+ * Migration 155 — Copy legacy long-horizon ownership/automation data.
  */
 export function runMigration155(db: BunDatabase): void {
   db.exec(`
