@@ -66,7 +66,13 @@ function makeMockNodeExecutionRepo(): NodeExecutionRepository {
 function makeMockHookStateRepo(): WorkflowHookStateRepository {
   const states = new Map<
     string,
-    { version: number; localState: Record<string, unknown>; lastResult?: WorkflowHookResult }
+    {
+      version: number;
+      localState: Record<string, unknown>;
+      lastResult?: WorkflowHookResult;
+      retryCount: number;
+      nextRetryAt: number | null;
+    }
   >();
 
   return {
@@ -80,7 +86,8 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
           version: s.version,
           localState: s.localState,
           lastResult: s.lastResult,
-          retryCount: 0,
+          retryCount: s.retryCount,
+          nextRetryAt: s.nextRetryAt ?? undefined,
           voteMaps: {},
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -91,7 +98,12 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
     ensure: (runId: string, hookId: string, defaults: Record<string, unknown> = {}) => {
       const key = `${runId}:${hookId}`;
       if (!states.has(key)) {
-        states.set(key, { version: 0, localState: { ...defaults } });
+        states.set(key, {
+          version: 0,
+          localState: { ...defaults },
+          retryCount: 0,
+          nextRetryAt: null,
+        });
       }
       const s = states.get(key)!;
       return {
@@ -100,7 +112,8 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
         version: s.version,
         localState: s.localState,
         lastResult: s.lastResult,
-        retryCount: 0,
+        retryCount: s.retryCount,
+        nextRetryAt: s.nextRetryAt ?? undefined,
         voteMaps: {},
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -113,6 +126,8 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
         expectedVersion: number;
         localState?: Record<string, unknown>;
         lastResult?: WorkflowHookResult;
+        retryCount?: number;
+        nextRetryAt?: number | null;
       }
     ) => {
       const key = `${runId}:${hookId}`;
@@ -125,13 +140,20 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
       if (patch.lastResult !== undefined) {
         s.lastResult = patch.lastResult;
       }
+      if (patch.retryCount !== undefined) {
+        s.retryCount = patch.retryCount;
+      }
+      if (patch.nextRetryAt !== undefined) {
+        s.nextRetryAt = patch.nextRetryAt;
+      }
       return {
         runId,
         hookId,
         version: s.version,
         localState: s.localState,
         lastResult: s.lastResult,
-        retryCount: 0,
+        retryCount: s.retryCount,
+        nextRetryAt: s.nextRetryAt ?? undefined,
         voteMaps: {},
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -522,6 +544,7 @@ describe('WorkflowHookEngine', () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
+    hookStateRepo.ensure('run-1', 'ref-hook');
     hookStateRepo.update('run-1', 'ref-hook', {
       expectedVersion: 0,
       lastResult: { type: 'block', reason: 'Prior block' },
