@@ -271,17 +271,23 @@ export function setupSpaceAgentHandlers(
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
 
+    const space = await spaceManager.getSpace(params.spaceId);
+    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
     const agents = spaceAgentManager.listBySpaceId(params.spaceId);
     return { agents };
   });
 
   // spaceAgent.get — get a single agent by ID
   messageHub.onRequest('spaceAgent.get', async (data) => {
-    const params = data as { id: string };
+    const params = data as { id: string; spaceId?: string };
     if (!params.id) throw new Error('id is required');
 
     const agent = spaceAgentManager.getById(params.id);
     if (!agent) throw new Error(`Agent not found: ${params.id}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.id} does not belong to space ${params.spaceId}`);
+    }
 
     return { agent };
   });
@@ -290,6 +296,7 @@ export function setupSpaceAgentHandlers(
   messageHub.onRequest('spaceAgent.update', async (data) => {
     const params = data as {
       id: string;
+      spaceId?: string;
       name?: string;
       handle?: string;
       description?: string | null;
@@ -303,7 +310,13 @@ export function setupSpaceAgentHandlers(
 
     if (!params.id) throw new Error('id is required');
 
-    const { id, ...updateFields } = params;
+    const existing = spaceAgentManager.getById(params.id);
+    if (!existing) throw new Error(`Agent not found: ${params.id}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.id} does not belong to space ${params.spaceId}`);
+    }
+
+    const { id, spaceId: _spaceId, ...updateFields } = params;
     const result = await spaceAgentManager.update(id, {
       name: updateFields.name,
       handle: updateFields.handle,
@@ -387,7 +400,7 @@ export function setupSpaceAgentHandlers(
 
   // spaceAgent.delete — delete an agent (blocked if referenced by workflows)
   messageHub.onRequest('spaceAgent.delete', async (data) => {
-    const params = data as { id: string };
+    const params = data as { id: string; spaceId?: string };
     if (!params.id) throw new Error('id is required');
 
     // Pre-fetch to capture spaceId for the event payload.
@@ -396,6 +409,9 @@ export function setupSpaceAgentHandlers(
     // have the spaceId for event routing even after the row is removed.
     const existing = spaceAgentManager.getById(params.id);
     if (!existing) throw new Error(`Agent not found: ${params.id}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.id} does not belong to space ${params.spaceId}`);
+    }
 
     const result = spaceAgentManager.delete(params.id);
     if (!result.ok) {

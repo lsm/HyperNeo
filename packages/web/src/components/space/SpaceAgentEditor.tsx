@@ -281,10 +281,10 @@ export function SpaceAgentEditor({
   };
 
   const title = isEdit
-    ? `Edit Agent: ${agent!.name}`
+    ? `Edit worker agent: ${agent!.name}`
     : isPromotion
       ? `Promote Session: ${promotionDraft!.sourceSessionTitle}`
-      : 'Create Agent';
+      : 'Create worker agent';
 
   return (
     <Modal isOpen onClose={onCancel} title={title} size="lg">
@@ -298,7 +298,9 @@ export function SpaceAgentEditor({
 
         {isPromotion && promotionDraft && (
           <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
-            <p class="font-medium">Review generated long-horizon profile before creating agent.</p>
+            <p class="font-medium">
+              Review generated long-horizon profile before creating long-horizon agent.
+            </p>
             <p class="mt-1 text-xs text-blue-200/80">
               Draft uses recent renderable messages from "{promotionDraft.sourceSessionTitle}" as
               standing context instead of copying raw chat history.
@@ -585,7 +587,11 @@ export function SpaceAgentEditor({
             Cancel
           </Button>
           <Button type="submit" loading={saving} fullWidth>
-            {isEdit ? 'Save Changes' : isPromotion ? 'Create Long-Horizon Agent' : 'Create Agent'}
+            {isEdit
+              ? 'Save Changes'
+              : isPromotion
+                ? 'Create Long-Horizon Agent'
+                : 'Create worker agent'}
           </Button>
         </div>
       </form>

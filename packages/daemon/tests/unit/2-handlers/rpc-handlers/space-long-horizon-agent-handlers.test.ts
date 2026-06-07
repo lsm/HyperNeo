@@ -62,8 +62,24 @@ describe('Space long-horizon agent handlers', () => {
       getByHandle: mock(() => null),
       update: mock((agentId, params) => ({ id: agentId, spaceId: 'space-1', ...params })),
       delete: mock(() => {}),
+      listGoals: mock(() => []),
+      assignGoal: mock(() => {}),
+      deleteGoalAssignment: mock(() => {}),
+      listForgeScopes: mock(() => []),
+      assignForgeScope: mock(() => {}),
+      deleteForgeScopeAssignment: mock(() => {}),
       listReminders: mock(() => []),
       createReminder: mock(() => ({})),
+      getReminder: mock(() => ({
+        id: 'reminder-1',
+        spaceId: 'space-1',
+        agentId: 'agent-1',
+        title: 'Test',
+        status: 'active',
+        triggerType: 'at',
+        createdAt: 1,
+        updatedAt: 1,
+      })),
       deleteReminder: mock(() => {}),
       listSubscriptions: mock(() => []),
       createSubscription: mock((params) => ({
@@ -1063,6 +1079,128 @@ describe('Space long-horizon agent handlers', () => {
           spaceId: 'missing-space',
         })
       ).rejects.toThrow('Space not found: missing-space');
+    });
+  });
+
+  describe('spaceLongHorizonAgent.goals', () => {
+    it('lists goals for an agent', async () => {
+      const result = await call<{ goals: unknown[] }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.listGoals',
+        { agentId: 'agent-1', spaceId: 'space-1' }
+      );
+
+      expect(result.goals).toEqual([]);
+      expect(repo.listGoals).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('assigns a goal to an agent', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.assignGoal',
+        { spaceId: 'space-1', agentId: 'agent-1', goalId: 'goal-1', relationship: 'owner' }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(repo.assignGoal).toHaveBeenCalledWith('agent-1', 'goal-1', 'owner');
+    });
+
+    it('deletes a goal assignment', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.deleteGoalAssignment',
+        { spaceId: 'space-1', agentId: 'agent-1', goalId: 'goal-1' }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(repo.deleteGoalAssignment).toHaveBeenCalledWith('agent-1', 'goal-1');
+    });
+  });
+
+  describe('spaceLongHorizonAgent.forgeScopes', () => {
+    it('lists Forge scopes for an agent', async () => {
+      const result = await call<{ scopes: unknown[] }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.listForgeScopes',
+        { agentId: 'agent-1', spaceId: 'space-1' }
+      );
+
+      expect(result.scopes).toEqual([]);
+      expect(repo.listForgeScopes).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('assigns a Forge scope to an agent', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.assignForgeScope',
+        { spaceId: 'space-1', agentId: 'agent-1', scopeId: 'scope-1', relationship: 'owner' }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(repo.assignForgeScope).toHaveBeenCalledWith('agent-1', 'scope-1', 'owner');
+    });
+
+    it('deletes a Forge scope assignment', async () => {
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceLongHorizonAgent.deleteForgeScopeAssignment',
+        { spaceId: 'space-1', agentId: 'agent-1', scopeId: 'scope-1' }
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(repo.deleteForgeScopeAssignment).toHaveBeenCalledWith('agent-1', 'scope-1');
+    });
+  });
+
+  describe('space ownership checks', () => {
+    it('listReminders rejects cross-space agentId', async () => {
+      repo.getById = mock(() => ({
+        id: 'agent-1',
+        spaceId: 'other-space',
+      })) as unknown as SpaceLongHorizonAgentRepository['getById'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.listReminders', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+        })
+      ).rejects.toThrow('Agent agent-1 does not belong to space space-1');
+    });
+
+    it('createReminder rejects agent from different space', async () => {
+      repo.getById = mock(() => ({
+        id: 'agent-1',
+        spaceId: 'other-space',
+      })) as unknown as SpaceLongHorizonAgentRepository['getById'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.createReminder', {
+          spaceId: 'space-1',
+          agentId: 'agent-1',
+          title: 'Test',
+          triggerType: 'at',
+        })
+      ).rejects.toThrow('Agent agent-1 does not belong to space space-1');
+    });
+
+    it('deleteReminder rejects reminder from different space', async () => {
+      repo.getReminder = mock(() => ({
+        id: 'reminder-1',
+        spaceId: 'other-space',
+        agentId: 'agent-1',
+        title: 'Test',
+        status: 'active',
+        triggerType: 'at',
+        createdAt: 1,
+        updatedAt: 1,
+      })) as unknown as SpaceLongHorizonAgentRepository['getReminder'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.deleteReminder', {
+          reminderId: 'reminder-1',
+          spaceId: 'space-1',
+        })
+      ).rejects.toThrow('Reminder reminder-1 does not belong to space space-1');
     });
   });
 });

@@ -1569,11 +1569,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       title: string;
       description: string;
       priority?: SpaceTaskPriority;
+      custom_agent_id?: string;
       workflow_id?: string;
       workflow_handle?: string;
       depends_on?: string[];
       draft?: boolean;
     }): Promise<ToolResult> {
+      if (args.custom_agent_id != null) {
+        return jsonResult({
+          success: false,
+          error: 'Task assignment by custom_agent_id is not yet supported.',
+        });
+      }
       let preferredWorkflowId = args.workflow_id ?? null;
       if (preferredWorkflowId) {
         const wf = workflowManager.getWorkflow(preferredWorkflowId);
@@ -1879,15 +1886,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       assigned_agent?: 'coder' | 'general';
     }): Promise<ToolResult> {
       try {
-        // Validate custom_agent_id if being set to a non-null value
+        // Validate custom_agent_id if being set to a non-null value.
+        // Worker-agent IDs only — reject long-horizon-only IDs.
         if (args.custom_agent_id != null) {
-          const agent = spaceAgentManager.getById(args.custom_agent_id);
-          if (!agent) {
-            return jsonResult({
-              success: false,
-              error: `Custom agent not found: ${args.custom_agent_id}`,
-            });
-          }
+          requireAgentFamily({
+            spaceId,
+            agentId: args.custom_agent_id,
+            expected: 'worker',
+            spaceAgentManager,
+            longHorizonAgentRepo: requireLongHorizonAgentRepo(),
+          });
         }
 
         // Pass args.custom_agent_id as-is (including undefined) so the manager

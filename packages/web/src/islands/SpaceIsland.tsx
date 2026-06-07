@@ -458,7 +458,7 @@ export default function SpaceIsland({
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-agents-view"
         >
-          <SpacePageHeader pageTitle="Agents" />
+          <SpacePageHeader pageTitle="Long-horizon agents" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceLongHorizonAgents

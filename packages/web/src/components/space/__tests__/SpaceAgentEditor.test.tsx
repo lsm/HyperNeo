@@ -178,13 +178,13 @@ describe('SpaceAgentEditor', () => {
 
   it('renders with "Create Agent" title in create mode', () => {
     const { getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-    expect(getByRole('dialog', { name: 'Create Agent' })).toBeTruthy();
+    expect(getByRole('dialog', { name: 'Create worker agent' })).toBeTruthy();
   });
 
   it('renders with edit title in edit mode', () => {
     const agent = makeAgent({ name: 'My Coder' });
     const { getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
-    expect(getByRole('dialog', { name: 'Edit Agent: My Coder' })).toBeTruthy();
+    expect(getByRole('dialog', { name: 'Edit worker agent: My Coder' })).toBeTruthy();
   });
 
   it('pre-fills name field in edit mode', () => {

@@ -2919,15 +2919,15 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
     expect(parsed.task.title).toBe('Full task');
   });
 
-  test('custom_agent_id field removed in M71 — task still creates without error', async () => {
-    // custom_agent_id is no longer validated in create_standalone_task post-M71
+  test('rejects custom_agent_id with clear error', async () => {
     const result = await makeHandlers(ctx).create_standalone_task({
       title: 'Task',
       description: 'Desc',
+      custom_agent_id: ctx.agentId,
     });
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(true);
-    expect(parsed.task.id).toBeDefined();
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('Task assignment by custom_agent_id is not yet supported.');
   });
 
   test('task is retrievable from repo after creation', async () => {
@@ -3508,7 +3508,7 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
     ctx.db.close();
   });
 
-  test('reassigns a pending task (custom_agent_id is accepted, field removed in M71)', async () => {
+  test('reassigns a pending task with a worker agent id', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
       title: 'Reassign me',
       description: 'Will be reassigned',
@@ -3572,7 +3572,7 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
     expect(parsed.task.id).toBe(taskId);
   });
 
-  test('returns error when custom_agent_id does not exist', async () => {
+  test('rejects missing custom_agent_id', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
       title: 'Task',
       description: 'Desc',
@@ -3585,7 +3585,31 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
     });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('agent-does-not-exist');
+    expect(parsed.error).toContain('Agent not found: agent-does-not-exist');
+  });
+
+  test('rejects long-horizon-only custom_agent_id', async () => {
+    ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: 'lh-only',
+      displayName: 'LH Only',
+    });
+    const lhAgent = ctx.longHorizonAgentRepo.getByHandle(ctx.spaceId, 'lh-only');
+    if (!lhAgent) throw new Error('LH agent not created');
+
+    const createResult = await makeHandlers(ctx).create_standalone_task({
+      title: 'Task',
+      description: 'Desc',
+    });
+    const taskId = JSON.parse(createResult.content[0].text).task.id;
+
+    const result = await makeHandlers(ctx).reassign_task({
+      task_id: taskId,
+      custom_agent_id: lhAgent.id,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Expected worker agent id, got long-horizon agent id.');
   });
 
   test('returns error when task is in_progress', async () => {

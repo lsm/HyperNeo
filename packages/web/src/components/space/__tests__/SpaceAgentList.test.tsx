@@ -4,10 +4,10 @@
  *
  * Tests:
  * - Loading state
- * - Empty state: "No agents yet. Create one to get started."
+ * - Empty state: "No worker agents yet. Create one to get started."
  * - Agent cards render name, model, description preview
  * - Tool count and preview tags render
- * - Create Agent button opens editor
+ * - Create worker agent button opens editor
  * - Edit button opens editor for that agent
  * - Delete button behavior:
  *   - When agent IS referenced by a workflow: shows blocking modal (no delete button)
@@ -17,77 +17,35 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceAgent, SpaceLongHorizonAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
-let mockLongHorizonAgents: ReturnType<typeof signal<SpaceLongHorizonAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
-let mockGoals: ReturnType<typeof signal<any[]>>;
-let mockSchedules: ReturnType<typeof signal<any[]>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockSpaceId: ReturnType<typeof signal<string | null>>;
 let mockSpace: ReturnType<typeof signal<any>>;
 
-const {
-  mockDeleteAgent,
-  mockCreateAgent,
-  mockUpdateAgent,
-  mockListSchedules,
-  mockListLongHorizonAgentSubscriptions,
-  mockCreateLongHorizonAgent,
-  mockUpdateLongHorizonAgent,
-  mockCreateLongHorizonAgentSubscription,
-  mockUpdateLongHorizonAgentSubscription,
-  mockDeleteLongHorizonAgentSubscription,
-  mockOnceConnected,
-  mockNavigateToSpaceGoals,
-  mockNavigateToSpaceForge,
-} = vi.hoisted(() => ({
+const { mockDeleteAgent, mockCreateAgent, mockUpdateAgent } = vi.hoisted(() => ({
   mockDeleteAgent: vi.fn(),
   mockCreateAgent: vi.fn(),
   mockUpdateAgent: vi.fn(),
-  mockListSchedules: vi.fn(),
-  mockListLongHorizonAgentSubscriptions: vi.fn(),
-  mockCreateLongHorizonAgent: vi.fn(),
-  mockUpdateLongHorizonAgent: vi.fn(),
-  mockCreateLongHorizonAgentSubscription: vi.fn(),
-  mockUpdateLongHorizonAgentSubscription: vi.fn(),
-  mockDeleteLongHorizonAgentSubscription: vi.fn(),
-  mockOnceConnected: vi.fn(),
-  mockNavigateToSpaceGoals: vi.fn(),
-  mockNavigateToSpaceForge: vi.fn(),
-}));
-
-vi.mock('../../../lib/router', () => ({
-  navigateToSpaceGoals: mockNavigateToSpaceGoals,
-  navigateToSpaceForge: mockNavigateToSpaceForge,
 }));
 
 vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       agents: mockAgents,
-      longHorizonAgents: mockLongHorizonAgents,
       workflows: mockWorkflows,
-      goals: mockGoals,
-      schedules: mockSchedules,
       loading: mockLoading,
       spaceId: mockSpaceId,
       space: mockSpace,
       deleteAgent: mockDeleteAgent,
       createAgent: mockCreateAgent,
       updateAgent: mockUpdateAgent,
-      listSchedules: mockListSchedules,
-      createLongHorizonAgent: mockCreateLongHorizonAgent,
-      updateLongHorizonAgent: mockUpdateLongHorizonAgent,
-      listLongHorizonAgentSubscriptions: mockListLongHorizonAgentSubscriptions,
-      createLongHorizonAgentSubscription: mockCreateLongHorizonAgentSubscription,
-      updateLongHorizonAgentSubscription: mockUpdateLongHorizonAgentSubscription,
-      deleteLongHorizonAgentSubscription: mockDeleteLongHorizonAgentSubscription,
     };
   },
 }));
@@ -96,7 +54,7 @@ const mockHubRequest = vi.fn();
 vi.mock('../../../lib/connection-manager', () => ({
   connectionManager: {
     getHubIfConnected: () => ({ request: mockHubRequest }),
-    onceConnected: mockOnceConnected,
+    onceConnected: vi.fn(),
   },
 }));
 
@@ -237,10 +195,7 @@ vi.mock('../../ui/Modal', () => ({
 
 // Initialize signals before import
 mockAgents = signal<SpaceAgent[]>([]);
-mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
-mockGoals = signal<any[]>([]);
-mockSchedules = signal<any[]>([]);
 mockLoading = signal(false);
 mockSpaceId = signal<string | null>('space-1');
 mockSpace = signal<any>({
@@ -269,30 +224,6 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
   };
 }
 
-function makeLongHorizonAgent(
-  overrides: Partial<SpaceLongHorizonAgent> = {}
-): SpaceLongHorizonAgent {
-  return {
-    id: 'lh-agent-1',
-    spaceId: 'space-1',
-    handle: 'my-coder',
-    displayName: 'My Coder',
-    templateKey: null,
-    status: 'active',
-    sessionId: null,
-    instructions: '',
-    autonomyLevel: null,
-    model: null,
-    thinkingLevel: null,
-    provider: null,
-    settingSources: null,
-    toolPermissions: {},
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    ...overrides,
-  };
-}
-
 function makeWorkflow(agentId: string): SpaceWorkflow {
   return {
     id: 'wf-1',
@@ -314,32 +245,12 @@ describe('SpaceAgentList', () => {
   beforeEach(() => {
     cleanup();
     mockAgents.value = [];
-    mockLongHorizonAgents.value = [];
     mockWorkflows.value = [];
-    mockGoals.value = [];
-    mockSchedules.value = [];
     mockLoading.value = false;
     mockSpaceId.value = 'space-1';
     mockDeleteAgent.mockReset();
     mockCreateAgent.mockReset();
     mockUpdateAgent.mockReset();
-    mockListSchedules.mockReset();
-    mockListSchedules.mockResolvedValue([]);
-    mockListLongHorizonAgentSubscriptions.mockReset();
-    mockListLongHorizonAgentSubscriptions.mockResolvedValue([]);
-    mockCreateLongHorizonAgent.mockReset();
-    mockCreateLongHorizonAgent.mockImplementation(async (params) => makeLongHorizonAgent(params));
-    mockUpdateLongHorizonAgent.mockReset();
-    mockUpdateLongHorizonAgent.mockImplementation(async (id, params) =>
-      makeLongHorizonAgent({ id, ...params })
-    );
-    mockCreateLongHorizonAgentSubscription.mockReset();
-    mockUpdateLongHorizonAgentSubscription.mockReset();
-    mockDeleteLongHorizonAgentSubscription.mockReset();
-    mockOnceConnected.mockReset();
-    mockOnceConnected.mockReturnValue(() => {});
-    mockNavigateToSpaceGoals.mockReset();
-    mockNavigateToSpaceForge.mockReset();
     mockHubRequest.mockReset();
     // Default: drift report returns no drifted agents so the list renders cleanly.
     mockHubRequest.mockResolvedValue({
@@ -356,21 +267,21 @@ describe('SpaceAgentList', () => {
   it('renders loading state when loading is true', () => {
     mockLoading.value = true;
     const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    expect(getByText('Loading agents...')).toBeTruthy();
+    expect(getByText('Loading worker agents...')).toBeTruthy();
   });
 
   // ── Empty state ────────────────────────────────────────────────────────────
 
   it('renders empty state when no agents exist', () => {
     const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    expect(getByText('No agents yet')).toBeTruthy();
+    expect(getByText('No worker agents yet')).toBeTruthy();
     expect(getByText('Create one to get started.')).toBeTruthy();
   });
 
-  it('renders header Create Agent button always', () => {
+  it('renders header Create worker agent button always', () => {
     const { getAllByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
     // Both the header button and the empty-state button exist
-    const buttons = getAllByText('Create Agent');
+    const buttons = getAllByText('Create worker agent');
     expect(buttons.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -391,7 +302,6 @@ describe('SpaceAgentList', () => {
   it('does not render model span when model is not set', () => {
     mockAgents.value = [makeAgent({ model: undefined })];
     const { container } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    // The TaskAgentCard shows the resolved model, so check within custom agent cards only.
     const agentCards = container.querySelectorAll('.bg-dark-850.border.border-dark-700');
     for (const card of agentCards) {
       const modelSpans = card.querySelectorAll('span.text-xs.text-gray-500.font-mono');
@@ -438,86 +348,17 @@ describe('SpaceAgentList', () => {
     expect(getByText('Agent Beta')).toBeTruthy();
   });
 
-  it('loads schedules for reminder totals', () => {
-    render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    expect(mockListSchedules).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    'Not connected',
-    'Not connected to transport',
-  ])('retries loading schedules when the connection recovers after %s', async (message) => {
-    let reconnect: (() => void) | undefined;
-    mockListSchedules.mockRejectedValueOnce(new Error(message));
-    mockOnceConnected.mockImplementation((callback) => {
-      reconnect = callback;
-      return vi.fn();
-    });
-
-    render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    await waitFor(() => expect(mockOnceConnected).toHaveBeenCalledOnce());
-
-    mockListSchedules.mockResolvedValue([]);
-    reconnect?.();
-    expect(mockListSchedules).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not retry loading schedules after non-connection errors', async () => {
-    mockListSchedules.mockRejectedValueOnce(new Error('Request failed'));
-
-    render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    await waitFor(() => expect(mockListSchedules).toHaveBeenCalledOnce());
-
-    expect(mockOnceConnected).not.toHaveBeenCalled();
-  });
-
-  it('uses SPA navigation for goals and Forge links', () => {
-    render(<SpaceAgentList {...DEFAULT_PROPS} />);
-
-    fireEvent.click(screen.getByText('View'));
-    fireEvent.click(screen.getByText('Open Forge'));
-
-    expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('neokai-dev');
-    expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('neokai-dev');
-  });
-
-  it('shows Coordinator as default long-horizon agent with basic scopes', () => {
-    mockAgents.value = [
-      makeAgent({
-        id: 'coordinator-1',
-        name: 'Coordinator',
-        templateName: 'Coordinator',
-        description: 'Built-in long-horizon Space agent.',
-      }),
-      makeAgent({ id: 'coder-1', name: 'Coder' }),
-    ];
-    mockGoals.value = [
-      { id: 'goal-1', status: 'active' },
-      { id: 'goal-2', status: 'completed' },
-      { id: 'goal-3', status: 'paused' },
-    ];
-    mockSchedules.value = [{ id: 'schedule-1', status: 'active' }];
-
-    const { container, getByText, queryByLabelText } = render(
-      <SpaceAgentList {...DEFAULT_PROPS} />
-    );
-
-    expect(getByText('Default Coordinator')).toBeTruthy();
-    expect(container.textContent).toContain('managed goals');
-    expect(container.textContent).toContain('Forge scopes');
-    expect(container.textContent).toContain('reminders');
-    expect(container.textContent).toContain('event subscriptions');
-    expect(container.textContent).toContain('Per-Agent Forge scope policy coming soon.');
-    expect(container.textContent).toContain('0 active event subscriptions');
-    expect(queryByLabelText('Forge scope filter')).toBeNull();
-    expect(queryByLabelText('Event subscription pattern')).toBeNull();
+  it('renders workflow usage footer', () => {
+    const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
+    expect(getByText('Workflow usage')).toBeTruthy();
+    expect(getByText(/workflows can reference these worker agents/)).toBeTruthy();
   });
 
   // ── Editor opening ─────────────────────────────────────────────────────────
 
-  it('opens editor in create mode when Create Agent header button is clicked', () => {
+  it('opens editor in create mode when Create worker agent header button is clicked', () => {
     const { getAllByText, getByTestId } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    const createButtons = getAllByText('Create Agent');
+    const createButtons = getAllByText('Create worker agent');
     fireEvent.click(createButtons[0]);
     expect(getByTestId('editor-mode').textContent).toBe('create');
   });
@@ -531,144 +372,11 @@ describe('SpaceAgentList', () => {
     expect(getByTestId('editor-agent-name').textContent).toBe('Coder');
   });
 
-  it('opens event subscriptions using the seeded coordinator long-horizon agent id', async () => {
-    mockAgents.value = [
-      makeAgent({
-        id: 'space-agent-coordinator',
-        name: 'Coordinator',
-        handle: 'coordinator',
-        templateName: 'Coordinator',
-      }),
-    ];
-    mockLongHorizonAgents.value = [
-      makeLongHorizonAgent({
-        id: 'space-lh-agent:coordinator:space-1',
-        handle: 'coordinator',
-        displayName: 'Coordinator',
-        templateKey: 'coordinator.default',
-      }),
-    ];
-
-    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    fireEvent.click(getByLabelText('Edit event subscriptions for Coordinator'));
-
-    expect(await findByText('Event subscriptions')).toBeTruthy();
-    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
-      'space-lh-agent:coordinator:space-1'
-    );
-  });
-
-  it('refreshes active long-horizon rows when opening subscriptions', async () => {
-    mockAgents.value = [makeAgent({ id: 'space-agent-coder', name: 'Coder', handle: 'coder' })];
-    mockLongHorizonAgents.value = [
-      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' }),
-    ];
-    mockUpdateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'active' })
-    );
-
-    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
-
-    expect(await findByText('Event subscriptions')).toBeTruthy();
-    expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
-      'space-agent-coder',
-      expect.objectContaining({ status: 'active' })
-    );
-    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
-  });
-
-  it('preserves inactive long-horizon rows when opening subscriptions for paused agents', async () => {
-    mockAgents.value = [
-      makeAgent({
-        id: 'space-agent-coder',
-        name: 'Coder',
-        handle: 'coder',
-        status: 'paused',
-        customPrompt: 'Use Coder prompt.',
-        model: 'claude-sonnet-4-6',
-        thinkingLevel: 'medium',
-        provider: 'openrouter',
-        settingSources: ['project'],
-        tools: ['Read', 'Edit'],
-      }),
-    ];
-    mockLongHorizonAgents.value = [
-      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' }),
-    ];
-    mockUpdateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({ id: 'space-agent-coder', handle: 'coder', status: 'paused' })
-    );
-
-    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
-
-    expect(await findByText('Event subscriptions')).toBeTruthy();
-    expect(mockCreateLongHorizonAgent).not.toHaveBeenCalled();
-    expect(mockUpdateLongHorizonAgent).toHaveBeenCalledWith(
-      'space-agent-coder',
-      expect.objectContaining({
-        handle: 'coder',
-        displayName: 'Coder',
-        instructions: 'Use Coder prompt.',
-        model: 'claude-sonnet-4-6',
-        thinkingLevel: 'medium',
-        provider: 'openrouter',
-        settingSources: ['project'],
-        toolPermissions: { tools: ['Read', 'Edit'] },
-        status: 'paused',
-      })
-    );
-    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
-  });
-
-  it('creates a long-horizon row before opening subscriptions for new specialists', async () => {
-    mockAgents.value = [
-      makeAgent({
-        id: 'space-agent-coder',
-        name: 'Coder',
-        handle: 'coder',
-        status: 'paused',
-        tools: ['Read', 'Edit'],
-        provider: 'openrouter',
-        settingSources: ['project'],
-        description: 'Short UI summary only',
-        customPrompt: 'Use Coder prompt.',
-      }),
-    ];
-    mockCreateLongHorizonAgent.mockResolvedValue(
-      makeLongHorizonAgent({
-        id: 'space-agent-coder',
-        handle: 'coder',
-        displayName: 'Coder',
-        status: 'paused',
-      })
-    );
-
-    const { getByLabelText, findByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    fireEvent.click(getByLabelText('Edit event subscriptions for Coder'));
-
-    expect(await findByText('Event subscriptions')).toBeTruthy();
-    expect(mockCreateLongHorizonAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'space-agent-coder',
-        handle: 'coder',
-        displayName: 'Coder',
-        instructions: 'Use Coder prompt.',
-        provider: 'openrouter',
-        settingSources: ['project'],
-        toolPermissions: { tools: ['Read', 'Edit'] },
-        status: 'paused',
-      })
-    );
-    expect(mockListLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-agent-coder');
-  });
-
   it('closes editor when cancel is clicked', () => {
     const { getAllByText, queryByTestId, getByTestId } = render(
       <SpaceAgentList {...DEFAULT_PROPS} />
     );
-    fireEvent.click(getAllByText('Create Agent')[0]);
+    fireEvent.click(getAllByText('Create worker agent')[0]);
     expect(getByTestId('agent-editor')).toBeTruthy();
     fireEvent.click(getByTestId('editor-cancel'));
     expect(queryByTestId('agent-editor')).toBeNull();
@@ -678,7 +386,7 @@ describe('SpaceAgentList', () => {
     const { getAllByText, queryByTestId, getByTestId } = render(
       <SpaceAgentList {...DEFAULT_PROPS} />
     );
-    fireEvent.click(getAllByText('Create Agent')[0]);
+    fireEvent.click(getAllByText('Create worker agent')[0]);
     fireEvent.click(getByTestId('editor-save'));
     expect(queryByTestId('agent-editor')).toBeNull();
   });
@@ -762,9 +470,6 @@ describe('SpaceAgentList', () => {
   });
 
   // ── Delete flow — workflow-referenced agent (no longer blocked client-side) ─
-  // SpaceWorkflowSummary no longer includes node/agent details, so the client
-  // cannot determine workflow references. The daemon still blocks deletion of
-  // in-use agents. All delete clicks now show the standard confirm dialog.
 
   it('shows confirm modal (not blocking) even when agent is used in a workflow', () => {
     const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
@@ -788,13 +493,13 @@ describe('SpaceAgentList', () => {
     expect(getByTestId('confirm-message').textContent).toContain('Coder');
   });
 
-  it('confirm modal title is "Delete Agent" even for referenced agents', () => {
+  it('confirm modal title is "Delete worker agent" even for referenced agents', () => {
     const agent = makeAgent({ id: 'agent-1', name: 'Coder' });
     mockAgents.value = [agent];
     mockWorkflows.value = [makeWorkflow('agent-1')];
     const { getByLabelText, getByRole } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
     fireEvent.click(getByLabelText('Delete Coder'));
-    expect(getByRole('dialog', { name: 'Delete Agent' })).toBeTruthy();
+    expect(getByRole('dialog', { name: 'Delete worker agent' })).toBeTruthy();
   });
 
   it('does not call deleteAgent when confirm modal is cancelled', () => {

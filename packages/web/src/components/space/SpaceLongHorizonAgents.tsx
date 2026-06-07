@@ -1,11 +1,10 @@
 import type {
-  SpaceAgent,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
 } from '@neokai/shared';
 import { useEffect, useState } from 'preact/hooks';
-import { navigateToSpaceSession } from '../../lib/router';
+import { navigateToSpaceConfigure, navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -31,34 +30,6 @@ const AUTONOMY_LABELS: Record<number, string> = {
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
-}
-
-type SelectedAgentDetail =
-  | { source: 'long-horizon'; agent: SpaceLongHorizonAgent }
-  | { source: 'space-agent'; agent: SpaceAgent };
-
-function selectedAgentName(detail: SelectedAgentDetail): string {
-  return detail.source === 'long-horizon' ? detail.agent.displayName : detail.agent.name;
-}
-
-function selectedAgentStatus(detail: SelectedAgentDetail): string {
-  return detail.agent.status ?? 'active';
-}
-
-function selectedAgentInstructions(detail: SelectedAgentDetail): string | null {
-  return detail.source === 'long-horizon' ? detail.agent.instructions : detail.agent.customPrompt;
-}
-
-function selectedAgentAutonomyLevel(detail: SelectedAgentDetail): number | null {
-  return detail.source === 'long-horizon' ? detail.agent.autonomyLevel : null;
-}
-
-function selectedAgentModel(detail: SelectedAgentDetail): string | null | undefined {
-  return detail.agent.model;
-}
-
-function selectedAgentThinkingLevel(detail: SelectedAgentDetail): ThinkingLevel | null | undefined {
-  return detail.agent.thinkingLevel;
 }
 
 // ── Agent editor ─────────────────────────────────────────────────────────────
@@ -147,7 +118,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           <p class="text-sm font-semibold text-gray-100">
             {isEdit
               ? `Edit ${agent?.displayName}`
-              : `New agent${template ? ` · ${template.displayName}` : ''}`}
+              : `New long-horizon agent${template ? ` · ${template.displayName}` : ''}`}
           </p>
           <button
             type="button"
@@ -530,11 +501,6 @@ export function SpaceLongHorizonAgents({
   const selectedSpaceAgent = selectedHandle
     ? spaceAgents.find((agent) => agent.handle === selectedHandle && agent.status !== 'archived')
     : null;
-  const selectedAgent: SelectedAgentDetail | null = selectedSpaceAgent
-    ? { source: 'space-agent', agent: selectedSpaceAgent }
-    : selectedLongHorizonAgent
-      ? { source: 'long-horizon', agent: selectedLongHorizonAgent }
-      : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
   // Count how many active instances exist per template handle
@@ -546,7 +512,7 @@ export function SpaceLongHorizonAgents({
   if (loading) {
     return (
       <div class="flex-1 flex items-center justify-center">
-        <span class="text-xs text-gray-400 animate-pulse">Loading agents…</span>
+        <span class="text-xs text-gray-400 animate-pulse">Loading long-horizon agents…</span>
       </div>
     );
   }
@@ -559,47 +525,62 @@ export function SpaceLongHorizonAgents({
             class="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4"
             data-testid="space-agent-detail"
           >
-            {selectedAgent ? (
+            {selectedLongHorizonAgent ? (
               <>
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0">
                     <p class="text-xs font-semibold uppercase tracking-wider text-blue-300/70">
-                      Selected agent
+                      Selected long-horizon agent
                     </p>
                     <h2 class="mt-1 text-base font-semibold text-gray-100">
-                      {selectedAgentName(selectedAgent)}
+                      {selectedLongHorizonAgent.displayName}
                     </h2>
-                    <p class="mt-0.5 text-xs text-gray-400">@{selectedAgent.agent.handle}</p>
+                    <p class="mt-0.5 text-xs text-gray-400">@{selectedLongHorizonAgent.handle}</p>
                   </div>
                   <span class="flex-shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-gray-300">
-                    {selectedAgentStatus(selectedAgent)}
+                    {selectedLongHorizonAgent.status ?? 'active'}
                   </span>
                 </div>
-                {selectedAgentInstructions(selectedAgent) && (
+                {selectedLongHorizonAgent.instructions && (
                   <p class="mt-3 text-sm text-gray-300 whitespace-pre-wrap">
-                    {selectedAgentInstructions(selectedAgent)}
+                    {selectedLongHorizonAgent.instructions}
                   </p>
                 )}
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-400">
-                  {selectedAgent.source === 'space-agent' && <span>Configured Space Agent</span>}
-                  {selectedAgentAutonomyLevel(selectedAgent) && (
+                  {selectedLongHorizonAgent.autonomyLevel && (
                     <span>
-                      L{selectedAgentAutonomyLevel(selectedAgent)}{' '}
-                      {AUTONOMY_LABELS[selectedAgentAutonomyLevel(selectedAgent)!]}
+                      L{selectedLongHorizonAgent.autonomyLevel}{' '}
+                      {AUTONOMY_LABELS[selectedLongHorizonAgent.autonomyLevel]}
                     </span>
                   )}
-                  {selectedAgentModel(selectedAgent) && (
-                    <span>Model: {selectedAgentModel(selectedAgent)}</span>
+                  {selectedLongHorizonAgent.model && (
+                    <span>Model: {selectedLongHorizonAgent.model}</span>
                   )}
-                  {selectedAgentThinkingLevel(selectedAgent) && (
-                    <span>Thinking: {selectedAgentThinkingLevel(selectedAgent)}</span>
+                  {selectedLongHorizonAgent.thinkingLevel && (
+                    <span>Thinking: {selectedLongHorizonAgent.thinkingLevel}</span>
                   )}
                 </div>
               </>
+            ) : selectedSpaceAgent ? (
+              <div data-testid="space-agent-detail-mismatch">
+                <p class="text-sm font-medium text-gray-100">Worker agent found</p>
+                <p class="mt-1 text-xs text-gray-400">
+                  @{selectedHandle} is a worker agent, not a long-horizon agent.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigateToSpaceConfigure(routeSpaceId, 'agents')}
+                  class="mt-2 text-xs text-blue-300 hover:text-blue-200"
+                >
+                  Go to Worker agents settings
+                </button>
+              </div>
             ) : (
               <div data-testid="space-agent-detail-missing">
                 <p class="text-sm font-medium text-gray-100">Agent not found</p>
-                <p class="mt-1 text-xs text-gray-400">No agent found for @{selectedHandle}.</p>
+                <p class="mt-1 text-xs text-gray-400">
+                  No long-horizon agent found for @{selectedHandle}.
+                </p>
               </div>
             )}
           </section>
@@ -608,11 +589,11 @@ export function SpaceLongHorizonAgents({
         {/* Configured agents */}
         <section class="rounded-xl border border-white/8 bg-white/[0.03] p-4">
           <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
-            Configured · {sortedAgents.length}
+            Configured long-horizon agents · {sortedAgents.length}
           </p>
           {sortedAgents.length === 0 ? (
             <p class="text-xs text-gray-400 py-4">
-              No agents yet — add one from the templates below.
+              No long-horizon agents yet — add one from the templates below.
             </p>
           ) : (
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -689,7 +670,7 @@ export function SpaceLongHorizonAgents({
             setDeleteError(null);
           }}
           onConfirm={handleDeleteConfirm}
-          title="Delete Agent"
+          title="Delete long-horizon agent"
           message={`Delete "${deletingAgent.displayName}"? This cannot be undone.`}
           confirmText="Delete"
           confirmButtonVariant="danger"

@@ -12,6 +12,7 @@ const {
   mockEnsureConfigData,
   mockListLongHorizonAgentReminders,
   mockNavigateToSpaceSession,
+  mockNavigateToSpaceConfigure,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
@@ -24,6 +25,7 @@ const {
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListLongHorizonAgentReminders: vi.fn().mockResolvedValue([]),
     mockNavigateToSpaceSession: vi.fn(),
+    mockNavigateToSpaceConfigure: vi.fn(),
   };
 });
 
@@ -42,6 +44,7 @@ vi.mock('../../../lib/space-store', () => ({
 
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceSession: mockNavigateToSpaceSession,
+  navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 }));
 
 vi.mock('../../../lib/toast', () => ({
@@ -112,24 +115,25 @@ describe('SpaceLongHorizonAgents', () => {
     mockEnsureConfigData.mockClear();
     mockListLongHorizonAgentReminders.mockClear();
     mockNavigateToSpaceSession.mockClear();
+    mockNavigateToSpaceConfigure.mockClear();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it('prefers configured SpaceAgent details when handles overlap', () => {
-    mockLongHorizonAgents.value = [makeLongHorizonAgent()];
+  it('shows mismatch panel when selected handle matches a worker agent but not a long-horizon agent', () => {
+    mockLongHorizonAgents.value = [];
     mockSpaceAgents.value = [makeSpaceAgent()];
 
     const { getByTestId } = render(
       <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
     );
 
-    const detail = getByTestId('space-agent-detail');
-    expect(detail.textContent).toContain('Configured Research');
-    expect(detail.textContent).toContain('Configured Space Agent');
-    expect(detail.textContent).not.toContain('Research Long Horizon');
+    const detail = getByTestId('space-agent-detail-mismatch');
+    expect(detail.textContent).toContain('Worker agent found');
+    expect(detail.textContent).toContain('@research is a worker agent, not a long-horizon agent.');
+    expect(detail.textContent).toContain('Go to Worker agents settings');
   });
 
   it('uses the route space id for agent session navigation', () => {

@@ -1150,4 +1150,61 @@ describe('Space Agent RPC Handlers', () => {
       expect(payload.agent.id).toBe(created.value.id);
     });
   });
+
+  describe('space ownership checks', () => {
+    it('list rejects missing space', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.list', { spaceId: 'missing-space' })
+      ).rejects.toThrow('Space not found: missing-space');
+    });
+
+    it('get rejects cross-space agent when spaceId is provided', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        tools: ['Read'],
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.get', {
+          id: created.value.id,
+          spaceId: 'other-space',
+        })
+      ).rejects.toThrow(`Agent ${created.value.id} does not belong to space other-space`);
+    });
+
+    it('update rejects cross-space agent', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        tools: ['Read'],
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: created.value.id,
+          spaceId: 'other-space',
+          name: 'Hacker',
+        })
+      ).rejects.toThrow(`Agent ${created.value.id} does not belong to space other-space`);
+    });
+
+    it('delete rejects cross-space agent', async () => {
+      const created = await manager.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        tools: ['Read'],
+      });
+      if (!created.ok) throw new Error('create failed');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.delete', {
+          id: created.value.id,
+          spaceId: 'other-space',
+        })
+      ).rejects.toThrow(`Agent ${created.value.id} does not belong to space other-space`);
+    });
+  });
 });

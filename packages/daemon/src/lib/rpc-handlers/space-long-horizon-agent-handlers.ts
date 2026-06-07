@@ -15,6 +15,8 @@ import type {
   MessageHub,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscriptionStatus,
+  SpaceLongHorizonAgentGoal,
+  SpaceLongHorizonAgentForgeScope,
 } from '@neokai/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -481,8 +483,13 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.listReminders', async (data) => {
-    const params = data as { agentId: string };
+    const params = data as { agentId: string; spaceId?: string };
     if (!params.agentId) throw new Error('agentId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
     return { reminders: repo.listReminders(params.agentId) };
   });
 
@@ -501,6 +508,11 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!params.agentId) throw new Error('agentId is required');
     if (!params.title) throw new Error('title is required');
     if (!params.triggerType) throw new Error('triggerType is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
     const reminder = repo.createReminder({
       spaceId: params.spaceId,
       agentId: params.agentId,
@@ -515,11 +527,100 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.deleteReminder', async (data) => {
-    const params = data as { reminderId: string };
+    const params = data as { reminderId: string; spaceId?: string };
     if (!params.reminderId) throw new Error('reminderId is required');
     const existing = repo.getReminder(params.reminderId);
     if (!existing) throw new Error(`Reminder not found: ${params.reminderId}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId) {
+      throw new Error(`Reminder ${params.reminderId} does not belong to space ${params.spaceId}`);
+    }
     repo.deleteReminder(params.reminderId);
+    return { success: true };
+  });
+
+  messageHub.onRequest('spaceLongHorizonAgent.listGoals', async (data) => {
+    const params = data as { agentId: string; spaceId?: string };
+    if (!params.agentId) throw new Error('agentId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    return { goals: repo.listGoals(params.agentId) };
+  });
+
+  messageHub.onRequest('spaceLongHorizonAgent.assignGoal', async (data) => {
+    const params = data as {
+      spaceId: string;
+      agentId: string;
+      goalId: string;
+      relationship?: SpaceLongHorizonAgentGoal['relationship'];
+    };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    if (!params.agentId) throw new Error('agentId is required');
+    if (!params.goalId) throw new Error('goalId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    repo.assignGoal(params.agentId, params.goalId, params.relationship ?? 'owner');
+    return { success: true };
+  });
+
+  messageHub.onRequest('spaceLongHorizonAgent.deleteGoalAssignment', async (data) => {
+    const params = data as { spaceId?: string; agentId: string; goalId: string };
+    if (!params.agentId) throw new Error('agentId is required');
+    if (!params.goalId) throw new Error('goalId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    repo.deleteGoalAssignment(params.agentId, params.goalId);
+    return { success: true };
+  });
+
+  messageHub.onRequest('spaceLongHorizonAgent.listForgeScopes', async (data) => {
+    const params = data as { agentId: string; spaceId?: string };
+    if (!params.agentId) throw new Error('agentId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    return { scopes: repo.listForgeScopes(params.agentId) };
+  });
+
+  messageHub.onRequest('spaceLongHorizonAgent.assignForgeScope', async (data) => {
+    const params = data as {
+      spaceId: string;
+      agentId: string;
+      scopeId: string;
+      relationship?: SpaceLongHorizonAgentForgeScope['relationship'];
+    };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    if (!params.agentId) throw new Error('agentId is required');
+    if (!params.scopeId) throw new Error('scopeId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    repo.assignForgeScope(params.agentId, params.scopeId, params.relationship ?? 'owner');
+    return { success: true };
+  });
+
+  messageHub.onRequest('spaceLongHorizonAgent.deleteForgeScopeAssignment', async (data) => {
+    const params = data as { spaceId?: string; agentId: string; scopeId: string };
+    if (!params.agentId) throw new Error('agentId is required');
+    if (!params.scopeId) throw new Error('scopeId is required');
+    const agent = repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    repo.deleteForgeScopeAssignment(params.agentId, params.scopeId);
     return { success: true };
   });
 

@@ -35,7 +35,7 @@ const CONFIGURE_TABS: Array<{
   label: string;
   count: (args: { agentCount: number; workflowCount: number }) => number;
 }> = [
-  { id: 'agents', label: 'Agents', count: ({ agentCount }) => agentCount },
+  { id: 'agents', label: 'Worker agents', count: ({ agentCount }) => agentCount },
   { id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
   { id: 'settings', label: 'General', count: () => 1 },
 ];
