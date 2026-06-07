@@ -290,10 +290,6 @@ export const CreateStandaloneTaskSchema = z.object({
     .enum(['low', 'normal', 'high', 'urgent'])
     .describe('Task priority (default: normal)')
     .optional(),
-  custom_agent_id: z
-    .string()
-    .describe('ID of a custom Space agent to assign this task to')
-    .optional(),
   workflow_id: z
     .string()
     .describe(

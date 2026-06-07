@@ -1569,18 +1569,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       title: string;
       description: string;
       priority?: SpaceTaskPriority;
-      custom_agent_id?: string;
       workflow_id?: string;
       workflow_handle?: string;
       depends_on?: string[];
       draft?: boolean;
     }): Promise<ToolResult> {
-      if (args.custom_agent_id != null) {
-        return jsonResult({
-          success: false,
-          error: 'Task assignment by custom_agent_id is not yet supported.',
-        });
-      }
       let preferredWorkflowId = args.workflow_id ?? null;
       if (preferredWorkflowId) {
         const wf = workflowManager.getWorkflow(preferredWorkflowId);
@@ -1882,29 +1875,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      */
     async reassign_task(args: {
       task_id: string;
-      custom_agent_id?: string | null;
       assigned_agent?: 'coder' | 'general';
     }): Promise<ToolResult> {
       try {
-        // Validate custom_agent_id if being set to a non-null value.
-        // Worker-agent IDs only — reject long-horizon-only IDs.
-        if (args.custom_agent_id != null) {
-          requireAgentFamily({
-            spaceId,
-            agentId: args.custom_agent_id,
-            expected: 'worker',
-            spaceAgentManager,
-            longHorizonAgentRepo: requireLongHorizonAgentRepo(),
-          });
-        }
-
-        // Pass args.custom_agent_id as-is (including undefined) so the manager
-        // only updates that field when it was explicitly provided.
-        const task = await taskManager.reassignTask(
-          args.task_id,
-          args.custom_agent_id,
-          args.assigned_agent
-        );
+        const task = await taskManager.reassignTask(args.task_id, undefined, args.assigned_agent);
         return jsonResult({ success: true, task });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -3506,10 +3480,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .enum(['low', 'normal', 'high', 'urgent'])
           .optional()
           .describe('Task priority (default: normal)'),
-        custom_agent_id: z
-          .string()
-          .optional()
-          .describe('ID of a custom Space agent to assign this task to'),
         workflow_id: z
           .string()
           .optional()
@@ -3597,13 +3567,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       'Change the agent assignment for a task. Only allowed for tasks in open, blocked, or cancelled status.',
       {
         task_id: z.string().describe('ID of the task to reassign'),
-        custom_agent_id: z
-          .string()
-          .nullable()
-          .optional()
-          .describe(
-            'ID of the custom Space agent to assign to. Pass null to clear the custom agent assignment.'
-          ),
         assigned_agent: z
           .enum(['coder', 'general'])
           .optional()

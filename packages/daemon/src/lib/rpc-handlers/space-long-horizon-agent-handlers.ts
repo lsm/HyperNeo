@@ -539,11 +539,12 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.listGoals', async (data) => {
-    const params = data as { agentId: string; spaceId?: string };
+    const params = data as { agentId: string; spaceId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.agentId) throw new Error('agentId is required');
     const agent = repo.getById(params.agentId);
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
-    if (params.spaceId && agent.spaceId !== params.spaceId) {
+    if (agent.spaceId !== params.spaceId) {
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     }
     return { goals: repo.listGoals(params.agentId) };
@@ -569,12 +570,13 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.deleteGoalAssignment', async (data) => {
-    const params = data as { spaceId?: string; agentId: string; goalId: string };
+    const params = data as { spaceId: string; agentId: string; goalId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.agentId) throw new Error('agentId is required');
     if (!params.goalId) throw new Error('goalId is required');
     const agent = repo.getById(params.agentId);
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
-    if (params.spaceId && agent.spaceId !== params.spaceId) {
+    if (agent.spaceId !== params.spaceId) {
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     }
     repo.deleteGoalAssignment(params.agentId, params.goalId);
@@ -582,11 +584,12 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.listForgeScopes', async (data) => {
-    const params = data as { agentId: string; spaceId?: string };
+    const params = data as { agentId: string; spaceId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.agentId) throw new Error('agentId is required');
     const agent = repo.getById(params.agentId);
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
-    if (params.spaceId && agent.spaceId !== params.spaceId) {
+    if (agent.spaceId !== params.spaceId) {
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     }
     return { scopes: repo.listForgeScopes(params.agentId) };
@@ -612,12 +615,13 @@ export function setupSpaceLongHorizonAgentHandlers(
   });
 
   messageHub.onRequest('spaceLongHorizonAgent.deleteForgeScopeAssignment', async (data) => {
-    const params = data as { spaceId?: string; agentId: string; scopeId: string };
+    const params = data as { spaceId: string; agentId: string; scopeId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.agentId) throw new Error('agentId is required');
     if (!params.scopeId) throw new Error('scopeId is required');
     const agent = repo.getById(params.agentId);
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
-    if (params.spaceId && agent.spaceId !== params.spaceId) {
+    if (agent.spaceId !== params.spaceId) {
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
     }
     repo.deleteForgeScopeAssignment(params.agentId, params.scopeId);

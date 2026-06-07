@@ -3755,17 +3755,10 @@ export class TaskAgentManager {
       title: string;
       description: string;
       priority?: 'low' | 'normal' | 'high' | 'urgent';
-      custom_agent_id?: string;
       workflow_id?: string;
       depends_on?: string[];
       draft?: boolean;
     }) => {
-      if (args.custom_agent_id != null) {
-        return jsonResult({
-          success: false,
-          error: 'Task assignment by custom_agent_id is not yet supported.',
-        });
-      }
       try {
         const task = await boundTaskManager.createTask({
           title: args.title,
