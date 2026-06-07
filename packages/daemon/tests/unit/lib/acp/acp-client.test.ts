@@ -165,7 +165,9 @@ describe('AcpClient', () => {
     ]);
     transport.resolveRequest(1, {
       sessionId: 'sess-123',
-      configOptions: [{ id: 'model', name: 'Model', type: 'select', options: [], currentValue: 'default' }],
+      configOptions: [
+        { id: 'model', name: 'Model', type: 'select', options: [], currentValue: 'default' },
+      ],
       modes: { currentModeId: 'code', availableModes: [{ id: 'code', name: 'Code' }] },
     });
 
@@ -177,7 +179,10 @@ describe('AcpClient', () => {
 
     const reqArgs = transport.sendRequest.mock.calls[0];
     expect(reqArgs[0]).toBe('session/new');
-    expect(reqArgs[1]).toMatchObject({ cwd: '/tmp/project', mcpServers: [{ type: 'stdio', name: 'test-server' }] });
+    expect(reqArgs[1]).toMatchObject({
+      cwd: '/tmp/project',
+      mcpServers: [{ type: 'stdio', name: 'test-server' }],
+    });
   });
 
   test('createSession throws on error response', async () => {
@@ -230,7 +235,9 @@ describe('AcpClient', () => {
 
     expect(updates.length).toBe(1);
     expect((updates[0] as { sessionId: string }).sessionId).toBe('sess-456');
-    expect((updates[0] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe('agent_message_chunk');
+    expect((updates[0] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe(
+      'agent_message_chunk'
+    );
   });
 
   test('sendPrompt throws when no session', async () => {
@@ -259,7 +266,7 @@ describe('AcpClient', () => {
         while (!result.done) {
           result = await gen.next();
         }
-      })(),
+      })()
     ).rejects.toThrow('Bad prompt');
   });
 
@@ -276,7 +283,9 @@ describe('AcpClient', () => {
     await sessionPromise;
 
     client.cancel();
-    expect(transport.sendNotification).toHaveBeenCalledWith('session/cancel', { sessionId: 'sess-cancel' });
+    expect(transport.sendNotification).toHaveBeenCalledWith('session/cancel', {
+      sessionId: 'sess-cancel',
+    });
   });
 
   test('cancel is no-op without session', () => {
@@ -338,7 +347,11 @@ describe('AcpClient', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 5));
 
-    expect(onFsWrite).toHaveBeenCalledWith({ sessionId: 's1', path: '/tmp/file.txt', content: 'hello' });
+    expect(onFsWrite).toHaveBeenCalledWith({
+      sessionId: 's1',
+      path: '/tmp/file.txt',
+      content: 'hello',
+    });
     expect(transport.sendResponse).toHaveBeenCalledWith(11, {});
   });
 
@@ -377,7 +390,9 @@ describe('AcpClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(onPermissionRequest).toHaveBeenCalled();
-    expect(transport.sendResponse).toHaveBeenCalledWith(13, { outcome: { outcome: 'selected', optionId: 'allow_once' } });
+    expect(transport.sendResponse).toHaveBeenCalledWith(13, {
+      outcome: { outcome: 'selected', optionId: 'allow_once' },
+    });
   });
 
   test('returns method not found for unhandled request', () => {
@@ -391,7 +406,10 @@ describe('AcpClient', () => {
       params: {},
     });
 
-    expect(transport.sendErrorResponse).toHaveBeenCalledWith(14, { code: -32601, message: 'Method not found: unknown/method' });
+    expect(transport.sendErrorResponse).toHaveBeenCalledWith(14, {
+      code: -32601,
+      message: 'Method not found: unknown/method',
+    });
   });
 
   test('returns internal error when callback throws', async () => {
@@ -410,7 +428,10 @@ describe('AcpClient', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 5));
 
-    expect(transport.sendErrorResponse).toHaveBeenCalledWith(15, { code: -32603, message: 'disk full' });
+    expect(transport.sendErrorResponse).toHaveBeenCalledWith(15, {
+      code: -32603,
+      message: 'disk full',
+    });
   });
 
   test('ignores notifications without subscribers', () => {

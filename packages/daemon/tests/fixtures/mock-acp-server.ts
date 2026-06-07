@@ -101,11 +101,17 @@ rl.on('line', (line) => {
         // Stream some notifications
         sendNotification('session/update', {
           sessionId: sid,
-          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello ' } },
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Hello ' },
+          },
         });
         sendNotification('session/update', {
           sessionId: sid,
-          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'world' } },
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'world' },
+          },
         });
         sendNotification('session/update', {
           sessionId: sid,

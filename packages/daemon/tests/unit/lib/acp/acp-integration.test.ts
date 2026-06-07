@@ -89,7 +89,10 @@ class MockAcpTransport {
           method: 'session/update',
           params: {
             sessionId: p.sessionId,
-            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello ' } },
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'Hello ' },
+            },
           },
         });
         this.notificationQueue.push({
@@ -97,7 +100,10 @@ class MockAcpTransport {
           method: 'session/update',
           params: {
             sessionId: p.sessionId,
-            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'world' } },
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'world' },
+            },
           },
         });
         this.notificationQueue.push({
@@ -198,22 +204,27 @@ describe('ACP Integration', () => {
     // Verify text accumulation
     const assistantMsgs = messages.filter((m) => (m as { type: string }).type === 'assistant');
     const textMsg = assistantMsgs.find((m) =>
-      (m as { message: { content: { type: string }[] } }).message.content.some((c) => c.type === 'text'),
+      (m as { message: { content: { type: string }[] } }).message.content.some(
+        (c) => c.type === 'text'
+      )
     );
     expect(textMsg).toBeDefined();
     expect(
-      (textMsg as { message: { content: { type: string; text: string }[] } }).message.content.find((c) => c.type === 'text')
-        ?.text,
+      (textMsg as { message: { content: { type: string; text: string }[] } }).message.content.find(
+        (c) => c.type === 'text'
+      )?.text
     ).toBe('Hello world');
 
     // Verify tool_use
     const toolMsg = assistantMsgs.find((m) =>
-      (m as { message: { content: { type: string }[] } }).message.content.some((c) => c.type === 'tool_use'),
+      (m as { message: { content: { type: string }[] } }).message.content.some(
+        (c) => c.type === 'tool_use'
+      )
     );
     expect(toolMsg).toBeDefined();
-    const toolBlock = (toolMsg as { message: { content: { type: string; id: string; name: string }[] } }).message.content.find(
-      (c) => c.type === 'tool_use',
-    );
+    const toolBlock = (
+      toolMsg as { message: { content: { type: string; id: string; name: string }[] } }
+    ).message.content.find((c) => c.type === 'tool_use');
     expect(toolBlock?.id).toBe('tc-mock-1');
     expect(toolBlock?.name).toBe('Read file');
 
@@ -235,10 +246,18 @@ describe('ACP Integration', () => {
 
     // Should receive all session/update notifications
     expect(updates.length).toBe(4);
-    expect((updates[0] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe('agent_message_chunk');
-    expect((updates[1] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe('agent_message_chunk');
-    expect((updates[2] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe('tool_call');
-    expect((updates[3] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe('tool_call_update');
+    expect((updates[0] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe(
+      'agent_message_chunk'
+    );
+    expect((updates[1] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe(
+      'agent_message_chunk'
+    );
+    expect((updates[2] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe(
+      'tool_call'
+    );
+    expect((updates[3] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe(
+      'tool_call_update'
+    );
 
     client.close();
   });

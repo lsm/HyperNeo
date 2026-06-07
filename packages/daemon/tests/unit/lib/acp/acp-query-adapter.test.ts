@@ -27,6 +27,10 @@ class MockAcpClient {
     return this.sessionId;
   }
 
+  getLastPromptStopReason() {
+    return undefined;
+  }
+
   queueNotification(notification: AcpSessionUpdateNotification) {
     this.notifications.push(notification);
   }
@@ -51,10 +55,15 @@ describe('AcpQueryAdapter', () => {
         return undefined;
       }
     }
-    expect(() => new (AcpQueryAdapter as unknown as new (client: unknown, prompt: unknown) => AcpQueryAdapter)(
-      new EmptyClient(),
-      [],
-    )).toThrow('AcpClient has no active session');
+    expect(
+      () =>
+        new (
+          AcpQueryAdapter as unknown as new (
+            client: unknown,
+            prompt: unknown
+          ) => AcpQueryAdapter
+        )(new EmptyClient(), [])
+    ).toThrow('AcpClient has no active session');
   });
 
   // -------------------------------------------------------------------------
@@ -63,9 +72,12 @@ describe('AcpQueryAdapter', () => {
 
   test('yields translated assistant messages from chunks', async () => {
     const client = new MockAcpClient('sess-1');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     client.queueNotification({
       sessionId: 'sess-1',
@@ -83,7 +95,9 @@ describe('AcpQueryAdapter', () => {
     const msg1 = await iterator.next();
     expect(msg1.done).toBe(false);
     expect(msg1.value.type).toBe('assistant');
-    expect((msg1.value as { message: { content: { text: string }[] } }).message.content[0].text).toBe('Hi there!');
+    expect(
+      (msg1.value as { message: { content: { text: string }[] } }).message.content[0].text
+    ).toBe('Hi there!');
 
     // Result message
     const msg2 = await iterator.next();
@@ -97,9 +111,12 @@ describe('AcpQueryAdapter', () => {
 
   test('yields tool_use message on tool_call', async () => {
     const client = new MockAcpClient('sess-2');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'do it' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'do it' }]
+    );
 
     client.queueNotification({
       sessionId: 'sess-2',
@@ -121,9 +138,12 @@ describe('AcpQueryAdapter', () => {
 
   test('yields tool_progress on tool_call_update', async () => {
     const client = new MockAcpClient('sess-3');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'go' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'go' }]
+    );
 
     client.queueNotification({
       sessionId: 'sess-3',
@@ -144,9 +164,12 @@ describe('AcpQueryAdapter', () => {
 
   test('stops iteration when interrupted', async () => {
     const client = new MockAcpClient('sess-4');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     client.queueNotification({
       sessionId: 'sess-4',
@@ -170,9 +193,12 @@ describe('AcpQueryAdapter', () => {
 
   test('returns early when closed before iteration', async () => {
     const client = new MockAcpClient('sess-5');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     adapter.close();
 
@@ -189,9 +215,12 @@ describe('AcpQueryAdapter', () => {
 
   test('interrupt calls client.cancel', async () => {
     const client = new MockAcpClient('sess-6');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     await adapter.interrupt();
     expect(client.cancel).toHaveBeenCalled();
@@ -199,9 +228,12 @@ describe('AcpQueryAdapter', () => {
 
   test('interrupt is idempotent', async () => {
     const client = new MockAcpClient('sess-7');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     await adapter.interrupt();
     await adapter.interrupt();
@@ -210,9 +242,12 @@ describe('AcpQueryAdapter', () => {
 
   test('close calls client.close', () => {
     const client = new MockAcpClient('sess-8');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     adapter.close();
     expect(client.close).toHaveBeenCalled();
@@ -220,9 +255,12 @@ describe('AcpQueryAdapter', () => {
 
   test('close is idempotent', () => {
     const client = new MockAcpClient('sess-9');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     adapter.close();
     adapter.close();
@@ -235,18 +273,24 @@ describe('AcpQueryAdapter', () => {
 
   test('sessionId getter returns client sessionId', () => {
     const client = new MockAcpClient('sess-10');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     expect(adapter.sessionId).toBe('sess-10');
   });
 
   test('setMcpServers resolves immediately', async () => {
     const client = new MockAcpClient('sess-11');
-    const adapter = new AcpQueryAdapter(client as unknown as InstanceType<typeof import('../../../../src/lib/acp/acp-client').AcpClient>, [
-      { type: 'text', text: 'hello' },
-    ]);
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }]
+    );
 
     await adapter.setMcpServers();
     // No-op: should resolve without error

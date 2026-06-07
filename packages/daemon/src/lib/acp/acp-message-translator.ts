@@ -15,6 +15,7 @@ import type {
   SDKToolProgressMessage,
   SDKResultMessage,
   SDKMessage,
+  SDKUserMessage,
 } from '@neokai/shared/sdk';
 import type { ContentBlock } from '@neokai/shared/sdk';
 import { generateUUID } from '@neokai/shared';
@@ -68,8 +69,13 @@ export class AcpMessageTranslator {
         return [];
       case 'tool_call':
         return [...this.flush(), this.translateToolCall(update)];
-      case 'tool_call_update':
-        return [this.translateToolCallUpdate(update)];
+      case 'tool_call_update': {
+        const messages: SDKMessage[] = [this.translateToolCallUpdate(update)];
+        if (update.content || update.rawOutput !== undefined) {
+          messages.push(this.translateToolResult(update));
+        }
+        return messages;
+      }
       default:
         return [];
     }
@@ -136,6 +142,29 @@ export class AcpMessageTranslator {
       parent_tool_use_id: null,
       elapsed_time_seconds: 0,
     };
+  }
+
+  /**
+   * Translate a tool_call_update with output into a synthetic SDK user message
+   * carrying the tool result so it is visible in the transcript.
+   */
+  translateToolResult(update: AcpToolCallUpdateUpdate): SDKUserMessage {
+    const output = update.rawOutput ?? update.content;
+    const text = typeof output === 'string' ? output : JSON.stringify(output);
+
+    return {
+      type: 'user',
+      uuid: generateUUID() as UUID,
+      session_id: this.sessionId,
+      parent_tool_use_id: update.toolCallId,
+      isSynthetic: true,
+      shouldQuery: false,
+      tool_use_result: output,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
+      },
+    } as SDKUserMessage;
   }
 
   /**

@@ -13,6 +13,7 @@ import type {
   AcpSessionNewParams,
   AcpSessionNewResult,
   AcpSessionPromptParams,
+  AcpSessionPromptResult,
   AcpSessionCancelParams,
   AcpSessionUpdateNotification,
   AcpConfigOption,
@@ -37,6 +38,7 @@ import type {
   AcpJsonRpcRequest,
   AcpMcpServerConfig,
   AcpContentBlock,
+  AcpStopReason,
 } from '@neokai/shared';
 import { AcpTransport } from './acp-transport';
 
@@ -46,7 +48,7 @@ export interface AcpClientCallbacks {
   onTerminalCreate?(params: AcpTerminalCreateParams): Promise<AcpTerminalCreateResult>;
   onTerminalOutput?(params: AcpTerminalOutputParams): Promise<AcpTerminalOutputResult>;
   onTerminalWaitForExit?(
-    params: AcpTerminalWaitForExitParams,
+    params: AcpTerminalWaitForExitParams
   ): Promise<AcpTerminalWaitForExitResult>;
   onTerminalKill?(params: AcpTerminalKillParams): Promise<AcpTerminalKillResult>;
   onTerminalRelease?(params: AcpTerminalReleaseParams): Promise<AcpTerminalReleaseResult>;
@@ -74,6 +76,7 @@ export class AcpClient {
   private sessionId: string | undefined;
   private notificationSubscribers = new Set<(notification: AcpJsonRpcNotification) => void>();
   private closed = false;
+  private lastPromptStopReason: AcpStopReason | undefined;
 
   constructor(options: AcpClientOptions) {
     const {
@@ -110,11 +113,21 @@ export class AcpClient {
    * Send initialize request and store negotiated capabilities.
    */
   async initialize(): Promise<AcpInitializeResult> {
+    const requestedVersion = 1;
+    const hasFs = !!(this.callbacks.onFsRead || this.callbacks.onFsWrite);
+    const hasTerminal = !!(
+      this.callbacks.onTerminalCreate ||
+      this.callbacks.onTerminalOutput ||
+      this.callbacks.onTerminalWaitForExit ||
+      this.callbacks.onTerminalKill ||
+      this.callbacks.onTerminalRelease
+    );
+
     const params: AcpInitializeParams = {
-      protocolVersion: 1,
+      protocolVersion: requestedVersion,
       clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: true,
+        ...(hasFs ? { fs: { readTextFile: true, writeTextFile: true } } : {}),
+        ...(hasTerminal ? { terminal: true } : {}),
       },
       clientInfo: { name: 'NeoKai', version: '0.1.0' },
     };
@@ -126,6 +139,12 @@ export class AcpClient {
     }
 
     const result = response.result as AcpInitializeResult;
+    if (result.protocolVersion !== requestedVersion) {
+      throw new Error(
+        `Unsupported ACP protocol version: agent returned ${result.protocolVersion}, client requested ${requestedVersion}`
+      );
+    }
+
     this.agentCapabilities = result.agentCapabilities;
     this.authMethods = result.authMethods;
     return result;
@@ -154,8 +173,12 @@ export class AcpClient {
    */
   async createSession(
     cwd: string,
-    mcpServers: AcpMcpServerConfig[] = [],
-  ): Promise<{ sessionId: string; configOptions: AcpConfigOption[]; modes?: AcpSessionModeState | null }> {
+    mcpServers: AcpMcpServerConfig[] = []
+  ): Promise<{
+    sessionId: string;
+    configOptions: AcpConfigOption[];
+    modes?: AcpSessionModeState | null;
+  }> {
     const params: AcpSessionNewParams = { cwd, mcpServers };
     const response = await this.transport.sendRequest('session/new', params);
 
@@ -183,6 +206,7 @@ export class AcpClient {
       throw new Error('No active session. Call createSession() first.');
     }
 
+    this.lastPromptStopReason = undefined;
     const queue: AcpSessionUpdateNotification[] = [];
     let resolveNext: (() => void) | null = null;
     let done = false;
@@ -210,13 +234,16 @@ export class AcpClient {
         (response) => {
           if ('error' in response) {
             error = new Error(response.error.message);
+          } else {
+            const result = response.result as AcpSessionPromptResult;
+            this.lastPromptStopReason = result.stopReason;
           }
           done = true;
         },
         (err) => {
           done = true;
           error = err instanceof Error ? err : new Error(String(err));
-        },
+        }
       )
       .finally(() => {
         if (resolveNext) {
@@ -236,6 +263,7 @@ export class AcpClient {
         }
         yield queue.shift()!;
       }
+      if (error) throw error;
     } finally {
       this.notificationSubscribers.delete(subscriber);
       requestPromise.catch(() => {});
@@ -247,7 +275,9 @@ export class AcpClient {
    */
   cancel(): void {
     if (!this.sessionId || this.closed) return;
-    this.transport.sendNotification('session/cancel', { sessionId: this.sessionId } as AcpSessionCancelParams);
+    this.transport.sendNotification('session/cancel', {
+      sessionId: this.sessionId,
+    } as AcpSessionCancelParams);
   }
 
   /**
@@ -275,6 +305,10 @@ export class AcpClient {
     return this.agentCapabilities;
   }
 
+  getLastPromptStopReason(): AcpStopReason | undefined {
+    return this.lastPromptStopReason;
+  }
+
   private async handleRequest(request: AcpJsonRpcRequest): Promise<void> {
     const handler = this.getRequestHandler(request.method);
     if (!handler) {
@@ -296,15 +330,15 @@ export class AcpClient {
     }
   }
 
-  private getRequestHandler(
-    method: string,
-  ): ((params: unknown) => Promise<unknown>) | undefined {
+  private getRequestHandler(method: string): ((params: unknown) => Promise<unknown>) | undefined {
     switch (method) {
       case 'fs/read':
+      case 'fs/read_text_file':
         return this.callbacks.onFsRead
           ? async (params) => this.callbacks.onFsRead!(params as AcpFsReadParams)
           : undefined;
       case 'fs/write':
+      case 'fs/write_text_file':
         return this.callbacks.onFsWrite
           ? async (params) => this.callbacks.onFsWrite!(params as AcpFsWriteParams)
           : undefined;
@@ -318,7 +352,8 @@ export class AcpClient {
           : undefined;
       case 'terminal/waitForExit':
         return this.callbacks.onTerminalWaitForExit
-          ? async (params) => this.callbacks.onTerminalWaitForExit!(params as AcpTerminalWaitForExitParams)
+          ? async (params) =>
+              this.callbacks.onTerminalWaitForExit!(params as AcpTerminalWaitForExitParams)
           : undefined;
       case 'terminal/kill':
         return this.callbacks.onTerminalKill

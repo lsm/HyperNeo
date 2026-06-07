@@ -31,9 +31,9 @@ describe('AcpMessageTranslator', () => {
     const messages = translator.flush();
     expect(messages.length).toBe(1);
     expect(messages[0].type).toBe('assistant');
-    expect((messages[0] as { message: { content: { type: string; text: string }[] } }).message.content).toEqual([
-      { type: 'text', text: 'Hello world' },
-    ]);
+    expect(
+      (messages[0] as { message: { content: { type: string; text: string }[] } }).message.content
+    ).toEqual([{ type: 'text', text: 'Hello world' }]);
   });
 
   test('accumulates thinking chunks and emits before text', () => {
@@ -71,12 +71,16 @@ describe('AcpMessageTranslator', () => {
 
     expect(messages.length).toBe(2);
     expect(messages[0].type).toBe('assistant');
-    expect((messages[0] as { message: { content: { type: string; text: string }[] } }).message.content[0]).toEqual({
+    expect(
+      (messages[0] as { message: { content: { type: string; text: string }[] } }).message.content[0]
+    ).toEqual({
       type: 'text',
       text: 'Before tool',
     });
     expect(messages[1].type).toBe('assistant');
-    expect((messages[1] as { message: { content: { type: string }[] } }).message.content[0].type).toBe('tool_use');
+    expect(
+      (messages[1] as { message: { content: { type: string }[] } }).message.content[0].type
+    ).toBe('tool_use');
   });
 
   test('flushes thinking and text before tool_call', () => {
@@ -86,7 +90,8 @@ describe('AcpMessageTranslator', () => {
     const messages = translator.processUpdate(toolCall('tc-1', 'Edit file', {}));
 
     expect(messages.length).toBe(2);
-    const firstContent = (messages[0] as { message: { content: { type: string }[] } }).message.content;
+    const firstContent = (messages[0] as { message: { content: { type: string }[] } }).message
+      .content;
     expect(firstContent.length).toBe(2);
     expect(firstContent[0].type).toBe('thinking');
     expect(firstContent[1].type).toBe('text');
@@ -97,13 +102,16 @@ describe('AcpMessageTranslator', () => {
   // ---------------------------------------------------------------------------
 
   test('translateToolCall produces tool_use block', () => {
-    const msg = translator.translateToolCall(toolCall('tc-2', 'Write file', { path: '/tmp/f', content: 'hi' }));
+    const msg = translator.translateToolCall(
+      toolCall('tc-2', 'Write file', { path: '/tmp/f', content: 'hi' })
+    );
 
     expect(msg.type).toBe('assistant');
     expect(msg.session_id).toBe('test-session');
     expect(msg.parent_tool_use_id).toBeNull();
-    const content = (msg as { message: { content: { type: string; id: string; name: string; input: unknown }[] } }).message
-      .content;
+    const content = (
+      msg as { message: { content: { type: string; id: string; name: string; input: unknown }[] } }
+    ).message.content;
     expect(content.length).toBe(1);
     expect(content[0]).toEqual({
       type: 'tool_use',
@@ -166,10 +174,27 @@ describe('AcpMessageTranslator', () => {
 
   test('ignores plan, config, mode, usage, commands updates', () => {
     expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)).toEqual([]);
-    expect(translator.processUpdate({ sessionUpdate: 'current_mode_update', currentModeId: 'x' } as never)).toEqual([]);
-    expect(translator.processUpdate({ sessionUpdate: 'config_option_update', configOptions: [] } as never)).toEqual([]);
-    expect(translator.processUpdate({ sessionUpdate: 'usage_update', size: 0, used: 0 } as never)).toEqual([]);
-    expect(translator.processUpdate({ sessionUpdate: 'available_commands_update', availableCommands: [] } as never)).toEqual([]);
+    expect(
+      translator.processUpdate({
+        sessionUpdate: 'current_mode_update',
+        currentModeId: 'x',
+      } as never)
+    ).toEqual([]);
+    expect(
+      translator.processUpdate({
+        sessionUpdate: 'config_option_update',
+        configOptions: [],
+      } as never)
+    ).toEqual([]);
+    expect(
+      translator.processUpdate({ sessionUpdate: 'usage_update', size: 0, used: 0 } as never)
+    ).toEqual([]);
+    expect(
+      translator.processUpdate({
+        sessionUpdate: 'available_commands_update',
+        availableCommands: [],
+      } as never)
+    ).toEqual([]);
   });
 });
 
@@ -194,7 +219,7 @@ function thoughtChunk(text: string): AcpAgentThoughtChunkUpdate {
 function toolCall(
   toolCallId: string,
   title: string,
-  rawInput: Record<string, unknown> | undefined,
+  rawInput: Record<string, unknown> | undefined
 ): AcpToolCallUpdateNotification {
   return {
     sessionUpdate: 'tool_call',

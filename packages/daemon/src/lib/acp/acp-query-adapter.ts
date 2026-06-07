@@ -9,7 +9,7 @@
  * yielding them to the consumer.
  */
 
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage, McpSetServersResult } from '@neokai/shared/sdk';
 import type { AcpContentBlock } from '@neokai/shared';
 import { AcpClient } from './acp-client';
 import { AcpMessageTranslator } from './acp-message-translator';
@@ -54,8 +54,10 @@ export class AcpQueryAdapter implements AsyncIterable<SDKMessage> {
         yield msg;
       }
 
-      // Emit result message
-      yield this.translator.translateResult('end_turn');
+      // Emit result message using the ACP stop reason if available
+      const stopReason = this.client.getLastPromptStopReason() ?? 'end_turn';
+      const isError = stopReason !== 'end_turn';
+      yield this.translator.translateResult(stopReason, isError);
     } catch (err) {
       const errorReason = this.interrupted ? 'cancelled' : 'end_turn';
       yield this.translator.translateResult(errorReason, !this.interrupted);
@@ -98,7 +100,7 @@ export class AcpQueryAdapter implements AsyncIterable<SDKMessage> {
    * Set MCP servers dynamically. No-op for PR 2 — dynamic MCP
    * updates will be implemented in PR 6.
    */
-  setMcpServers(): Promise<void> {
-    return Promise.resolve();
+  setMcpServers(): Promise<McpSetServersResult> {
+    return Promise.resolve({ added: [], removed: [], errors: {} });
   }
 }
