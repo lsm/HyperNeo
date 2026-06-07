@@ -356,9 +356,13 @@ describe('WorkflowHookEngine', () => {
     mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { a: 1 } });
     mockExecutor.setResult('hook-2', { type: 'patch_params', patch: { b: 2 } });
 
-    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
 
-    expect(outcome.finalParams).toEqual({ target: 'Review', a: 1, b: 2 });
+    expect(outcome.finalParams).toEqual({ target: 'Review', message: 'hi', a: 1, b: 2 });
   });
 
   test('validation hooks run before side-effect hooks', async () => {
@@ -592,10 +596,14 @@ describe('WorkflowHookEngine', () => {
       patch: { target: 'Deploy', extra: true },
     });
 
-    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
 
     expect(outcome.decision).toBe('patch_params');
-    expect(outcome.finalParams).toEqual({ target: 'Review', extra: true });
+    expect(outcome.finalParams).toEqual({ target: 'Review', message: 'hi', extra: true });
   });
 
   test('@worker address target is parsed to node name for hook matching', async () => {
@@ -647,6 +655,100 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.status).toBe('blocked_by_hook');
   });
+
+  test('retryable_block does not consume attempts before delay elapsed', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    hookStateRepo.ensure('run-1', 'hook-1');
+    hookStateRepo.update('run-1', 'hook-1', {
+      expectedVersion: 0,
+      retryCount: 1,
+      nextRetryAt: Date.now() + 100_000,
+    });
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          retry: { maxAttempts: 3, delayMs: 1000 },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'retryable_block', reason: 'Wait' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('retryable_block');
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.retryCount).toBe(1);
+  });
+
+  test('large artifact data is bounded before injection', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+    const artifactRepo = {
+      listByRun: () => [
+        {
+          id: 'a1',
+          runId: 'run-1',
+          nodeId: 'node-coding',
+          artifactType: 'progress',
+          artifactKey: 'current',
+          data: { summary: 'x'.repeat(20_000) },
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    } as unknown as WorkflowRunArtifactRepository;
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo,
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    const artifacts = (capturedContext as { currentArtifacts: Array<{ data: unknown }> })
+      .currentArtifacts;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].data).toContain('truncated');
+  });
+
+  test('patch_params that violate method schema block the action', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'validation', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { message: 123 } });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.reason).toContain('Patched params invalid');
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {
@@ -690,14 +792,14 @@ describe('wrapHandlerWithHooks', () => {
     ]);
     mockExecutor.setResult('hook-1', { type: 'patch_params', patch: { extra: 'data' } });
 
-    const handler = async (args: { target: string; extra?: string }) => ({
+    const handler = async (args: { target: string; message: string; extra?: string }) => ({
       content: [
         { type: 'text' as const, text: JSON.stringify({ success: true, extra: args.extra }) },
       ],
     });
 
     const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
-    const result = await wrapped({ target: 'Review' });
+    const result = await wrapped({ target: 'Review', message: 'hi' });
 
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(true);

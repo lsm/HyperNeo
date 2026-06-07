@@ -155,6 +155,14 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
   const validNodes = nodeNames(nodes);
   const validSlotsByNode = agentSlotNamesByNode(nodes);
 
+  // Pre-scan hook IDs so cross-hook references (e.g. recentResultRef) can be validated.
+  const hookIds = new Set<string>();
+  for (const hook of hooks) {
+    if (isRecord(hook) && typeof hook.id === 'string') {
+      hookIds.add(hook.id);
+    }
+  }
+
   for (let i = 0; i < hooks.length; i++) {
     const loc = `hooks[${i}]`;
     const hook = hooks[i];
@@ -196,6 +204,35 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
 
     if (hook.label !== undefined && typeof hook.label !== 'string') {
       errors.push(`${loc}.label: expected string`);
+    }
+
+    if (hook.humanOnly === true) {
+      errors.push(`${loc}.humanOnly: human-only hooks are not yet supported`);
+    }
+
+    if (isRecord(hook.localState)) {
+      if (hook.localState.defaults !== undefined && !isRecord(hook.localState.defaults)) {
+        errors.push(`${loc}.localState.defaults: expected object`);
+      }
+      if (hook.localState.recentResultRef !== undefined) {
+        const ref = hook.localState.recentResultRef;
+        if (!isRecord(ref)) {
+          errors.push(`${loc}.localState.recentResultRef: expected object`);
+        } else {
+          if (typeof ref.hookId !== 'string' || ref.hookId.trim().length === 0) {
+            errors.push(`${loc}.localState.recentResultRef.hookId: expected non-empty string`);
+          } else if (!hookIds.has(ref.hookId)) {
+            errors.push(
+              `${loc}.localState.recentResultRef.hookId: unknown hook id "${ref.hookId}"`
+            );
+          }
+          if (typeof ref.key !== 'string' || ref.key.trim().length === 0) {
+            errors.push(`${loc}.localState.recentResultRef.key: expected non-empty string`);
+          }
+        }
+      }
+    } else if (hook.localState !== undefined) {
+      errors.push(`${loc}.localState: expected object`);
     }
 
     if (typeof hook.sourceNode !== 'string' || hook.sourceNode.trim().length === 0) {

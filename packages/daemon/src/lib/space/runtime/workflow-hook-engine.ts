@@ -29,6 +29,16 @@ import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
 import { Logger } from '../../logger';
 import { parseAddress } from '../../../../../messaging/src/address';
+import {
+  SendMessageSchema,
+  SaveArtifactSchema,
+  CreateStandaloneTaskSchema,
+} from '../tools/node-agent-tool-schemas';
+import {
+  ApproveTaskSchema,
+  SubmitForApprovalSchema,
+  MarkCompleteSchema,
+} from '../tools/task-agent-tool-schemas';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -97,6 +107,18 @@ const FOLLOW_UP_METHODS = new Set(['send_message']);
 
 /** Maximum follow-up execution latency budget (30 seconds default). */
 const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
+
+/** Maximum bytes for an artifact data payload injected into hook context. */
+const MAX_ARTIFACT_DATA_BYTES = 16_384;
+
+const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
+  send_message: SendMessageSchema,
+  save_artifact: SaveArtifactSchema,
+  create_standalone_task: CreateStandaloneTaskSchema,
+  approve_task: ApproveTaskSchema,
+  submit_for_approval: SubmitForApprovalSchema,
+  mark_complete: MarkCompleteSchema,
+};
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -218,20 +240,24 @@ export class WorkflowHookEngine {
               const maxAttempts = retryConfig?.maxAttempts ?? 0;
               const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
               const currentRetryCount = hookState?.retryCount ?? 0;
+              const nextRetryAt = hookState?.nextRetryAt;
 
               if (maxAttempts > 0 && currentRetryCount >= maxAttempts) {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: false };
+              } else if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+                // Delay has not elapsed — remain retryable without consuming another attempt.
+                blockedByValidation = { hookId: hook.id, result, isRetryable: true };
               } else {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: true };
                 const delayMs = retryConfig?.delayMs ?? 0;
                 const backoffMultiplier = retryConfig?.backoffMultiplier ?? 1;
-                const nextRetryAt =
+                const newNextRetryAt =
                   Date.now() + delayMs * Math.pow(backoffMultiplier, currentRetryCount);
                 try {
                   this.config.hookStateRepo.update(this.config.workflowRunId, hook.id, {
                     expectedVersion: hookState?.version ?? 0,
                     retryCount: currentRetryCount + 1,
-                    nextRetryAt,
+                    nextRetryAt: newNextRetryAt,
                   });
                 } catch {
                   // best-effort retry state persistence
@@ -259,7 +285,20 @@ export class WorkflowHookEngine {
               );
               delete patch.target;
             }
-            currentParams = { ...currentParams, ...patch };
+            const patchedParams = { ...currentParams, ...patch };
+            const validationErrors = this.validatePatchedParams(methodName, patchedParams);
+            if (validationErrors.length > 0) {
+              blockedByValidation = {
+                hookId: hook.id,
+                result: {
+                  type: 'block',
+                  reason: `Patched params invalid: ${validationErrors.join('; ')}`,
+                },
+                isRetryable: false,
+              };
+            } else {
+              currentParams = patchedParams;
+            }
           }
           break;
         }
@@ -491,7 +530,7 @@ export class WorkflowHookEngine {
         nodeId: a.nodeId,
         type: a.artifactType,
         key: a.artifactKey,
-        data: a.data,
+        data: this.boundArtifactData(a.data),
         createdAt: a.createdAt,
         updatedAt: a.updatedAt,
       })),
@@ -512,6 +551,38 @@ export class WorkflowHookEngine {
       clone.message = clone.message.slice(0, 4096) + '...[truncated]';
     }
     return clone;
+  }
+
+  /**
+   * Bound artifact data payloads to avoid oversized hook env vars.
+   * Values that exceed the byte budget are replaced with a placeholder.
+   */
+  private boundArtifactData(data: unknown): unknown {
+    if (data === null || typeof data !== 'object') return data;
+    try {
+      const bytes = new TextEncoder().encode(JSON.stringify(data)).length;
+      if (bytes <= MAX_ARTIFACT_DATA_BYTES) return data;
+    } catch {
+      // Fall through to truncated placeholder on serialization failure.
+    }
+    return `[truncated: artifact data exceeds ${MAX_ARTIFACT_DATA_BYTES} bytes]`;
+  }
+
+  /**
+   * Re-validate patched params against the MCP method schema.
+   * Returns human-readable validation errors, or an empty array when valid.
+   */
+  private validatePatchedParams(methodName: string, params: Record<string, unknown>): string[] {
+    const schema = METHOD_PARAM_SCHEMAS[methodName];
+    if (!schema) return [];
+    const result = schema.safeParse(params);
+    if (!result.success) {
+      return result.error.issues.map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join('.') : 'params';
+        return `${path}: ${issue.message}`;
+      });
+    }
+    return [];
   }
 
   // -------------------------------------------------------------------------
