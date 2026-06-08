@@ -117,6 +117,9 @@ const MAX_PARAM_DATA_BYTES = 4096;
 /** Maximum bytes for hook-local state serialized into the script env. */
 const MAX_HOOK_LOCAL_STATE_BYTES = 8192;
 
+/** Maximum bytes for the entire serialized artifacts array injected into hook env. */
+const MAX_ARTIFACTS_ARRAY_BYTES = 65_536;
+
 const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   send_message: SendMessageSchema,
   save_artifact: SaveArtifactSchema,
@@ -462,7 +465,9 @@ export class WorkflowHookEngine {
       const target = params.target;
       if (typeof target === 'string') {
         if (target.trim() === '*') {
-          const permitted = resolver.getPermittedTargets(fromNode);
+          const permittedNode = resolver.getPermittedTargets(fromNode);
+          const permittedSlot = resolver.getPermittedTargets(meta.agentName);
+          const permitted = [...new Set([...permittedNode, ...permittedSlot])];
           if (permitted.includes('*')) {
             for (const node of workflow.nodes) {
               actionTargets.add(node.name);
@@ -483,7 +488,9 @@ export class WorkflowHookEngine {
         for (const t of target) {
           if (typeof t !== 'string') continue;
           if (t.trim() === '*') {
-            const permitted = resolver.getPermittedTargets(fromNode);
+            const permittedNode = resolver.getPermittedTargets(fromNode);
+            const permittedSlot = resolver.getPermittedTargets(meta.agentName);
+            const permitted = [...new Set([...permittedNode, ...permittedSlot])];
             if (permitted.includes('*')) {
               for (const node of workflow.nodes) {
                 actionTargets.add(node.name);
@@ -592,6 +599,32 @@ export class WorkflowHookEngine {
     const permittedExternalLookups: string[] =
       hook.validator.kind === 'script' ? (hook.validator.externalLookups ?? []) : [];
 
+    // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
+    const mappedArtifacts: Array<{
+      id: string;
+      nodeId: string;
+      type: string;
+      key: string;
+      data: unknown;
+      createdAt: number;
+      updatedAt: number;
+    }> = [];
+    for (const a of currentArtifacts) {
+      const item = {
+        id: a.id,
+        nodeId: a.nodeId,
+        type: a.artifactType,
+        key: a.artifactKey,
+        data: this.boundArtifactData(a.data),
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+      };
+      const candidate = [...mappedArtifacts, item];
+      const bytes = new TextEncoder().encode(JSON.stringify(candidate)).length;
+      if (bytes > MAX_ARTIFACTS_ARRAY_BYTES) break;
+      mappedArtifacts.push(item);
+    }
+
     return {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
@@ -604,15 +637,7 @@ export class WorkflowHookEngine {
       taskId: meta.taskId,
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
-      currentArtifacts: currentArtifacts.map((a) => ({
-        id: a.id,
-        nodeId: a.nodeId,
-        type: a.artifactType,
-        key: a.artifactKey,
-        data: this.boundArtifactData(a.data),
-        createdAt: a.createdAt,
-        updatedAt: a.updatedAt,
-      })),
+      currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,
     };
@@ -806,7 +831,15 @@ export class WorkflowHookEngine {
       try {
         const addr = parseAddress(trimmed);
         if (addr.kind === 'worker') {
-          return [decodeURIComponent(addr.nodeId)];
+          const decoded = decodeURIComponent(addr.nodeId);
+          if (nodeIdToName.has(decoded)) {
+            return [nodeIdToName.get(decoded)!];
+          }
+          const slotMatches = slotToNodes.get(decoded);
+          if (slotMatches) {
+            return [...slotMatches];
+          }
+          return [decoded];
         }
       } catch {
         // fall through to raw target

@@ -637,6 +637,22 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('@worker address with node ID segment resolves to node name for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:run-1/node-review/reviewer' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
   test('@role:actor-role:<nodeId> target is decoded and resolved for hook matching', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
@@ -675,6 +691,35 @@ describe('WorkflowHookEngine', () => {
     ]);
     // Channel uses agent slot name 'reviewer' instead of node name 'Review'
     workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer' }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '*', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('broadcast * resolves when channel from uses agent slot name', async () => {
+    const workflow = makeWorkflow([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    // Channel uses agent slot name 'coder' as source instead of node name 'Coding'
+    workflow.channels = [{ id: 'ch-1', from: 'coder', to: 'Review' }];
 
     const mockExecutor = new MockHookExecutor();
     const engine = new WorkflowHookEngine({
@@ -951,6 +996,50 @@ describe('WorkflowHookEngine', () => {
       .currentArtifacts;
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].data).toContain('truncated');
+  });
+
+  test('artifacts array is capped by total serialized byte budget', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    // Create 10 artifacts each with ~8 KB of data → ~80 KB total, exceeding 64 KB budget
+    const bigArtifacts = Array.from({ length: 10 }, (_, i) => ({
+      id: `a${i}`,
+      runId: 'run-1',
+      nodeId: 'node-coding',
+      artifactType: 'progress',
+      artifactKey: `key-${i}`,
+      data: { payload: 'x'.repeat(8_000) },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }));
+
+    const artifactRepo = {
+      listByRun: () => bigArtifacts,
+    } as unknown as WorkflowRunArtifactRepository;
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo,
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    const artifacts = (capturedContext as { currentArtifacts: unknown[] }).currentArtifacts;
+    // 8 of 10 should fit under 64 KB; 9 would exceed
+    expect(artifacts.length).toBeLessThan(10);
+    expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 
   test('patch_params that violate method schema block the action', async () => {
