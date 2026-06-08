@@ -2,6 +2,16 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.37.0] - 2026-06-08
+
+ACP protocol type definitions with JSON-RPC stdio transport, workflow hook schema storage with validation and persistence, and separation of worker and long-horizon agent types. 3 commits since v0.36.0.
+
+### Added
+
+- **ACP protocol types + JSON-RPC stdio transport**: Added ACP (Agent Client Protocol) JSON-RPC 2.0 type definitions covering initialization, authentication, session lifecycle, content blocks, tool calls, permission requests, file system operations, and MCP server configurations
+- **Workflow hook schema storage**: Typed hook definitions, validation, persistence, and per-run hook state storage so workflow hooks can be introduced without removing legacy gates. Includes export/import round-trip support and runtime bounds enforcement
+- **Separate worker and long-horizon agents**: Worker agents and long-horizon agents are now distinct agent types with separate lifecycle management
+
 ## [0.36.0] - 2026-06-02
 
 Auto-fetch model list from custom endpoints, refresh models on provider changes, Forge completed-task automation and task-result backfill, Codex auth reliability fixes, long-horizon event subscription rehydration, agent event subscription UI, external event delivery log UI, auto-configure GitHub webhooks for spaces, and mobile Space tab fixes. 18 commits since v0.35.0.
