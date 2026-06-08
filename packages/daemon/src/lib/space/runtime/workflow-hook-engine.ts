@@ -508,14 +508,14 @@ export class WorkflowHookEngine {
       if (!hook.enabled) return false;
       if (hook.method !== methodName) return false;
 
-      // Match sourceNode — either the node name or agent name
-      if (hook.sourceNode !== nodeName && hook.sourceNode !== meta.agentName) return false;
+      // Match sourceNode — must be the current workflow node name
+      if (hook.sourceNode !== nodeName) return false;
 
-      // Match targetNode when declared — skip if action target does not match
+      // Match targetNode when declared — non-send_message methods have no action
+      // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
-        if (methodName === 'send_message' && actionTargets.size > 0) {
-          if (!actionTargets.has(hook.targetNode)) return false;
-        }
+        if (methodName !== 'send_message') return false;
+        if (actionTargets.size > 0 && !actionTargets.has(hook.targetNode)) return false;
       }
 
       // Authorized callers check
@@ -523,7 +523,7 @@ export class WorkflowHookEngine {
       if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
 
       return hook.authorizedCallers.some((caller) => {
-        if (caller.sourceNode !== nodeName && caller.sourceNode !== meta.agentName) return false;
+        if (caller.sourceNode !== nodeName) return false;
         if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
         return caller.agentSlots.includes(meta.agentName);
       });
