@@ -6,10 +6,10 @@
     "kai": "bin/kai.js"
   },
   "optionalDependencies": {
-    "@neokai/cli-darwin-arm64": "0.8.0",
-    "@neokai/cli-darwin-x64": "0.8.0",
-    "@neokai/cli-linux-x64": "0.8.0",
-    "@neokai/cli-linux-arm64": "0.8.0"
+    "@neokai/cli-darwin-arm64": "0.37.0",
+    "@neokai/cli-darwin-x64": "0.37.0",
+    "@neokai/cli-linux-x64": "0.37.0",
+    "@neokai/cli-linux-arm64": "0.37.0"
   },
   "files": [
     "bin/"
