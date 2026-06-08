@@ -797,7 +797,7 @@ function normalizeRecencyScore(lessons: EvolutionLesson[]): Map<string, number> 
   }
   const range = maxUpdated - minUpdated || 1;
   for (const lesson of lessons) {
-    scores.set(lesson.id, ((lesson.updatedAt - minUpdated) / range) * 5);
+    scores.set(lesson.id, ((lesson.updatedAt - minUpdated) / range) * 0.99);
   }
   return scores;
 }
@@ -809,7 +809,7 @@ function normalizeRecencyScore(lessons: EvolutionLesson[]): Map<string, number> 
  * - Tag overlap between `lesson.appliesTo` and `task.labels`: +10 per match
  * - Keyword overlap between task text and lesson text: +2 per match
  * - Lesson confidence: +3 * confidence
- * - Recency: 0–5 based on relative updatedAt within the lesson set
+ * - Recency: 0–0.99 tiebreaker based on relative updatedAt within the lesson set
  */
 export function rankLessonsByTaskRelevance(
   lessons: EvolutionLesson[],
