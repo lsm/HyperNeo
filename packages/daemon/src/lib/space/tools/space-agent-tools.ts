@@ -1557,7 +1557,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           if (!agent) {
             return jsonResult({
               success: false,
-              error: `Custom agent not found: ${args.custom_agent_id}`,
+              error: `Worker agent not found: ${args.custom_agent_id}`,
             });
           }
         }
@@ -3173,7 +3173,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         custom_agent_id: z
           .string()
           .optional()
-          .describe('ID of a custom Space agent to assign this task to'),
+          .describe('ID of a worker agent to assign this task to'),
         workflow_id: z
           .string()
           .optional()
@@ -3266,7 +3266,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .nullable()
           .optional()
           .describe(
-            'ID of the custom Space agent to assign to. Pass null to clear the custom agent assignment.'
+            'ID of the worker agent to assign to. Pass null to clear the worker agent assignment.'
           ),
         assigned_agent: z
           .enum(['coder', 'general'])
@@ -3370,12 +3370,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'get_agent',
         'Get one long-horizon Space agent by ID.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        { agent_id: z.string().describe('Long-horizon agent ID') },
         (args) => handlers.get_agent(args)
       ),
       tool(
         'create_agent',
-        'Create a custom long-horizon Space agent. Tool-permission changes are validated against the known tool allowlist.',
+        'Create a long-horizon Space agent. Tool-permission changes are validated against the known tool allowlist.',
         {
           name: z.string().min(1).describe('Agent name, unique within the space'),
           description: z.string().optional().describe('Agent specialization summary'),
@@ -3414,7 +3414,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'update_agent',
         'Update a long-horizon Space agent. Autonomy/tool-permission escalation is limited by manager validation and audited.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           name: z.string().optional().describe('New agent name'),
           status: agentStatusSchema.optional().describe('Lifecycle status'),
           description: z.string().nullable().optional().describe('New description'),
@@ -3448,32 +3448,38 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'pause_agent',
         'Pause a long-horizon Space agent without deleting it.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        { agent_id: z.string().describe('Long-horizon agent ID') },
         (args) => handlers.pause_agent(args)
       ),
       tool(
         'archive_agent',
         'Archive a long-horizon Space agent.',
-        { agent_id: z.string().describe('SpaceAgent ID') },
+        { agent_id: z.string().describe('Long-horizon agent ID') },
         (args) => handlers.archive_agent(args)
       ),
       tool(
         'assign_agent_to_goal',
         'Assign a long-horizon Space agent to a goal.',
-        { agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          goal_id: z.string().describe('Goal ID'),
+        },
         (args) => handlers.assign_agent_to_goal(args)
       ),
       tool(
         'unassign_agent_from_goal',
         'Remove a long-horizon Space agent goal assignment.',
-        { agent_id: z.string().describe('SpaceAgent ID'), goal_id: z.string().describe('Goal ID') },
+        {
+          agent_id: z.string().describe('Long-horizon agent ID'),
+          goal_id: z.string().describe('Goal ID'),
+        },
         (args) => handlers.unassign_agent_from_goal(args)
       ),
       tool(
         'assign_agent_to_forge_scope',
         'Assign a long-horizon Space agent to a Forge scope.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           scope_id: z.string().describe('Forge scope ID'),
         },
         (args) => handlers.assign_agent_to_forge_scope(args)
@@ -3482,7 +3488,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'unassign_agent_from_forge_scope',
         'Remove a long-horizon Space agent Forge scope assignment.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           scope_id: z.string().describe('Forge scope ID'),
         },
         (args) => handlers.unassign_agent_from_forge_scope(args)
@@ -3491,7 +3497,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'create_agent_reminder',
         'Create a reminder for a long-horizon Space agent.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           message: z.string().min(1).describe('Reminder message'),
           remind_at: z.number().int().describe('Reminder timestamp in ms since epoch'),
         },
@@ -3501,7 +3507,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'list_agent_reminders',
         'List reminders for a long-horizon Space agent.',
         {
-          agent_id: z.string().describe('SpaceAgent ID'),
+          agent_id: z.string().describe('Long-horizon agent ID'),
           status: z.enum(['active', 'done', 'cancelled']).optional().describe('Reminder status'),
         },
         (args) => handlers.list_agent_reminders(args)

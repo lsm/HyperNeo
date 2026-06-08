@@ -2,7 +2,7 @@
  * Tool Access and Sub-Session Features Unit Tests
  *
  * Verifies tool access per preset agent and that sub-session features are
- * correctly applied to custom agent init configs.
+ * correctly applied to worker agent init configs.
  */
 
 import { describe, it, expect } from 'bun:test';
