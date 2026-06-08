@@ -89,6 +89,17 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
 /** SSH agent / Git credential helper keys — stripped from restricted env. */
 const SSH_ENV_KEYS = new Set(['SSH_AUTH_SOCK', 'SSH_AGENT_LAUNCHER', 'SSH_AGENT_PID']);
 
+/** Credential-bearing config path variables — stripped from restricted env. */
+const CREDENTIAL_PATH_ENV_KEYS = new Set([
+  'KUBECONFIG',
+  'DOCKER_CONFIG',
+  'NPM_CONFIG_USERCONFIG',
+  'AWS_CONFIG_FILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'AZURE_CONFIG_DIR',
+]);
+
 // ---------------------------------------------------------------------------
 // Built-in validators
 // ---------------------------------------------------------------------------
@@ -162,6 +173,8 @@ function buildHookRestrictedEnv(
 
     if (SSH_ENV_KEYS.has(key)) continue;
 
+    if (CREDENTIAL_PATH_ENV_KEYS.has(key)) continue;
+
     env[key] = value as string;
   }
 
@@ -232,6 +245,7 @@ function buildHookRestrictedEnv(
         const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
         if (isKeyRestricted) continue;
         if (SSH_ENV_KEYS.has(key)) continue;
+        if (CREDENTIAL_PATH_ENV_KEYS.has(key)) continue;
       }
       env[key] = value;
     }
@@ -324,6 +338,16 @@ export async function executeHookScript(
 
       const code = await proc.exited;
       clearTimeout(killTimer);
+
+      // Reap any background children in the process group after the main
+      // script exits (success, failure, or timeout).
+      try {
+        if (proc.pid) {
+          process.kill(-proc.pid, 'SIGKILL');
+        }
+      } catch {
+        // process group already gone
+      }
 
       return { code, timedOut: killed };
     })(),

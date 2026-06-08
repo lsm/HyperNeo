@@ -1240,4 +1240,83 @@ describe('HookExecutor script execution', () => {
     expect(result.result.type).toBe('allow');
     expect(result.result.message).toBe('ok');
   });
+
+  test('credential-bearing config path env vars are stripped', async () => {
+    process.env.KUBECONFIG = '/secret/kubeconfig';
+    process.env.DOCKER_CONFIG = '/secret/docker';
+
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const hook = makeHook({
+      id: 'hook-script',
+      classification: 'validation',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${KUBECONFIG:-missing}|${DOCKER_CONFIG:-missing}\\" }"',
+      },
+    });
+
+    const result = await executor.execute(hook, {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+      permittedExternalLookups: [],
+    });
+
+    delete process.env.KUBECONFIG;
+    delete process.env.DOCKER_CONFIG;
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe('missing|missing');
+  });
+
+  test('process group is killed after successful script exit', async () => {
+    const originalKill = process.kill;
+    const killCalls: Array<{ pid: number; signal: string | number }> = [];
+    process.kill = (pid: number, signal?: string | number) => {
+      killCalls.push({ pid, signal: signal ?? 'SIGTERM' });
+      return true;
+    };
+
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const hook = makeHook({
+      id: 'hook-script',
+      classification: 'validation',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source: 'echo \'{ "type": "allow" }\'',
+      },
+    });
+
+    try {
+      await executor.execute(hook, {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      });
+    } finally {
+      process.kill = originalKill;
+    }
+
+    expect(killCalls.some((c) => c.pid < 0 && c.signal === 'SIGKILL')).toBe(true);
+  });
 });
