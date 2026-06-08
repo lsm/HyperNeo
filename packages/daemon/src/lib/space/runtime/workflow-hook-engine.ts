@@ -114,6 +114,9 @@ const MAX_ARTIFACT_DATA_BYTES = 16_384;
 /** Maximum bytes for a param `data` field before it is redacted in hook env. */
 const MAX_PARAM_DATA_BYTES = 4096;
 
+/** Maximum bytes for hook-local state serialized into the script env. */
+const MAX_HOOK_LOCAL_STATE_BYTES = 8192;
+
 const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   send_message: SendMessageSchema,
   save_artifact: SaveArtifactSchema,
@@ -198,6 +201,48 @@ export class WorkflowHookEngine {
       // but allow later validation hooks to run (so block can override retryable_block)
       if (blockedByValidation && (hook.classification ?? 'validation') === 'side_effect') {
         break;
+      }
+
+      // Pre-check retry backoff / limit for validation hooks so we don't waste
+      // executor runs while a retryable_block cooldown is active.
+      if ((hook.classification ?? 'validation') === 'validation' && hook.retry) {
+        const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+        const maxAttempts = hook.retry.maxAttempts ?? 0;
+        const currentRetryCount = hookState?.retryCount ?? 0;
+        const lastResult = hookState?.lastResult;
+
+        if (maxAttempts > 0 && currentRetryCount >= maxAttempts) {
+          const reason =
+            lastResult?.type === 'retryable_block' ? lastResult.reason : 'Retry limit exceeded';
+          blockedByValidation = {
+            hookId: hook.id,
+            result: { type: 'block', reason: reason ?? 'Retry limit exceeded' },
+            isRetryable: false,
+          };
+          executionLog.push({
+            hookId: hook.id,
+            classification: 'validation',
+            result: blockedByValidation.result,
+            timestamp: Date.now(),
+          });
+          continue;
+        }
+
+        const nextRetryAt = hookState?.nextRetryAt;
+        if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+          const result: WorkflowHookResult =
+            lastResult?.type === 'retryable_block'
+              ? lastResult
+              : { type: 'retryable_block', reason: 'Retry backoff pending' };
+          blockedByValidation = { hookId: hook.id, result, isRetryable: true };
+          executionLog.push({
+            hookId: hook.id,
+            classification: 'validation',
+            result,
+            timestamp: Date.now(),
+          });
+          continue;
+        }
       }
 
       const context = await this.buildExecutorContext(hook, methodName, currentParams, meta);
@@ -388,7 +433,7 @@ export class WorkflowHookEngine {
       }
     }
 
-    const fromNode = slotToNode.get(meta.agentName) ?? nodeName;
+    const fromNode = nodeName;
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
     // Resolve action target(s) for send_message
@@ -527,7 +572,7 @@ export class WorkflowHookEngine {
       sessionId: meta.sessionId,
       taskId: meta.taskId,
       targetNode: hook.targetNode ?? meta.targetNode,
-      hookLocalState,
+      hookLocalState: this.boundHookLocalState(hookLocalState),
       currentArtifacts: currentArtifacts.map((a) => ({
         id: a.id,
         nodeId: a.nodeId,
@@ -576,6 +621,20 @@ export class WorkflowHookEngine {
       // Fall through to truncated placeholder on serialization failure.
     }
     return `[truncated: artifact data exceeds ${MAX_ARTIFACT_DATA_BYTES} bytes]`;
+  }
+
+  /**
+   * Bound hook-local state before serializing into script env vars.
+   * Replaces the whole state with a placeholder when it exceeds the byte budget.
+   */
+  private boundHookLocalState(state: Record<string, unknown>): Record<string, unknown> {
+    try {
+      const bytes = new TextEncoder().encode(JSON.stringify(state)).length;
+      if (bytes <= MAX_HOOK_LOCAL_STATE_BYTES) return state;
+    } catch {
+      // Fall through to placeholder on serialization failure.
+    }
+    return { _truncated: `hook local state exceeds ${MAX_HOOK_LOCAL_STATE_BYTES} bytes` };
   }
 
   /**
