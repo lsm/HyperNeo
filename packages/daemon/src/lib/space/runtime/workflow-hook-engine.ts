@@ -312,16 +312,35 @@ export class WorkflowHookEngine {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: true };
                 const delayMs = retryConfig?.delayMs ?? 0;
                 const backoffMultiplier = retryConfig?.backoffMultiplier ?? 1;
-                const newNextRetryAt =
-                  Date.now() + delayMs * Math.pow(backoffMultiplier, currentRetryCount);
-                try {
-                  this.config.hookStateRepo.update(this.config.workflowRunId, hook.id, {
-                    expectedVersion: hookState?.version ?? 0,
-                    retryCount: currentRetryCount + 1,
-                    nextRetryAt: newNextRetryAt,
-                  });
-                } catch {
-                  // best-effort retry state persistence
+                let updateOk = false;
+                for (let attempt = 0; attempt < 3; attempt++) {
+                  const currentState = this.config.hookStateRepo.get(
+                    this.config.workflowRunId,
+                    hook.id
+                  );
+                  const nextRetryAt =
+                    Date.now() +
+                    delayMs * Math.pow(backoffMultiplier, currentState?.retryCount ?? 0);
+                  try {
+                    const updateResult = this.config.hookStateRepo.update(
+                      this.config.workflowRunId,
+                      hook.id,
+                      {
+                        expectedVersion: currentState?.version ?? 0,
+                        retryCount: (currentState?.retryCount ?? 0) + 1,
+                        nextRetryAt,
+                      }
+                    );
+                    if (updateResult !== null) {
+                      updateOk = true;
+                      break;
+                    }
+                  } catch {
+                    // retry on version conflict or error
+                  }
+                }
+                if (!updateOk) {
+                  log.warn(`Failed to persist retry state for hook "${hook.id}" after 3 attempts`);
                 }
               }
             }
@@ -380,15 +399,29 @@ export class WorkflowHookEngine {
       // Reset retry metadata when the hook does not return a retryable_block,
       // so later unrelated actions start with a fresh attempt budget.
       if (hook.retry && result.type !== 'retryable_block') {
-        try {
-          const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
-          this.config.hookStateRepo.update(this.config.workflowRunId, hook.id, {
-            expectedVersion: hookState?.version ?? 0,
-            retryCount: 0,
-            nextRetryAt: null,
-          });
-        } catch {
-          // best-effort reset
+        let updateOk = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const currentState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+          try {
+            const updateResult = this.config.hookStateRepo.update(
+              this.config.workflowRunId,
+              hook.id,
+              {
+                expectedVersion: currentState?.version ?? 0,
+                retryCount: 0,
+                nextRetryAt: null,
+              }
+            );
+            if (updateResult !== null) {
+              updateOk = true;
+              break;
+            }
+          } catch {
+            // retry on version conflict or error
+          }
+        }
+        if (!updateOk) {
+          log.warn(`Failed to reset retry state for hook "${hook.id}" after 3 attempts`);
         }
       }
     }
@@ -466,6 +499,7 @@ export class WorkflowHookEngine {
 
     const fromNode = nodeName;
     const nodeIdToName = new Map(workflow.nodes.map((n) => [n.id, n.name]));
+    const nodeNames = new Set(workflow.nodes.map((n) => n.name));
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
     // Resolve action target(s) for send_message
@@ -483,13 +517,23 @@ export class WorkflowHookEngine {
             }
           } else {
             for (const t of permitted) {
-              for (const resolved of this.resolveTargetEntries(t, nodeIdToName, slotToNodes)) {
+              for (const resolved of this.resolveTargetEntries(
+                t,
+                nodeIdToName,
+                slotToNodes,
+                nodeNames
+              )) {
                 actionTargets.add(resolved);
               }
             }
           }
         } else {
-          for (const resolved of this.resolveTargetEntries(target, nodeIdToName, slotToNodes)) {
+          for (const resolved of this.resolveTargetEntries(
+            target,
+            nodeIdToName,
+            slotToNodes,
+            nodeNames
+          )) {
             actionTargets.add(resolved);
           }
         }
@@ -506,13 +550,23 @@ export class WorkflowHookEngine {
               }
             } else {
               for (const pt of permitted) {
-                for (const resolved of this.resolveTargetEntries(pt, nodeIdToName, slotToNodes)) {
+                for (const resolved of this.resolveTargetEntries(
+                  pt,
+                  nodeIdToName,
+                  slotToNodes,
+                  nodeNames
+                )) {
                   actionTargets.add(resolved);
                 }
               }
             }
           } else {
-            for (const resolved of this.resolveTargetEntries(t, nodeIdToName, slotToNodes)) {
+            for (const resolved of this.resolveTargetEntries(
+              t,
+              nodeIdToName,
+              slotToNodes,
+              nodeNames
+            )) {
               actionTargets.add(resolved);
             }
           }
@@ -850,11 +904,16 @@ export class WorkflowHookEngine {
   private resolveTargetEntries(
     target: string,
     nodeIdToName: Map<string, string>,
-    slotToNodes: Map<string, string[]>
+    slotToNodes: Map<string, string[]>,
+    nodeNames: Set<string>
   ): string[] {
     const trimmed = target.trim();
     if (nodeIdToName.has(trimmed)) {
       return [nodeIdToName.get(trimmed)!];
+    }
+    // Prefer exact workflow node names over slot aliases
+    if (nodeNames.has(trimmed)) {
+      return [trimmed];
     }
     const slotMatches = slotToNodes.get(trimmed);
     if (slotMatches) {
@@ -901,6 +960,8 @@ export class WorkflowHookEngine {
       if (roleSlotMatches) {
         return [...roleSlotMatches];
       }
+      // Raw role may be a workflow node name
+      return [role];
     }
     return [trimmed];
   }

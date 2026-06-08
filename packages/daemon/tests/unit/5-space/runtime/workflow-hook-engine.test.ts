@@ -701,6 +701,22 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('@role:Review resolves raw role to node name for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@role:Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
   test('broadcast * resolves agent slot names to node names for hook matching', async () => {
     const workflow = makeWorkflow([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
@@ -752,6 +768,51 @@ describe('WorkflowHookEngine', () => {
     const outcome = await engine.executeAction(
       'send_message',
       { target: '*', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('bare target prefers exact node name over slot alias', async () => {
+    // Node A is named 'Review'; Node B has an agent slot named 'Review'
+    const workflow = makeWorkflow([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    workflow.nodes = [
+      {
+        id: 'node-coding',
+        name: 'Coding',
+        agents: [{ name: 'coder', agentId: 'agent-coder' }],
+      },
+      {
+        id: 'node-review',
+        name: 'Review',
+        agents: [{ name: 'reviewer', agentId: 'agent-reviewer' }],
+      },
+      {
+        id: 'node-deploy',
+        name: 'Deploy',
+        agents: [{ name: 'Review', agentId: 'agent-review' }],
+      },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
       defaultMeta
     );
 
@@ -956,6 +1017,57 @@ describe('WorkflowHookEngine', () => {
     const state = hookStateRepo.get('run-1', 'hook-1');
     expect(state?.retryCount).toBe(0);
     expect(state?.nextRetryAt).toBeUndefined();
+  });
+
+  test('retryable_block retries state update on version conflict', async () => {
+    let failCount = 0;
+    const hookStateRepo = makeMockHookStateRepo();
+    const originalUpdate = hookStateRepo.update;
+    hookStateRepo.update = (
+      runId: string,
+      hookId: string,
+      patch: {
+        expectedVersion: number;
+        localState?: Record<string, unknown>;
+        lastResult?: WorkflowHookResult;
+        retryCount?: number;
+        nextRetryAt?: number | null;
+      }
+    ) => {
+      if (failCount < 2) {
+        failCount++;
+        return null; // simulate version conflict
+      }
+      return originalUpdate(runId, hookId, patch);
+    };
+
+    const mockExecutor = new MockHookExecutor();
+    hookStateRepo.ensure('run-1', 'hook-1');
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          retry: { maxAttempts: 3, delayMs: 1000 },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'retryable_block', reason: 'Retry me' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('retryable_block');
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.retryCount).toBe(1);
+    expect(failCount).toBe(2);
   });
 
   test('node id target is resolved to node name for hook matching', async () => {
