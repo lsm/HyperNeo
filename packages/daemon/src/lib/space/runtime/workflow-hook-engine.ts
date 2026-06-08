@@ -111,6 +111,9 @@ const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 /** Maximum bytes for an artifact data payload injected into hook context. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 
+/** Maximum bytes for a param `data` field before it is redacted in hook env. */
+const MAX_PARAM_DATA_BYTES = 4096;
+
 const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   send_message: SendMessageSchema,
   save_artifact: SaveArtifactSchema,
@@ -545,7 +548,14 @@ export class WorkflowHookEngine {
   private boundParams(params: Record<string, unknown>): Record<string, unknown> {
     const clone = { ...params };
     if (clone.data !== undefined) {
-      clone.data = '[truncated: large data field omitted from hook env]';
+      try {
+        const bytes = new TextEncoder().encode(JSON.stringify(clone.data)).length;
+        if (bytes > MAX_PARAM_DATA_BYTES) {
+          clone.data = '[truncated: large data field omitted from hook env]';
+        }
+      } catch {
+        clone.data = '[truncated: non-serializable data field]';
+      }
     }
     if (typeof clone.message === 'string' && clone.message.length > 4096) {
       clone.message = clone.message.slice(0, 4096) + '...[truncated]';
@@ -659,7 +669,7 @@ export class WorkflowHookEngine {
       try {
         const addr = parseAddress(target);
         if (addr.kind === 'worker') {
-          return addr.nodeId;
+          return decodeURIComponent(addr.nodeId);
         }
       } catch {
         // fall through to raw target

@@ -622,6 +622,83 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('@worker address with encoded node segment is decoded for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review/QA', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:run-1/Review%2FQA/reviewer' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('small data payloads are preserved in hook context', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', data: { review_url: 'https://example.com/pr/1' } },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    expect(params.data).toEqual({ review_url: 'https://example.com/pr/1' });
+  });
+
+  test('large data payloads are redacted in hook context', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    const bigData = { summary: 'x'.repeat(10_000) };
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', data: bigData },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    expect(params.data).toContain('truncated');
+  });
+
   test('retryable_block honors maxAttempts and converts to hard block', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
