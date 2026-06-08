@@ -195,7 +195,7 @@ function makeHook(overrides: Partial<WorkflowHook> & { id: string }): WorkflowHo
     method: 'send_message',
     classification: 'validation',
     order: 0,
-    validator: { kind: 'built_in', id: 'pr_open' },
+    validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
     authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     ...overrides,
   } as WorkflowHook;
@@ -630,6 +630,38 @@ describe('WorkflowHookEngine', () => {
     const outcome = await engine.executeAction(
       'send_message',
       { target: '@worker:run-1/Review%2FQA/reviewer' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('@role:actor-role:<nodeId> target is decoded and resolved for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@role:actor-role:node-review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('@role:actor-role:<slotName> target is decoded and resolved for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@role:actor-role:reviewer', message: 'hi' },
       defaultMeta
     );
 

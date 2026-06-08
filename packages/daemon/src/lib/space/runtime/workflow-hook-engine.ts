@@ -814,6 +814,18 @@ export class WorkflowHookEngine {
     }
     if (trimmed.startsWith('@role:')) {
       const role = trimmed.slice(6);
+      // Decode actor-role:<nodeId|agentName> form used by the messaging adapter
+      const actorRolePrefix = 'actor-role:';
+      if (role.startsWith(actorRolePrefix)) {
+        const actorRoleValue = role.slice(actorRolePrefix.length);
+        if (nodeIdToName.has(actorRoleValue)) {
+          return [nodeIdToName.get(actorRoleValue)!];
+        }
+        const actorRoleSlotMatches = slotToNodes.get(actorRoleValue);
+        if (actorRoleSlotMatches) {
+          return [...actorRoleSlotMatches];
+        }
+      }
       if (nodeIdToName.has(role)) {
         return [nodeIdToName.get(role)!];
       }

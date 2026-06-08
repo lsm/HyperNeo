@@ -288,6 +288,7 @@ export async function executeHookScript(
       env: restrictedEnv,
       stdout: 'pipe',
       stderr: 'pipe',
+      detached: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

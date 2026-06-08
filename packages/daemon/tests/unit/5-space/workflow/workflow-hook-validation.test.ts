@@ -17,7 +17,7 @@ function validHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
     sourceNode: 'Coding',
     targetNode: 'Review',
     method: 'send_message',
-    validator: { kind: 'built_in', id: 'pr_open' },
+    validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
     authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     ...overrides,
   };
@@ -115,6 +115,14 @@ describe('workflow hook validation', () => {
     expect(runtimeService.validateResult({ type: 'shell_out', command: 'x' }).join('\n')).toContain(
       'bounded hook result type'
     );
+  });
+
+  test('rejects unimplemented built-in validators', () => {
+    const errors = validateWorkflowHooks(
+      [validHook({ validator: { kind: 'built_in', id: 'pr_open' } })],
+      nodes
+    ).join('\n');
+    expect(errors).toContain('unknown built-in validator');
   });
 
   test('validates localState.recentResultRef shape and cross-hook references', () => {
