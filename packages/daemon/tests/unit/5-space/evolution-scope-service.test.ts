@@ -267,13 +267,13 @@ describe('EvolutionScopeService', () => {
       rule: 'Lesson B',
       why: 'Why B',
     });
-    evolutionRepo.updateLesson(lessonA.id, { confidence: 0.9 });
-    evolutionRepo.updateLesson(lessonB.id, { confidence: 0.1 });
+    evolutionRepo.updateLesson(lessonA.id, { confidence: 1.0 });
+    evolutionRepo.updateLesson(lessonB.id, { confidence: 0.0 });
 
     const selected = service.selectActiveLessonsForTask({ taskId: task.id, limit: 1 });
 
     expect(selected).toHaveLength(1);
-    // lessonA has much higher confidence, so it should win even if slightly older
+    // lessonA has max confidence, so it should win even if slightly older
     expect(selected[0].id).toBe(lessonA.id);
   });
 

@@ -797,7 +797,7 @@ function normalizeRecencyScore(lessons: EvolutionLesson[]): Map<string, number> 
   }
   const range = maxUpdated - minUpdated || 1;
   for (const lesson of lessons) {
-    scores.set(lesson.id, ((lesson.updatedAt - minUpdated) / range) * 0.99);
+    scores.set(lesson.id, ((lesson.updatedAt - minUpdated) / range) * 0.49);
   }
   return scores;
 }
@@ -808,8 +808,8 @@ function normalizeRecencyScore(lessons: EvolutionLesson[]): Map<string, number> 
  * Scoring:
  * - Tag overlap between `lesson.appliesTo` and `task.labels`: +10 per match
  * - Keyword overlap between task text and lesson text: +2 per match
- * - Lesson confidence: +3 * confidence
- * - Recency: 0–0.99 tiebreaker based on relative updatedAt within the lesson set
+ * - Lesson confidence: +0.5 * confidence (max 0.5, tiebreaker only)
+ * - Recency: 0–0.49 tiebreaker based on relative updatedAt within the lesson set
  */
 export function rankLessonsByTaskRelevance(
   lessons: EvolutionLesson[],
@@ -821,14 +821,14 @@ export function rankLessonsByTaskRelevance(
   const scored = lessons.map((lesson) => {
     const lessonTokens = buildLessonTokens(lesson);
     const tagOverlap = countOverlap(
-      new Set(lesson.appliesTo.map((t) => t.toLowerCase())),
-      new Set(task.labels.map((l) => l.toLowerCase()))
+      new Set(lesson.appliesTo.map((t) => t.trim().toLowerCase())),
+      new Set(task.labels.map((l) => l.trim().toLowerCase()))
     );
     const keywordOverlap = countOverlap(taskTokens, lessonTokens);
     const score =
       tagOverlap * 10 +
       keywordOverlap * 2 +
-      lesson.confidence * 3 +
+      lesson.confidence * 0.5 +
       (recencyScores.get(lesson.id) ?? 0);
     return { lesson, score };
   });
