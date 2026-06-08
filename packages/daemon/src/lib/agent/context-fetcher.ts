@@ -24,9 +24,12 @@ import type {
 import { Logger } from '../logger';
 
 type ContextMetadata =
-  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata'>
+  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'>
   | null
   | undefined;
+
+/** Providers whose SDK-reported context capacity is trustworthy. All others prefer metadata. */
+const NATIVE_CONTEXT_WINDOW_PROVIDERS = new Set(['anthropic', 'anthropic-copilot']);
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -90,8 +93,11 @@ export class ContextFetcher {
     const metadataCapacity = metadataMatchesResponse
       ? positiveInteger(modelMetadata?.contextWindow)
       : undefined;
+    const isNativeProvider =
+      modelMetadata?.provider && NATIVE_CONTEXT_WINDOW_PROVIDERS.has(modelMetadata.provider);
+    const shouldPreferMetadata = modelMetadata?.preferContextWindowMetadata ?? !isNativeProvider;
     const capacity =
-      modelMetadata?.preferContextWindowMetadata && metadataCapacity
+      shouldPreferMetadata && metadataCapacity
         ? metadataCapacity
         : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {

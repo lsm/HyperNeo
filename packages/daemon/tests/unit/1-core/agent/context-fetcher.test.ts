@@ -310,6 +310,73 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(0);
   });
 
+  it('prefers metadata capacity for non-native providers when SDK reports a generic value', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'glm-5.1',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('uses SDK capacity for native Anthropic providers even when metadata differs', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 25,
+      model: 'claude-sonnet-4-6',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'claude-sonnet-4-6',
+      alias: 'sonnet',
+      contextWindow: 100000,
+      provider: 'anthropic',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('allows non-native providers to opt out of metadata via explicit flag', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'custom-model',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      provider: 'custom:test',
+      preferContextWindowMetadata: false,
+    });
+
+    expect(info.totalCapacity).toBe(1000000);
+    expect(info.percentUsed).toBe(5);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 5 });
+  });
+
   it('caps recomputed percentUsed at 100 when usage exceeds capacity', () => {
     const response = baseResponse({
       totalTokens: 300000,
