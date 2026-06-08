@@ -638,6 +638,35 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('broadcast * resolves agent slot names to node names for hook matching', async () => {
+    const workflow = makeWorkflow([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    // Channel uses agent slot name 'reviewer' instead of node name 'Review'
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer' }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '*', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
   test('small data payloads are preserved in hook context', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();

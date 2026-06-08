@@ -404,7 +404,7 @@ export class WorkflowHookEngine {
             }
           } else {
             for (const t of permitted) {
-              actionTargets.add(t);
+              actionTargets.add(this.resolveTargetToNode(t, slotToNode));
             }
           }
         } else {
