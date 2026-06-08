@@ -2350,7 +2350,7 @@ function runMigration28(db: BunDatabase): void {
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
- * - space_agents: custom agents per space (role/provider/inject_workflow_context included, no CHECK on role)
+ * - space_agents: worker agents per space (role/provider/inject_workflow_context included, no CHECK on role)
  * - space_workflows: workflow definitions per space (includes start_step_id)
  * - space_workflow_steps: ordered steps within a workflow
  * - space_workflow_transitions: directed edges between steps (graph navigation)
@@ -10595,7 +10595,7 @@ export function runMigration154(db: BunDatabase): void {
 }
 
 /**
- * Migration 154 — Copy legacy long-horizon ownership/automation data.
+ * Migration 155 — Copy legacy long-horizon ownership/automation data.
  */
 export function runMigration155(db: BunDatabase): void {
   db.exec(`

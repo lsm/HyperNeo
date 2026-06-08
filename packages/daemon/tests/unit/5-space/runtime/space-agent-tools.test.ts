@@ -968,6 +968,68 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(missingReminder.error).toBe(`Long-horizon agent not found: ${missingId}`);
   });
 
+  test('rejects worker-only ids on long-horizon goal, scope, reminder, and get tools', async () => {
+    const handlers = makeHandlers(ctx);
+    const workerOnly = await ctx.agentManager.create({
+      spaceId: ctx.spaceId,
+      name: 'Worker Only',
+    });
+    expect(workerOnly.ok).toBe(true);
+    if (!workerOnly.ok) throw new Error(workerOnly.error);
+    const workerId = workerOnly.value.id;
+
+    const goal = ctx.goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Test Goal',
+    });
+    const scope = ctx.evolutionScopeService.createScope({
+      spaceId: ctx.spaceId,
+      kind: 'custom',
+      name: 'Test Scope',
+      objective: 'Track evidence',
+    });
+
+    const expectedError = 'Expected long-horizon agent id, got worker agent id.';
+
+    const getResult = JSON.parse(
+      (await handlers.get_agent({ agent_id: workerId })).content[0].text
+    );
+    expect(getResult.success).toBe(false);
+    expect(getResult.error).toBe(expectedError);
+
+    const assignGoal = JSON.parse(
+      (await handlers.assign_agent_to_goal({ agent_id: workerId, goal_id: goal.id })).content[0]
+        .text
+    );
+    expect(assignGoal.success).toBe(false);
+    expect(assignGoal.error).toBe(expectedError);
+
+    const assignScope = JSON.parse(
+      (await handlers.assign_agent_to_forge_scope({ agent_id: workerId, scope_id: scope.id }))
+        .content[0].text
+    );
+    expect(assignScope.success).toBe(false);
+    expect(assignScope.error).toBe(expectedError);
+
+    const reminder = JSON.parse(
+      (
+        await handlers.create_agent_reminder({
+          agent_id: workerId,
+          message: 'No target',
+          remind_at: Date.now(),
+        })
+      ).content[0].text
+    );
+    expect(reminder.success).toBe(false);
+    expect(reminder.error).toBe(expectedError);
+
+    const listReminders = JSON.parse(
+      (await handlers.list_agent_reminders({ agent_id: workerId })).content[0].text
+    );
+    expect(listReminders.success).toBe(false);
+    expect(listReminders.error).toBe(expectedError);
+  });
+
   test('returns errors from database-backed tools when database is not configured', async () => {
     const handlers = createSpaceAgentToolHandlers({
       spaceId: ctx.spaceId,
@@ -3415,8 +3477,8 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 
   test('does not error when reassigning open task', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
-      title: 'Has custom agent',
-      description: 'Custom agent must be preserved',
+      title: 'Has worker agent',
+      description: 'Worker agent must be preserved',
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
@@ -3429,10 +3491,10 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
     expect(parsed.task.id).toBe(taskId);
   });
 
-  test('clears custom agent when custom_agent_id is null (field removed in M71)', async () => {
+  test('clears worker agent when custom_agent_id is null (field removed in M71)', async () => {
     const createResult = await makeHandlers(ctx).create_standalone_task({
       title: 'Clear agent',
-      description: 'Remove custom agent',
+      description: 'Remove worker agent',
     });
     const taskId = JSON.parse(createResult.content[0].text).task.id;
 
