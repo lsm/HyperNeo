@@ -18,6 +18,9 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +42,8 @@ export interface HookExecutorContext {
   hookLocalState: Record<string, unknown>;
   currentArtifacts: Record<string, unknown>[];
   permittedExternalLookups: string[];
+  /** Optional bounded template data from the hook definition. */
+  templateData?: Record<string, unknown>;
 }
 
 /** Result of executing a single hook validator. */
@@ -191,6 +196,14 @@ function buildHookRestrictedEnv(
     env['NEOKAI_PERMITTED_EXTERNAL_LOOKUPS'] = context.permittedExternalLookups.join(',');
   }
 
+  if (context.templateData) {
+    try {
+      env['NEOKAI_HOOK_TEMPLATE_DATA_JSON'] = JSON.stringify(context.templateData);
+    } catch {
+      env['NEOKAI_HOOK_TEMPLATE_DATA_JSON'] = '{}';
+    }
+  }
+
   // Merge user-specified env (cannot override injected vars)
   if (scriptEnv) {
     for (const [key, value] of Object.entries(scriptEnv)) {
@@ -256,6 +269,11 @@ export async function executeHookScript(
   }
 
   const restrictedEnv = buildHookRestrictedEnv(context);
+
+  // Isolate HOME to a temp directory so restricted hooks cannot read
+  // disk-backed credentials from the user profile.
+  const hookHome = mkdtempSync(join(tmpdir(), 'neokai-hook-'));
+  restrictedEnv['HOME'] = hookHome;
 
   let proc;
   try {

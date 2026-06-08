@@ -440,13 +440,15 @@ export class WorkflowHookEngine {
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
-    // Build slot-to-node translation map so agent names resolve to node names
-    const slotToNode = new Map<string, string>();
+    // Build slot-to-nodes map so duplicate slot names across nodes are preserved
+    const slotToNodes = new Map<string, string[]>();
     for (const node of workflow.nodes) {
       for (const agent of node.agents ?? []) {
-        if (!slotToNode.has(agent.name)) {
-          slotToNode.set(agent.name, node.name);
+        const arr = slotToNodes.get(agent.name) ?? [];
+        if (!arr.includes(node.name)) {
+          arr.push(node.name);
         }
+        slotToNodes.set(agent.name, arr);
       }
     }
 
@@ -459,7 +461,7 @@ export class WorkflowHookEngine {
     if (methodName === 'send_message') {
       const target = params.target;
       if (typeof target === 'string') {
-        if (target === '*') {
+        if (target.trim() === '*') {
           const permitted = resolver.getPermittedTargets(fromNode);
           if (permitted.includes('*')) {
             for (const node of workflow.nodes) {
@@ -467,18 +469,20 @@ export class WorkflowHookEngine {
             }
           } else {
             for (const t of permitted) {
-              actionTargets.add(nodeIdToName.get(t) ?? this.resolveTargetToNode(t, slotToNode));
+              for (const resolved of this.resolveTargetEntries(t, nodeIdToName, slotToNodes)) {
+                actionTargets.add(resolved);
+              }
             }
           }
         } else {
-          actionTargets.add(
-            nodeIdToName.get(target) ?? this.resolveTargetToNode(target, slotToNode)
-          );
+          for (const resolved of this.resolveTargetEntries(target, nodeIdToName, slotToNodes)) {
+            actionTargets.add(resolved);
+          }
         }
       } else if (Array.isArray(target)) {
         for (const t of target) {
           if (typeof t !== 'string') continue;
-          if (t === '*') {
+          if (t.trim() === '*') {
             const permitted = resolver.getPermittedTargets(fromNode);
             if (permitted.includes('*')) {
               for (const node of workflow.nodes) {
@@ -486,11 +490,15 @@ export class WorkflowHookEngine {
               }
             } else {
               for (const pt of permitted) {
-                actionTargets.add(nodeIdToName.get(pt) ?? this.resolveTargetToNode(pt, slotToNode));
+                for (const resolved of this.resolveTargetEntries(pt, nodeIdToName, slotToNodes)) {
+                  actionTargets.add(resolved);
+                }
               }
             }
           } else {
-            actionTargets.add(nodeIdToName.get(t) ?? this.resolveTargetToNode(t, slotToNode));
+            for (const resolved of this.resolveTargetEntries(t, nodeIdToName, slotToNodes)) {
+              actionTargets.add(resolved);
+            }
           }
         }
       }
@@ -603,6 +611,7 @@ export class WorkflowHookEngine {
         updatedAt: a.updatedAt,
       })),
       permittedExternalLookups,
+      templateData: hook.templateData,
     };
   }
 
@@ -747,18 +756,41 @@ export class WorkflowHookEngine {
   // Helpers
   // -------------------------------------------------------------------------
 
-  private resolveTargetToNode(target: string, slotToNode: Map<string, string>): string {
-    if (target.startsWith('@worker:')) {
+  /**
+   * Resolve a raw target string into one or more node names.
+   *
+   * Handles:
+   *   - node IDs → node name
+   *   - agent slot names → all matching node names (duplicate slots across nodes)
+   *   - @worker: addresses → decoded node segment
+   *   - bare node names / raw strings → returned as-is
+   *
+   * Target strings are trimmed before resolution.
+   */
+  private resolveTargetEntries(
+    target: string,
+    nodeIdToName: Map<string, string>,
+    slotToNodes: Map<string, string[]>
+  ): string[] {
+    const trimmed = target.trim();
+    if (nodeIdToName.has(trimmed)) {
+      return [nodeIdToName.get(trimmed)!];
+    }
+    const slotMatches = slotToNodes.get(trimmed);
+    if (slotMatches) {
+      return [...slotMatches];
+    }
+    if (trimmed.startsWith('@worker:')) {
       try {
-        const addr = parseAddress(target);
+        const addr = parseAddress(trimmed);
         if (addr.kind === 'worker') {
-          return decodeURIComponent(addr.nodeId);
+          return [decodeURIComponent(addr.nodeId)];
         }
       } catch {
         // fall through to raw target
       }
     }
-    return slotToNode.get(target) ?? target;
+    return [trimmed];
   }
 
   private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
