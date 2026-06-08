@@ -467,7 +467,7 @@ export class WorkflowHookEngine {
             }
           } else {
             for (const t of permitted) {
-              actionTargets.add(this.resolveTargetToNode(t, slotToNode));
+              actionTargets.add(nodeIdToName.get(t) ?? this.resolveTargetToNode(t, slotToNode));
             }
           }
         } else {
@@ -486,11 +486,11 @@ export class WorkflowHookEngine {
               }
             } else {
               for (const pt of permitted) {
-                actionTargets.add(this.resolveTargetToNode(pt, slotToNode));
+                actionTargets.add(nodeIdToName.get(pt) ?? this.resolveTargetToNode(pt, slotToNode));
               }
             }
           } else {
-            actionTargets.add(this.resolveTargetToNode(t, slotToNode));
+            actionTargets.add(nodeIdToName.get(t) ?? this.resolveTargetToNode(t, slotToNode));
           }
         }
       }
@@ -622,8 +622,12 @@ export class WorkflowHookEngine {
         clone.data = '[truncated: non-serializable data field]';
       }
     }
-    if (typeof clone.message === 'string' && clone.message.length > 4096) {
-      clone.message = clone.message.slice(0, 4096) + '...[truncated]';
+    // Truncate any oversized string fields (message, description, reason, etc.)
+    for (const key of Object.keys(clone)) {
+      const value = clone[key];
+      if (typeof value === 'string' && value.length > 4096) {
+        clone[key] = value.slice(0, 4096) + '...[truncated]';
+      }
     }
     return clone;
   }

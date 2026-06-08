@@ -379,6 +379,7 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
           errors.push(`${loc}.poll.maxDurationMs: expected positive number`);
         }
       }
+      errors.push(`${loc}.poll: hook polling is not yet supported`);
     }
   }
 
