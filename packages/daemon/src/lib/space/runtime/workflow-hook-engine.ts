@@ -577,11 +577,14 @@ export class WorkflowHookEngine {
       }
     }
 
-    // Load current artifacts — bounded to last 50 to avoid oversized env
+    // Load current artifacts — most recently updated first, capped at 50
     let currentArtifacts: WorkflowRunArtifact[] = [];
     try {
       const all = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
-      currentArtifacts = all.slice(-50);
+      currentArtifacts = all
+        .slice()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 50);
     } catch {
       // best effort
     }
@@ -631,14 +634,33 @@ export class WorkflowHookEngine {
         clone.data = '[truncated: non-serializable data field]';
       }
     }
-    // Truncate any oversized string fields (message, description, reason, etc.)
     for (const key of Object.keys(clone)) {
-      const value = clone[key];
-      if (typeof value === 'string' && value.length > 4096) {
-        clone[key] = value.slice(0, 4096) + '...[truncated]';
-      }
+      clone[key] = this.boundValue(clone[key]);
     }
     return clone;
+  }
+
+  /**
+   * Recursively bound values before serializing into hook env vars.
+   * Strings longer than 4096 chars are truncated; objects and arrays
+   * are traversed deeply.
+   */
+  private boundValue(value: unknown): unknown {
+    if (typeof value === 'string' && value.length > 4096) {
+      return value.slice(0, 4096) + '...[truncated]';
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => this.boundValue(item));
+    }
+    if (value !== null && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(record)) {
+        out[k] = this.boundValue(v);
+      }
+      return out;
+    }
+    return value;
   }
 
   /**
@@ -788,6 +810,16 @@ export class WorkflowHookEngine {
         }
       } catch {
         // fall through to raw target
+      }
+    }
+    if (trimmed.startsWith('@role:')) {
+      const role = trimmed.slice(6);
+      if (nodeIdToName.has(role)) {
+        return [nodeIdToName.get(role)!];
+      }
+      const roleSlotMatches = slotToNodes.get(role);
+      if (roleSlotMatches) {
+        return [...roleSlotMatches];
       }
     }
     return [trimmed];

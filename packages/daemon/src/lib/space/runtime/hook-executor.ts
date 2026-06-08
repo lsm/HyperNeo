@@ -86,6 +86,9 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_HOST',
 ]);
 
+/** SSH agent / Git credential helper keys — stripped from restricted env. */
+const SSH_ENV_KEYS = new Set(['SSH_AUTH_SOCK', 'SSH_AGENT_LAUNCHER', 'SSH_AGENT_PID']);
+
 // ---------------------------------------------------------------------------
 // Built-in validators
 // ---------------------------------------------------------------------------
@@ -157,6 +160,8 @@ function buildHookRestrictedEnv(
     const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
     if (isKeyRestricted) continue;
 
+    if (SSH_ENV_KEYS.has(key)) continue;
+
     env[key] = value as string;
   }
 
@@ -226,6 +231,7 @@ function buildHookRestrictedEnv(
         if (isPrefixRestricted) continue;
         const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
         if (isKeyRestricted) continue;
+        if (SSH_ENV_KEYS.has(key)) continue;
       }
       env[key] = value;
     }
@@ -302,7 +308,16 @@ export async function executeHookScript(
     (async () => {
       const killTimer = setTimeout(() => {
         killed = true;
-        proc.kill('SIGKILL');
+        // Kill the entire process group so background children are reaped.
+        try {
+          if (proc.pid) {
+            process.kill(-proc.pid, 'SIGKILL');
+          } else {
+            proc.kill('SIGKILL');
+          }
+        } catch {
+          proc.kill('SIGKILL');
+        }
         controller.abort();
       }, timeoutMs);
 
