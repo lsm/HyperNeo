@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
-import { runMigration154 } from '../../../../src/storage/schema/migrations.ts';
+import { runMigration155 } from '../../../../src/storage/schema/migrations.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
 function makeDb(): BunDatabase {
@@ -180,7 +180,7 @@ describe('legacy long-horizon migration', () => {
     db.prepare(`DELETE FROM migration_markers WHERE key = ?`).run(
       'm154_legacy_long_horizon_agent_data'
     );
-    runMigration154(db);
+    runMigration155(db);
 
     const repo = new SpaceLongHorizonAgentRepository(db);
     expect(repo.listGoals('worker-only')).toEqual([
@@ -190,7 +190,7 @@ describe('legacy long-horizon migration', () => {
     repo.deleteGoalAssignment('worker-only', 'goal-a');
     expect(repo.listGoals('worker-only')).toEqual([]);
 
-    runMigration154(db);
+    runMigration155(db);
 
     expect(repo.listGoals('worker-only')).toEqual([]);
     db.close();

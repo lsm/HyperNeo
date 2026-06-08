@@ -3,7 +3,7 @@
  *
  * Types for the Space multi-agent workflow system.
  * Spaces are distinct from Rooms — they are workspace-first, workflow-centric
- * contexts for orchestrating custom agents and automated pipelines.
+ * contexts for orchestrating worker agents and automated pipelines.
  */
 
 import type { ThinkingLevel } from '../types';
