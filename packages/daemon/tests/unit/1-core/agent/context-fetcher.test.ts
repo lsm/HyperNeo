@@ -377,6 +377,72 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 5 });
   });
 
+  it('uses metadata for non-native providers when SDK reports generic placeholder model', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'default',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5.1',
+      alias: 'glm-5.1',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
+  it('uses metadata for non-native providers when SDK reports generic tier name', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'sonnet',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'kimi-for-coding',
+      alias: 'kimi',
+      contextWindow: 262144,
+      provider: 'kimi',
+    });
+
+    expect(info.totalCapacity).toBe(262144);
+    expect(info.percentUsed).toBe(19);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 19.1 });
+  });
+
+  it('still prefers SDK capacity for native providers when SDK reports generic placeholder', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 25,
+      model: 'default',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'claude-sonnet-4-6',
+      alias: 'sonnet',
+      contextWindow: 100000,
+      provider: 'anthropic',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
+  });
+
   it('caps recomputed percentUsed at 100 when usage exceeds capacity', () => {
     const response = baseResponse({
       totalTokens: 300000,
