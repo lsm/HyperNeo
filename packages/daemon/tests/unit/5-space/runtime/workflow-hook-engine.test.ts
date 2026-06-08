@@ -420,10 +420,9 @@ describe('WorkflowHookEngine', () => {
     const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
 
     expect(outcome.decision).toBe('emit_follow_up');
-    expect(outcome.followUpRequest).toEqual({
-      targetNode: 'Review',
-      message: 'Please review this',
-    });
+    expect(outcome.followUpRequests).toEqual([
+      { targetNode: 'Review', message: 'Please review this' },
+    ]);
     expect(outcome.userState.status).toBe('follow_up_emitted');
     expect(outcome.userState.emittedActionIds).toContain('Review');
   });
@@ -726,6 +725,88 @@ describe('WorkflowHookEngine', () => {
 
     const params = (capturedContext as { params: Record<string, unknown> }).params;
     expect(params.data).toContain('truncated');
+  });
+
+  test('retryCount is reset after a non-retryable hook result', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    hookStateRepo.ensure('run-1', 'hook-1');
+    hookStateRepo.update('run-1', 'hook-1', {
+      expectedVersion: 0,
+      retryCount: 2,
+      nextRetryAt: Date.now() - 1,
+    });
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          retry: { maxAttempts: 3, delayMs: 1000 },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('allow');
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.retryCount).toBe(0);
+    expect(state?.nextRetryAt).toBeUndefined();
+  });
+
+  test('node id target is resolved to node name for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'node-review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
+  test('multiple emit_follow_up requests are collected', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', classification: 'side_effect', order: 1 }),
+      makeHook({ id: 'hook-2', classification: 'side_effect', order: 2 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'emit_follow_up',
+      targetNode: 'Review',
+      message: 'msg1',
+    });
+    mockExecutor.setResult('hook-2', {
+      type: 'emit_follow_up',
+      targetNode: 'Deploy',
+      message: 'msg2',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('emit_follow_up');
+    expect(outcome.followUpRequests).toHaveLength(2);
+    expect(outcome.followUpRequests[0]).toEqual({ targetNode: 'Review', message: 'msg1' });
+    expect(outcome.followUpRequests[1]).toEqual({ targetNode: 'Deploy', message: 'msg2' });
+    expect(outcome.userState.emittedActionIds).toEqual(['Review', 'Deploy']);
   });
 
   test('retryable_block honors maxAttempts and converts to hard block', async () => {

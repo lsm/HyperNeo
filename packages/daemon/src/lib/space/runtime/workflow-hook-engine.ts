@@ -65,8 +65,8 @@ export interface HookActionOutcome {
     | 'record_state';
   /** Final params after all patch_params applied (or original if none). */
   finalParams: Record<string, unknown>;
-  /** Follow-up action to dispatch, if any. */
-  followUpRequest?: { targetNode: string; message: string };
+  /** Follow-up actions to dispatch, if any. */
+  followUpRequests: Array<{ targetNode: string; message: string }>;
   /** State updates to persist. */
   stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>;
   /** Normalized user-visible state for banners/debug UI. */
@@ -174,6 +174,7 @@ export class WorkflowHookEngine {
       return {
         decision: 'allow',
         finalParams: params,
+        followUpRequests: [],
         stateUpdates: [],
         userState: { status: 'allowed' },
         executionLog: [],
@@ -184,7 +185,7 @@ export class WorkflowHookEngine {
     const executionLog: HookExecutionRecord[] = [];
     const originalParams = { ...params };
     let currentParams = originalParams;
-    let followUpRequest: { targetNode: string; message: string } | undefined;
+    const followUpRequests: Array<{ targetNode: string; message: string }> = [];
     const stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }> = [];
     let blockedByValidation: {
       hookId: string;
@@ -353,7 +354,7 @@ export class WorkflowHookEngine {
 
         case 'emit_follow_up':
           if (result.targetNode && result.message) {
-            followUpRequest = { targetNode: result.targetNode, message: result.message };
+            followUpRequests.push({ targetNode: result.targetNode, message: result.message });
           }
           break;
 
@@ -362,6 +363,21 @@ export class WorkflowHookEngine {
             stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
           }
           break;
+      }
+
+      // Reset retry metadata when the hook does not return a retryable_block,
+      // so later unrelated actions start with a fresh attempt budget.
+      if (hook.retry && result.type !== 'retryable_block') {
+        try {
+          const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
+          this.config.hookStateRepo.update(this.config.workflowRunId, hook.id, {
+            expectedVersion: hookState?.version ?? 0,
+            retryCount: 0,
+            nextRetryAt: null,
+          });
+        } catch {
+          // best-effort reset
+        }
       }
     }
 
@@ -374,6 +390,7 @@ export class WorkflowHookEngine {
       return {
         decision: isRetryable ? 'retryable_block' : 'block',
         finalParams: currentParams,
+        followUpRequests: [],
         stateUpdates,
         userState: this.buildBlockUserState(hook, methodName, result, isRetryable, meta),
         executionLog,
@@ -383,7 +400,7 @@ export class WorkflowHookEngine {
 
     // Determine the most significant non-block decision
     const hasPatch = !this.shallowEqual(params, currentParams);
-    const hasFollowUp = !!followUpRequest;
+    const hasFollowUp = followUpRequests.length > 0;
     const hasState = stateUpdates.length > 0;
 
     let decision: HookActionOutcome['decision'] = 'allow';
@@ -394,14 +411,14 @@ export class WorkflowHookEngine {
     return {
       decision,
       finalParams: currentParams,
-      followUpRequest,
+      followUpRequests,
       stateUpdates,
       userState: this.buildAllowUserState(
         decision,
         methodName,
         originalParams,
         currentParams,
-        followUpRequest,
+        followUpRequests,
         stateUpdates,
         executionLog
       ),
@@ -434,6 +451,7 @@ export class WorkflowHookEngine {
     }
 
     const fromNode = nodeName;
+    const nodeIdToName = new Map(workflow.nodes.map((n) => [n.id, n.name]));
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
     // Resolve action target(s) for send_message
@@ -453,7 +471,9 @@ export class WorkflowHookEngine {
             }
           }
         } else {
-          actionTargets.add(this.resolveTargetToNode(target, slotToNode));
+          actionTargets.add(
+            nodeIdToName.get(target) ?? this.resolveTargetToNode(target, slotToNode)
+          );
         }
       } else if (Array.isArray(target)) {
         for (const t of target) {
@@ -690,7 +710,7 @@ export class WorkflowHookEngine {
     methodName: string,
     originalParams: Record<string, unknown>,
     finalParams: Record<string, unknown>,
-    followUpRequest: { targetNode: string; message: string } | undefined,
+    followUpRequests: Array<{ targetNode: string; message: string }>,
     _stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>,
     _executionLog: HookExecutionRecord[]
   ): WorkflowHookUserState {
@@ -712,8 +732,8 @@ export class WorkflowHookEngine {
       );
     }
 
-    if (followUpRequest) {
-      base.emittedActionIds = [followUpRequest.targetNode];
+    if (followUpRequests.length > 0) {
+      base.emittedActionIds = followUpRequests.map((r) => r.targetNode);
     }
 
     return base;
@@ -856,13 +876,13 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     }
 
     // Skip nested follow-up emission — only one level of follow-up is allowed
-    const nestedFollowUpSuppressed = outcome.followUpRequest && isFollowUp;
+    const nestedFollowUpSuppressed = outcome.followUpRequests.length > 0 && isFollowUp;
     if (nestedFollowUpSuppressed) {
       log.warn('Nested follow-up emission suppressed during follow-up dispatch.');
     }
 
     // Handle follow-up dispatch
-    if (outcome.followUpRequest && !nestedFollowUpSuppressed) {
+    if (outcome.followUpRequests.length > 0 && !nestedFollowUpSuppressed) {
       const followUpMethod = 'send_message';
       if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
         return hookResult(
@@ -891,28 +911,32 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           | ((args: Record<string, unknown>) => Promise<AnyToolResult>)
           | undefined) ?? followUpHandler;
 
-      // Dispatch follow-up through the wrapped pipeline with timeout
-      const followUpPromise = wrapHandlerWithHooks(
-        followUpMethod,
-        rawFollowUpHandler as (args: Record<string, unknown>) => Promise<AnyToolResult>,
-        engine,
-        handlers,
-        { ...meta, targetNode: outcome.followUpRequest.targetNode },
-        true
-      )({
-        target: outcome.followUpRequest.targetNode,
-        message: outcome.followUpRequest.message,
-      } as unknown as Record<string, unknown>);
+      // Dispatch all follow-ups concurrently through the wrapped pipeline with timeout
+      const followUpPromises = outcome.followUpRequests.map((req) => {
+        const dispatchPromise = wrapHandlerWithHooks(
+          followUpMethod,
+          rawFollowUpHandler as (args: Record<string, unknown>) => Promise<AnyToolResult>,
+          engine,
+          handlers,
+          { ...meta, targetNode: req.targetNode },
+          true
+        )({
+          target: req.targetNode,
+          message: req.message,
+        } as unknown as Record<string, unknown>);
 
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error('Follow-up dispatch timed out')),
-          DEFAULT_FOLLOW_UP_TIMEOUT_MS
-        );
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error('Follow-up dispatch timed out')),
+            DEFAULT_FOLLOW_UP_TIMEOUT_MS
+          );
+        });
+
+        return Promise.race([dispatchPromise, timeoutPromise]);
       });
 
       try {
-        await Promise.race([followUpPromise, timeoutPromise]);
+        await Promise.all(followUpPromises);
       } catch (err) {
         log.warn(
           `Follow-up dispatch timed out or failed: ${err instanceof Error ? err.message : String(err)}`
