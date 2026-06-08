@@ -685,6 +685,22 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog[0].hookId).toBe('hook-1');
   });
 
+  test('@role:actor-role with URI-encoded node name is decoded for hook matching', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', targetNode: 'Review/QA', method: 'send_message' }),
+    ]);
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@role:actor-role:Review%2FQA', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-1');
+  });
+
   test('broadcast * resolves agent slot names to node names for hook matching', async () => {
     const workflow = makeWorkflow([
       makeHook({ id: 'hook-1', targetNode: 'Review', method: 'send_message' }),
@@ -802,6 +818,107 @@ describe('WorkflowHookEngine', () => {
 
     const params = (capturedContext as { params: Record<string, unknown> }).params;
     expect(params.data).toContain('truncated');
+  });
+
+  test('large arrays in params are capped', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    const bigArray = Array.from({ length: 150 }, (_, i) => `item-${i}`);
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', items: bigArray },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    expect(Array.isArray(params.items)).toBe(true);
+    expect((params.items as unknown[]).length).toBe(101);
+    expect((params.items as unknown[])[100]).toBe('[truncated: array exceeds 100 items]');
+  });
+
+  test('large objects in params are capped', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    const bigObject: Record<string, string> = {};
+    for (let i = 0; i < 60; i++) {
+      bigObject[`key-${i}`] = `value-${i}`;
+    }
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', payload: bigObject },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    const payload = params.payload as Record<string, unknown>;
+    expect(Object.keys(payload).length).toBe(51);
+    expect(payload._truncated).toBe('object exceeds 50 keys');
+  });
+
+  test('oversized total params are replaced with placeholder', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    // 100 strings of 400 chars each → ~42 KB JSON, exceeding 32 KB budget
+    const hugeArray = Array.from({ length: 100 }, () => 'x'.repeat(400));
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', huge: hugeArray },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    expect(params._truncated).toContain('exceed');
   });
 
   test('retryCount is reset after a non-retryable hook result', async () => {

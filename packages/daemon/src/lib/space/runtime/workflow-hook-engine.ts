@@ -117,6 +117,15 @@ const MAX_PARAM_DATA_BYTES = 4096;
 /** Maximum bytes for hook-local state serialized into the script env. */
 const MAX_HOOK_LOCAL_STATE_BYTES = 8192;
 
+/** Maximum items in an array before truncation in hook env params. */
+const MAX_ARRAY_ITEMS = 100;
+
+/** Maximum keys in an object before truncation in hook env params. */
+const MAX_OBJECT_KEYS = 50;
+
+/** Maximum bytes for the serialized params JSON injected into hook env. */
+const MAX_PARAMS_JSON_BYTES = 32_768;
+
 /** Maximum bytes for the entire serialized artifacts array injected into hook env. */
 const MAX_ARTIFACTS_ARRAY_BYTES = 65_536;
 
@@ -662,6 +671,16 @@ export class WorkflowHookEngine {
     for (const key of Object.keys(clone)) {
       clone[key] = this.boundValue(clone[key]);
     }
+    // Fail-safe: if the total serialized params still exceed the budget,
+    // replace the whole object with a placeholder so Bun.spawn doesn't fail.
+    try {
+      const totalBytes = new TextEncoder().encode(JSON.stringify(clone)).length;
+      if (totalBytes > MAX_PARAMS_JSON_BYTES) {
+        return { _truncated: `params exceed ${MAX_PARAMS_JSON_BYTES} bytes` };
+      }
+    } catch {
+      return { _truncated: 'params are non-serializable' };
+    }
     return clone;
   }
 
@@ -675,12 +694,26 @@ export class WorkflowHookEngine {
       return value.slice(0, 4096) + '...[truncated]';
     }
     if (Array.isArray(value)) {
-      return value.map((item) => this.boundValue(item));
+      const arr = value.map((item) => this.boundValue(item));
+      if (arr.length > MAX_ARRAY_ITEMS) {
+        return [...arr.slice(0, MAX_ARRAY_ITEMS), '[truncated: array exceeds 100 items]'];
+      }
+      return arr;
     }
     if (value !== null && typeof value === 'object') {
       const record = value as Record<string, unknown>;
+      const entries = Object.entries(record);
+      if (entries.length > MAX_OBJECT_KEYS) {
+        const out: Record<string, unknown> = {};
+        for (let i = 0; i < MAX_OBJECT_KEYS; i++) {
+          const [k, v] = entries[i];
+          out[k] = this.boundValue(v);
+        }
+        out._truncated = 'object exceeds 50 keys';
+        return out;
+      }
       const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(record)) {
+      for (const [k, v] of entries) {
         out[k] = this.boundValue(v);
       }
       return out;
@@ -850,7 +883,7 @@ export class WorkflowHookEngine {
       // Decode actor-role:<nodeId|agentName> form used by the messaging adapter
       const actorRolePrefix = 'actor-role:';
       if (role.startsWith(actorRolePrefix)) {
-        const actorRoleValue = role.slice(actorRolePrefix.length);
+        const actorRoleValue = decodeURIComponent(role.slice(actorRolePrefix.length));
         if (nodeIdToName.has(actorRoleValue)) {
           return [nodeIdToName.get(actorRoleValue)!];
         }
@@ -858,6 +891,8 @@ export class WorkflowHookEngine {
         if (actorRoleSlotMatches) {
           return [...actorRoleSlotMatches];
         }
+        // Return the decoded value directly (may be a raw node name)
+        return [actorRoleValue];
       }
       if (nodeIdToName.has(role)) {
         return [nodeIdToName.get(role)!];
