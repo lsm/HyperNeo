@@ -128,7 +128,7 @@ describe('SpaceLongHorizonAgents', () => {
 
     const detail = getByTestId('space-agent-detail');
     expect(detail.textContent).toContain('Configured Research');
-    expect(detail.textContent).toContain('Configured Space Agent');
+    expect(detail.textContent).toContain('Configured Worker Agent');
     expect(detail.textContent).not.toContain('Research Long Horizon');
   });
 
