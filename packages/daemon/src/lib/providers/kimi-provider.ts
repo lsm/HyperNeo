@@ -175,10 +175,12 @@ export class KimiProvider implements Provider {
     return {
       envVars: {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
-        // Blank ANTHROPIC_API_KEY explicitly so ProviderService clears any
-        // inherited Anthropic key from process.env. The bridge handles Kimi
-        // auth via its config.apiKey; no ANTHROPIC_AUTH_TOKEN needed.
+        // Blank ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN explicitly so
+        // ProviderService clears any inherited Anthropic credentials from
+        // process.env. The bridge handles Kimi auth via its config.apiKey;
+        // the SDK subprocess does not need real Anthropic credentials.
         ANTHROPIC_API_KEY: '',
+        ANTHROPIC_AUTH_TOKEN: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,

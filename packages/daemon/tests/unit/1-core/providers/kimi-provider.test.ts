@@ -175,10 +175,10 @@ describe('KimiProvider', () => {
 
       // SDK routes through the bridge
       expect(config.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-      // Blank ANTHROPIC_API_KEY so ProviderService clears inherited Anthropic keys;
-      // the bridge handles Kimi auth via config.apiKey. No ANTHROPIC_AUTH_TOKEN.
+      // Blank both Anthropic auth env vars so ProviderService clears any
+      // inherited Anthropic credentials. The bridge handles Kimi auth.
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
-      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
@@ -275,8 +275,9 @@ describe('KimiProvider', () => {
 
       expect(calls[0].baseUrl).toBe('https://api.moonshot.cn/anthropic');
       expect(calls[0].apiKey).toBe('session-key');
-      // Auth is handled by the bridge, not passed through env vars
-      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      // Both Anthropic auth env vars are blanked so inherited credentials are cleared
+      expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('');
     });
 
     it('should throw when no API key is configured', () => {
