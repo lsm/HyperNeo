@@ -24,9 +24,15 @@ import type {
 import { Logger } from '../logger';
 
 type ContextMetadata =
-  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata'>
+  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'>
   | null
   | undefined;
+
+/** Providers whose SDK-reported context capacity is trustworthy. All others prefer metadata. */
+const NATIVE_CONTEXT_WINDOW_PROVIDERS = new Set(['anthropic', 'anthropic-copilot']);
+
+/** Generic SDK tier names that non-native providers map to via ANTHROPIC_DEFAULT_*_MODEL. */
+const SDK_GENERIC_MODEL_IDS = new Set(['default', 'haiku', 'sonnet', 'opus']);
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -83,15 +89,20 @@ export class ContextFetcher {
     const sdkRawCapacity = positiveInteger(response.rawMaxTokens);
     const sdkCapacity = positiveInteger(response.maxTokens);
     const responseModel = response.model || undefined;
+    const isNativeProvider =
+      modelMetadata?.provider && NATIVE_CONTEXT_WINDOW_PROVIDERS.has(modelMetadata.provider);
+    const isGenericSdkModel = responseModel ? SDK_GENERIC_MODEL_IDS.has(responseModel) : false;
     const metadataMatchesResponse =
       !responseModel ||
       modelMetadata?.id === responseModel ||
-      modelMetadata?.alias === responseModel;
+      modelMetadata?.alias === responseModel ||
+      (!isNativeProvider && isGenericSdkModel);
     const metadataCapacity = metadataMatchesResponse
       ? positiveInteger(modelMetadata?.contextWindow)
       : undefined;
+    const shouldPreferMetadata = modelMetadata?.preferContextWindowMetadata ?? !isNativeProvider;
     const capacity =
-      modelMetadata?.preferContextWindowMetadata && metadataCapacity
+      shouldPreferMetadata && metadataCapacity
         ? metadataCapacity
         : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {

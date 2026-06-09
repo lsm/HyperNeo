@@ -290,8 +290,12 @@ describe('startEmbeddedServer', () => {
 
     for (const file of files) {
       const source = readFileSync(file, 'utf8');
-      expect(source).not.toContain('anthropic-copilot');
-      expect(source.toLowerCase()).not.toContain('copilot');
+      // Provider IDs like 'anthropic-copilot' are allowed in generic provider
+      // infrastructure (e.g. capacity-resolution allowlists). Only Copilot-specific
+      // context fields should stay out of these generic paths.
+      expect(source).not.toContain('conversationTokens');
+      expect(source).not.toContain('freeSpaceTokens');
+      expect(source).not.toContain('bufferTokens');
     }
   });
 

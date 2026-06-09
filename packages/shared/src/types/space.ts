@@ -3,7 +3,7 @@
  *
  * Types for the Space multi-agent workflow system.
  * Spaces are distinct from Rooms — they are workspace-first, workflow-centric
- * contexts for orchestrating custom agents and automated pipelines.
+ * contexts for orchestrating worker agents and automated pipelines.
  */
 
 import type { ThinkingLevel } from '../types';
@@ -1512,6 +1512,172 @@ export function hasGateFeatures(gate: { features?: GateFeatures } | undefined): 
   );
 }
 
+export type WorkflowHookMcpMethod =
+  | 'send_message'
+  | 'save_artifact'
+  | 'create_standalone_task'
+  | 'mark_complete'
+  | 'submit_for_approval'
+  | 'approve_task';
+
+export type WorkflowHookValidatorId =
+  | 'pr_open'
+  | 'pr_mergeable'
+  | 'github_review_approved'
+  | 'codex_review_approved'
+  | 'artifact_exists'
+  | 'task_reported_status';
+
+export type WorkflowHookExternalLookup = 'github';
+
+export interface WorkflowHookAuthorizedCaller {
+  /** Source workflow node name authorized to invoke this hook. */
+  sourceNode: string;
+  /** Optional agent slot names within sourceNode. Omitted means any slot in sourceNode. */
+  agentSlots?: string[];
+}
+
+export interface WorkflowHookRetrySettings {
+  maxAttempts: number;
+  delayMs: number;
+  backoffMultiplier?: number;
+}
+
+export interface WorkflowHookPollSettings {
+  intervalMs: number;
+  maxDurationMs?: number;
+}
+
+export interface WorkflowHookScriptValidator {
+  kind: 'script';
+  interpreter: 'bash';
+  source: string;
+  timeoutMs?: number;
+  externalLookups?: WorkflowHookExternalLookup[];
+}
+
+export interface WorkflowHookBuiltInValidator {
+  kind: 'built_in';
+  id: WorkflowHookValidatorId;
+}
+
+export type WorkflowHookValidator = WorkflowHookBuiltInValidator | WorkflowHookScriptValidator;
+
+export interface WorkflowHookStateReference {
+  hookId: string;
+  key: string;
+}
+
+export interface WorkflowHookLocalStateConfig {
+  defaults?: Record<string, unknown>;
+  recentResultRef?: WorkflowHookStateReference;
+}
+
+export interface WorkflowHookBaseResult {
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface WorkflowHookAllowResult extends WorkflowHookBaseResult {
+  type: 'allow';
+}
+
+export interface WorkflowHookBlockResult extends WorkflowHookBaseResult {
+  type: 'block';
+  reason: string;
+}
+
+export interface WorkflowHookRetryableBlockResult extends WorkflowHookBaseResult {
+  type: 'retryable_block';
+  reason: string;
+  retryAfterMs?: number;
+}
+
+export interface WorkflowHookPatchParamsResult extends WorkflowHookBaseResult {
+  type: 'patch_params';
+  patch: Record<string, unknown>;
+}
+
+export interface WorkflowHookEmitFollowUpResult extends WorkflowHookBaseResult {
+  type: 'emit_follow_up';
+  targetNode: string;
+  message: string;
+}
+
+export interface WorkflowHookRecordStateResult extends WorkflowHookBaseResult {
+  type: 'record_state';
+  state: Record<string, unknown>;
+}
+
+export type WorkflowHookResult =
+  | WorkflowHookAllowResult
+  | WorkflowHookBlockResult
+  | WorkflowHookRetryableBlockResult
+  | WorkflowHookPatchParamsResult
+  | WorkflowHookEmitFollowUpResult
+  | WorkflowHookRecordStateResult;
+
+export interface WorkflowHookStateSnapshot {
+  runId: string;
+  hookId: string;
+  version: number;
+  localState: Record<string, unknown>;
+  lastResult?: WorkflowHookResult;
+  retryCount: number;
+  nextRetryAt?: number;
+  voteMaps: Record<string, Record<string, unknown>>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WorkflowHook {
+  /** Stable hook identifier, unique inside a workflow. */
+  id: string;
+  enabled: boolean;
+  /** Node whose MCP action or runtime event triggers this hook. */
+  sourceNode: string;
+  /** Optional node affected by this hook result. */
+  targetNode?: string;
+  method: WorkflowHookMcpMethod;
+  templateData?: Record<string, unknown>;
+  validator: WorkflowHookValidator;
+  retry?: WorkflowHookRetrySettings;
+  poll?: WorkflowHookPollSettings;
+  localState?: WorkflowHookLocalStateConfig;
+  /** Agents authorized to invoke this hook. Empty/absent fails closed unless humanOnly is true. */
+  authorizedCallers?: WorkflowHookAuthorizedCaller[];
+  /** Human-only hooks can only run from explicit UI approval/retry actions, never agent MCP sessions. */
+  humanOnly?: boolean;
+  /** Hook classification — determines execution order and failure semantics. Defaults to 'validation'. */
+  classification?: 'validation' | 'side_effect';
+  /** Execution order within classification (lower = earlier). Defaults to 0. */
+  order?: number;
+  /** Human-readable label for debugging and banner messages. */
+  label?: string;
+}
+
+export interface WorkflowHookUserState {
+  status:
+    | 'allowed'
+    | 'blocked_by_hook'
+    | 'waiting_on_hook_retry'
+    | 'patched'
+    | 'follow_up_emitted'
+    | 'state_recorded';
+  hookId?: string;
+  hookLabel?: string;
+  method?: string;
+  reason?: string;
+  remediation?: string;
+  sourceNode?: string;
+  targetNode?: string;
+  patchedKeys?: string[];
+  emittedActionIds?: string[];
+  retryAfterMs?: number;
+  retryCount?: number;
+  nextRetryAt?: number;
+}
+
 export interface Gate {
   /** Unique identifier */
   id: string;
@@ -1968,6 +2134,11 @@ export interface SpaceWorkflow {
    */
   gates?: Gate[];
   /**
+   * Hook definitions for MCP action/runtime validation.
+   * Persisted as JSON in the `hooks` column of `space_workflows`.
+   */
+  hooks?: WorkflowHook[];
+  /**
    * Tags for organizational categorization.
    *
    * Primary workflow selection for standalone tasks is LLM-driven; tags are
@@ -2057,6 +2228,8 @@ export interface CreateSpaceWorkflowParams {
   channels?: WorkflowChannel[];
   /** Gate definitions for this workflow. */
   gates?: Gate[];
+  /** Hook definitions for MCP action/runtime validation. */
+  hooks?: WorkflowHook[];
   /** Tags for organizational categorization (default: []). See `SpaceWorkflow.tags` for runtime semantics. */
   tags?: string[];
   /** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
@@ -2125,6 +2298,10 @@ export interface UpdateSpaceWorkflowParams {
    * Replaces the gate list. Pass `[]` or `null` to clear all gates.
    */
   gates?: Gate[] | null;
+  /**
+   * Replaces the hook list. Pass `[]` or `null` to clear all hooks.
+   */
+  hooks?: WorkflowHook[] | null;
   /**
    * Replaces the tag list. Pass `[]` or `null` to clear all tags.
    * See `SpaceWorkflow.tags` for runtime semantics (used by the deterministic fallback selector).
@@ -2371,6 +2548,8 @@ export interface ExportedSpaceWorkflow {
    * Directed messaging channels. `from`/`to` use node names. Channel `id` is stripped.
    */
   channels?: ExportedWorkflowChannel[];
+  /** Workflow hooks in portable form. Node references use node/agent slot names. */
+  hooks?: WorkflowHook[];
   /**
    * Minimum autonomy level (1-5) required for end-node agents to self-close
    * the task via `approve_task`. Below this threshold, `approve_task` becomes

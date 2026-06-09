@@ -34,7 +34,7 @@ If `/rpc` is not available in the current build, inspect the daemon's RPC route 
 
 ### create_standalone_task(title, description, priority, agent, workflow_id?)
 
-Call the Space task creation RPC with `spaceId`, `title`, `description`, `priority`, optional `workflowId`, and optional agent/custom agent assignment. Use this for all new work.
+Call the Space task creation RPC with `spaceId`, `title`, `description`, `priority`, optional `workflowId`, and optional worker agent assignment. Use this for all new work.
 
 ### get_task_detail(task_id)
 
@@ -50,7 +50,7 @@ Call the task cancel RPC with `taskId`. If the user wants the workflow run cance
 
 ### reassign_task(task_id, agent)
 
-Call the task reassign RPC with `taskId` and either a built-in agent type or custom agent id.
+Call the task reassign RPC with `taskId` and either a built-in agent type or worker agent id.
 
 ### list_workflows()
 

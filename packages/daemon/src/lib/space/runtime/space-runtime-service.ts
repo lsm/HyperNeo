@@ -189,6 +189,7 @@ export interface SpaceRuntimeServiceConfig {
     spaceRepo: SpaceRepository;
     sessionRepo: SessionRepository;
     spaceAgentRepo: SpaceAgentRepository;
+    longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
     workflowRepo: SpaceWorkflowRepository;
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
@@ -329,7 +330,7 @@ export class SpaceRuntimeService {
         queueForActivation: (actor: ActorRef, message: MessageRecord) => Promise<string | null>;
       }
     | undefined {
-    if (!this.config.sessionManager || !this.config.spaceAgentInboxRepo) return undefined;
+    if (!this.config.sessionManager) return undefined;
     return {
       deliverToSession: (actor, message) => this.deliverToLongTermAgent(actor, message),
       queueForActivation: (actor, message) => this.queueLongTermAgentMessage(actor, message),
@@ -384,9 +385,13 @@ export class SpaceRuntimeService {
     message: MessageRecord
   ): Promise<string | null> {
     const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
+    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
+    if (longHorizonAgent?.spaceId === actor.spaceId) {
+      return this.deliverToLongTermAgent(actor, message);
+    }
+    if (!inboxRepo) return null;
     const sourceSessionId = sourceSessionIdFromActorId(message.senderActorId);
     const { record } = inboxRepo.enqueue({
       spaceId: message.spaceId,
@@ -606,7 +611,9 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null);
+    this.attachLongTermAgentMcpServers(session, space, agent.displayName, sessionId, null, [
+      `@${agent.handle}`,
+    ]);
     return session;
   }
 
@@ -615,6 +622,10 @@ export class SpaceRuntimeService {
     if (!sessionManager) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
+    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
+    if (longHorizonAgent?.spaceId === actor.spaceId) {
+      return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
+    }
     const agent = this.config.spaceAgentManager.getById(agentId);
     if (!agent || agent.spaceId !== actor.spaceId) return null;
     const space = await this.config.spaceManager.getSpace(actor.spaceId);
@@ -744,14 +755,16 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceAgent | null
+    agent: SpaceAgent | null,
+    agentHandleAliases?: string[]
   ): void {
     const mcpServers: Record<string, McpServerConfig> = {
       'space-agent-tools': this.buildLongTermAgentMcpServer(
         space,
         agentName,
         sessionId,
-        agent
+        agent,
+        agentHandleAliases
       ) as unknown as McpServerConfig,
     };
     if (this.config.memoryRepo) {
@@ -794,10 +807,12 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceAgent | null
+    agent: SpaceAgent | null,
+    agentHandleAliases?: string[]
   ) {
     const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
     const agentHandle = agent ? canonicalAgentHandle(agents, agent) : undefined;
+    const aliases = agentHandleAliases ?? (agentHandle ? [agentHandle] : undefined);
     return createSpaceAgentMcpServer({
       spaceId: space.id,
       db: this.config.db,
@@ -827,7 +842,7 @@ export class SpaceRuntimeService {
         return s?.autonomyLevel ?? 1;
       },
       myAgentName: agentName,
-      myAgentNameAliases: agentHandle ? [agentHandle] : undefined,
+      myAgentNameAliases: aliases,
       mySessionId: sessionId,
       auditLogRepo: this.auditLogRepo,
       scheduleService: this.config.scheduleService,
@@ -1002,8 +1017,9 @@ export class SpaceRuntimeService {
       inboxRepo.expireStale();
       for (const space of await this.config.spaceManager.listSpaces()) {
         for (const row of inboxRepo.listPendingForSpace(space.id)) {
-          const agent = this.config.spaceAgentManager.getById(row.targetAgentId);
-          if (!agent || agent.spaceId !== space.id) continue;
+          const workerAgent = this.config.spaceAgentManager.getById(row.targetAgentId);
+          const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(row.targetAgentId);
+          if (workerAgent?.spaceId !== space.id && longHorizonAgent?.spaceId !== space.id) continue;
           void this.activateLongTermAgentAndFlush(
             {
               actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,

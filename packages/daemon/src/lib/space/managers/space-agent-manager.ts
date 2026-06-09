@@ -19,6 +19,10 @@ import type {
 } from '@neokai/shared';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+
+type LongHorizonAgentHandleSource = {
+  listBySpaceId(spaceId: string): Array<{ id: string; handle: string }>;
+};
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
 import { Logger } from '../../logger';
@@ -35,7 +39,10 @@ export type SpaceAgentResult<T> =
   | { ok: false; error: string; details?: string[] };
 
 export class SpaceAgentManager {
-  constructor(private repo: SpaceAgentRepository) {}
+  constructor(
+    private repo: SpaceAgentRepository,
+    private longHorizonAgentHandles?: LongHorizonAgentHandleSource
+  ) {}
 
   /**
    * Create a new agent within a Space.
@@ -260,14 +267,28 @@ export class SpaceAgentManager {
     if (this.repo.isHandleTaken(spaceId, trimmed, excludeId)) {
       return `An agent with handle "${trimmed}" already exists in this Space`;
     }
+    if (this.longHorizonHandleTaken(spaceId, trimmed, excludeId)) {
+      return `An agent with handle "${trimmed}" already exists in this Space`;
+    }
     return null;
   }
 
   private generateUniqueHandle(spaceId: string, name: string): string {
     return slugifyWithinLimit(name, [
       ...this.repo.getHandlesForSpace(spaceId),
+      ...this.longHorizonHandlesForSpace(spaceId).map((agent) => agent.handle),
       ...RESERVED_AGENT_HANDLES,
     ]);
+  }
+
+  private longHorizonHandleTaken(spaceId: string, handle: string, excludeId?: string): boolean {
+    return this.longHorizonHandlesForSpace(spaceId).some(
+      (agent) => agent.handle === handle && agent.id !== excludeId
+    );
+  }
+
+  private longHorizonHandlesForSpace(spaceId: string): Array<{ id: string; handle: string }> {
+    return this.longHorizonAgentHandles?.listBySpaceId(spaceId) ?? [];
   }
 
   /**

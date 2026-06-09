@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -693,8 +694,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // Migration 152: Preserve provider and setting sources on long-horizon agents.
   runMigration152(db);
 
-  // Migration 153: Expand Forge evidence kinds for public feedback mining.
+  // Migration 153: Add workflow hook config and per-run hook state storage.
   runMigration153(db);
+
+  // Migration 154: Store GitHub webhook auto-registration state.
+  runMigration154(db);
+
+  // Migration 155: Copy legacy ownership/automation rows into long-horizon tables.
+  runMigration155(db);
+
+  // Migration 156: Expand Forge evidence kinds for public feedback mining.
+  runMigration156(db);
 }
 
 /**
@@ -2343,7 +2353,7 @@ function runMigration28(db: BunDatabase): void {
  *
  * Creates the following tables in FK-safe order:
  * - spaces: workspace-first multi-agent container
- * - space_agents: custom agents per space (role/provider/inject_workflow_context included, no CHECK on role)
+ * - space_agents: worker agents per space (role/provider/inject_workflow_context included, no CHECK on role)
  * - space_workflows: workflow definitions per space (includes start_step_id)
  * - space_workflow_steps: ordered steps within a workflow
  * - space_workflow_transitions: directed edges between steps (graph navigation)
@@ -10184,6 +10194,48 @@ export function runMigration140(db: BunDatabase): void {
   );
 }
 
+export function runMigration153(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflows') && !tableHasColumn(db, 'space_workflows', 'hooks')) {
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN hooks TEXT`);
+  }
+
+  if (!tableExists(db, 'space_workflow_runs')) return;
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_state (
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      local_state TEXT NOT NULL DEFAULT '{}',
+      last_result TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      vote_maps TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, hook_id),
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_hook_state_run ON workflow_hook_state(run_id)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_hook_result_artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      hook_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      result TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_hook_result_artifacts_run_hook ` +
+      `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
+  );
+}
+
 export function runMigration144(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createSpaceAgentManagementTables(db);
@@ -10533,9 +10585,55 @@ function runMigration152(db: BunDatabase): void {
   }
 }
 
+export function runMigration154(db: BunDatabase): void {
+  if (!tableExists(db, 'space_github_watched_repos')) return;
+  const columns: Array<[string, string]> = [
+    ['webhook_remote_id', 'INTEGER'],
+    ['webhook_url', 'TEXT'],
+    ['webhook_auto_registered', 'INTEGER NOT NULL DEFAULT 0'],
+    ['webhook_active', 'INTEGER'],
+    ['webhook_last_checked_at', 'INTEGER'],
+    ['webhook_last_error', 'TEXT'],
+    ['webhook_configured_at', 'INTEGER'],
+  ];
+  for (const [name, definition] of columns) {
+    if (!tableHasColumn(db, 'space_github_watched_repos', name)) {
+      db.exec(`ALTER TABLE space_github_watched_repos ADD COLUMN ${name} ${definition}`);
+    }
+  }
+}
+
 /**
- * Migration 153 — Expand Forge evidence kinds for public feedback mining.
+ * Migration 155 — Copy legacy long-horizon ownership/automation data.
  */
-function runMigration153(db: BunDatabase): void {
+export function runMigration155(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS migration_markers (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    )
+  `);
+  const markerKey = 'm154_legacy_long_horizon_agent_data';
+  const existing = db.prepare(`SELECT key FROM migration_markers WHERE key = ?`).get(markerKey);
+  if (existing) return;
+  if (
+    !tableExists(db, 'space_agent_goal_assignments') ||
+    !tableExists(db, 'space_agent_forge_scope_assignments') ||
+    !tableExists(db, 'space_agent_reminders') ||
+    !tableExists(db, 'space_long_horizon_agents')
+  ) {
+    return;
+  }
+  migrateLegacyLongHorizonAgentData(db);
+  db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
+    markerKey,
+    Date.now()
+  );
+}
+
+/**
+ * Migration 156 — Expand Forge evidence kinds for public feedback mining.
+ */
+function runMigration156(db: BunDatabase): void {
   widenEvolutionEvidenceKinds(db);
 }

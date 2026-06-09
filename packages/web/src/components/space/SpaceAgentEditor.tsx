@@ -1,7 +1,7 @@
 /**
  * SpaceAgentEditor Component
  *
- * Modal form for creating or editing a custom agent in a Space.
+ * Modal form for creating or editing a worker agent in a Space.
  *
  * Fields:
  * - From Template (built-in seeded templates)
