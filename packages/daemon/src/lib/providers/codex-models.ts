@@ -69,6 +69,46 @@ export function getModelContextWindow(modelId: string): number | undefined {
   return resolved ? MODEL_CONTEXT_WINDOWS[resolved] : undefined;
 }
 
+/**
+ * Anthropic model IDs to present to the Claude Agent SDK so it uses a large
+ * context window instead of falling back to ~200 k for unknown Codex IDs.
+ *
+ * The SDK has a hard-coded model database. When it sees a model it recognises
+ * (e.g. `claude-opus-4-20250918`) it uses that model's real context limit (1 M).
+ * When it sees an unknown ID (e.g. `gpt-5.5`) it falls back to ~200 k and
+ * rejects requests at ~175 k tokens — well before NeoKai's compaction at 231 k.
+ *
+ * These overrides are used for:
+ *   - `translateModelIdForSdk()` (so the SDK sends the Anthropic ID in the
+ *     request body to the bridge)
+ *   - `ANTHROPIC_DEFAULT_*_MODEL` env vars (so SDK sub-agents use the same
+ *     large-context IDs)
+ *
+ * The bridge then maps the Anthropic ID back to the real Codex model ID via
+ * `modelAliases` before forwarding to OpenAI.
+ */
+export const CODEX_TO_SDK_ANTHROPIC_MODEL: Record<CodexBridgeModelId, string> = {
+  'gpt-5.5': 'claude-opus-4-20250918',
+  'gpt-5.3-codex': 'claude-opus-4-20250918',
+  'gpt-5.4': 'claude-opus-4-20250918',
+  'gpt-5.4-mini': 'claude-sonnet-4-20250514',
+  'gpt-5.1-codex-mini': 'claude-sonnet-4-20250514',
+};
+
+/**
+ * Reverse mapping: Anthropic SDK model ID → real Codex model ID.
+ * Used by the bridge's `modelAliases` so incoming requests are resolved to
+ * the correct OpenAI model before being sent upstream.
+ *
+ * Note: multiple Codex models map to the same Anthropic ID (we only have one
+ * 1 M Anthropic model ID). The bridge resolves to the canonical model for that
+ * tier — `gpt-5.5` for the 1 M tier and `gpt-5.4-mini` for the 200 k tier.
+ */
+export const SDK_ANTHROPIC_TO_CODEX_MODEL: Record<string, CodexBridgeModelId> = {
+  'claude-opus-4-20250918': 'gpt-5.5',
+  'claude-sonnet-4-20250514': 'gpt-5.4-mini',
+};
+
 export function getCodexBridgeModelInfos(): ModelInfo[] {
   return (Object.keys(MODEL_CONTEXT_WINDOWS) as CodexBridgeModelId[]).map((id) => {
     const details = CODEX_MODEL_DETAILS[id];

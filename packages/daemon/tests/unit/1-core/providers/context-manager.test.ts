@@ -1035,22 +1035,24 @@ describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()',
     codexProvider = undefined;
   });
 
-  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+  it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL uses the 200 k Anthropic Sonnet ID', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
     const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
       workspacePath: '/tmp/ws-codex-leak',
     });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4-20250514');
   });
 
-  it('Codex provider: all three DEFAULT_*_MODEL slots are non-Anthropic model names', () => {
+  it('Codex provider: all three DEFAULT_*_MODEL slots use Anthropic IDs with large context', () => {
     codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
     const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
       workspacePath: '/tmp/ws-codex-all',
     });
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).not.toMatch(/^claude-/);
-    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).not.toMatch(/^claude-/);
+    // Haiku slot uses the 200 k Anthropic Sonnet ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4-20250514');
+    // Sonnet and Opus slots use the 1 M Anthropic Opus ID
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('claude-opus-4-20250918');
+    expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('claude-opus-4-20250918');
   });
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {

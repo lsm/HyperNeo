@@ -36,7 +36,12 @@ import {
   type OpenAIResponsesBridgeServer,
   createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import { getCodexBridgeModelInfos } from './codex-models.js';
+import {
+  getCodexBridgeModelInfos,
+  resolveCodexBridgeModelId,
+  CODEX_TO_SDK_ANTHROPIC_MODEL,
+  SDK_ANTHROPIC_TO_CODEX_MODEL,
+} from './codex-models.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -405,21 +410,49 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   private modelAliases(): Record<string, string> {
-    return Object.fromEntries(
+    const userAliases = Object.fromEntries(
       ANTHROPIC_CODEX_MODELS.flatMap((model) =>
         model.alias ? [[model.alias, model.id] as const] : []
       )
     );
+    // Map Anthropic SDK model IDs back to real Codex IDs so the bridge
+    // forwards the correct model to OpenAI.
+    const sdkAliases = Object.fromEntries(
+      Object.entries(SDK_ANTHROPIC_TO_CODEX_MODEL).map(([anthropicId, codexId]) => [
+        anthropicId,
+        codexId,
+      ])
+    );
+    return { ...userAliases, ...sdkAliases };
   }
 
   private responsesBridgeModels() {
-    return ANTHROPIC_CODEX_MODELS.map((model) => ({
+    const codexModels = ANTHROPIC_CODEX_MODELS.map((model) => ({
       id: model.id,
       display_name: model.name,
       created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
       context_window: model.contextWindow,
       max_tokens: 16384,
     }));
+    // Also advertise the Anthropic SDK aliases so the SDK can look them up
+    // if it queries the models list for context window info.
+    const anthropicModels = [
+      {
+        id: 'claude-opus-4-20250918',
+        display_name: 'Claude Opus 4 (1M context)',
+        created_at: '2025-09-18T00:00:00Z',
+        context_window: 1_000_000,
+        max_tokens: 16384,
+      },
+      {
+        id: 'claude-sonnet-4-20250514',
+        display_name: 'Claude Sonnet 4 (200K context)',
+        created_at: '2025-05-14T00:00:00Z',
+        context_window: 200_000,
+        max_tokens: 16384,
+      },
+    ];
+    return [...codexModels, ...anthropicModels];
   }
 
   private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
@@ -507,8 +540,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   translateModelIdForSdk(modelId: string): string {
+    const resolved = resolveCodexBridgeModelId(modelId) ?? modelId;
     return (
-      ANTHROPIC_CODEX_MODELS.find((m) => m.id === modelId || m.alias === modelId)?.id ?? modelId
+      CODEX_TO_SDK_ANTHROPIC_MODEL[resolved as import('./codex-models.js').CodexBridgeModelId] ??
+      resolved
     );
   }
 
@@ -580,22 +615,29 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const bridgeBaseUrl =
       bridgeServer.baseUrlForSession?.(sessionId) || `http://127.0.0.1:${bridgeServer.port}`;
 
+    const sdkAnthropicId =
+      CODEX_TO_SDK_ANTHROPIC_MODEL[resolvedId as import('./codex-models.js').CodexBridgeModelId];
+    if (!sdkAnthropicId) {
+      throw new Error(`Unknown Codex model: ${modelId}`);
+    }
+
     return {
       envVars: {
         ANTHROPIC_BASE_URL: bridgeBaseUrl,
         ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        // Map SDK model tiers to Codex model IDs so the Claude Agent SDK
-        // subprocess never falls back to Anthropic model names (e.g.
-        // 'claude-haiku-4-5-20251001') which the Codex bridge does not recognise.
+        // Present Anthropic model IDs with known large context windows to the
+        // Claude Agent SDK so it does not fall back to its default ~200 k limit
+        // and reject requests prematurely. The bridge maps these back to real
+        // Codex IDs via modelAliases before forwarding to OpenAI.
         // Routing policy (mirrors getModelForTier):
-        //   Opus   → gpt-5.5           (latest frontier)
-        //   Sonnet → resolvedId         (user-selected model)
-        //   Haiku  → gpt-5.4-mini       (fast/cheap fallback)
-        ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.5',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.4-mini',
+        //   Opus   → claude-opus-4-20250918   (1 M context)
+        //   Sonnet → sdkAnthropicId            (user-selected model, 1 M or 200 k)
+        //   Haiku  → claude-sonnet-4-20250514  (200 k context, fast/cheap)
+        ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
+        ANTHROPIC_DEFAULT_SONNET_MODEL: sdkAnthropicId,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.4-mini'],
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',
