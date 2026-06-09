@@ -5,7 +5,16 @@
  * https://api.kimi.com/coding/ — designed for coding agents.
  *
  * The API uses a single fixed model ID `kimi-for-coding` that automatically
- * maps to the latest Kimi flagship model, so no bridge server or protocol
+ * maps to the latest Kimi flagship model.
+ *
+ * ## Bridge architecture
+ *
+ * The Claude Agent SDK has a hardcoded table of known model context windows.
+ * It does not recognise `kimi-for-coding` and falls back to a ~200 k default,
+ * rejecting requests that fit within Kimi's 262 k window.  To work around
+ * this, the provider routes SDK traffic through a lightweight local bridge that
+ * intercepts `GET /v1/models` and returns the correct context window metadata.
+ * All other requests are proxied verbatim to Kimi's API — no protocol
  * translation is needed.
  *
  * API Documentation: https://www.kimi.com/code/docs/
@@ -21,6 +30,13 @@ import type {
   ModelTier,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
+import {
+  createAnthropicMessagesBridgeServer,
+  type AnthropicMessagesBridgeServer,
+} from './anthropic-messages-bridge/server.js';
+import { Logger } from '../logger.js';
+
+const logger = new Logger('kimi-provider');
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -67,7 +83,14 @@ export class KimiProvider implements Provider {
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
 
-  constructor(env: NodeJS.ProcessEnv = process.env) {
+  /** Bridge server that intercepts /v1/models to report the correct context window. */
+  private bridgeServer: AnthropicMessagesBridgeServer | null = null;
+  private bridgeBaseUrl: string | null = null;
+
+  constructor(
+    env: NodeJS.ProcessEnv = process.env,
+    private readonly bridgeFactory: typeof createAnthropicMessagesBridgeServer = createAnthropicMessagesBridgeServer
+  ) {
     this.env = env;
   }
 
@@ -114,11 +137,30 @@ export class KimiProvider implements Provider {
     // All Kimi Code requests use the fixed model ID
     const routingModelId = KimiProvider.DEFAULT_MODEL;
 
+    // Lazily start the bridge if it isn't running yet.  The bridge provides
+    // `/v1/models` with the correct 262 k context window so the SDK binary
+    // does not fall back to its ~200 k hardcoded default.
+    if (!this.bridgeServer) {
+      this.bridgeServer = this.bridgeFactory({
+        baseUrl,
+        apiKey,
+        models: [
+          {
+            id: routingModelId,
+            display_name: 'Kimi For Coding',
+            context_window: 262144,
+          },
+        ],
+      });
+      this.bridgeBaseUrl = `http://127.0.0.1:${this.bridgeServer.port}`;
+      logger.info(`Kimi bridge server started on port ${this.bridgeServer.port}`);
+    }
+
     return {
       envVars: {
-        ANTHROPIC_BASE_URL: baseUrl,
+        ANTHROPIC_BASE_URL: this.bridgeBaseUrl!,
+        ANTHROPIC_API_KEY: `kimi-bridge`,
         ANTHROPIC_AUTH_TOKEN: apiKey,
-        ANTHROPIC_API_KEY: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
@@ -148,6 +190,11 @@ export class KimiProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
-    // No resources to clean up — direct API connection.
+    if (this.bridgeServer) {
+      this.bridgeServer.stop();
+      this.bridgeServer = null;
+      this.bridgeBaseUrl = null;
+      logger.info('Kimi bridge server stopped');
+    }
   }
 }
