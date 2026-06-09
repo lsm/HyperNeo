@@ -692,7 +692,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^claude-/);
     });
 
-    it('advertises Anthropic SDK aliases in the bridge models list with large context windows', async () => {
+    it('advertises Anthropic SDK aliases in the bridge models list with Codex context limits', async () => {
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-models',
       });
@@ -703,8 +703,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
         data: Array<{ id: string; context_window: number }>;
       };
       const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
-      expect(byId.get('claude-opus-4-1-20250805')).toBe(1_000_000);
-      expect(byId.get('claude-sonnet-4-20250514')).toBe(200_000);
+      // Alias models advertise real Codex limits so the SDK compacts before
+      // exceeding the upstream window (272k frontier, 128k mini).
+      expect(byId.get('claude-opus-4-1-20250805')).toBe(272_000);
+      expect(byId.get('claude-sonnet-4-20250514')).toBe(128_000);
       // Codex models should still be present
       expect(byId.get('gpt-5.5')).toBe(272_000);
       expect(byId.get('gpt-5.4-mini')).toBe(128_000);

@@ -642,6 +642,46 @@ describe('openai-responses-bridge server', () => {
     expect(capturedBody?.model).toBe('gpt-5.1-codex-mini');
   });
 
+  it('preserves primary model when same-tier fallback shares alias (first-wins)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    // Primary model registration (gpt-5.3-codex via Opus alias)
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    // Fallback model registration (gpt-5.4 shares the same Opus alias — first-wins)
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.4');
+
+    // Primary request — should use first-registered gpt-5.3-codex, NOT gpt-5.4
+    await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'primary' }],
+      }),
+    });
+    expect(capturedBody?.model).toBe('gpt-5.3-codex');
+  });
+
   it('forwards image attachments to the OpenAI Responses API', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({

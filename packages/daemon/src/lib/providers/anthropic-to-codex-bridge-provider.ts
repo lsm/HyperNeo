@@ -435,20 +435,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       max_tokens: 16384,
     }));
     // Also advertise the Anthropic SDK aliases so the SDK can look them up
-    // if it queries the models list for context window info.
+    // if it queries the models list for context window info. Context windows
+    // reflect the real Codex model limits (272k/128k), not the Anthropic model
+    // limits (1M/200k), so the SDK compacts before exceeding the upstream limit.
     const anthropicModels = [
       {
         id: 'claude-opus-4-1-20250805',
-        display_name: 'Claude Opus 4.1 (1M context)',
+        display_name: 'Claude Opus 4.1 (Codex bridge)',
         created_at: '2025-08-05T00:00:00Z',
-        context_window: 1_000_000,
+        context_window: 272_000,
         max_tokens: 16384,
       },
       {
         id: 'claude-sonnet-4-20250514',
-        display_name: 'Claude Sonnet 4 (200K context)',
+        display_name: 'Claude Sonnet 4 (Codex bridge)',
         created_at: '2025-05-14T00:00:00Z',
-        context_window: 200_000,
+        context_window: 128_000,
         max_tokens: 16384,
       },
     ];
@@ -640,7 +642,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         // forwarding to OpenAI.
         // Routing policy (mirrors getModelForTier):
         //   Opus   → claude-opus-4-1-20250805   (1 M context)
-        //   Sonnet → sdkAnthropicId              (user-selected model, 1 M or 200 k)
+        //   Sonnet → sdkAnthropicId              (user-selected model, frontier or mini)
         //   Haiku  → claude-sonnet-4-20250514    (200 k context, fast/cheap)
         ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkAnthropicId,
