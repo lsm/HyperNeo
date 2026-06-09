@@ -96,6 +96,10 @@ export interface WorkflowHookEngineConfig {
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
   workspacePath?: string;
+  /** Optional resolved PR URL for this workflow run (injected into hook script env). */
+  prUrl?: string;
+  /** Optional JSON-serialized gate data for this run, keyed by gateId (injected into hook script env). */
+  gateDataJson?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -521,14 +525,11 @@ export class WorkflowHookEngine {
     meta: HookActionMeta
   ): { hooks: WorkflowHook[]; missingChannelHooks: boolean; mixedGateHookChannel: boolean } {
     const workflow = this.config.workflow;
-    if (!workflow?.hooks)
-      return { hooks: [], missingChannelHooks: false, mixedGateHookChannel: false };
-
-    const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+    const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
     // Build slot-to-nodes map so duplicate slot names across nodes are preserved
     const slotToNodes = new Map<string, string[]>();
-    for (const node of workflow.nodes) {
+    for (const node of workflow?.nodes ?? []) {
       for (const agent of node.agents ?? []) {
         const arr = slotToNodes.get(agent.name) ?? [];
         if (!arr.includes(node.name)) {
@@ -539,9 +540,9 @@ export class WorkflowHookEngine {
     }
 
     const fromNode = nodeName;
-    const nodeIdToName = new Map(workflow.nodes.map((n) => [n.id, n.name]));
-    const nodeNames = new Set(workflow.nodes.map((n) => n.name));
-    const resolver = new ChannelResolver(workflow.channels ?? []);
+    const nodeIdToName = new Map((workflow?.nodes ?? []).map((n) => [n.id, n.name]));
+    const nodeNames = new Set((workflow?.nodes ?? []).map((n) => n.name));
+    const resolver = new ChannelResolver(workflow?.channels ?? []);
 
     // Resolve action target(s) for send_message.
     // Keep both raw targets (slot names, node IDs, bare strings) and resolved
@@ -557,8 +558,12 @@ export class WorkflowHookEngine {
           const permittedSlot = resolver.getPermittedTargets(meta.agentName);
           const permitted = [...new Set([...permittedNode, ...permittedSlot])];
           if (permitted.includes('*')) {
-            for (const node of workflow.nodes) {
+            for (const node of workflow?.nodes ?? []) {
               actionTargets.add(node.name);
+            }
+            // Also add permitted slot/node names so slot-addressed channels match
+            for (const t of permitted) {
+              if (t !== '*') rawActionTargets.add(t);
             }
           } else {
             for (const t of permitted) {
@@ -575,6 +580,9 @@ export class WorkflowHookEngine {
           }
         } else {
           rawActionTargets.add(target);
+          for (const decoded of this.decodeTargetSlotNames(target)) {
+            rawActionTargets.add(decoded);
+          }
           for (const resolved of this.resolveTargetEntries(
             target,
             nodeIdToName,
@@ -592,8 +600,11 @@ export class WorkflowHookEngine {
             const permittedSlot = resolver.getPermittedTargets(meta.agentName);
             const permitted = [...new Set([...permittedNode, ...permittedSlot])];
             if (permitted.includes('*')) {
-              for (const node of workflow.nodes) {
+              for (const node of workflow?.nodes ?? []) {
                 actionTargets.add(node.name);
+              }
+              for (const pt of permitted) {
+                if (pt !== '*') rawActionTargets.add(pt);
               }
             } else {
               for (const pt of permitted) {
@@ -610,6 +621,9 @@ export class WorkflowHookEngine {
             }
           } else {
             rawActionTargets.add(t);
+            for (const decoded of this.decodeTargetSlotNames(t)) {
+              rawActionTargets.add(decoded);
+            }
             for (const resolved of this.resolveTargetEntries(
               t,
               nodeIdToName,
@@ -630,7 +644,7 @@ export class WorkflowHookEngine {
     let hasChannelHookIds = false;
     let mixedGateHookChannel = false;
     if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
-      for (const ch of workflow.channels ?? []) {
+      for (const ch of workflow?.channels ?? []) {
         const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
         if (!fromMatches) continue;
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
@@ -654,7 +668,7 @@ export class WorkflowHookEngine {
       }
     }
 
-    const matchedHooks = workflow.hooks.filter((hook) => {
+    const matchedHooks = (workflow?.hooks ?? []).filter((hook) => {
       if (!hook.enabled) return false;
       if (hook.method !== methodName) return false;
 
@@ -797,6 +811,8 @@ export class WorkflowHookEngine {
       permittedExternalLookups,
       templateData: hook.templateData,
       workflowStartIso,
+      prUrl: this.config.prUrl,
+      gateDataJson: this.config.gateDataJson,
     };
   }
 
@@ -1058,6 +1074,40 @@ export class WorkflowHookEngine {
       return [role];
     }
     return [trimmed];
+  }
+
+  /**
+   * Extract decoded slot/agent names from generic target strings so that
+   * slot-addressed channels (e.g. to: 'reviewer') match even when the agent
+   * uses the explicit address form (@worker:.../reviewer or @role:reviewer).
+   */
+  private decodeTargetSlotNames(target: string): string[] {
+    const decoded: string[] = [];
+    const trimmed = target.trim();
+
+    if (trimmed.startsWith('@worker:')) {
+      try {
+        const addr = parseAddress(trimmed);
+        if (addr.kind === 'worker' && addr.agentName) {
+          decoded.push(addr.agentName);
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    if (trimmed.startsWith('@role:')) {
+      const role = trimmed.slice(6);
+      const actorRolePrefix = 'actor-role:';
+      if (role.startsWith(actorRolePrefix)) {
+        const actorRoleValue = decodeURIComponent(role.slice(actorRolePrefix.length));
+        decoded.push(actorRoleValue);
+      } else {
+        decoded.push(role);
+      }
+    }
+
+    return decoded;
   }
 
   private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

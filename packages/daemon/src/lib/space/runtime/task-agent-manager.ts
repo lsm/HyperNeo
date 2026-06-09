@@ -3828,10 +3828,32 @@ export class TaskAgentManager {
       }
     };
 
-    // Build workflow hook engine when the workflow defines hooks.
+    // Build workflow hook engine when the workflow defines hooks OR when any
+    // channel declares hookIds (so missing-hook fail-closed checks run even
+    // when the hooks array is empty or omitted).
+    const hasHookManagedChannels = (workflow?.channels ?? []).some(
+      (ch) => ch.hookIds && ch.hookIds.length > 0
+    );
     let hookEngine: WorkflowHookEngine | undefined;
-    if (workflow?.hooks && workflow.hooks.length > 0) {
+    if (workflow && ((workflow.hooks && workflow.hooks.length > 0) || hasHookManagedChannels)) {
       const hookExecutor = new HookExecutor({ workspacePath });
+
+      // Build gate data JSON for hook script environments so converted gate
+      // scripts can read the same context they had in the legacy gate path.
+      let gateDataJson: string | undefined;
+      if (this.config.gateDataRepo) {
+        try {
+          const records = this.config.gateDataRepo.listByRun(workflowRunId);
+          const gateData: Record<string, unknown> = {};
+          for (const record of records) {
+            gateData[record.gateId] = record.data;
+          }
+          gateDataJson = JSON.stringify(gateData);
+        } catch {
+          // best effort — hook scripts that depend on gate data will fail closed
+        }
+      }
+
       hookEngine = new WorkflowHookEngine({
         workflow,
         workflowRunId,
@@ -3841,6 +3863,8 @@ export class TaskAgentManager {
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
         hookExecutor,
         workspacePath,
+        prUrl: this.resolvePrUrlForRun(workflowRunId) || undefined,
+        gateDataJson,
       });
     }
 

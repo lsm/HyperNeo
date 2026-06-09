@@ -1425,6 +1425,139 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.userState.reason).toContain('mixed configuration');
     expect(outcome.executionLog).toHaveLength(0);
   });
+
+  test('empty hooks array with hook-managed channel fails closed', async () => {
+    const workflow = makeWorkflow([]);
+    workflow.hooks = [];
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['missing-hook'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+  });
+
+  test('@worker address with agent slot matches slot-addressed channel', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:run-1/Review/reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('@role address with agent slot matches slot-addressed channel', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@role:reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('broadcast * matches slot-addressed channels', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    // Channel uses agent slot name 'reviewer' and wildcard permits all
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '*', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {

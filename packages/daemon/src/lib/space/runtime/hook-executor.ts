@@ -46,6 +46,10 @@ export interface HookExecutorContext {
   templateData?: Record<string, unknown>;
   /** Optional ISO8601 timestamp of workflowRun.createdAt for time-window checks. */
   workflowStartIso?: string;
+  /** Optional resolved PR URL for this workflow run. */
+  prUrl?: string;
+  /** Optional JSON-serialized gate data for this run, keyed by gateId. */
+  gateDataJson?: string;
 }
 
 /** Result of executing a single hook validator. */
@@ -192,6 +196,14 @@ function buildHookRestrictedEnv(
 
   if (context.workflowStartIso) {
     env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
+  }
+
+  if (context.prUrl) {
+    env['NEOKAI_PR_URL'] = context.prUrl;
+  }
+
+  if (context.gateDataJson) {
+    env['NEOKAI_GATE_DATA_JSON'] = context.gateDataJson;
   }
 
   if (context.targetNode) {
