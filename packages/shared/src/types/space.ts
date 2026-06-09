@@ -2390,6 +2390,8 @@ export interface ExportedWorkflowChannel {
   maxCycles?: number;
   label?: string;
   gateId?: string;
+  /** Hook IDs that validate MCP actions on this channel */
+  hookIds?: string[];
 }
 
 /**

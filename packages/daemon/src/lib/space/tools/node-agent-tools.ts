@@ -218,7 +218,8 @@ export async function evaluateTerminalGateFeatures(
       });
       const includeIncoming = incomingChannels.length === 1;
       for (const ch of workflow.channels) {
-        if (!ch.gateId) continue;
+        // Skip hook-managed channels — terminal gate features only apply to legacy gates
+        if (!ch.gateId || (ch.hookIds && ch.hookIds.length > 0)) continue;
         const isOutgoing =
           ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
         let isIncoming = false;

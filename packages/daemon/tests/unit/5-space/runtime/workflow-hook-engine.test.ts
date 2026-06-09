@@ -18,6 +18,7 @@ import type { WorkflowHook, WorkflowHookResult, SpaceWorkflow } from '@neokai/sh
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
 
 // ---------------------------------------------------------------------------
@@ -168,6 +169,16 @@ function makeMockArtifactRepo(): WorkflowRunArtifactRepository {
   } as unknown as WorkflowRunArtifactRepository;
 }
 
+function makeMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
+  return {
+    getRun: () =>
+      ({
+        id: 'run-1',
+        createdAt: Date.now(),
+      }) as unknown as import('@neokai/shared').SpaceWorkflowRun,
+  } as unknown as SpaceWorkflowRunRepository;
+}
+
 function makeWorkflow(hooks: WorkflowHook[]): SpaceWorkflow {
   return {
     id: 'wf-1',
@@ -210,6 +221,7 @@ function makeEngine(hooks: WorkflowHook[]): {
     workflow: makeWorkflow(hooks),
     workflowRunId: 'run-1',
     nodeExecutionRepo: makeMockNodeExecutionRepo(),
+    workflowRunRepo: makeMockWorkflowRunRepo(),
     artifactRepo: makeMockArtifactRepo(),
     hookStateRepo: makeMockHookStateRepo(),
     hookExecutor: mockExecutor,
@@ -524,6 +536,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -566,6 +579,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -729,6 +743,7 @@ describe('WorkflowHookEngine', () => {
       workflow,
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
       hookExecutor: mockExecutor,
@@ -758,6 +773,7 @@ describe('WorkflowHookEngine', () => {
       workflow,
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
       hookExecutor: mockExecutor,
@@ -803,6 +819,7 @@ describe('WorkflowHookEngine', () => {
       workflow,
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
       hookExecutor: mockExecutor,
@@ -828,6 +845,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -858,6 +876,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -889,6 +908,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -922,6 +942,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -958,6 +979,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1003,6 +1025,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1054,6 +1077,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1135,6 +1159,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1170,6 +1195,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1207,6 +1233,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo,
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1251,6 +1278,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo,
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1354,6 +1382,7 @@ describe('wrapHandlerWithHooks', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,

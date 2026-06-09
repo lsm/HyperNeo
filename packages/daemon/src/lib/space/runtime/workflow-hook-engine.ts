@@ -91,7 +91,7 @@ export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
   nodeExecutionRepo: NodeExecutionRepository;
-  workflowRunRepo?: SpaceWorkflowRunRepository;
+  workflowRunRepo: SpaceWorkflowRunRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
@@ -690,7 +690,7 @@ export class WorkflowHookEngine {
       mappedArtifacts.push(item);
     }
 
-    const run = this.config.workflowRunRepo?.getRun(this.config.workflowRunId);
+    const run = this.config.workflowRunRepo.getRun(this.config.workflowRunId);
     const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
 
     return {
