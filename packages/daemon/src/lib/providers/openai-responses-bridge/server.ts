@@ -1158,10 +1158,13 @@ export function createOpenAIResponsesBridgeServer(
   // Per-session thinking config injected by the daemon when the Anthropic SDK client
   // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
-  // Per-session model alias overrides. When the SDK sends an aliased Anthropic model
-  // ID (e.g. claude-opus-4-1-20250805) the bridge maps it to a default Codex ID via
-  // modelAliases. This map lets the daemon override that default per session so the
-  // originally-selected Codex model is preserved upstream.
+  // Per-session, per-alias model overrides. When the SDK sends an aliased Anthropic
+  // model ID (e.g. claude-opus-4-1-20250805) the bridge maps it to a default Codex ID
+  // via modelAliases. This map lets the daemon override that default per (session,
+  // alias) so the originally-selected Codex model is preserved upstream. Keyed by
+  // (sessionId, aliasModelId) so that different SDK tiers (opus/sonnet/haiku) within
+  // the same session are independently overridden and fallback model registration
+  // does not clobber the primary model's override.
   const sessionModelAliasOverrides = new Map<string, string>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   // ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
@@ -1220,13 +1223,23 @@ export function createOpenAIResponsesBridgeServer(
     sessionThinkingConfigs.set(sessionId, { thinking });
   };
 
-  const deleteSessionModelAliasOverride = (sessionId: string): void => {
-    sessionModelAliasOverrides.delete(sessionId);
+  const sessionModelKey = (sessionId: string, aliasModelId: string): string =>
+    `${sessionId}\0${aliasModelId}`;
+
+  const _deleteSessionModelAliasOverrides = (sessionId: string): void => {
+    for (const key of sessionModelAliasOverrides.keys()) {
+      if (key.startsWith(`${sessionId}\0`)) {
+        sessionModelAliasOverrides.delete(key);
+      }
+    }
   };
 
-  const storeSessionModelAliasOverride = (sessionId: string, realModelId: string): void => {
-    deleteSessionModelAliasOverride(sessionId);
-    sessionModelAliasOverrides.set(sessionId, realModelId);
+  const storeSessionModelAliasOverride = (
+    sessionId: string,
+    aliasModelId: string,
+    realModelId: string
+  ): void => {
+    sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
   };
 
   const consumeContinuation = (
@@ -1316,9 +1329,13 @@ export function createOpenAIResponsesBridgeServer(
 
       let model = resolveModelId(body.model, config.modelAliases);
       const sessionId = route.sessionId;
-      // If the daemon has registered a per-session model override, use it so
-      // the originally-selected Codex model is preserved upstream.
-      const sessionModelOverride = sessionModelAliasOverrides.get(sessionId);
+      // If the daemon has registered a per-(session, alias) model override, use it
+      // so the originally-selected Codex model is preserved upstream. This only
+      // overrides when the incoming model matches the registered alias, so different
+      // SDK tiers (opus/sonnet/haiku) are independently resolved.
+      const sessionModelOverride = sessionModelAliasOverrides.get(
+        sessionModelKey(sessionId, body.model)
+      );
       if (sessionModelOverride) {
         model = sessionModelOverride;
       }
@@ -1467,8 +1484,8 @@ export function createOpenAIResponsesBridgeServer(
     setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
       storeSessionThinkingConfig(sessionId, thinking);
     },
-    setSessionModelConfig: (sessionId: string, _aliasModelId: string, realModelId: string) => {
-      storeSessionModelAliasOverride(sessionId, realModelId);
+    setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
+      storeSessionModelAliasOverride(sessionId, aliasModelId, realModelId);
     },
     stop: () => {
       for (const continuation of continuations.values()) {
