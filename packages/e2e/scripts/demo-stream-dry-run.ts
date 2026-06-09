@@ -179,21 +179,37 @@ async function seedDemoForge(page: Page, spaceId: string): Promise<void> {
   await page.evaluate(async (sid) => {
     const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
     if (!hub?.request) throw new Error('MessageHub not available');
-    const scopeResult = (await hub.request('evolution.scope.create', {
-      params: {
-        spaceId: sid,
-        kind: 'custom',
-        name: 'Demo Forge scope',
-        objective: 'Dry-run seeding',
-      },
-    })) as { scope: { id: string } };
-    await hub.request('evolution.evidence.create', {
-      params: {
-        scopeId: scopeResult.scope.id,
-        kind: 'manual_note',
-        summary: 'Demo evidence seeded by the dry-run script.',
-      },
-    });
+
+    // Reuse an existing demo scope so repeated dry-runs do not clutter the Space.
+    const list = (await hub.request('evolution.scope.list', { spaceId: sid })) as {
+      scopes: Array<{ id: string; name: string }>;
+    };
+    let scope = list.scopes.find((s) => s.name === 'Demo Forge scope');
+    if (!scope) {
+      const created = (await hub.request('evolution.scope.create', {
+        params: {
+          spaceId: sid,
+          kind: 'custom',
+          name: 'Demo Forge scope',
+          objective: 'Dry-run seeding',
+        },
+      })) as { scope: { id: string } };
+      scope = created.scope;
+    }
+
+    // Ensure at least one evidence item exists for the scope.
+    const evidenceList = (await hub.request('evolution.evidence.list', { scopeId: scope.id })) as {
+      evidence: Array<unknown>;
+    };
+    if (!evidenceList.evidence || evidenceList.evidence.length === 0) {
+      await hub.request('evolution.evidence.create', {
+        params: {
+          scopeId: scope.id,
+          kind: 'manual_note',
+          summary: 'Demo evidence seeded by the dry-run script.',
+        },
+      });
+    }
   }, spaceId);
 }
 
@@ -349,8 +365,12 @@ async function main() {
     'agents-view',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      await page.goto(`/space/${spaceId}/agents`);
+      // Drive through the sidebar nav like the operator does.
+      await page.goto(`/space/${spaceId}`);
+      await waitForWebSocketConnected(page);
       await page.locator('[data-testid="space-detail-agent"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-detail-agent"]').click();
+      await page.locator('[data-testid="space-agents-view"]').waitFor({ state: 'visible' });
       // The agents page shows long-horizon agents; every new space gets a Coordinator.
       await page.getByText('Coordinator').first().waitFor({ state: 'visible', timeout: 15000 });
       await screenshot(page, '04-agents-view');
@@ -362,8 +382,16 @@ async function main() {
     'forge-view',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      await page.goto(`/space/${spaceId}/forge`);
+      // Drive through the sidebar nav and verify the seeded Forge scope card is visible.
+      await page.goto(`/space/${spaceId}`);
+      await waitForWebSocketConnected(page);
+      await page.locator('[data-testid="space-detail-forge"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-detail-forge"]').click();
       await page.locator('[data-testid="space-forge-view"]').waitFor({ state: 'visible' });
+      await page
+        .getByRole('button', { name: 'Demo Forge scope' })
+        .first()
+        .waitFor({ state: 'visible' });
       await screenshot(page, '05-forge-view');
     },
     page
