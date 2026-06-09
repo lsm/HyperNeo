@@ -28,6 +28,7 @@ import type {
   Gate,
   SpaceWorkflow,
   WorkflowChannel,
+  WorkflowHook,
   WorkflowNode,
 } from '@neokai/shared';
 import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
@@ -1684,6 +1685,15 @@ function remapTemplateHook(
   };
 }
 
+function hookKey(hook: WorkflowHook): string {
+  return JSON.stringify({
+    id: hook.id,
+    sourceNode: hook.sourceNode,
+    targetNode: hook.targetNode ?? null,
+    method: hook.method,
+  });
+}
+
 function mergeHooksFromTemplate(
   existingHooks: SpaceWorkflow['hooks'],
   templateHooks: SpaceWorkflow['hooks'],
@@ -1696,29 +1706,32 @@ function mergeHooksFromTemplate(
   );
   if (!existingHooks) return remappedTemplateHooks;
 
-  const existingKeys = new Set(
-    existingHooks.map((hook) =>
-      JSON.stringify({
-        id: hook.id,
-        sourceNode: hook.sourceNode,
-        targetNode: hook.targetNode ?? null,
-        method: hook.method,
-      })
-    )
-  );
+  // Build a map of template hooks by key for efficient lookup
+  const templateByKey = new Map<string, WorkflowHook>();
+  for (const th of remappedTemplateHooks) {
+    templateByKey.set(hookKey(th), th);
+  }
+
+  // For existing hooks that match a template key, update structural fields
+  // (templateData, validator, retryPolicy) while preserving user-customized fields.
+  const updatedExisting = existingHooks.map((hook) => {
+    const templateMatch = templateByKey.get(hookKey(hook));
+    if (templateMatch) {
+      return {
+        ...hook,
+        templateData: templateMatch.templateData,
+        validator: templateMatch.validator,
+      };
+    }
+    return hook;
+  });
+
+  const existingKeys = new Set(existingHooks.map(hookKey));
   const missingTemplateHooks = remappedTemplateHooks.filter(
-    (hook) =>
-      !existingKeys.has(
-        JSON.stringify({
-          id: hook.id,
-          sourceNode: hook.sourceNode,
-          targetNode: hook.targetNode ?? null,
-          method: hook.method,
-        })
-      )
+    (hook) => !existingKeys.has(hookKey(hook))
   );
 
-  return [...existingHooks, ...missingTemplateHooks];
+  return [...updatedExisting, ...missingTemplateHooks];
 }
 
 /** @internal Exported for testing. */

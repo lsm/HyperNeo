@@ -212,6 +212,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: { _codex_head_sha: 'abc123' },
       templateData: { threshold: 1, requireCodex: true },
     });
 
@@ -264,6 +265,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true } },
+      hookLocalState: { _codex_head_sha: 'abc123' },
       currentArtifacts: [
         {
           id: 'a1',
@@ -379,7 +381,9 @@ describe('reviewApprovalValidator', () => {
   test('uses enterprise GraphQL endpoint for non-github.com hosts', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
+    const originalGhHost = process.env.GH_HOST;
     process.env.GITHUB_TOKEN = 'test-token';
+    process.env.GH_HOST = 'github.enterprise.com';
     let requestedUrl = '';
     globalThis.fetch = async (url, init) => {
       requestedUrl = url as string;
@@ -413,12 +417,14 @@ describe('reviewApprovalValidator', () => {
       params: {
         data: { approved: true, pr_url: 'https://github.enterprise.com/org/repo/pull/42' },
       },
+      hookLocalState: { _codex_head_sha: 'ent-sha-789' },
       templateData: { threshold: 1, requireCodex: true },
     });
 
     await reviewApprovalValidator(ctx);
     globalThis.fetch = originalFetch;
     process.env.GITHUB_TOKEN = originalToken;
+    process.env.GH_HOST = originalGhHost;
 
     expect(requestedUrl).toBe('https://github.enterprise.com/api/graphql');
   });
@@ -464,6 +470,7 @@ describe('reviewApprovalValidator', () => {
 
     const ctx = makeCtx({
       params: { data: { approved: true } },
+      hookLocalState: { _codex_head_sha: 'abc123' },
       gateData: [
         {
           gateId: 'code-pr-gate',
@@ -480,5 +487,148 @@ describe('reviewApprovalValidator', () => {
 
     expect(result.type).toBe('allow');
     expect((result as { message?: string }).message).toContain('codex approval');
+  });
+
+  test('records head SHA and blocks after reset when stale codex exists', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'sha-after-reset',
+                reactions: {
+                  nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                },
+                comments: { nodes: [] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    // After reset, _codex_head_sha is null (no storedHeadSha)
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: { _codex_started_at: Date.now() - 10_000 },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    // Should NOT allow even though codex thumbs-up exists — SHA was reset
+    expect(result.type).toBe('retryable_block');
+    const state = (result as { state?: Record<string, unknown> }).state;
+    expect(state?._codex_head_sha).toBe('sha-after-reset');
+    expect((result as { reason: string }).reason).toContain('reset');
+  });
+
+  test('rejects untrusted host for codex lookup', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: false, status: 403 } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { approved: true, pr_url: 'https://attacker.example/org/repo/pull/1' },
+      },
+      hookLocalState: { _codex_head_sha: 'abc123' },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    // Should NOT make any API call and should block
+    expect(fetchCalled).toBe(false);
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('prefers gate data pr_url over stale artifact pr_url', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let queriedRepo = '';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      queriedRepo = `${body.variables.owner}/${body.variables.name}`;
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'abc123',
+                reactions: { nodes: [] },
+                comments: { nodes: [] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true } },
+      hookLocalState: { _codex_head_sha: 'abc123' },
+      currentArtifacts: [
+        {
+          id: 'old-artifact',
+          nodeId: 'node-coding',
+          type: 'result',
+          key: 'old',
+          data: { pr_url: 'https://github.com/old/repo/pull/99' },
+          createdAt: Date.now() - 100_000,
+          updatedAt: Date.now() - 100_000,
+        },
+      ],
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/new/repo/pull/42' },
+          updatedAt: Date.now(),
+        },
+      ],
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    // Should query the gate data URL (new/repo), not the artifact URL (old/repo)
+    expect(queriedRepo).toBe('new/repo');
   });
 });

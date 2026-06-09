@@ -77,14 +77,16 @@ function findPrUrl(ctx: HookExecutorContext): string | undefined {
   if (typeof data?.pr_url === 'string') return data.pr_url;
   if (typeof ctx.hookLocalState._pr_url === 'string') return ctx.hookLocalState._pr_url as string;
 
-  for (const artifact of ctx.currentArtifacts) {
-    const artifactData = artifact.data as Record<string, unknown> | undefined;
-    if (typeof artifactData?.pr_url === 'string') return artifactData.pr_url;
-  }
-
+  // Gate data is the canonical source for the active PR URL
   for (const gate of ctx.gateData ?? []) {
     const gateData = gate.data as Record<string, unknown> | undefined;
     if (typeof gateData?.pr_url === 'string') return gateData.pr_url;
+  }
+
+  // Fall back to artifacts (may contain stale URLs from prior cycles)
+  for (const artifact of ctx.currentArtifacts) {
+    const artifactData = artifact.data as Record<string, unknown> | undefined;
+    if (typeof artifactData?.pr_url === 'string') return artifactData.pr_url;
   }
 
   return undefined;
@@ -114,6 +116,19 @@ async function checkCodexApproval(
 
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) return { status: 'error' };
+
+  // Only send credentials to trusted hosts
+  const trustedHosts = new Set(['github.com']);
+  const ghHost = process.env.GH_HOST;
+  if (ghHost) trustedHosts.add(ghHost);
+  const extraHosts = process.env.NEOKAI_TRUSTED_GITHUB_HOSTS;
+  if (extraHosts) {
+    for (const h of extraHosts.split(',')) {
+      const trimmed = h.trim();
+      if (trimmed) trustedHosts.add(trimmed);
+    }
+  }
+  if (!trustedHosts.has(parsed.host)) return { status: 'error' };
 
   const endpoint =
     parsed.host === 'github.com'
@@ -305,6 +320,22 @@ export async function reviewApprovalValidator(
           state: {
             ...nextState,
             _codex_started_at: now,
+            _codex_head_sha: codexResult.headSha,
+            _pr_url: prUrl,
+          },
+        };
+      }
+
+      // After a reset, storedHeadSha is null. Record the current head and wait
+      // for a fresh codex approval instead of accepting historical thumbs-ups.
+      if (codexResult.headSha && !storedHeadSha) {
+        return {
+          type: 'retryable_block',
+          reason: 'Recording PR head SHA after reset. Waiting for fresh codex approval.',
+          retryAfterMs: 60_000,
+          state: {
+            ...nextState,
+            _codex_started_at: codexStartedAt ?? now,
             _codex_head_sha: codexResult.headSha,
             _pr_url: prUrl,
           },

@@ -14,10 +14,26 @@ function isValidReviewUrl(url: string): boolean {
   return /^https:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+/.test(url);
 }
 
+/** Extract the PR base URL (host/owner/repo/pull/N) from a full URL. */
+function extractPrBaseUrl(url: string): string | undefined {
+  const m = url.match(/^(https:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+)/);
+  return m?.[1];
+}
+
+/** Find the active PR URL from gate data (canonical source). */
+function getActivePrUrl(ctx: HookExecutorContext): string | undefined {
+  for (const gate of ctx.gateData ?? []) {
+    const gateData = gate.data as Record<string, unknown> | undefined;
+    if (typeof gateData?.pr_url === 'string') return gateData.pr_url;
+  }
+  return undefined;
+}
+
 function findReviewEvidence(
   ctx: HookExecutorContext
 ): { reviewUrl?: string; source: string } | undefined {
   const data = ctx.params.data as Record<string, unknown> | undefined;
+  const activePrBase = extractPrBaseUrl(getActivePrUrl(ctx) ?? '');
 
   // Immediate evidence in the message data
   if (
@@ -25,6 +41,11 @@ function findReviewEvidence(
     typeof data.review_url === 'string' &&
     isValidReviewUrl(data.review_url)
   ) {
+    // If we know the active PR, verify the review URL is for the same PR
+    if (activePrBase) {
+      const reviewBase = extractPrBaseUrl(data.review_url);
+      if (reviewBase !== activePrBase) return undefined;
+    }
     return { reviewUrl: data.review_url, source: 'message_data' };
   }
 
@@ -37,6 +58,10 @@ function findReviewEvidence(
       const artifactData = artifact.data as Record<string, unknown> | undefined;
       const url = artifactData?.review_url;
       if (typeof url === 'string' && isValidReviewUrl(url)) {
+        if (activePrBase) {
+          const reviewBase = extractPrBaseUrl(url);
+          if (reviewBase !== activePrBase) continue;
+        }
         return { reviewUrl: url, source: 'artifact' };
       }
     } else {

@@ -169,10 +169,54 @@ describe('reviewPostedValidator', () => {
       params: {
         data: { review_url: 'https://github.enterprise.com/org/repo/pull/42#discussion_r1' },
       },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.enterprise.com/org/repo/pull/42' },
+          updatedAt: Date.now(),
+        },
+      ],
     });
     const result = await reviewPostedValidator(ctx);
 
     expect(result.type).toBe('allow');
     expect((result as { message?: string }).message).toContain('message_data');
+  });
+
+  test('blocks review URL from a different PR than the active one', async () => {
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/other/repo/pull/99#discussion_r1' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('No review evidence');
+  });
+
+  test('allows review URL matching the active PR', async () => {
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r42' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+
+    expect(result.type).toBe('allow');
   });
 });
