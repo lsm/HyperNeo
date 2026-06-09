@@ -2,9 +2,9 @@
 
 All notable changes to NeoKai will be documented in this file.
 
-## [0.37.0] - 2026-06-08
+## [0.37.0] - 2026-06-09
 
-ACP protocol client with query adapter and message translator, runtime hook engine with MCP action integration, ACP protocol type definitions with JSON-RPC stdio transport, workflow hook schema storage with validation and persistence, separation of worker and long-horizon agent types, and terminology sweep with boundary tests. 6 commits since v0.36.0.
+ACP protocol client with query adapter and message translator, runtime hook engine with MCP action integration, ACP protocol type definitions with JSON-RPC stdio transport, workflow hook schema storage with validation and persistence, separation of worker and long-horizon agent types, provider context window fix for non-native models, and terminology sweep with boundary tests. 7 commits since v0.36.0.
 
 ### Added
 
@@ -20,6 +20,7 @@ ACP protocol client with query adapter and message translator, runtime hook engi
 
 ### Fixed
 
+- **Prefer provider metadata context window for non-native providers**: Non-Anthropic providers (GLM, Kimi, Ollama, MiniMax, custom endpoints) now use their own model metadata contextWindow instead of the SDK's assumed capacity. Only Anthropic and Anthropic Copilot continue to trust SDK-reported values by default
 - Fixed legacy long-horizon migration test to use the correct migration function (runMigration155) and added wrong-ID validation tests for goal/scope/reminder tools rejecting worker-only agent IDs
 
 ## [0.36.0] - 2026-06-02
