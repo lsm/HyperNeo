@@ -335,7 +335,11 @@ async function main() {
     'tasks-view',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      await page.goto(`/space/${spaceId}/tasks`);
+      // Drive through the sidebar nav so the Action tab is selected for blocked tasks.
+      await page.goto(`/space/${spaceId}`);
+      await waitForWebSocketConnected(page);
+      await page.locator('[data-testid="space-detail-tasks"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-detail-tasks"]').click();
       await page.locator('[data-testid="space-tasks-view"]').waitFor({ state: 'visible' });
       await screenshot(page, '02-tasks-view');
     },
@@ -401,8 +405,12 @@ async function main() {
     'create-session',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      // Drive the same UI path the operator uses: Sessions nav → Create session button.
-      await page.goto(`/space/${spaceId}/sessions`);
+      // Drive the same UI path the operator uses: sidebar Sessions → Create session button.
+      await page.goto(`/space/${spaceId}`);
+      await waitForWebSocketConnected(page);
+      await page.locator('[data-testid="space-detail-sessions"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-detail-sessions"]').click();
+      await page.locator('[data-testid="space-sessions-view"]').waitFor({ state: 'visible' });
 
       // Capture pre-click session IDs so we can recover the created session even if
       // navigation fails, avoiding orphaned sessions in the demo Space.
@@ -458,7 +466,16 @@ async function main() {
   await safeStep(
     'settings-skills',
     async () => {
-      await page.goto('/settings?tab=skills');
+      // Drive the same UI path the operator uses: bottom-left Settings → Skills tab.
+      await page.getByRole('button', { name: 'Settings' }).first().click();
+      await page
+        .locator('nav[aria-label="Settings sections"]')
+        .getByRole('button', { name: 'Skills' })
+        .waitFor({ state: 'visible' });
+      await page
+        .locator('nav[aria-label="Settings sections"]')
+        .getByRole('button', { name: 'Skills' })
+        .click();
       // Wait for SkillsRegistry content (the "Add Skill" button) rather than the sidebar nav.
       await page.getByRole('button', { name: 'Add Skill' }).waitFor({ state: 'visible' });
       await screenshot(page, '07-settings-skills');
