@@ -328,6 +328,85 @@ describe('codexReviewApprovedValidator', () => {
     expect(fetchCalls).toHaveLength(0);
   });
 
+  test('send_message to non-target node bypasses Codex check', async () => {
+    const ctx = makeContext({
+      methodName: 'send_message',
+      params: { target: 'SomeOtherNode' },
+      templateData: { enforceForTargets: ['Review'] },
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('allow');
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  test('send_message to broadcast "*" triggers Codex check', async () => {
+    fetchMock = async (url) => {
+      if (url.includes('/pulls/42')) {
+        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
+      }
+      if (url.includes('/issues/42/reactions')) {
+        return new Response('[]', { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    const ctx = makeContext({
+      methodName: 'send_message',
+      params: { target: '*' },
+      templateData: { enforceForTargets: ['Review'] },
+      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    // Should not bypass — broadcast is treated as matching all targets
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('send_message to agent-slot target triggers Codex check', async () => {
+    fetchMock = async (url) => {
+      if (url.includes('/pulls/42')) {
+        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
+      }
+      if (url.includes('/issues/42/reactions')) {
+        return new Response('[]', { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    const ctx = makeContext({
+      methodName: 'send_message',
+      params: { target: 'reviewer' },
+      templateData: { enforceForTargets: ['Review'] },
+      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('uses GH_ENTERPRISE_TOKEN when GITHUB_TOKEN is absent', async () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    process.env.GH_ENTERPRISE_TOKEN = 'enterprise-token';
+
+    fetchMock = async (url) => {
+      if (url.includes('/pulls/42')) {
+        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
+      }
+      if (url.includes('/issues/42/reactions')) {
+        return new Response('[]', { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    const ctx = makeContext({
+      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    // Should not block on missing token
+    expect(result.type).toBe('retryable_block');
+
+    delete process.env.GH_ENTERPRISE_TOKEN;
+  });
+
   test('head change resets freshness anchor', async () => {
     let callCount = 0;
     fetchMock = async (url) => {

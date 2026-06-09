@@ -188,7 +188,9 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           if (agent.name) allowedTargets.add(agent.name);
         }
       }
-      if (!targets.some((t) => typeof t === 'string' && allowedTargets.has(t))) {
+      // Broadcast '*' fans out to all permitted targets, so treat it as matching
+      const isBroadcast = targets.includes('*');
+      if (!isBroadcast && !targets.some((t) => typeof t === 'string' && allowedTargets.has(t))) {
         return { type: 'allow' };
       }
     }
@@ -219,7 +221,12 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     };
   }
 
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+  const token =
+    process.env.GH_TOKEN ||
+    process.env.GITHUB_TOKEN ||
+    process.env.GH_ENTERPRISE_TOKEN ||
+    process.env.GITHUB_ENTERPRISE_TOKEN ||
+    '';
   if (!token) {
     return {
       type: 'block',
