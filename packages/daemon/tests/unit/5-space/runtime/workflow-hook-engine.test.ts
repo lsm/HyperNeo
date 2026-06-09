@@ -1746,6 +1746,114 @@ describe('WorkflowHookEngine', () => {
     const ctx = capturedContext as { prUrl?: string };
     expect(ctx.prUrl).toBe('https://github.com/lsm/neokai/pull/42');
   });
+
+  test('node-id target first-matches channel by resolved node name', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'node-review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('array target uses first-match per element', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'specific-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+      makeHook({
+        id: 'wildcard-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['specific-gate'] },
+      { id: 'ch-2', from: 'Coding', to: '*', hookIds: ['wildcard-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('specific-gate', { type: 'allow' });
+    // wildcard-gate not set — would block if union behavior still applied
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review'], message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('specific-gate');
+  });
+
+  test('space-agent target skips channel hook binding', async () => {
+    // No hooks in workflow.hooks — channel only references a missing hook.
+    const workflow = makeWorkflow([]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: '*', hookIds: ['missing-gate'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'space-agent', message: 'escalate' },
+      defaultMeta
+    );
+
+    // Channel hook binding is skipped for space-agent, so missing-gate
+    // does not trigger fail-closed.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {

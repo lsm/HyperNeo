@@ -641,54 +641,99 @@ export class WorkflowHookEngine {
 
     // For send_message, intersect resolved hooks with the hookIds declared on
     // the matching workflow channels. Use first-match semantics (same as
-    // ChannelRouter.findMatchingWorkflowChannel) for single-string targets so
-    // overlapping routes don't pull in unrelated hooks.
+    // ChannelRouter.findMatchingWorkflowChannel) so overlapping routes don't
+    // pull in unrelated hooks.
     const channelHookIds = new Set<string>();
     let hasChannelHookIds = false;
     let mixedGateHookChannel = false;
     if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
       const target = params.target;
-      const isSingleString = typeof target === 'string' && target.trim() !== '*';
 
-      if (isSingleString) {
-        // First-match semantics: only the first matching channel governs delivery.
-        // Try raw target first, then decoded slot names from @worker:/@role: forms.
-        const trimmedTarget = target.trim();
-        let firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, trimmedTarget);
+      // Skip built-in escalation targets — they route outside channel topology.
+      const isEscalationTarget = (t: string) => t === 'space-agent' || t.startsWith('@coordinator');
+
+      const processFirstMatch = (rawTarget: string): boolean => {
+        const trimmed = rawTarget.trim();
+        if (isEscalationTarget(trimmed)) return false;
+
+        // Try raw target, then decoded slot names, then resolved node names.
+        let firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, trimmed);
         if (!firstCh) {
-          for (const decoded of this.decodeTargetSlotNames(trimmedTarget)) {
+          for (const decoded of this.decodeTargetSlotNames(trimmed)) {
             firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, decoded);
             if (firstCh) break;
           }
         }
-        if (firstCh) {
-          if (firstCh.gateId && firstCh.hookIds && firstCh.hookIds.length > 0) {
-            mixedGateHookChannel = true;
-          } else if (firstCh.hookIds && firstCh.hookIds.length > 0) {
-            hasChannelHookIds = true;
-            for (const hid of firstCh.hookIds) {
-              channelHookIds.add(hid);
-            }
+        if (!firstCh) {
+          for (const resolved of actionTargets) {
+            firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, resolved);
+            if (firstCh) break;
           }
         }
-      } else {
-        // Broadcast (*) or array targets: multiple deliveries may use different
-        // channels, so collect hookIds from all matching channels (fail-closed).
+
+        if (!firstCh) return false;
+
+        if (firstCh.gateId && firstCh.hookIds && firstCh.hookIds.length > 0) {
+          mixedGateHookChannel = true;
+          return true;
+        }
+        if (firstCh.hookIds && firstCh.hookIds.length > 0) {
+          hasChannelHookIds = true;
+          for (const hid of firstCh.hookIds) {
+            channelHookIds.add(hid);
+          }
+        }
+        return true;
+      };
+
+      if (typeof target === 'string' && target.trim() !== '*') {
+        processFirstMatch(target);
+      } else if (Array.isArray(target)) {
+        // First-match per array element so a specific channel governs each target.
+        const seenChannels = new Set<string>();
+        for (const t of target) {
+          if (typeof t !== 'string') continue;
+          if (t.trim() === '*') {
+            // Broadcast: fall back to union over all matching non-escalation channels.
+            for (const ch of workflow?.channels ?? []) {
+              const fromMatches =
+                ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
+              if (!fromMatches) continue;
+              const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+              const toMatches = toList.some(
+                (to) => to === '*' || actionTargets.has(to) || rawActionTargets.has(to)
+              );
+              if (!toMatches) continue;
+              if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+                mixedGateHookChannel = true;
+                break;
+              }
+              if (ch.hookIds && ch.hookIds.length > 0) {
+                hasChannelHookIds = true;
+                for (const hid of ch.hookIds) {
+                  channelHookIds.add(hid);
+                }
+              }
+            }
+          } else if (!seenChannels.has(t)) {
+            seenChannels.add(t);
+            processFirstMatch(t);
+          }
+        }
+      } else if (target === '*' || (typeof target === 'string' && target.trim() === '*')) {
+        // Broadcast: union over all matching non-escalation channels.
         for (const ch of workflow?.channels ?? []) {
           const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
           if (!fromMatches) continue;
           const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
           const toMatches = toList.some(
-            (t) => t === '*' || actionTargets.has(t) || rawActionTargets.has(t)
+            (to) => to === '*' || actionTargets.has(to) || rawActionTargets.has(to)
           );
           if (!toMatches) continue;
-
-          // Reject mixed gate/hook channels before any hooks run
           if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
             mixedGateHookChannel = true;
             break;
           }
-
           if (ch.hookIds && ch.hookIds.length > 0) {
             hasChannelHookIds = true;
             for (const hid of ch.hookIds) {
@@ -833,15 +878,17 @@ export class WorkflowHookEngine {
 
     // Build fresh gate data JSON per action so long-lived sessions don't
     // validate against stale gate data or missing PR URLs.
+    // Flat-merge all gate data objects for backward compatibility with
+    // converted gate scripts that expect a single flat object shape.
     let gateDataJson: string | undefined;
     if (this.config.gateDataRepo) {
       try {
         const records = this.config.gateDataRepo.listByRun(this.config.workflowRunId);
-        const gateData: Record<string, unknown> = {};
+        const flatGateData: Record<string, unknown> = {};
         for (const record of records) {
-          gateData[record.gateId] = record.data;
+          Object.assign(flatGateData, record.data);
         }
-        gateDataJson = JSON.stringify(gateData);
+        gateDataJson = JSON.stringify(flatGateData);
       } catch {
         // best effort — hook scripts that depend on gate data will fail closed
       }
