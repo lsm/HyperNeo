@@ -175,8 +175,9 @@ describe('KimiProvider', () => {
 
       // SDK routes through the bridge
       expect(config.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-      // Follow Codex pattern: ANTHROPIC_API_KEY sentinel, no ANTHROPIC_AUTH_TOKEN
-      expect(config.envVars.ANTHROPIC_API_KEY).toBe('kimi-bridge');
+      // Blank ANTHROPIC_API_KEY so ProviderService clears inherited Anthropic keys;
+      // the bridge handles Kimi auth via config.apiKey. No ANTHROPIC_AUTH_TOKEN.
+      expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
       expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');

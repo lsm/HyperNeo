@@ -35,11 +35,17 @@ import {
   type AnthropicMessagesBridgeServer,
 } from './anthropic-messages-bridge/server.js';
 import { Logger } from '../logger.js';
+import * as crypto from 'crypto';
 
 const logger = new Logger('kimi-provider');
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
+}
+
+/** Return a short non-reversible fingerprint of `value` for log correlation. */
+function keyFingerprint(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
 export class KimiProvider implements Provider {
@@ -160,20 +166,19 @@ export class KimiProvider implements Provider {
         ],
       });
       this.bridgeServers.set(bridgeKey, bridgeServer);
-      logger.info(
-        `Kimi bridge server started on port ${bridgeServer.port} for key=${bridgeKey.slice(0, 40)}…`
-      );
+      // Log a fingerprint, not the raw key — avoids leaking credential prefixes
+      // in daemon logs.
+      const logKey = `${baseUrl}::${keyFingerprint(apiKey)}`;
+      logger.info(`Kimi bridge server started on port ${bridgeServer.port} for key=${logKey}`);
     }
 
     return {
       envVars: {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
-        // Follow the Codex bridge pattern: set ANTHROPIC_API_KEY to a sentinel
-        // value and let the bridge handle auth via its config.apiKey.  Do NOT
-        // set ANTHROPIC_AUTH_TOKEN — having both causes ProviderService's
-        // applyEnvVarsToProcessForSession to leak the real key into process.env
-        // across session switches.
-        ANTHROPIC_API_KEY: `kimi-bridge`,
+        // Blank ANTHROPIC_API_KEY explicitly so ProviderService clears any
+        // inherited Anthropic key from process.env. The bridge handles Kimi
+        // auth via its config.apiKey; no ANTHROPIC_AUTH_TOKEN needed.
+        ANTHROPIC_API_KEY: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
@@ -205,7 +210,9 @@ export class KimiProvider implements Provider {
   async shutdown(): Promise<void> {
     for (const [key, server] of this.bridgeServers) {
       server.stop();
-      logger.info(`Kimi bridge server stopped for key=${key.slice(0, 40)}…`);
+      const [baseUrl, apiKey] = key.split('::');
+      const logKey = `${baseUrl}::${keyFingerprint(apiKey)}`;
+      logger.info(`Kimi bridge server stopped for key=${logKey}`);
     }
     this.bridgeServers.clear();
   }
