@@ -248,6 +248,9 @@ async function main() {
 
   const spaceId = demoSpace?.spaceId ?? null;
   const workspacePath = demoSpace?.workspacePath ?? '';
+  if (workspacePath && !existsSync(workspacePath)) {
+    mkdirSync(workspacePath, { recursive: true });
+  }
 
   await safeStep(
     'space-overview',
@@ -255,7 +258,7 @@ async function main() {
       if (!spaceId) throw new Error('no spaceId');
       await page.goto(`/space/${spaceId}`);
       await waitForWebSocketConnected(page);
-      await page.locator('[data-testid="space-detail-dashboard"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-overview-view"]').waitFor({ state: 'visible' });
       await screenshot(page, '01-space-overview');
     },
     page
@@ -287,11 +290,14 @@ async function main() {
     async () => {
       if (!spaceId) throw new Error('no spaceId');
       if (!demoTaskId) throw new Error('no demoTaskId');
-      // Navigate directly to the draft task so the dry-run does not depend on
-      // which Tasks tab is currently active in the sidebar.
-      await page.goto(`/space/${spaceId}/task/${demoTaskId}`);
+      // Drive the same UI path the operator uses: Tasks view → click the task row.
+      await page.goto(`/space/${spaceId}/tasks`);
+      await page.locator('[data-testid="space-tasks-view"]').waitFor({ state: 'visible' });
+      await page.getByText(DEMO_TASK_TITLE).first().click();
+      await page.waitForURL(
+        new RegExp(`^${BASE_URL.replace(/\//g, '\\/')}\\/space\\/${spaceId}\\/task\\/${demoTaskId}`)
+      );
       await waitForWebSocketConnected(page);
-      // The task pane renders the thread panel directly; no explicit "Thread" tab text.
       await page.locator('[data-testid="task-thread-panel"]').waitFor({ state: 'visible' });
       await screenshot(page, '03-task-thread');
     },
