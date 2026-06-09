@@ -196,7 +196,8 @@ export type Provider =
   | 'ollama'
   | 'ollama-cloud'
   | 'anthropic-copilot'
-  | 'anthropic-codex';
+  | 'anthropic-codex'
+  | 'acp';
 
 /**
  * Provider-specific configuration
@@ -279,6 +280,7 @@ export const PROVIDER_THINKING_MODES: Record<Provider, 'off' | 'on' | 'granular'
   'ollama-cloud': 'off',
   'anthropic-copilot': 'off',
   'anthropic-codex': 'granular',
+  acp: 'granular',
 };
 
 /**
