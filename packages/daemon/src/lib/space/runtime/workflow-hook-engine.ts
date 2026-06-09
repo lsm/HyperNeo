@@ -290,6 +290,9 @@ export class WorkflowHookEngine {
           if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
+          if (result.state && typeof result.state === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+          }
           // side_effect block is recorded but does not stop
           break;
 
@@ -344,6 +347,9 @@ export class WorkflowHookEngine {
                 }
               }
             }
+          }
+          if (result.state && typeof result.state === 'object') {
+            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
           }
           break;
         }

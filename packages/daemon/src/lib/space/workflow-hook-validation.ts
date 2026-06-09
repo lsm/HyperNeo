@@ -13,9 +13,8 @@ const VALID_METHODS = new Set([
   'submit_for_approval',
   'approve_task',
 ]);
-// Built-in validators are not yet implemented; reject them at validation time
-// so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>([]);
+// Allow built-in validator IDs that have real implementations registered.
+const VALID_BUILT_IN_VALIDATORS = new Set<string>(['review_approval', 'review_posted']);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',

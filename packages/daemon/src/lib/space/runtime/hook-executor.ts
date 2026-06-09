@@ -22,6 +22,8 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
+import { reviewApprovalValidator } from './built-in-validators/review-approval-validator';
+import { reviewPostedValidator } from './built-in-validators/review-posted-validator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -137,6 +139,8 @@ registerBuiltInValidator('task_reported_status', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,
 }));
+registerBuiltInValidator('review_approval', reviewApprovalValidator);
+registerBuiltInValidator('review_posted', reviewPostedValidator);
 
 // ---------------------------------------------------------------------------
 // Environment builder

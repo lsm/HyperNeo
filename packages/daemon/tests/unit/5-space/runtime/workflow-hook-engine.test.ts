@@ -1378,6 +1378,71 @@ describe('wrapHandlerWithHooks', () => {
     expect(state2?.localState).toEqual({ count: 1 });
   });
 
+  test('persists state on block results', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', {
+      type: 'block',
+      reason: 'Threshold not met',
+      state: { approvals: { arch: 'approved' } },
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review' });
+
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.localState).toEqual({ approvals: { arch: 'approved' } });
+    expect(state?.lastResult?.type).toBe('block');
+  });
+
+  test('persists state on retryable_block results', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Waiting on CI',
+      retryAfterMs: 5_000,
+      state: { retryCount: 1 },
+    });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review' });
+
+    const state = hookStateRepo.get('run-1', 'hook-1');
+    expect(state?.localState).toEqual({ retryCount: 1 });
+    expect(state?.lastResult?.type).toBe('retryable_block');
+  });
+
   test('dispatches follow-up through handler pipeline', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', classification: 'side_effect' }),
