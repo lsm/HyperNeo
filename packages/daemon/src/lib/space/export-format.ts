@@ -129,6 +129,7 @@ const exportedWorkflowChannelSchema = z.object({
   maxCycles: z.number().int().positive().optional(),
   label: z.string().optional(),
   gateId: z.string().optional(),
+  hookIds: z.array(z.string().min(1)).optional(),
 });
 
 const workflowHookValidatorSchema = z.union([
@@ -425,6 +426,7 @@ export function exportWorkflow(
       if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
       if (ch.label !== undefined) exported.label = ch.label;
       if (ch.gateId !== undefined) exported.gateId = ch.gateId;
+      if (ch.hookIds !== undefined) exported.hookIds = ch.hookIds;
       return exported;
     });
     result.channels = exportedChannels;

@@ -1642,6 +1642,85 @@ describe('ExportedWorkflowChannel — export and validation', () => {
     expect(ch.maxCycles).toBe(3);
   });
 
+  test('exportWorkflow preserves hookIds on channel', () => {
+    const workflow: SpaceWorkflow = {
+      id: 'wf-hook',
+      spaceId: 'space-1',
+      name: 'Hook Workflow',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Work',
+          agents: [
+            { agentId: 'agent-uuid-1', name: 'coder' },
+            { agentId: 'agent-uuid-3', name: 'reviewer' },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-1',
+      rules: [],
+      tags: [],
+      channels: [
+        {
+          id: 'ch-hook-uuid',
+          from: 'coder',
+          to: 'reviewer',
+          hookIds: ['review-gate', 'pr-check'],
+        },
+      ],
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+
+    const ch = exported.channels![0] as Record<string, unknown>;
+    expect('id' in ch).toBe(false);
+    expect(ch.hookIds).toEqual(['review-gate', 'pr-check']);
+  });
+
+  test('round-trip: export preserves hookIds, validate passes', () => {
+    const workflow: SpaceWorkflow = {
+      id: 'wf-hook',
+      spaceId: 'space-1',
+      name: 'Hook Workflow',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Work',
+          agents: [
+            { agentId: 'agent-uuid-1', name: 'coder' },
+            { agentId: 'agent-uuid-3', name: 'reviewer' },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-1',
+      rules: [],
+      tags: [],
+      channels: [
+        {
+          id: 'ch-hook-uuid',
+          from: 'coder',
+          to: 'reviewer',
+          hookIds: ['review-gate'],
+        },
+      ],
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
+    const json = JSON.stringify(exported);
+    const parsed = JSON.parse(json) as unknown;
+    const result = validateExportedWorkflow(parsed);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const ch = result.value.channels![0] as Record<string, unknown>;
+      expect(ch.hookIds).toEqual(['review-gate']);
+    }
+  });
+
   test('channel id does not appear in exported JSON', () => {
     const workflow = makeWorkflowWithChannelId();
     const exported = exportWorkflow(workflow, [makeAgent(), makeReviewerAgent()]);
