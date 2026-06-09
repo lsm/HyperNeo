@@ -1201,7 +1201,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       id: 'codex-review-check',
       enabled: true,
       sourceNode: 'Plan Review',
-      method: 'submit_for_approval',
+      method: 'send_message',
       validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
       authorizedCallers: [
         {
@@ -1214,24 +1214,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
           ],
         },
       ],
-    },
-    {
-      id: 'codex-review-check-approve',
-      enabled: true,
-      sourceNode: 'Plan Review',
-      method: 'approve_task',
-      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
-      authorizedCallers: [
-        {
-          sourceNode: 'Plan Review',
-          agentSlots: [
-            'architecture-reviewer',
-            'security-reviewer',
-            'correctness-reviewer',
-            'ux-reviewer',
-          ],
-        },
-      ],
+      templateData: { enforceForTargets: ['Task Dispatcher'] },
     },
   ],
 };
@@ -1432,17 +1415,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       id: 'codex-review-check',
       enabled: true,
       sourceNode: 'Review',
-      method: 'submit_for_approval',
+      method: 'send_message',
       validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
       authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
-    },
-    {
-      id: 'codex-review-check-approve',
-      enabled: true,
-      sourceNode: 'Review',
-      method: 'approve_task',
-      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
-      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+      templateData: { enforceForTargets: ['QA'] },
     },
   ],
 };

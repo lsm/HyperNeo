@@ -143,14 +143,36 @@ function toEpochMs(iso: string): number {
 // Validator
 // ---------------------------------------------------------------------------
 
+const ALLOWED_PR_HOSTS = new Set(['github.com', process.env.GH_HOST].filter(Boolean) as string[]);
+
 export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) => {
-  const { nodeName, workflow, lastResult, currentArtifacts, params, permittedExternalLookups } =
-    context;
+  const {
+    nodeName,
+    workflow,
+    lastResult,
+    currentArtifacts,
+    params,
+    permittedExternalLookups,
+    methodName,
+    templateData,
+  } = context;
 
   // Only enforce when the workflow node explicitly requests it
   const node = workflow?.nodes?.find((n) => n.name === nodeName);
   if (!node?.requireCodexApproval) {
     return { type: 'allow' };
+  }
+
+  // For send_message hooks, only enforce when the target matches configured handoff targets
+  if (methodName === 'send_message') {
+    const enforceForTargets = templateData?.enforceForTargets as string[] | undefined;
+    if (enforceForTargets && enforceForTargets.length > 0) {
+      const target = (params as Record<string, unknown>).target;
+      const targets = Array.isArray(target) ? target : [target];
+      if (!targets.some((t) => typeof t === 'string' && enforceForTargets.includes(t))) {
+        return { type: 'allow' };
+      }
+    }
   }
 
   // Load persisted state from previous invocation
@@ -199,6 +221,13 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     return {
       type: 'block',
       reason: `Invalid PR URL for Codex review check: ${prUrl}`,
+    };
+  }
+
+  if (!ALLOWED_PR_HOSTS.has(prInfo.host)) {
+    return {
+      type: 'block',
+      reason: `PR host "${prInfo.host}" is not in the allowed list. Only ${[...ALLOWED_PR_HOSTS].join(', ')} are permitted.`,
     };
   }
 
