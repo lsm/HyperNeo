@@ -200,6 +200,8 @@ function buildHookRestrictedEnv(
 
   if (context.prUrl) {
     env['NEOKAI_PR_URL'] = context.prUrl;
+    // Also expose as PR_URL for backward compatibility with converted gate scripts
+    env['PR_URL'] = context.prUrl;
   }
 
   if (context.gateDataJson) {

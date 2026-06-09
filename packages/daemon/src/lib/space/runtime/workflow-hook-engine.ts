@@ -652,7 +652,15 @@ export class WorkflowHookEngine {
 
       if (isSingleString) {
         // First-match semantics: only the first matching channel governs delivery.
-        const firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, target.trim());
+        // Try raw target first, then decoded slot names from @worker:/@role: forms.
+        const trimmedTarget = target.trim();
+        let firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, trimmedTarget);
+        if (!firstCh) {
+          for (const decoded of this.decodeTargetSlotNames(trimmedTarget)) {
+            firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, decoded);
+            if (firstCh) break;
+          }
+        }
         if (firstCh) {
           if (firstCh.gateId && firstCh.hookIds && firstCh.hookIds.length > 0) {
             mixedGateHookChannel = true;
@@ -720,8 +728,13 @@ export class WorkflowHookEngine {
     });
 
     // Fail closed when any declared channel hookId does not resolve to a
-    // runnable hook (deleted, disabled, wrong source/target, missing auth).
-    const resolvedHookIds = new Set(matchedHooks.map((h) => h.id));
+    // runnable validation hook. Side_effect hooks cannot block delivery, so
+    // they do not count as resolved validators for a channel.
+    const resolvedHookIds = new Set(
+      matchedHooks
+        .filter((h) => (h.classification ?? 'validation') === 'validation')
+        .map((h) => h.id)
+    );
     const missingChannelHooks =
       hasChannelHookIds && [...channelHookIds].some((hid) => !resolvedHookIds.has(hid));
     return { hooks: matchedHooks, missingChannelHooks, mixedGateHookChannel };
