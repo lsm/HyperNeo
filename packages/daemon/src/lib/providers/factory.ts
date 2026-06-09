@@ -8,7 +8,6 @@
  */
 
 import { AnthropicProvider } from './anthropic-provider.js';
-import { AcpProvider } from './acp-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { KimiProvider } from './kimi-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
@@ -129,15 +128,6 @@ export function initializeProviders(): ProviderRegistry {
     registerCopilotProvider(registry);
   }
 
-  // Register ACP provider (Agent Client Protocol) only when configured.
-  // ACP bypasses the SDK HTTP path; the agent subprocess is spawned directly.
-  if (!disabledBuiltInProviderIds.has('acp')) {
-    const acpProvider = new AcpProvider();
-    if (acpProvider.isAvailable()) {
-      registerIfMissing(registry, acpProvider);
-    }
-  }
-
   // Additional built-in providers can be registered here
   // Example:
   // registerIfMissing(registry, new DeepSeekProvider());
@@ -188,13 +178,6 @@ export async function registerBuiltInProvider(
     case 'anthropic-copilot':
       await waitForOptionalProviderRegistration(registry);
       break;
-    case 'acp': {
-      const acpProvider = new AcpProvider();
-      if (acpProvider.isAvailable()) {
-        registry.register(acpProvider);
-      }
-      break;
-    }
     default:
       logger.warn(`Unknown built-in provider ID: ${providerId}`);
   }
@@ -354,13 +337,6 @@ export async function ensureBuiltInProviderRegistered(providerId: string): Promi
       registerCopilotProvider(registry);
       await waitForOptionalProviderRegistration(registry);
       break;
-    case 'acp': {
-      const acpProvider = new AcpProvider();
-      if (acpProvider.isAvailable()) {
-        registerIfMissing(registry, acpProvider);
-      }
-      break;
-    }
     default:
       break;
   }
