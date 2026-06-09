@@ -313,7 +313,7 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(0);
   });
 
-  it('does not use session metadata when SDK capacity is unavailable for a different active model', () => {
+  it('does not use session metadata when SDK capacity is unavailable for a different active model on native providers', () => {
     const response = baseResponse({
       totalTokens: 64000,
       maxTokens: 0,
@@ -328,12 +328,35 @@ describe('ContextFetcher.toContextInfo', () => {
     const info = ContextFetcher.toContextInfo(response, {
       id: 'gpt-5.5',
       contextWindow: 272000,
+      provider: 'anthropic',
     });
 
     expect(info.totalCapacity).toBe(0);
     expect(info.percentUsed).toBe(50);
     expect(info.breakdown.Messages).toEqual({ tokens: 64000, percent: null });
     expect(info.autoCompactThreshold).toBe(0);
+  });
+
+  it('prefers non-native provider metadata even when SDK-reported model name differs', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 1000000,
+      rawMaxTokens: 1000000,
+      percentage: 5,
+      model: 'upstream-mapped-id',
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'glm-5',
+      alias: 'glm-5',
+      contextWindow: 200000,
+      provider: 'glm',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.percentUsed).toBe(25);
+    expect(info.breakdown.Messages).toEqual({ tokens: 50000, percent: 25 });
   });
 
   it('prefers metadata capacity for non-native providers when SDK reports a generic value', () => {
