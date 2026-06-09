@@ -24,7 +24,10 @@ import type {
 import { Logger } from '../logger';
 
 type ContextMetadata =
-  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'>
+  | Pick<
+      ModelInfo,
+      'id' | 'alias' | 'sdkModelIds' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'
+    >
   | null
   | undefined;
 
@@ -92,10 +95,14 @@ export class ContextFetcher {
     const isNativeProvider =
       modelMetadata?.provider && NATIVE_CONTEXT_WINDOW_PROVIDERS.has(modelMetadata.provider);
     const isGenericSdkModel = responseModel ? SDK_GENERIC_MODEL_IDS.has(responseModel) : false;
+    const sdkModelIds = modelMetadata?.sdkModelIds;
+    const matchesSdkModelId =
+      responseModel && sdkModelIds ? sdkModelIds.includes(responseModel) : false;
     const metadataMatchesResponse =
       !responseModel ||
       modelMetadata?.id === responseModel ||
       modelMetadata?.alias === responseModel ||
+      matchesSdkModelId ||
       (!isNativeProvider && isGenericSdkModel);
     const metadataCapacity = metadataMatchesResponse
       ? positiveInteger(modelMetadata?.contextWindow)
