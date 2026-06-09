@@ -169,13 +169,15 @@ describe('KimiProvider', () => {
           id: 'kimi-for-coding',
           display_name: 'Kimi For Coding',
           context_window: 262144,
+          max_tokens: 32768,
         },
       ]);
 
       // SDK routes through the bridge
       expect(config.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      // Follow Codex pattern: ANTHROPIC_API_KEY sentinel, no ANTHROPIC_AUTH_TOKEN
       expect(config.envVars.ANTHROPIC_API_KEY).toBe('kimi-bridge');
-      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect(config.envVars.API_TIMEOUT_MS).toBe('3000000');
       expect(config.envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
       expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('kimi-for-coding');
@@ -185,7 +187,7 @@ describe('KimiProvider', () => {
       expect(config.apiVersion).toBe('v1');
     });
 
-    it('should reuse the same bridge across multiple calls', () => {
+    it('should reuse the same bridge for identical credentials', () => {
       const { factory, calls } = createFakeBridgeFactory();
       process.env.KIMI_API_KEY = 'test-key';
       provider = new KimiProvider(process.env, factory);
@@ -195,6 +197,36 @@ describe('KimiProvider', () => {
 
       // Only one bridge started
       expect(calls).toHaveLength(1);
+    });
+
+    it('should create separate bridges for different API keys', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-a' });
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-b' });
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0].apiKey).toBe('key-a');
+      expect(calls[1].apiKey).toBe('key-b');
+    });
+
+    it('should create separate bridges for different base URLs', () => {
+      const { factory, calls } = createFakeBridgeFactory();
+      provider = new KimiProvider(process.env, factory);
+
+      provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        baseUrl: 'https://api.kimi.com/coding',
+      });
+      provider.buildSdkConfig('kimi-for-coding', {
+        apiKey: 'key',
+        baseUrl: 'https://api.moonshot.cn/anthropic',
+      });
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0].baseUrl).toBe('https://api.kimi.com/coding');
+      expect(calls[1].baseUrl).toBe('https://api.moonshot.cn/anthropic');
     });
 
     it('should normalize aliases to kimi-for-coding', () => {
@@ -242,7 +274,8 @@ describe('KimiProvider', () => {
 
       expect(calls[0].baseUrl).toBe('https://api.moonshot.cn/anthropic');
       expect(calls[0].apiKey).toBe('session-key');
-      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('session-key');
+      // Auth is handled by the bridge, not passed through env vars
+      expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     });
 
     it('should throw when no API key is configured', () => {
@@ -310,16 +343,17 @@ describe('KimiProvider', () => {
   });
 
   describe('shutdown', () => {
-    it('should stop bridge server on shutdown', async () => {
+    it('should stop all bridge servers on shutdown', async () => {
       const { factory, servers } = createFakeBridgeFactory();
-      process.env.KIMI_API_KEY = 'test-key';
       provider = new KimiProvider(process.env, factory);
 
-      provider.buildSdkConfig('kimi-for-coding');
-      expect(servers).toHaveLength(1);
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-a' });
+      provider.buildSdkConfig('kimi-for-coding', { apiKey: 'key-b' });
+      expect(servers).toHaveLength(2);
 
       await provider.shutdown();
       expect(servers[0].stop).toHaveBeenCalled();
+      expect(servers[1].stop).toHaveBeenCalled();
     });
 
     it('should resolve without error when no bridge was started', async () => {

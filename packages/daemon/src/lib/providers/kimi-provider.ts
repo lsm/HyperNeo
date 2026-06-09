@@ -83,9 +83,13 @@ export class KimiProvider implements Provider {
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
 
-  /** Bridge server that intercepts /v1/models to report the correct context window. */
-  private bridgeServer: AnthropicMessagesBridgeServer | null = null;
-  private bridgeBaseUrl: string | null = null;
+  /**
+   * Bridge servers keyed by `{baseUrl}::{apiKey}` so that sessions with
+   * different per-session credentials get isolated bridges that forward
+   * the correct auth upstream.  This avoids a singleton bridge leaking
+   * one session's credentials into another session's requests.
+   */
+  private readonly bridgeServers = new Map<string, AnthropicMessagesBridgeServer>();
 
   constructor(
     env: NodeJS.ProcessEnv = process.env,
@@ -137,11 +141,13 @@ export class KimiProvider implements Provider {
     // All Kimi Code requests use the fixed model ID
     const routingModelId = KimiProvider.DEFAULT_MODEL;
 
-    // Lazily start the bridge if it isn't running yet.  The bridge provides
-    // `/v1/models` with the correct 262 k context window so the SDK binary
-    // does not fall back to its ~200 k hardcoded default.
-    if (!this.bridgeServer) {
-      this.bridgeServer = this.bridgeFactory({
+    // Lazily start a per-credentials bridge.  Keyed by `{baseUrl}::{apiKey}`
+    // so sessions with different API keys or base URLs get isolated bridges
+    // that forward the correct auth upstream.
+    const bridgeKey = `${baseUrl}::${apiKey}`;
+    let bridgeServer = this.bridgeServers.get(bridgeKey);
+    if (!bridgeServer) {
+      bridgeServer = this.bridgeFactory({
         baseUrl,
         apiKey,
         models: [
@@ -149,18 +155,25 @@ export class KimiProvider implements Provider {
             id: routingModelId,
             display_name: 'Kimi For Coding',
             context_window: 262144,
+            max_tokens: 32768,
           },
         ],
       });
-      this.bridgeBaseUrl = `http://127.0.0.1:${this.bridgeServer.port}`;
-      logger.info(`Kimi bridge server started on port ${this.bridgeServer.port}`);
+      this.bridgeServers.set(bridgeKey, bridgeServer);
+      logger.info(
+        `Kimi bridge server started on port ${bridgeServer.port} for key=${bridgeKey.slice(0, 40)}…`
+      );
     }
 
     return {
       envVars: {
-        ANTHROPIC_BASE_URL: this.bridgeBaseUrl!,
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
+        // Follow the Codex bridge pattern: set ANTHROPIC_API_KEY to a sentinel
+        // value and let the bridge handle auth via its config.apiKey.  Do NOT
+        // set ANTHROPIC_AUTH_TOKEN — having both causes ProviderService's
+        // applyEnvVarsToProcessForSession to leak the real key into process.env
+        // across session switches.
         ANTHROPIC_API_KEY: `kimi-bridge`,
-        ANTHROPIC_AUTH_TOKEN: apiKey,
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
@@ -190,11 +203,10 @@ export class KimiProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
-    if (this.bridgeServer) {
-      this.bridgeServer.stop();
-      this.bridgeServer = null;
-      this.bridgeBaseUrl = null;
-      logger.info('Kimi bridge server stopped');
+    for (const [key, server] of this.bridgeServers) {
+      server.stop();
+      logger.info(`Kimi bridge server stopped for key=${key.slice(0, 40)}…`);
     }
+    this.bridgeServers.clear();
   }
 }
