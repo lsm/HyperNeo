@@ -478,7 +478,7 @@ describe('openai-responses-bridge server', () => {
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {
-        'claude-opus-4-20250918': 'gpt-5.5',
+        'claude-opus-4-1-20250805': 'gpt-5.5',
         'claude-sonnet-4-20250514': 'gpt-5.4-mini',
       },
       fetchImpl: async (_url, init) => {
@@ -499,7 +499,7 @@ describe('openai-responses-bridge server', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-opus-4-20250918',
+        model: 'claude-opus-4-1-20250805',
         max_tokens: 128,
         messages: [{ role: 'user', content: 'hi' }],
       }),
@@ -507,6 +507,44 @@ describe('openai-responses-bridge server', () => {
 
     expect(resp.status).toBe(200);
     expect(capturedBody?.model).toBe('gpt-5.5');
+  });
+
+  it('uses per-session model override when setSessionModelConfig is called', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+
+    const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.model).toBe('gpt-5.3-codex');
   });
 
   it('forwards image attachments to the OpenAI Responses API', async () => {

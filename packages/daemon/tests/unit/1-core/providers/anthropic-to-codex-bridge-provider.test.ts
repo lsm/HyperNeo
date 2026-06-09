@@ -637,19 +637,19 @@ describe('AnthropicToCodexBridgeProvider', () => {
       // The Claude Agent SDK has a hard-coded model database. When it sees an
       // unknown Codex ID (e.g. 'gpt-5.5') it falls back to ~200 k context and
       // rejects requests at ~175 k tokens. By presenting Anthropic IDs that the
-      // SDK recognises (claude-opus-4-20250918 = 1 M, claude-sonnet-4-20250514
+      // SDK recognises (claude-opus-4-1-20250805 = 1 M, claude-sonnet-4-20250514
       // = 200 k) we avoid premature rejection. The bridge maps these back to
       // real Codex IDs via modelAliases before forwarding to OpenAI.
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-model' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-20250918');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-sonnet-4-20250514');
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-20250918');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
     it('resolves model alias to Anthropic ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
       const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
       // 'codex' is an alias for 'gpt-5.3-codex' which maps to the 1 M Anthropic ID
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-20250918');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
     it('resolves codex-mini alias to the 200 k Anthropic ID', () => {
@@ -666,12 +666,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
     it('resolves codex-latest alias to the 1 M Anthropic ID', () => {
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
       // 'codex-latest' is an alias for 'gpt-5.5' which maps to the 1 M Anthropic ID
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-20250918');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
     it('resolves gpt-5.4 alias to the 1 M Anthropic ID', () => {
       const cfg = provider.buildSdkConfig('codex-5.4', { workspacePath: '/tmp/ws-54' });
-      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-20250918');
+      expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-opus-4-1-20250805');
     });
 
     it('throws for unknown model IDs instead of silently falling back', () => {
@@ -690,6 +690,24 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/^claude-/);
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toMatch(/^claude-/);
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toMatch(/^claude-/);
+    });
+
+    it('advertises Anthropic SDK aliases in the bridge models list with large context windows', async () => {
+      const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
+        workspacePath: '/tmp/ws-models',
+      });
+      const baseUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
+      const resp = await fetch(`${baseUrl}/v1/models`);
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as {
+        data: Array<{ id: string; context_window: number }>;
+      };
+      const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
+      expect(byId.get('claude-opus-4-1-20250805')).toBe(1_000_000);
+      expect(byId.get('claude-sonnet-4-20250514')).toBe(200_000);
+      // Codex models should still be present
+      expect(byId.get('gpt-5.5')).toBe(272_000);
+      expect(byId.get('gpt-5.4-mini')).toBe(128_000);
     });
   });
 
@@ -733,10 +751,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       // Frontier models map to the 1 M context Anthropic ID; mini models map to
       // the 200 k context Anthropic ID. This prevents the SDK from falling back
       // to its default ~200 k limit for unknown Codex IDs.
-      expect(provider.translateModelIdForSdk('codex-latest')).toBe('claude-opus-4-20250918');
+      expect(provider.translateModelIdForSdk('codex-latest')).toBe('claude-opus-4-1-20250805');
       expect(provider.translateModelIdForSdk('codex-mini')).toBe('claude-sonnet-4-20250514');
       expect(provider.translateModelIdForSdk('codex-5.1-mini')).toBe('claude-sonnet-4-20250514');
-      expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('claude-opus-4-20250918');
+      expect(provider.translateModelIdForSdk('gpt-5.5')).toBe('claude-opus-4-1-20250805');
       expect(provider.translateModelIdForSdk('unknown-model')).toBe('unknown-model');
     });
 

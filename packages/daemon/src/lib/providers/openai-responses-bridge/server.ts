@@ -63,6 +63,13 @@ export type OpenAIResponsesBridgeServer = {
   baseUrlForSession?(sessionId: string): string;
   /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
+  /**
+   * Override the resolved model ID for a specific session.
+   * Used when the SDK sends an aliased Anthropic model ID (e.g.
+   * claude-opus-4-1-20250805) and the bridge needs to map it back to the
+   * originally-selected Codex model ID for that session.
+   */
+  setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
   stop(): void;
 };
 
@@ -1151,6 +1158,11 @@ export function createOpenAIResponsesBridgeServer(
   // Per-session thinking config injected by the daemon when the Anthropic SDK client
   // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
+  // Per-session model alias overrides. When the SDK sends an aliased Anthropic model
+  // ID (e.g. claude-opus-4-1-20250805) the bridge maps it to a default Codex ID via
+  // modelAliases. This map lets the daemon override that default per session so the
+  // originally-selected Codex model is preserved upstream.
+  const sessionModelAliasOverrides = new Map<string, string>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   // ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
@@ -1206,6 +1218,15 @@ export function createOpenAIResponsesBridgeServer(
   ): void => {
     deleteSessionThinkingConfig(sessionId);
     sessionThinkingConfigs.set(sessionId, { thinking });
+  };
+
+  const deleteSessionModelAliasOverride = (sessionId: string): void => {
+    sessionModelAliasOverrides.delete(sessionId);
+  };
+
+  const storeSessionModelAliasOverride = (sessionId: string, realModelId: string): void => {
+    deleteSessionModelAliasOverride(sessionId);
+    sessionModelAliasOverrides.set(sessionId, realModelId);
   };
 
   const consumeContinuation = (
@@ -1293,8 +1314,14 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
 
-      const model = resolveModelId(body.model, config.modelAliases);
+      let model = resolveModelId(body.model, config.modelAliases);
       const sessionId = route.sessionId;
+      // If the daemon has registered a per-session model override, use it so
+      // the originally-selected Codex model is preserved upstream.
+      const sessionModelOverride = sessionModelAliasOverrides.get(sessionId);
+      if (sessionModelOverride) {
+        model = sessionModelOverride;
+      }
       const resolvedContinuation = isChatgptOAuth
         ? undefined
         : resolveContinuation(sessionId, body.messages, continuations);
@@ -1440,6 +1467,9 @@ export function createOpenAIResponsesBridgeServer(
     setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
       storeSessionThinkingConfig(sessionId, thinking);
     },
+    setSessionModelConfig: (sessionId: string, _aliasModelId: string, realModelId: string) => {
+      storeSessionModelAliasOverride(sessionId, realModelId);
+    },
     stop: () => {
       for (const continuation of continuations.values()) {
         clearTimeout(continuation.cleanupTimer);
@@ -1450,6 +1480,7 @@ export function createOpenAIResponsesBridgeServer(
       }
       sessionReasoningItems.clear();
       sessionThinkingConfigs.clear();
+      sessionModelAliasOverrides.clear();
       server.stop(true);
     },
   };

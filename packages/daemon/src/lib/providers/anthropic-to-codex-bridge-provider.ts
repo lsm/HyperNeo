@@ -438,9 +438,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     // if it queries the models list for context window info.
     const anthropicModels = [
       {
-        id: 'claude-opus-4-20250918',
-        display_name: 'Claude Opus 4 (1M context)',
-        created_at: '2025-09-18T00:00:00Z',
+        id: 'claude-opus-4-1-20250805',
+        display_name: 'Claude Opus 4.1 (1M context)',
+        created_at: '2025-08-05T00:00:00Z',
         context_window: 1_000_000,
         max_tokens: 16384,
       },
@@ -621,6 +621,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
 
+    // Register a per-session override so the bridge sends the originally-selected
+    // Codex model ID upstream instead of the default alias target. Without this,
+    // all frontier models (gpt-5.5, gpt-5.3-codex, gpt-5.4) would collapse to
+    // gpt-5.5 because they share the same Anthropic SDK alias.
+    bridgeServer.setSessionModelConfig?.(sessionId, sdkAnthropicId, resolvedId);
+
     return {
       envVars: {
         ANTHROPIC_BASE_URL: bridgeBaseUrl,
@@ -630,11 +636,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         // Present Anthropic model IDs with known large context windows to the
         // Claude Agent SDK so it does not fall back to its default ~200 k limit
         // and reject requests prematurely. The bridge maps these back to real
-        // Codex IDs via modelAliases before forwarding to OpenAI.
+        // Codex IDs via modelAliases (plus per-session overrides) before
+        // forwarding to OpenAI.
         // Routing policy (mirrors getModelForTier):
-        //   Opus   → claude-opus-4-20250918   (1 M context)
-        //   Sonnet → sdkAnthropicId            (user-selected model, 1 M or 200 k)
-        //   Haiku  → claude-sonnet-4-20250514  (200 k context, fast/cheap)
+        //   Opus   → claude-opus-4-1-20250805   (1 M context)
+        //   Sonnet → sdkAnthropicId              (user-selected model, 1 M or 200 k)
+        //   Haiku  → claude-sonnet-4-20250514    (200 k context, fast/cheap)
         ANTHROPIC_DEFAULT_OPUS_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.5'],
         ANTHROPIC_DEFAULT_SONNET_MODEL: sdkAnthropicId,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: CODEX_TO_SDK_ANTHROPIC_MODEL['gpt-5.4-mini'],
