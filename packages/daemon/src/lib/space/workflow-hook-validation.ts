@@ -10,15 +10,12 @@ const VALID_METHODS = new Set([
   'save_artifact',
   'create_standalone_task',
   'mark_complete',
+  'submit_for_approval',
+  'approve_task',
 ]);
-const VALID_BUILT_IN_VALIDATORS = new Set([
-  'pr_open',
-  'pr_mergeable',
-  'github_review_approved',
-  'codex_review_approved',
-  'artifact_exists',
-  'task_reported_status',
-]);
+// Built-in validators are not yet implemented; reject them at validation time
+// so workflows cannot declare IDs that would unconditionally block at runtime.
+const VALID_BUILT_IN_VALIDATORS = new Set<string>([]);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',
@@ -153,6 +150,14 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
   const validNodes = nodeNames(nodes);
   const validSlotsByNode = agentSlotNamesByNode(nodes);
 
+  // Pre-scan hook IDs so cross-hook references (e.g. recentResultRef) can be validated.
+  const hookIds = new Set<string>();
+  for (const hook of hooks) {
+    if (isRecord(hook) && typeof hook.id === 'string') {
+      hookIds.add(hook.id);
+    }
+  }
+
   for (let i = 0; i < hooks.length; i++) {
     const loc = `hooks[${i}]`;
     const hook = hooks[i];
@@ -177,6 +182,53 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
     }
 
     if (typeof hook.enabled !== 'boolean') errors.push(`${loc}.enabled: expected boolean`);
+
+    if (
+      hook.classification !== undefined &&
+      hook.classification !== 'validation' &&
+      hook.classification !== 'side_effect'
+    ) {
+      errors.push(`${loc}.classification: expected "validation" or "side_effect"`);
+    }
+
+    if (hook.order !== undefined) {
+      if (typeof hook.order !== 'number' || !Number.isFinite(hook.order)) {
+        errors.push(`${loc}.order: expected finite number`);
+      }
+    }
+
+    if (hook.label !== undefined && typeof hook.label !== 'string') {
+      errors.push(`${loc}.label: expected string`);
+    }
+
+    if (hook.humanOnly === true) {
+      errors.push(`${loc}.humanOnly: human-only hooks are not yet supported`);
+    }
+
+    if (isRecord(hook.localState)) {
+      if (hook.localState.defaults !== undefined && !isRecord(hook.localState.defaults)) {
+        errors.push(`${loc}.localState.defaults: expected object`);
+      }
+      if (hook.localState.recentResultRef !== undefined) {
+        const ref = hook.localState.recentResultRef;
+        if (!isRecord(ref)) {
+          errors.push(`${loc}.localState.recentResultRef: expected object`);
+        } else {
+          if (typeof ref.hookId !== 'string' || ref.hookId.trim().length === 0) {
+            errors.push(`${loc}.localState.recentResultRef.hookId: expected non-empty string`);
+          } else if (!hookIds.has(ref.hookId)) {
+            errors.push(
+              `${loc}.localState.recentResultRef.hookId: unknown hook id "${ref.hookId}"`
+            );
+          }
+          if (typeof ref.key !== 'string' || ref.key.trim().length === 0) {
+            errors.push(`${loc}.localState.recentResultRef.key: expected non-empty string`);
+          }
+        }
+      }
+    } else if (hook.localState !== undefined) {
+      errors.push(`${loc}.localState: expected object`);
+    }
 
     if (typeof hook.sourceNode !== 'string' || hook.sourceNode.trim().length === 0) {
       errors.push(`${loc}.sourceNode: expected non-empty node name`);
@@ -322,6 +374,7 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
           errors.push(`${loc}.poll.maxDurationMs: expected positive number`);
         }
       }
+      errors.push(`${loc}.poll: hook polling is not yet supported`);
     }
   }
 
