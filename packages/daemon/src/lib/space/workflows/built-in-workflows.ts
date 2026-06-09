@@ -1132,7 +1132,8 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       validator: {
         kind: 'script',
         interpreter: 'bash',
-        source: 'echo \'{"type":"record_state","state":{"approvals":null}}\'',
+        source:
+          'echo \'{"type":"record_state","state":{"approvals":null},"targetHookId":"plan-approval-hook"}\'',
       },
       authorizedCallers: [{ sourceNode: 'Plan Review' }],
       label: 'Plan Approval Reset',
@@ -1340,7 +1341,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
         kind: 'script',
         interpreter: 'bash',
         source:
-          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null}}\'',
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null},"targetHookId":"review-approval-hook"}\'',
       },
       authorizedCallers: [{ sourceNode: 'Review' }],
       label: 'Review Approval Reset',
@@ -1356,7 +1357,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
         kind: 'script',
         interpreter: 'bash',
         source:
-          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null}}\'',
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null},"targetHookId":"review-approval-hook"}\'',
       },
       authorizedCallers: [{ sourceNode: 'QA' }],
       label: 'QA Approval Reset',
@@ -1746,6 +1747,26 @@ export function mergeChannelsFromTemplate(
   return [...keptExisting, ...remappedTemplateChannels];
 }
 
+/**
+ * Remove gates that are no longer in the template and no longer referenced by
+ * any channel. Preserves user-added custom gates as long as a channel still
+ * references them.
+ *
+ * @internal Exported for testing.
+ */
+export function removeOrphanedGates(
+  gates: Gate[] | undefined,
+  channels: SpaceWorkflow['channels'] | undefined,
+  templateGates: Gate[] | undefined
+): Gate[] | undefined {
+  if (!gates) return gates;
+  const templateGateIds = new Set(templateGates?.map((g) => g.id) ?? []);
+  const referencedGateIds = new Set(
+    (channels ?? []).map((ch) => ch.gateId).filter((id): id is string => typeof id === 'string')
+  );
+  return gates.filter((gate) => templateGateIds.has(gate.id) || referencedGateIds.has(gate.id));
+}
+
 /** @internal Exported for testing. */
 export function mergeGateStructuralFieldsFromTemplate(
   existingGates: Gate[] | undefined,
@@ -1758,44 +1779,43 @@ export function mergeGateStructuralFieldsFromTemplate(
   const existingGateIds = new Set(existingGates.map((gate) => gate.id));
   const missingTemplateGates = templateGates.filter((gate) => !existingGateIds.has(gate.id));
 
-  const mergedExisting = existingGates
-    .filter((gate) => templateGatesById.has(gate.id))
-    .map((gate) => {
-      const templateGate = templateGatesById.get(gate.id)!;
+  const mergedExisting = existingGates.map((gate) => {
+    const templateGate = templateGatesById.get(gate.id);
+    if (!templateGate) return gate;
 
-      const templateFieldsByName = new Map(
-        (templateGate.fields ?? []).map((field) => [field.name, field])
-      );
-      const fields = (gate.fields ?? []).map((field) => {
-        const templateField = templateFieldsByName.get(field.name);
-        if (!templateField) return field;
-        return { ...field, writers: templateField.writers };
-      });
-
-      // Skip copying template features if the existing gate already has a custom
-      // script or poll, so feature-backed mechanisms do not silently override
-      // custom gate logic at runtime. When copying is allowed, propagate the
-      // template's features (including undefined when the template removed them).
-      // Preserve existing codex_review_bot feature during transition to node-level
-      // config so pre-existing workflows that relied on gate-level codex keep working.
-      const shouldCopyFeatures = !gate.script && !gate.poll;
-      let nextFeatures: Gate['features'] | undefined;
-      if (shouldCopyFeatures) {
-        if (templateGate.features) {
-          nextFeatures = { ...templateGate.features };
-        }
-        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
-          nextFeatures = { codex_review_bot: true, ...nextFeatures };
-        }
-      } else {
-        nextFeatures = gate.features;
-      }
-      return {
-        ...gate,
-        fields,
-        features: nextFeatures,
-      } as Gate;
+    const templateFieldsByName = new Map(
+      (templateGate.fields ?? []).map((field) => [field.name, field])
+    );
+    const fields = (gate.fields ?? []).map((field) => {
+      const templateField = templateFieldsByName.get(field.name);
+      if (!templateField) return field;
+      return { ...field, writers: templateField.writers };
     });
+
+    // Skip copying template features if the existing gate already has a custom
+    // script or poll, so feature-backed mechanisms do not silently override
+    // custom gate logic at runtime. When copying is allowed, propagate the
+    // template's features (including undefined when the template removed them).
+    // Preserve existing codex_review_bot feature during transition to node-level
+    // config so pre-existing workflows that relied on gate-level codex keep working.
+    const shouldCopyFeatures = !gate.script && !gate.poll;
+    let nextFeatures: Gate['features'] | undefined;
+    if (shouldCopyFeatures) {
+      if (templateGate.features) {
+        nextFeatures = { ...templateGate.features };
+      }
+      if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
+        nextFeatures = { codex_review_bot: true, ...nextFeatures };
+      }
+    } else {
+      nextFeatures = gate.features;
+    }
+    return {
+      ...gate,
+      fields,
+      features: nextFeatures,
+    } as Gate;
+  });
 
   return [...mergedExisting, ...missingTemplateGates];
 }
@@ -1909,7 +1929,11 @@ export function seedBuiltInWorkflows(
           template.nodes,
           row.nodes
         );
-        const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
+        const mergedGates = removeOrphanedGates(
+          mergeGateStructuralFieldsFromTemplate(row.gates, template.gates),
+          mergedChannels,
+          template.gates
+        );
         const mergedHooks = mergeHooksFromTemplate(
           row.hooks,
           template.hooks,

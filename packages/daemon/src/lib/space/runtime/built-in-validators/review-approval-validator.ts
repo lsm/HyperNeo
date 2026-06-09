@@ -72,6 +72,19 @@ function getVotes(state: Record<string, unknown>, voteKey: string): Record<strin
   return {};
 }
 
+function findPrUrl(ctx: HookExecutorContext): string | undefined {
+  const data = ctx.params.data as Record<string, unknown> | undefined;
+  if (typeof data?.pr_url === 'string') return data.pr_url;
+  if (typeof ctx.hookLocalState._pr_url === 'string') return ctx.hookLocalState._pr_url as string;
+
+  for (const artifact of ctx.currentArtifacts) {
+    const artifactData = artifact.data as Record<string, unknown> | undefined;
+    if (typeof artifactData?.pr_url === 'string') return artifactData.pr_url;
+  }
+
+  return undefined;
+}
+
 function parsePrUrl(url: string): { owner: string; repo: string; number: number } | null {
   const m = url.match(/https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (!m) return null;
@@ -180,7 +193,7 @@ async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting'
 
     const isCodexPlusOne = (r: { content?: string; user?: { login?: string } }): boolean =>
       (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
-      r.content === '+1';
+      r.content === 'THUMBS_UP';
 
     // PR body reactions
     if (pr.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
@@ -254,12 +267,19 @@ export async function reviewApprovalValidator(
 
   // Threshold met → check codex if required
   if (template.requireCodex) {
-    const prUrl =
-      typeof data?.pr_url === 'string'
-        ? data.pr_url
-        : typeof state._pr_url === 'string'
-          ? (state._pr_url as string)
-          : undefined;
+    const prUrl = findPrUrl(ctx);
+    const timeoutMs =
+      typeof template.codexTimeoutMs === 'number' ? template.codexTimeoutMs : 600_000;
+    const codexStartedAt = state._codex_started_at as number | undefined;
+    const now = Date.now();
+
+    // Timeout already elapsed — allow regardless of API state
+    if (codexStartedAt !== undefined && now - codexStartedAt > timeoutMs) {
+      return {
+        type: 'allow',
+        message: `Threshold met (${approvalCount}/${threshold}). Codex approval timed out after ${timeoutMs}ms; allowing.`,
+      };
+    }
 
     if (prUrl) {
       const codexResult = await checkCodexApproval(prUrl);
@@ -269,47 +289,14 @@ export async function reviewApprovalValidator(
           message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
         };
       }
-      if (codexResult === 'error') {
-        // Fail closed on GitHub error — retryable so the agent can retry
-        return {
-          type: 'retryable_block',
-          reason: 'Threshold met. Unable to verify codex[bot] status (GitHub API error). Retrying.',
-          retryAfterMs: 60_000,
-          state: nextState,
-        };
-      }
     }
 
-    // Codex not yet approved → retryable block with timeout
-    const timeoutMs =
-      typeof template.codexTimeoutMs === 'number' ? template.codexTimeoutMs : 600_000;
-    const codexStartedAt = state._codex_started_at as number | undefined;
-    const now = Date.now();
-
-    if (codexStartedAt === undefined) {
-      // First time we hit threshold — start the codex clock
-      return {
-        type: 'retryable_block',
-        reason: 'Threshold met. Waiting for codex[bot] approval.',
-        retryAfterMs: 60_000,
-        state: { ...nextState, _codex_started_at: now, _pr_url: prUrl },
-      };
-    }
-
-    if (now - codexStartedAt > timeoutMs) {
-      // Codex timeout elapsed — allow through
-      return {
-        type: 'allow',
-        message: `Threshold met (${approvalCount}/${threshold}). Codex approval timed out after ${timeoutMs}ms; allowing.`,
-      };
-    }
-
-    // Still within timeout window
+    // Not yet approved (or API error / no prUrl). Start or continue timeout.
     return {
       type: 'retryable_block',
       reason: 'Threshold met. Waiting for codex[bot] approval.',
       retryAfterMs: 60_000,
-      state: nextState,
+      state: { ...nextState, _codex_started_at: codexStartedAt ?? now, _pr_url: prUrl },
     };
   }
 

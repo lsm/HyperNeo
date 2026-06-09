@@ -400,7 +400,12 @@ export class WorkflowHookEngine {
 
         case 'record_state':
           if (result.state && typeof result.state === 'object') {
-            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
+            const targetHookId =
+              typeof result.targetHookId === 'string' ? result.targetHookId : hook.id;
+            stateUpdates.push({
+              hookId: targetHookId,
+              state: result.state as Record<string, unknown>,
+            });
           }
           break;
       }

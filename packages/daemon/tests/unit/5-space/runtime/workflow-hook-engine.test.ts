@@ -533,6 +533,24 @@ describe('WorkflowHookEngine', () => {
     });
   });
 
+  test('record_state with targetHookId routes state to specified hook', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'reset-hook', classification: 'side_effect' }),
+    ]);
+    mockExecutor.setResult('reset-hook', {
+      type: 'record_state',
+      state: { approvals: null },
+      targetHookId: 'vote-hook',
+    });
+
+    const outcome = await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    expect(outcome.decision).toBe('record_state');
+    expect(outcome.stateUpdates).toHaveLength(1);
+    expect(outcome.stateUpdates[0].hookId).toBe('vote-hook');
+    expect(outcome.stateUpdates[0].state).toEqual({ approvals: null });
+  });
+
   test('side_effect patch_params is ignored', async () => {
     const { engine, mockExecutor } = makeEngine([
       makeHook({ id: 'hook-1', classification: 'side_effect' }),

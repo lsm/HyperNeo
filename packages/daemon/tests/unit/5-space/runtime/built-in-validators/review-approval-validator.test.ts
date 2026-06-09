@@ -196,7 +196,7 @@ describe('reviewApprovalValidator', () => {
                   nodes: [
                     {
                       reactions: {
-                        nodes: [{ user: { login: 'codex[bot]' }, content: '+1' }],
+                        nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
                       },
                     },
                   ],
@@ -220,6 +220,92 @@ describe('reviewApprovalValidator', () => {
 
     expect(result.type).toBe('allow');
     expect((result as { message?: string }).message).toContain('codex approval');
+  });
+
+  test('finds pr_url in artifacts when not in message data', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reactions: { nodes: [] },
+                comments: {
+                  nodes: [
+                    {
+                      reactions: {
+                        nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                      },
+                    },
+                  ],
+                },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true } },
+      currentArtifacts: [
+        {
+          id: 'a1',
+          nodeId: 'node-review',
+          type: 'result',
+          key: 'cycle-0',
+          data: { pr_url: 'https://github.com/test/repo/pull/42' },
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect((result as { message?: string }).message).toContain('codex approval');
+  });
+
+  test('starts codex timeout on API error so timeout can eventually allow', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: false,
+        status: 500,
+      }) as Response;
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('retryable_block');
+    const state = (result as { state?: Record<string, unknown> }).state;
+    expect(state?._codex_started_at).toBeTypeOf('number');
   });
 
   test('persists partial votes even when blocked', async () => {

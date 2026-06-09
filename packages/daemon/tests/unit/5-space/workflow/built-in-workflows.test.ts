@@ -38,6 +38,7 @@ import {
   getBuiltInGateScript,
   getBuiltInWorkflows,
   mergeGateStructuralFieldsFromTemplate,
+  removeOrphanedGates,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   validateWorkflowTemplateGateWriters,
   RESEARCH_WORKFLOW,
@@ -2032,19 +2033,21 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result![0].features).toBeUndefined();
   });
 
-  test('mergeGateStructuralFieldsFromTemplate removes gates no longer in template', () => {
-    const existingGates = [
+  test('removeOrphanedGates removes gates no longer in template and unreferenced by channels', () => {
+    const gates = [
       {
         id: 'old-gate',
         fields: [{ name: 'f1', type: 'string', writers: ['*'], check: { op: 'exists' } }],
       },
       { id: 'kept-gate', fields: [] },
+      { id: 'custom-gate', fields: [] },
     ];
+    const channels = [{ from: 'A', to: 'B', gateId: 'custom-gate' }];
     const templateGates = [{ id: 'kept-gate', fields: [] }];
 
-    const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
-    expect(result).toHaveLength(1);
-    expect(result![0].id).toBe('kept-gate');
+    const result = removeOrphanedGates(gates, channels as SpaceWorkflow['channels'], templateGates);
+    expect(result).toHaveLength(2);
+    expect(result!.map((g) => g.id).sort()).toEqual(['custom-gate', 'kept-gate']);
   });
 
   test('mergeChannelsFromTemplate replaces existing channels with same from→to', () => {

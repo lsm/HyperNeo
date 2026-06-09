@@ -1613,6 +1613,8 @@ export interface WorkflowHookEmitFollowUpResult extends WorkflowHookBaseResult {
 export interface WorkflowHookRecordStateResult extends WorkflowHookBaseResult {
   type: 'record_state';
   state: Record<string, unknown>;
+  /** When set, persist state to the specified hook instead of the current one. */
+  targetHookId?: string;
 }
 
 export type WorkflowHookResult =
