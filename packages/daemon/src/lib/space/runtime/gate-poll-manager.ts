@@ -252,8 +252,8 @@ export interface PollWorkflowDefProvider {
 
 /**
  * Callback for resolving the last-updated timestamp of a gate's runtime data.
- * Used by poll ticks so feature scripts (e.g. codex_review_bot) can base their
- * timeout on the gate data write time rather than the workflow start time.
+ * Used by poll ticks so feature scripts can base their timeout on the gate
+ * data write time rather than the workflow start time.
  */
 export interface PollGateDataResolver {
   /**
@@ -280,7 +280,6 @@ interface PolledGate {
 function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
   const result: PolledGate[] = [];
   const nativeSeen = new Set<string>();
-  const injectedSeen = new Set<string>();
 
   for (const channel of workflow.channels ?? []) {
     if (!channel.gateId) continue;
@@ -289,53 +288,20 @@ function getPolledGates(workflow: SpaceWorkflow): PolledGate[] {
 
     // A "native" poll is one that exists on the gate itself (gate.poll or a
     // registered feature poll). These are gate-scoped: one timer per gate.
-    // Dynamically-injected Codex polls are source-scoped: one timer per
-    // flagged channel source so the correct target node receives guidance.
-    const hasNativePoll = !!getEffectiveGatePoll(gate, undefined);
-
-    // Wildcard channels need special handling: resolveTargetNodeName cannot
-    // target the literal '*' source, so expand dynamically-injected polls to
-    // concrete node names. Native polls remain gate-scoped and may still use
-    // '*' only after proving the poll exists without source-scoped injection.
     if (channel.from === '*') {
-      if (hasNativePoll) {
-        const nativePoll = getEffectiveGatePoll(gate, undefined);
-        if (!nativePoll || nativeSeen.has(gate.id)) continue;
-        nativeSeen.add(gate.id);
-        result.push({ gate, poll: nativePoll, sourceName: '*' });
-      } else {
-        for (const node of workflow.nodes) {
-          const nodePoll = getEffectiveGatePoll(gate, workflow, node.name);
-          if (!nodePoll) continue;
-          const key = `${gate.id}:${node.name}`;
-          if (injectedSeen.has(key)) continue;
-          injectedSeen.add(key);
-          result.push({ gate, poll: nodePoll, sourceName: node.name });
-        }
-      }
+      const nativePoll = getEffectiveGatePoll(gate, undefined);
+      if (!nativePoll || nativeSeen.has(gate.id)) continue;
+      nativeSeen.add(gate.id);
+      result.push({ gate, poll: nativePoll, sourceName: '*' });
       continue;
     }
 
     const poll = getEffectiveGatePoll(gate, workflow, channel.from);
     if (!poll) continue;
 
-    if (hasNativePoll) {
-      if (nativeSeen.has(gate.id)) continue;
-      nativeSeen.add(gate.id);
-      result.push({ gate, poll, sourceName: channel.from });
-    } else {
-      const sourceNodeNames = resolveSourceNodeNamesByRef(workflow, channel.from);
-      for (const sourceName of sourceNodeNames) {
-        const sourceNode = workflow.nodes.find((node) => node.name === sourceName);
-        if (!sourceNode?.requireCodexApproval) continue;
-        const nodePoll = getEffectiveGatePoll(gate, workflow, sourceName);
-        if (!nodePoll) continue;
-        const key = `${gate.id}:${sourceName}`;
-        if (injectedSeen.has(key)) continue;
-        injectedSeen.add(key);
-        result.push({ gate, poll: nodePoll, sourceName });
-      }
-    }
+    if (nativeSeen.has(gate.id)) continue;
+    nativeSeen.add(gate.id);
+    result.push({ gate, poll, sourceName: channel.from });
   }
   return result;
 }

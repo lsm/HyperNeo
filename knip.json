@@ -55,6 +55,7 @@
     "packages/daemon/src/lib/space/managers/node-execution-manager.ts": ["exports"],
     "packages/daemon/src/lib/space/messaging-adapter.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/gate-evaluator.ts": ["exports"],
+    "packages/daemon/src/lib/space/runtime/gate-features.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/post-approval-router.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/retry-utils.ts": ["exports"],
     "packages/daemon/src/lib/space/workflows/template-hash.ts": ["exports"],

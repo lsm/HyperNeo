@@ -204,65 +204,6 @@ describe('GatePollManager', () => {
       expect(manager.isPollActive('run-1', 'gate-2')).toBe(true);
     });
 
-    test('starts dynamic codex polls for wildcard channel concrete sources', () => {
-      const gate: Gate = {
-        id: 'wildcard-codex-gate',
-        fields: [
-          { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-        ],
-        resetOnCycle: false,
-      };
-      const workflow = makeWorkflow(
-        [gate],
-        [{ id: 'ch-1', from: '*', to: 'Reviewer', gateId: gate.id }]
-      );
-      workflow.nodes = workflow.nodes.map((node) =>
-        node.name === 'Coder' ? { ...node, requireCodexApproval: true } : node
-      );
-
-      manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
-
-      expect(manager.activePollCount).toBe(1);
-      expect(manager.isPollActive('run-1', gate.id, 'Coder')).toBe(true);
-    });
-
-    test('starts dynamic codex polls for colliding agent-slot source owner', () => {
-      const gate: Gate = {
-        id: 'colliding-source-gate',
-        fields: [
-          { name: 'signoff', type: 'boolean', writers: [], check: { op: '==', value: true } },
-        ],
-        resetOnCycle: false,
-      };
-      const workflow = makeWorkflow(
-        [gate],
-        [{ id: 'ch-1', from: 'Reviewer', to: 'reviewer', gateId: gate.id }]
-      );
-      workflow.nodes[0] = {
-        ...workflow.nodes[0],
-        name: 'ReviewSource',
-        requireCodexApproval: true,
-        codexPollIntervalMs: 60_000,
-        agents: [{ agentId: 'agent-1', name: 'Reviewer' }],
-      };
-      workflow.nodes[1] = {
-        ...workflow.nodes[1],
-        name: 'Reviewer',
-        requireCodexApproval: false,
-        codexPollIntervalMs: undefined,
-      };
-
-      manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());
-
-      expect(manager.activePollCount).toBe(1);
-      expect(manager.isPollActive('run-1', gate.id, 'ReviewSource')).toBe(true);
-      const activePolls = (manager as Record<string, unknown>).activePolls as Map<
-        string,
-        { pollConfig: GatePoll }
-      >;
-      expect(activePolls.get(`run-1:${gate.id}:ReviewSource`)?.pollConfig.intervalMs).toBe(60_000);
-    });
-
     test('enforces minimum interval (still starts with clamped value)', () => {
       const workflow = makeWorkflowWithPoll({ intervalMs: 5000 }); // Below minimum
       manager.startPolls('run-1', workflow, '/tmp', 'space-1', makeContext());

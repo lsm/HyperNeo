@@ -1201,10 +1201,13 @@ describe('validateGate', () => {
     expect(errors).toHaveLength(0);
   });
 
-  test('gate with codex review bot feature is valid', () => {
+  test('gate with registered feature is valid', () => {
+    registerGateFeature('dummy_feature', {
+      script: () => ({ interpreter: 'bash', source: 'echo ok', timeoutMs: 30000 }),
+    });
     const errors = validateGate({
       id: 'g1',
-      features: { codex_review_bot: true },
+      features: { dummy_feature: true },
       resetOnCycle: false,
     });
     expect(errors).toHaveLength(0);
@@ -1247,9 +1250,12 @@ describe('validateGate', () => {
   });
 
   test('gate with registered feature and custom script returns error', () => {
+    registerGateFeature('dummy_feature', {
+      script: () => ({ interpreter: 'bash', source: 'echo ok', timeoutMs: 30000 }),
+    });
     const errors = validateGate({
       id: 'g1',
-      features: { codex_review_bot: true },
+      features: { dummy_feature: true },
       script: { interpreter: 'bash', source: 'echo hi' },
       resetOnCycle: false,
     });
@@ -1258,9 +1264,12 @@ describe('validateGate', () => {
   });
 
   test('gate with registered feature and custom poll returns error', () => {
+    registerGateFeature('dummy_feature', {
+      poll: () => ({ intervalMs: 30_000, target: 'to', script: 'echo poll' }),
+    });
     const errors = validateGate({
       id: 'g1',
-      features: { codex_review_bot: true },
+      features: { dummy_feature: true },
       fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
       poll: { intervalMs: 30_000, target: 'to', script: 'echo poll' },
       resetOnCycle: false,
@@ -1270,13 +1279,15 @@ describe('validateGate', () => {
   });
 
   test('gate with multiple features defining scripts returns error', () => {
-    // Register a second dummy feature so validation can detect the conflict.
+    registerGateFeature('first_script_feature', {
+      script: () => ({ interpreter: 'bash', source: 'echo first', timeoutMs: 30000 }),
+    });
     registerGateFeature('second_script_feature', {
       script: () => ({ interpreter: 'bash', source: 'echo second', timeoutMs: 30000 }),
     });
     const errors = validateGate({
       id: 'g1',
-      features: { codex_review_bot: true, second_script_feature: true },
+      features: { first_script_feature: true, second_script_feature: true },
       fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
       resetOnCycle: false,
     });

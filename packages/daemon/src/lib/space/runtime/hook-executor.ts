@@ -11,7 +11,9 @@ import type {
   WorkflowHookResult,
   WorkflowHookScriptValidator,
   WorkflowHookValidatorId,
+  SpaceWorkflow,
 } from '@neokai/shared';
+import { codexReviewApprovedValidator } from './built-in-validators/codex-approval-validator';
 import {
   collectWithMaxBuffer,
   deepMergeWithDepthLimit,
@@ -44,6 +46,10 @@ export interface HookExecutorContext {
   permittedExternalLookups: string[];
   /** Optional bounded template data from the hook definition. */
   templateData?: Record<string, unknown>;
+  /** Workflow definition for node-level flag lookups (e.g. requireCodexApproval). */
+  workflow?: SpaceWorkflow;
+  /** Result from the previous execution of this hook, for stateful validators. */
+  lastResult?: WorkflowHookResult;
 }
 
 /** Result of executing a single hook validator. */
@@ -125,10 +131,7 @@ registerBuiltInValidator('github_review_approved', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,
 }));
-registerBuiltInValidator('codex_review_approved', async () => ({
-  type: 'block',
-  reason: NOT_IMPLEMENTED,
-}));
+registerBuiltInValidator('codex_review_approved', codexReviewApprovedValidator);
 registerBuiltInValidator('artifact_exists', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,

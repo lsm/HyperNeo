@@ -58,7 +58,7 @@ export class GateDataRepository {
    * Replaces the entire data object — callers must merge before calling.
    *
    * When the new data is structurally identical to the existing data, `updated_at`
-   * is preserved so timeout anchors (e.g. codex_review_bot) do not advance on
+   * is preserved so timeout anchors do not advance on
    * retry writes.
    */
   set(runId: string, gateId: string, data: Record<string, unknown>): GateDataRecord {
@@ -220,8 +220,8 @@ export class GateDataRepository {
   /**
    * Reset a gate's data to its defaults.
    * Used when a cyclic workflow loops back through a gate with `resetOnCycle: true`.
-   * Injects `cycle_start_at` so per-cycle freshness anchors (e.g. codex_review_bot)
-   * can distinguish reactions from the current cycle vs. prior cycles.
+   * Injects `cycle_start_at` so per-cycle freshness anchors can distinguish
+   * reactions from the current cycle vs. prior cycles.
    */
   reset(runId: string, gateId: string, defaultData: Record<string, unknown>): GateDataRecord {
     return this.set(runId, gateId, { ...defaultData, cycle_start_at: Date.now() });

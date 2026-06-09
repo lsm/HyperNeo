@@ -2265,8 +2265,8 @@ export class SpaceRuntime {
           getWorkflow: (workflowId) => this.config.spaceWorkflowManager.getWorkflow(workflowId),
         },
         // Gate data resolver: refreshes gate data updated timestamp on each
-        // poll tick so feature scripts (e.g. codex_review_bot) base their
-        // timeout on the gate data write time rather than workflow start.
+        // poll tick so feature scripts base their timeout on the gate data
+        // write time rather than workflow start.
         {
           getGateDataUpdatedIsoForRun: (runId, gateId) => {
             try {

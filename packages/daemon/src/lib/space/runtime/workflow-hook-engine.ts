@@ -703,6 +703,8 @@ export class WorkflowHookEngine {
       currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,
+      workflow: this.config.workflow ?? undefined,
+      lastResult: hookState.lastResult,
     };
   }
 
@@ -847,6 +849,10 @@ export class WorkflowHookEngine {
       if (result.type === 'retryable_block' && result.retryAfterMs !== undefined) {
         base.retryAfterMs = result.retryAfterMs;
       }
+    }
+
+    if (result.data && typeof result.data === 'object') {
+      base.data = result.data as Record<string, unknown>;
     }
 
     return base;

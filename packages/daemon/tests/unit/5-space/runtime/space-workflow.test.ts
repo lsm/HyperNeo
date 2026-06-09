@@ -652,7 +652,7 @@ describe('SpaceWorkflowManager', () => {
     expect(updated?.name).toBe('WF');
   });
 
-  test('updateWorkflow validates Codex scripted-gate conflicts against null clears', () => {
+  test('updateWorkflow allows null clears on workflow with requireCodexApproval nodes', () => {
     const wf = repo.createWorkflow({
       spaceId: 'space-1',
       name: 'Legacy Invalid Codex Workflow',

@@ -1676,6 +1676,8 @@ export interface WorkflowHookUserState {
   retryAfterMs?: number;
   retryCount?: number;
   nextRetryAt?: number;
+  /** Structured data returned by the hook result (e.g. current head SHA, reaction state). */
+  data?: Record<string, unknown>;
 }
 
 export interface Gate {

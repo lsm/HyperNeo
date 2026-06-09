@@ -32,7 +32,6 @@ import type {
 } from '@neokai/shared';
 import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
 import { Logger } from '../../logger';
-import { isApprovalGate } from '../runtime/gate-features';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
@@ -1542,108 +1541,55 @@ export function mergeNodeStructuralFieldsFromTemplate(
 }
 
 /**
- * When a gate still carries the legacy `codex_review_bot` feature (preserved
- * during restamp for backward compatibility), set `requireCodexApproval: true`
- * on the source node(s) for that gate's channels so the visual editor toggle
- * reflects reality and the node-level config drives runtime injection.
+ * When a gate still carries the legacy `codex_review_bot` feature, set
+ * `requireCodexApproval: true` on the source node(s) for that gate's channels
+ * so the node-level config drives the hook-based Codex check.
  *
- * Also strips `codex_review_bot` from the gate features so the node toggle
- * becomes the single source of truth and can be disabled by unchecking it.
+ * Also strips `codex_review_bot` from the gate features since the hook engine
+ * replaces gate-feature injection.
  */
 function migrateCodexFeatureToNodeToggle(
   nodes: WorkflowNode[],
   channels: WorkflowChannel[],
   gates: Gate[]
 ): { nodes: WorkflowNode[]; gates: Gate[] } {
-  // Only migrate gates that do not have a custom script. For scripted gates,
-  // dynamic injection is blocked so the node flag cannot replace the legacy
-  // feature; leaving them untouched preserves the legacy feature as the sole
-  // mechanism and keeps the checkbox as a single source of truth for
-  // non-scripted gates.
-  // Only migrate legacy features on approval gates — dynamic Codex injection
-  // requires isApprovalGate(), so migrating a non-approval gate would break it.
   const codexGateIds = new Set(
-    gates
-      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-  // Scripted approval gates with legacy codex: strip node toggles so the UI
-  // doesn't show a misleading enabled checkbox for gates where dynamic
-  // injection is blocked and the legacy feature is the actual mechanism.
-  const scriptedCodexGateIds = new Set(
-    gates
-      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
+    gates.filter((g) => hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
   );
 
-  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
-    const result = new Set<string>();
-    for (const channel of channels) {
-      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
-      if (channel.from === '*') {
-        for (const node of nodes) result.add(node.id);
-        continue;
-      }
-      const nodeByName = nodes.find((n) => n.name === channel.from);
-      if (nodeByName) {
-        result.add(nodeByName.id);
-        continue;
-      }
-      for (const node of nodes) {
-        try {
-          const agents = resolveNodeAgents(node);
-          if (agents.some((a) => a.name === channel.from)) {
-            result.add(node.id);
-          }
-        } catch {
-          // skip malformed nodes
+  const nodesToFlag = new Set<string>();
+  for (const channel of channels) {
+    if (!channel.gateId || !codexGateIds.has(channel.gateId)) continue;
+    if (channel.from === '*') {
+      for (const node of nodes) nodesToFlag.add(node.id);
+      continue;
+    }
+    const nodeByName = nodes.find((n) => n.name === channel.from);
+    if (nodeByName) {
+      nodesToFlag.add(nodeByName.id);
+      continue;
+    }
+    for (const node of nodes) {
+      try {
+        const agents = resolveNodeAgents(node);
+        if (agents.some((a) => a.name === channel.from)) {
+          nodesToFlag.add(node.id);
         }
+      } catch {
+        // skip malformed nodes
       }
     }
-    return result;
-  };
-
-  const nodesToFlag = collectSourceNodes(codexGateIds);
-  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
-
-  // Also strip toggles for nodes connected to ANY scripted approval gate
-  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
-  // is blocked for scripted approval gates, so a node toggle is misleading
-  // when the node sends through one.
-  const allScriptedApprovalGateIds = new Set(
-    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
-  );
-  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
-    nodesToUnflag.add(nodeId);
   }
 
-  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
-  const migratedNodes = needsNodeChange
-    ? nodes.map((node) => {
-        if (nodesToUnflag.has(node.id)) {
-          const next = { ...node };
-          delete next.requireCodexApproval;
-          return next;
-        }
-        if (nodesToFlag.has(node.id)) {
-          return { ...node, requireCodexApproval: true };
-        }
-        return node;
-      })
-    : nodes;
-
-  const migratedGateIdsToStrip = new Set<string>();
-  for (const gateId of codexGateIds) {
-    const sources = collectSourceNodes(new Set([gateId]));
-    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
-    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
-  }
+  const migratedNodes =
+    nodesToFlag.size > 0
+      ? nodes.map((node) =>
+          nodesToFlag.has(node.id) ? { ...node, requireCodexApproval: true } : node
+        )
+      : nodes;
 
   const migratedGates = gates.map((gate) => {
     if (!gate.features?.codex_review_bot) return gate;
-    // Preserve legacy feature on gates that cannot be replaced by dynamic
-    // approval-gate injection.
-    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
     const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
     return {
       ...gate,
@@ -1750,20 +1696,8 @@ export function mergeGateStructuralFieldsFromTemplate(
       // script or poll, so feature-backed mechanisms do not silently override
       // custom gate logic at runtime. When copying is allowed, propagate the
       // template's features (including undefined when the template removed them).
-      // Preserve existing codex_review_bot feature during transition to node-level
-      // config so pre-existing workflows that relied on gate-level codex keep working.
       const shouldCopyFeatures = !gate.script && !gate.poll;
-      let nextFeatures: Gate['features'] | undefined;
-      if (shouldCopyFeatures) {
-        if (templateGate.features) {
-          nextFeatures = { ...templateGate.features };
-        }
-        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
-          nextFeatures = { codex_review_bot: true, ...nextFeatures };
-        }
-      } else {
-        nextFeatures = gate.features;
-      }
+      const nextFeatures = shouldCopyFeatures ? templateGate.features : gate.features;
       return {
         ...gate,
         fields,

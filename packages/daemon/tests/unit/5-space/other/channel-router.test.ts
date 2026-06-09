@@ -258,6 +258,10 @@ describe('ChannelRouter', () => {
       db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
     });
+
+    registerGateFeature('dummy_blocking_feature', {
+      script: () => ({ interpreter: 'bash', source: 'exit 1' }),
+    });
   });
 
   afterEach(() => {
@@ -1464,16 +1468,17 @@ describe('ChannelRouter', () => {
       expect(result.allowed).toBe(true);
     });
 
-    test('gated wildcard channel: canDeliver uses concrete sender for dynamic Codex gate', async () => {
+    test('gated wildcard channel: canDeliver uses concrete sender for dynamic feature gate', async () => {
       const gate: Gate = {
-        id: 'wildcard-codex-gate',
+        id: 'wildcard-feature-gate',
         fields: [
           { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
         ],
         resetOnCycle: false,
+        features: { dummy_blocking_feature: true },
       };
       const channels: WorkflowChannel[] = [
-        { id: 'ch-1', from: '*', to: 'planner', gateId: 'wildcard-codex-gate' },
+        { id: 'ch-1', from: '*', to: 'planner', gateId: 'wildcard-feature-gate' },
       ];
       const workflow = buildWorkflowWithGates(
         SPACE_ID,
@@ -1483,7 +1488,6 @@ describe('ChannelRouter', () => {
             id: NODE_A,
             name: 'Coder Node',
             agents: [{ agentId: AGENT_CODER, name: 'coder' }],
-            requireCodexApproval: true,
           },
           {
             id: NODE_B,
@@ -1498,23 +1502,24 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Wildcard Codex canDeliver Run',
+        title: 'Wildcard Feature canDeliver Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      gateDataRepo.set(run.id, 'wildcard-codex-gate', { approved: true });
+      gateDataRepo.set(run.id, 'wildcard-feature-gate', { approved: true });
 
       const result = await router.canDeliver(run.id, 'coder', 'planner');
       expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('codex review bot');
+      expect(result.reason).toBeTruthy();
     });
 
-    test('onGateDataChanged: wildcard channel uses concrete sources for dynamic Codex gate', async () => {
+    test('onGateDataChanged: wildcard channel uses concrete sources for dynamic feature gate', async () => {
       const gate: Gate = {
-        id: 'wildcard-codex-activation-gate',
+        id: 'wildcard-feature-activation-gate',
         fields: [
           { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
         ],
         resetOnCycle: false,
+        features: { dummy_blocking_feature: true },
       };
       const channels: WorkflowChannel[] = [
         { id: 'ch-wildcard-activation', from: '*', to: 'planner', gateId: gate.id },
@@ -1527,7 +1532,6 @@ describe('ChannelRouter', () => {
             id: NODE_A,
             name: 'Coder Node',
             agents: [{ agentId: AGENT_CODER, name: 'coder' }],
-            requireCodexApproval: true,
           },
           {
             id: NODE_B,
@@ -1542,7 +1546,7 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Wildcard Codex onGateDataChanged Run',
+        title: 'Wildcard Feature onGateDataChanged Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       gateDataRepo.set(run.id, gate.id, { approved: true });

@@ -52,6 +52,7 @@ import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-
 import type { SpaceWorkflow, NodeExecutionStatus } from '@neokai/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 
 // ---------------------------------------------------------------------------
 // DB / seed helpers (mirror the rehydration test fixtures)
@@ -246,6 +247,10 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       busUnsubs.push(unsub);
     }
     notifications = [];
+
+    registerGateFeature('dummy_test_feature', {
+      script: () => ({ interpreter: 'bash', source: 'exit 1' }),
+    });
   });
 
   afterEach(() => {
@@ -1642,7 +1647,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
                   check: { op: '==', value: true },
                 },
               ],
-              features: { codex_review_bot: true },
+              features: { dummy_test_feature: true },
             },
           ],
         }
@@ -1680,7 +1685,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         SPACE_ID,
         workflowManager,
         [
-          { id: STEP_A, name: 'Coding', agentId: AGENT, requireCodexApproval: true },
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
           { id: STEP_B, name: 'Review', agentId: AGENT },
         ],
         {
@@ -1699,6 +1704,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
                   check: { op: '==', value: true },
                 },
               ],
+              features: { dummy_test_feature: true },
             },
           ],
         }

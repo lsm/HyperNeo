@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
 
 describe('SpaceWorkflowManager', () => {
@@ -21,6 +22,10 @@ describe('SpaceWorkflowManager', () => {
     insertSpace(db);
     repo = new SpaceWorkflowRepository(db as any);
     manager = new SpaceWorkflowManager(repo, null);
+
+    registerGateFeature('test_manager_feature', {
+      script: () => ({ interpreter: 'bash', source: 'echo ok' }),
+    });
   });
 
   afterEach(() => {
@@ -881,7 +886,7 @@ describe('SpaceWorkflowManager', () => {
           gates: [
             {
               id: 'g1',
-              features: { codex_review_bot: true },
+              features: { test_manager_feature: true },
               script: { interpreter: 'bash', source: 'echo hi' },
               resetOnCycle: false,
             },
@@ -915,10 +920,10 @@ describe('SpaceWorkflowManager', () => {
       });
 
       const updated = manager.updateWorkflow(wf.id, {
-        gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
+        gates: [{ id: 'g1', features: { test_manager_feature: true }, resetOnCycle: false }],
       });
       expect(updated).not.toBeNull();
-      expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
+      expect(updated!.gates![0].features).toEqual({ test_manager_feature: true });
     });
   });
 });

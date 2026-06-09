@@ -2739,13 +2739,22 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.reason).toContain('Feature script failed');
   });
 
-  test('read_gate evaluates dynamic codex gate with agent-name channel source', async () => {
+  test('read_gate evaluates dynamic feature gate with agent-name channel source', async () => {
+    registerGateFeature('test_dynamic_feature', {
+      script: () => ({
+        interpreter: 'bash',
+        source: 'exit 1',
+        timeoutMs: 30000,
+      }),
+    });
+
     const gate: Gate = {
       id: 'gate-read-agent-source',
       fields: [
         { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
       ],
       resetOnCycle: false,
+      features: { test_dynamic_feature: true },
     };
     const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
       nodes: [
@@ -2753,7 +2762,6 @@ describe('node-agent-tools: async gate evaluation', () => {
           id: 'node-coder',
           name: 'Coding',
           agents: [{ agentId: 'agent-coder', name: 'coder' }],
-          requireCodexApproval: true,
         },
         {
           id: 'node-reviewer',
@@ -2769,7 +2777,7 @@ describe('node-agent-tools: async gate evaluation', () => {
     const mockExecutor = async () => ({
       success: false,
       data: {},
-      error: 'Codex still pending',
+      error: 'Feature still pending',
     });
 
     const config = makeConfig(ctx, {
@@ -2789,16 +2797,25 @@ describe('node-agent-tools: async gate evaluation', () => {
 
     expect(data.success).toBe(true);
     expect(data.gateOpen).toBe(false);
-    expect(data.reason).toContain('Codex still pending');
+    expect(data.reason).toContain('Feature still pending');
   });
 
   test('terminal gate feature checks use current node source for wildcard channels', async () => {
+    registerGateFeature('test_terminal_feature', {
+      script: () => ({
+        interpreter: 'bash',
+        source: 'exit 1',
+        timeoutMs: 30000,
+      }),
+    });
+
     const gate: Gate = {
-      id: 'terminal-wildcard-codex-gate',
+      id: 'terminal-wildcard-feature-gate',
       fields: [
         { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
       ],
       resetOnCycle: false,
+      features: { test_terminal_feature: true },
     };
     const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
       nodes: [
@@ -2806,7 +2823,6 @@ describe('node-agent-tools: async gate evaluation', () => {
           id: 'node-coder',
           name: 'Coding',
           agents: [{ agentId: 'agent-coder', name: 'coder' }],
-          requireCodexApproval: true,
         },
         {
           id: 'node-reviewer',
@@ -2822,7 +2838,7 @@ describe('node-agent-tools: async gate evaluation', () => {
     const mockExecutor = async () => ({
       success: false,
       data: {},
-      error: 'Codex still pending',
+      error: 'Feature still pending',
     });
 
     const result = await evaluateTerminalGateFeatures(
@@ -2841,7 +2857,7 @@ describe('node-agent-tools: async gate evaluation', () => {
     const data = JSON.parse(result!.content[0].text);
 
     expect(data.success).toBe(false);
-    expect(data.error).toContain('Codex still pending');
+    expect(data.error).toContain('Feature still pending');
   });
 
   test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {
