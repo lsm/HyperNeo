@@ -832,8 +832,9 @@ export class ChannelRouter {
 
     // Terminal runs are not reopened by gate-data changes. Allowed
     // reactivation paths are explicit cyclic send_message re-entry and
-    // manual human resume/retry only.
-    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
+    // manual human resume/retry only. Blocked runs are still evaluated so
+    // gate writes can unblock them.
+    if (run.status === 'done' || run.status === 'cancelled') {
       this.evictRunCache(runId);
       return [];
     }

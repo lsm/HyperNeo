@@ -182,10 +182,31 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const { hooks, missingChannelHooks } = this.resolveMatchingHooks(methodName, params, meta);
+    const { hooks, missingChannelHooks, mixedGateHookChannel } = this.resolveMatchingHooks(
+      methodName,
+      params,
+      meta
+    );
 
-    // Fail closed when a hook-managed channel declares hookIds but no matching
-    // hooks resolve (disabled, missing, or misconfigured).
+    // Reject mixed gate/hook channels before any hooks run.
+    if (mixedGateHookChannel) {
+      return {
+        decision: 'block',
+        finalParams: params,
+        followUpRequests: [],
+        stateUpdates: [],
+        userState: {
+          status: 'blocked_by_hook',
+          reason:
+            'Channel references both gateId and hookIds. Action blocked (mixed configuration).',
+        },
+        executionLog: [],
+      };
+    }
+
+    // Fail closed when a hook-managed channel declares hookIds but one or more
+    // declared hooks do not resolve (disabled, missing, misconfigured, or wrong
+    // source/target).
     if (missingChannelHooks) {
       return {
         decision: 'block',
@@ -195,7 +216,7 @@ export class WorkflowHookEngine {
         userState: {
           status: 'blocked_by_hook',
           reason:
-            'Channel declares hookIds but no matching hooks were found. Action blocked (fail closed).',
+            'Channel declares hookIds but not all declared hooks resolve. Action blocked (fail closed).',
         },
         executionLog: [],
       };
@@ -498,9 +519,10 @@ export class WorkflowHookEngine {
     methodName: string,
     params: Record<string, unknown>,
     meta: HookActionMeta
-  ): { hooks: WorkflowHook[]; missingChannelHooks: boolean } {
+  ): { hooks: WorkflowHook[]; missingChannelHooks: boolean; mixedGateHookChannel: boolean } {
     const workflow = this.config.workflow;
-    if (!workflow?.hooks) return { hooks: [], missingChannelHooks: false };
+    if (!workflow?.hooks)
+      return { hooks: [], missingChannelHooks: false, mixedGateHookChannel: false };
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
@@ -521,8 +543,12 @@ export class WorkflowHookEngine {
     const nodeNames = new Set(workflow.nodes.map((n) => n.name));
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
-    // Resolve action target(s) for send_message
+    // Resolve action target(s) for send_message.
+    // Keep both raw targets (slot names, node IDs, bare strings) and resolved
+    // node names so channel matching works for slot-addressed channels like
+    // { from: 'coder', to: 'reviewer', hookIds: [...] }.
     const actionTargets = new Set<string>();
+    const rawActionTargets = new Set<string>();
     if (methodName === 'send_message') {
       const target = params.target;
       if (typeof target === 'string') {
@@ -536,6 +562,7 @@ export class WorkflowHookEngine {
             }
           } else {
             for (const t of permitted) {
+              rawActionTargets.add(t);
               for (const resolved of this.resolveTargetEntries(
                 t,
                 nodeIdToName,
@@ -547,6 +574,7 @@ export class WorkflowHookEngine {
             }
           }
         } else {
+          rawActionTargets.add(target);
           for (const resolved of this.resolveTargetEntries(
             target,
             nodeIdToName,
@@ -569,6 +597,7 @@ export class WorkflowHookEngine {
               }
             } else {
               for (const pt of permitted) {
+                rawActionTargets.add(pt);
                 for (const resolved of this.resolveTargetEntries(
                   pt,
                   nodeIdToName,
@@ -580,6 +609,7 @@ export class WorkflowHookEngine {
               }
             }
           } else {
+            rawActionTargets.add(t);
             for (const resolved of this.resolveTargetEntries(
               t,
               nodeIdToName,
@@ -598,13 +628,23 @@ export class WorkflowHookEngine {
     // hooks in that set are authoritative for this action.
     const channelHookIds = new Set<string>();
     let hasChannelHookIds = false;
-    if (methodName === 'send_message' && actionTargets.size > 0) {
+    let mixedGateHookChannel = false;
+    if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
       for (const ch of workflow.channels ?? []) {
         const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
         if (!fromMatches) continue;
         const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        const toMatches = toList.some((t) => t === '*' || actionTargets.has(t));
+        const toMatches = toList.some(
+          (t) => t === '*' || actionTargets.has(t) || rawActionTargets.has(t)
+        );
         if (!toMatches) continue;
+
+        // Reject mixed gate/hook channels before any hooks run
+        if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+          mixedGateHookChannel = true;
+          break;
+        }
+
         if (ch.hookIds && ch.hookIds.length > 0) {
           hasChannelHookIds = true;
           for (const hid of ch.hookIds) {
@@ -642,8 +682,12 @@ export class WorkflowHookEngine {
       });
     });
 
-    const missingChannelHooks = hasChannelHookIds && matchedHooks.length === 0;
-    return { hooks: matchedHooks, missingChannelHooks };
+    // Fail closed when any declared channel hookId does not resolve to a
+    // runnable hook (deleted, disabled, wrong source/target, missing auth).
+    const resolvedHookIds = new Set(matchedHooks.map((h) => h.id));
+    const missingChannelHooks =
+      hasChannelHookIds && [...channelHookIds].some((hid) => !resolvedHookIds.has(hid));
+    return { hooks: matchedHooks, missingChannelHooks, mixedGateHookChannel };
   }
 
   private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {

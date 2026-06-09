@@ -1314,6 +1314,117 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.reason).toContain('Patched params invalid');
   });
+
+  test('slot-addressed channel with hookIds resolves when target is agent slot name', async () => {
+    // Channel uses agent slot name 'reviewer' as to-address instead of node name 'Review'
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('missing one of multiple declared hookIds fails closed', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'hook-a',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['hook-a', 'hook-b'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-a', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+  });
+
+  test('mixed gateId and hookIds channel fails closed before hooks run', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', gateId: 'legacy-gate', hookIds: ['review-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('mixed configuration');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {

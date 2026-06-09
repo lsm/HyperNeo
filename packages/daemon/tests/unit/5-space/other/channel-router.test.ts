@@ -4437,7 +4437,7 @@ describe('ChannelRouter', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
     });
 
-    test('does not reactivate terminal runs (blocked)', async () => {
+    test('still evaluates and activates blocked runs via gate data changes', async () => {
       const gate: Gate = {
         id: 'blocked-gate',
         fields: [{ name: 'blocked', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -4464,13 +4464,16 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Terminal Blocked Run',
+        title: 'Blocked Run',
       });
       workflowRunRepo.updateStatusUnchecked(run.id, 'blocked');
 
       gateDataRepo.set(run.id, 'blocked-gate', { blocked: true });
       const activated = await router.onGateDataChanged(run.id, 'blocked-gate');
-      expect(activated).toHaveLength(0);
+      // Gate is open (field exists) → target node should be activated even though
+      // the run is blocked, so gate writes can unblock recoverable blocked runs.
+      expect(activated.length).toBeGreaterThan(0);
+      // Run stays blocked — activateNode does not auto-reopen blocked runs.
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
     });
 
