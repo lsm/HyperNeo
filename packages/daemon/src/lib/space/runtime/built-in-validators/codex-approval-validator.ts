@@ -92,6 +92,16 @@ function resolvePrUrl(
     }
   }
 
+  // For send_message hooks, the PR URL may be nested in params.data
+  const nestedData = params.data as Record<string, unknown> | undefined;
+  if (nestedData) {
+    const url =
+      (typeof nestedData.prUrl === 'string' && nestedData.prUrl) ||
+      (typeof nestedData.pr_url === 'string' && nestedData.pr_url) ||
+      '';
+    if (url) return url;
+  }
+
   const url =
     (typeof params.prUrl === 'string' && params.prUrl) ||
     (typeof params.pr_url === 'string' && params.pr_url) ||
@@ -163,13 +173,22 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     return { type: 'allow' };
   }
 
-  // For send_message hooks, only enforce when the target matches configured handoff targets
+  // For send_message hooks, only enforce when the target matches configured handoff targets.
+  // Targets may be node names or agent slot names belonging to those nodes.
   if (methodName === 'send_message') {
     const enforceForTargets = templateData?.enforceForTargets as string[] | undefined;
     if (enforceForTargets && enforceForTargets.length > 0) {
       const target = (params as Record<string, unknown>).target;
       const targets = Array.isArray(target) ? target : [target];
-      if (!targets.some((t) => typeof t === 'string' && enforceForTargets.includes(t))) {
+      const allowedTargets = new Set(enforceForTargets);
+      // Also include agent slot names belonging to the allowed nodes
+      for (const nodeName of enforceForTargets) {
+        const node = workflow?.nodes?.find((n) => n.name === nodeName);
+        for (const agent of node?.agents ?? []) {
+          if (agent.name) allowedTargets.add(agent.name);
+        }
+      }
+      if (!targets.some((t) => typeof t === 'string' && allowedTargets.has(t))) {
         return { type: 'allow' };
       }
     }
@@ -265,7 +284,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     const now = Date.now();
     const isFirstCheck = persisted.currentHeadSha === undefined;
     const currentHeadBecameHeadAt = headChanged ? now : (persisted.currentHeadBecameHeadAt ?? now);
-    const checkStartedAt = persisted.checkStartedAt ?? now;
+    const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
 
     // Fetch all reactions (PRs are issues for reaction API)
     const reactions = await fetchAllReactions(prInfo, token);
