@@ -13,7 +13,10 @@ import {
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
-import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
+import {
+  HookExecutor,
+  type HookExecutorContext,
+} from '../../../../src/lib/space/runtime/hook-executor';
 import type { WorkflowHook, WorkflowHookResult, SpaceWorkflow } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
@@ -1853,6 +1856,90 @@ describe('WorkflowHookEngine', () => {
     // does not trigger fail-closed.
     expect(outcome.decision).toBe('allow');
     expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('@session: reply target skips channel hook binding', async () => {
+    // Wildcard hook-managed channel should not bind @session: targets.
+    const workflow = makeWorkflow([]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: '*', hookIds: ['missing-gate'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@session:abc-123', message: 'reply to human' },
+      defaultMeta
+    );
+
+    // @session: targets route outside channel topology — no channel hook binding.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('send_message data is merged into gate data context', async () => {
+    const capturedContexts: HookExecutorContext[] = [];
+    const capturingExecutor = new (class extends HookExecutor {
+      constructor() {
+        super({ workspacePath: '/tmp' });
+      }
+      override async execute(
+        hook: WorkflowHook,
+        context: HookExecutorContext
+      ): Promise<{ result: WorkflowHookResult }> {
+        capturedContexts.push(context);
+        return { result: { type: 'allow' } };
+      }
+    })();
+
+    const mockGateDataRepo = {
+      listByRun: () => [{ gateId: 'g1', data: { existing_field: true }, runId: 'run-1' }],
+      get: () => null,
+    };
+
+    const hook: WorkflowHook = {
+      id: 'test-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+
+    const workflow = makeWorkflow([hook]);
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: capturingExecutor,
+      workspacePath: '/tmp',
+      gateDataRepo: mockGateDataRepo as any,
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'done', data: { pr_url: 'https://github.com/pull/1' } },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(capturedContexts).toHaveLength(1);
+    const gateData = JSON.parse(capturedContexts[0].gateDataJson ?? '{}');
+    // Both persisted gate data and in-flight params.data should be present
+    expect(gateData.existing_field).toBe(true);
+    expect(gateData.pr_url).toBe('https://github.com/pull/1');
   });
 });
 

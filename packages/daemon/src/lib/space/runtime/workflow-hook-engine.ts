@@ -650,7 +650,10 @@ export class WorkflowHookEngine {
       const target = params.target;
 
       // Skip built-in escalation targets — they route outside channel topology.
-      const isEscalationTarget = (t: string) => t === 'space-agent' || t.startsWith('@coordinator');
+      // Also skip @session: reply-session targets — AgentMessageRouter handles
+      // these as direct Space Agent reply routes that bypass channel topology.
+      const isEscalationTarget = (t: string) =>
+        t === 'space-agent' || t.startsWith('@coordinator') || t.startsWith('@session:');
 
       const processFirstMatch = (rawTarget: string): boolean => {
         const trimmed = rawTarget.trim();
@@ -880,13 +883,35 @@ export class WorkflowHookEngine {
     // validate against stale gate data or missing PR URLs.
     // Flat-merge all gate data objects for backward compatibility with
     // converted gate scripts that expect a single flat object shape.
+    // Also merge the current `params.data` (from send_message's `data` arg)
+    // so that converted gate scripts see the in-flight payload without
+    // requiring a separate gate data write first — matching legacy behavior
+    // where the gate write happened before evaluation.
     let gateDataJson: string | undefined;
-    if (this.config.gateDataRepo) {
+    {
       try {
-        const records = this.config.gateDataRepo.listByRun(this.config.workflowRunId);
+        const records = this.config.gateDataRepo?.listByRun(this.config.workflowRunId) ?? [];
         const flatGateData: Record<string, unknown> = {};
         for (const record of records) {
           Object.assign(flatGateData, record.data);
+        }
+        // Merge current action data so hooks evaluating in the same MCP call
+        // see the payload the agent is sending (e.g. { pr_url }) without
+        // needing a prior gate data write.
+        if (
+          methodName === 'send_message' &&
+          params.data &&
+          typeof params.data === 'object' &&
+          !Array.isArray(params.data)
+        ) {
+          try {
+            const dataBytes = new TextEncoder().encode(JSON.stringify(params.data)).length;
+            if (dataBytes <= MAX_PARAM_DATA_BYTES) {
+              Object.assign(flatGateData, params.data as Record<string, unknown>);
+            }
+          } catch {
+            // non-serializable data — skip merge
+          }
         }
         gateDataJson = JSON.stringify(flatGateData);
       } catch {

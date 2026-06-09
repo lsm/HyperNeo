@@ -218,6 +218,15 @@ export async function evaluateTerminalGateFeatures(
       });
       const includeIncoming = incomingChannels.length === 1;
       for (const ch of workflow.channels) {
+        // Fail closed on mixed gate/hook channels — a channel referencing
+        // both gateId and hookIds is an invalid configuration that must not
+        // silently bypass terminal gate validation.
+        if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+          return jsonResult({
+            success: false,
+            error: `Channel "${ch.id ?? 'unknown'}" references both gateId "${ch.gateId}" and hookIds [${ch.hookIds.join(', ')}]. Terminal gate validation cannot proceed with mixed configuration.`,
+          });
+        }
         // Skip hook-managed channels — terminal gate features only apply to legacy gates
         if (!ch.gateId || (ch.hookIds && ch.hookIds.length > 0)) continue;
         const isOutgoing =
