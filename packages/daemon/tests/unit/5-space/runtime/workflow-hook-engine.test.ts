@@ -1941,6 +1941,145 @@ describe('WorkflowHookEngine', () => {
     expect(gateData.existing_field).toBe(true);
     expect(gateData.pr_url).toBe('https://github.com/pull/1');
   });
+
+  test('generic handle target skips channel hook binding', async () => {
+    // @some-agent is a generic handle — routes through SpaceDeliveryFacade,
+    // not channelRouter.deliverMessage, so channel hooks must not bind.
+    const workflow = makeWorkflow([]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: '*', hookIds: ['missing-gate'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@some-agent', message: 'hello' },
+      defaultMeta
+    );
+
+    // Generic handle bypasses channel topology — no channel hook binding.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('@worker address with URL-encoded agent name decodes for channel matching', async () => {
+    // Agent slot name contains '/' which is URL-encoded in @worker addresses.
+    const hook: WorkflowHook = {
+      id: 'encoded-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+
+    const workflow = makeWorkflow([hook]);
+    workflow.nodes = [
+      { id: 'node-coding', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+      {
+        id: 'node-review',
+        name: 'Review',
+        agents: [{ name: 'reviewer/lead', agentId: 'agent-reviewer' }],
+      },
+    ];
+    // Channel targets the decoded agent slot name
+    workflow.channels = [
+      { id: 'ch-encoded', from: 'Coding', to: 'reviewer/lead', hookIds: ['encoded-hook'] },
+    ];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      // @worker:Review/reviewer%2Flead — encoded form of reviewer/lead
+      { target: '@worker:Review/reviewer%2Flead', message: 'review please' },
+      defaultMeta
+    );
+
+    // URL-encoded agent name is decoded to match the channel's to: 'reviewer/lead'
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('encoded-hook');
+  });
+
+  test('array targets each resolve their own channel independently', async () => {
+    // Two channels with different hookIds — each array element must match
+    // its own channel, not the sibling's.
+    const hookReview: WorkflowHook = {
+      id: 'review-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+    const hookQa: WorkflowHook = {
+      id: 'qa-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+
+    const workflow = makeWorkflow([hookReview, hookQa]);
+    workflow.nodes = [
+      { id: 'node-coding', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+      {
+        id: 'node-review',
+        name: 'Review',
+        agents: [{ name: 'reviewer', agentId: 'agent-reviewer' }],
+      },
+      { id: 'node-qa', name: 'QA', agents: [{ name: 'qa', agentId: 'agent-qa' }] },
+    ];
+    workflow.channels = [
+      { id: 'ch-coder-reviewer', from: 'Coding', to: 'Review', hookIds: ['review-hook'] },
+      { id: 'ch-coder-qa', from: 'Coding', to: 'QA', hookIds: ['qa-hook'] },
+    ];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      // Node-id targets — each should resolve to its own node name
+      { target: ['node-review', 'node-qa'], message: 'check both' },
+      defaultMeta
+    );
+
+    // Both channels' hooks should be collected (not just Review's)
+    expect(outcome.decision).toBe('allow');
+    const hookIds = outcome.executionLog.map((r) => r.hookId).sort();
+    expect(hookIds).toEqual(['qa-hook', 'review-hook']);
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {

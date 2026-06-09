@@ -649,17 +649,29 @@ export class WorkflowHookEngine {
     if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
       const target = params.target;
 
-      // Skip built-in escalation targets — they route outside channel topology.
-      // Also skip @session: reply-session targets — AgentMessageRouter handles
-      // these as direct Space Agent reply routes that bypass channel topology.
-      const isEscalationTarget = (t: string) =>
-        t === 'space-agent' || t.startsWith('@coordinator') || t.startsWith('@session:');
+      // Skip targets that route outside workflow channel topology:
+      // - space-agent: built-in escalation
+      // - @session: reply-session targets (direct Space Agent reply routes)
+      // - Generic handles (@some-agent): routed through SpaceDeliveryFacade,
+      //   not channelRouter.deliverMessage, so channel hooks cannot govern them
+      // Only @worker: and @role: addresses map to workflow node agents.
+      const isOutsideChannelTopology = (t: string) => {
+        if (t === 'space-agent') return true;
+        if (t.startsWith('@session:')) return true;
+        if (t.startsWith('@') && !t.startsWith('@worker:') && !t.startsWith('@role:')) {
+          // Generic handle — routes through SpaceDeliveryFacade, not channels.
+          return true;
+        }
+        return false;
+      };
 
       const processFirstMatch = (rawTarget: string): boolean => {
         const trimmed = rawTarget.trim();
-        if (isEscalationTarget(trimmed)) return false;
+        if (isOutsideChannelTopology(trimmed)) return false;
 
-        // Try raw target, then decoded slot names, then resolved node names.
+        // Try raw target, then decoded slot names, then per-element resolved
+        // node names (NOT the global actionTargets set — each array element
+        // must first-match its own channel, not a sibling's channel).
         let firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, trimmed);
         if (!firstCh) {
           for (const decoded of this.decodeTargetSlotNames(trimmed)) {
@@ -668,7 +680,12 @@ export class WorkflowHookEngine {
           }
         }
         if (!firstCh) {
-          for (const resolved of actionTargets) {
+          for (const resolved of this.resolveTargetEntries(
+            trimmed,
+            nodeIdToName,
+            slotToNodes,
+            nodeNames
+          )) {
             firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, resolved);
             if (firstCh) break;
           }
@@ -1213,7 +1230,9 @@ export class WorkflowHookEngine {
       try {
         const addr = parseAddress(trimmed);
         if (addr.kind === 'worker' && addr.agentName) {
-          decoded.push(addr.agentName);
+          // Decode URL-encoded agent names (e.g. reviewer%2Flead → reviewer/lead)
+          // so slot-addressed channels with special characters match correctly.
+          decoded.push(decodeURIComponent(addr.agentName));
         }
       } catch {
         // ignore parse errors
