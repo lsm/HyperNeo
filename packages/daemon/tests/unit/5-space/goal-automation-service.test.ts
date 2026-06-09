@@ -3225,10 +3225,12 @@ describe('handleGoalAutomationExecute', () => {
       objective: 'Cursor race',
       policy: { automation: { selfNagCronExpression: '0 * * * *' } },
     });
+    const t0 = Date.now();
     evolutionRepo.createEvidence({
       scopeId: scope.id,
       kind: 'manual_note',
       summary: 'Early evidence',
+      createdAt: t0,
     });
 
     const payload = {
@@ -3273,6 +3275,7 @@ describe('handleGoalAutomationExecute', () => {
       scopeId: scope.id,
       kind: 'manual_note',
       summary: 'Later evidence',
+      createdAt: t0 + 1,
     });
     const job2 = createAutomationJob(payload, 'job-2');
     const result2 = await handleGoalAutomationExecute(job2, deps_base);

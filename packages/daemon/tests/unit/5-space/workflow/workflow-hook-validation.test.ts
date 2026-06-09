@@ -17,7 +17,7 @@ function validHook(overrides: Partial<WorkflowHook> = {}): WorkflowHook {
     sourceNode: 'Coding',
     targetNode: 'Review',
     method: 'send_message',
-    validator: { kind: 'built_in', id: 'pr_open' },
+    validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
     authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     ...overrides,
   };
@@ -45,13 +45,18 @@ describe('workflow hook validation', () => {
     expect(errors).toContain('role terminology is not allowed');
   });
 
-  test('fails closed for absent callers unless humanOnly', () => {
+  test('fails closed for absent callers', () => {
     expect(
       validateWorkflowHooks([validHook({ authorizedCallers: undefined })], nodes).join('\n')
     ).toContain('authorizedCallers');
-    expect(
-      validateWorkflowHooks([validHook({ humanOnly: true, authorizedCallers: undefined })], nodes)
-    ).toEqual([]);
+  });
+
+  test('rejects humanOnly hooks as not yet supported', () => {
+    const errors = validateWorkflowHooks(
+      [validHook({ humanOnly: true, authorizedCallers: undefined })],
+      nodes
+    ).join('\n');
+    expect(errors).toContain('human-only hooks are not yet supported');
   });
 
   test('rejects disabled hooks during caller authorization', () => {
@@ -63,24 +68,6 @@ describe('workflow hook validation', () => {
         agentSlot: 'coder',
       })
     ).toBe(false);
-    expect(
-      runtimeService.isCallerAuthorized(
-        validHook({ enabled: false, humanOnly: true, authorizedCallers: undefined }),
-        { kind: 'human' }
-      )
-    ).toBe(false);
-  });
-
-  test('rejects agent invocation for human-only hooks', () => {
-    const hook = validHook({ humanOnly: true, authorizedCallers: undefined });
-    expect(
-      runtimeService.isCallerAuthorized(hook, {
-        kind: 'agent',
-        sourceNode: 'Coding',
-        agentSlot: 'coder',
-      })
-    ).toBe(false);
-    expect(runtimeService.isCallerAuthorized(hook, { kind: 'human' })).toBe(true);
   });
 
   test('authorizes only declared node and agent slots', () => {
@@ -128,5 +115,34 @@ describe('workflow hook validation', () => {
     expect(runtimeService.validateResult({ type: 'shell_out', command: 'x' }).join('\n')).toContain(
       'bounded hook result type'
     );
+  });
+
+  test('rejects unimplemented built-in validators', () => {
+    const errors = validateWorkflowHooks(
+      [validHook({ validator: { kind: 'built_in', id: 'pr_open' } })],
+      nodes
+    ).join('\n');
+    expect(errors).toContain('unknown built-in validator');
+  });
+
+  test('validates localState.recentResultRef shape and cross-hook references', () => {
+    const ref = { hookId: 'missing-hook', key: 'priorResult' };
+    const errors = validateWorkflowHooks(
+      [validHook({ localState: { recentResultRef: ref } })],
+      nodes
+    ).join('\n');
+    expect(errors).toContain('recentResultRef.hookId: unknown hook id "missing-hook"');
+
+    const badKey = validateWorkflowHooks(
+      [validHook({ id: 'hook-a', localState: { recentResultRef: { hookId: 'hook-a', key: '' } } })],
+      nodes
+    ).join('\n');
+    expect(badKey).toContain('recentResultRef.key: expected non-empty string');
+
+    const badType = validateWorkflowHooks(
+      [validHook({ localState: { recentResultRef: 'not-an-object' } as unknown })],
+      nodes
+    ).join('\n');
+    expect(badType).toContain('recentResultRef: expected object');
   });
 });
