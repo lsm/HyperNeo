@@ -33,6 +33,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import {
   CODING_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
+  mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
   getBuiltInGateScript,
   getBuiltInWorkflows,
@@ -2029,6 +2030,47 @@ describe('seedBuiltInWorkflows()', () => {
     const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
     expect(result).toHaveLength(1);
     expect(result![0].features).toBeUndefined();
+  });
+
+  test('mergeGateStructuralFieldsFromTemplate removes gates no longer in template', () => {
+    const existingGates = [
+      {
+        id: 'old-gate',
+        fields: [{ name: 'f1', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      },
+      { id: 'kept-gate', fields: [] },
+    ];
+    const templateGates = [{ id: 'kept-gate', fields: [] }];
+
+    const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
+    expect(result).toHaveLength(1);
+    expect(result![0].id).toBe('kept-gate');
+  });
+
+  test('mergeChannelsFromTemplate replaces existing channels with same from→to', () => {
+    const existingChannels = [
+      { from: 'A', to: 'B', gateId: 'old-gate' },
+      { from: 'C', to: 'D' },
+    ];
+    const templateChannels = [
+      { from: 'A', to: 'B' },
+      { from: 'E', to: 'F' },
+    ];
+
+    const result = mergeChannelsFromTemplate(
+      existingChannels as SpaceWorkflow['channels'],
+      templateChannels as SpaceWorkflow['channels'],
+      [],
+      []
+    );
+    expect(result).toHaveLength(3);
+    const ab = result!.find((ch) => ch.from === 'A' && ch.to === 'B');
+    expect(ab).toBeDefined();
+    expect(ab!.gateId).toBeUndefined();
+    const cd = result!.find((ch) => ch.from === 'C' && ch.to === 'D');
+    expect(cd).toBeDefined();
+    const ef = result!.find((ch) => ch.from === 'E' && ch.to === 'F');
+    expect(ef).toBeDefined();
   });
 
   test('re-stamp appends missing validation node and channels with resolved agent IDs', () => {

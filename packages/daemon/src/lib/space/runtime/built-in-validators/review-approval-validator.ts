@@ -79,7 +79,10 @@ function parsePrUrl(url: string): { owner: string; repo: string; number: number 
 }
 
 /**
- * Check GitHub for a codex[bot] +1 reaction on the PR.
+ * Check GitHub for a codex[bot] +1 reaction on the PR body, issue comments,
+ * or review comments. Uses the GraphQL API to query all reaction locations
+ * in a single request.
+ *
  * Returns 'approved' if found, 'waiting' if not, 'error' on failure.
  */
 async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting' | 'error'> {
@@ -89,33 +92,116 @@ async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting'
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) return 'error';
 
-  try {
-    const res = await fetch(
-      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}/reactions?per_page=100`,
-      {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${token}`,
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
+  const query = `
+    query($owner:String!,$name:String!,$number:Int!) {
+      repository(owner:$owner,name:$name) {
+        pullRequest(number:$number) {
+          reactions(first:10) {
+            nodes { content user { login } }
+          }
+          comments(first:100) {
+            nodes {
+              reactions(first:10) {
+                nodes { content user { login } }
+              }
+            }
+          }
+          reviewThreads(first:100) {
+            nodes {
+              comments(first:100) {
+                nodes {
+                  reactions(first:10) {
+                    nodes { content user { login } }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
-    );
+    }
+  `;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const res = await fetch('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        variables: { owner: parsed.owner, name: parsed.repo, number: parsed.number },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
     if (!res.ok) return 'error';
 
-    const reactions = (await res.json()) as Array<{
-      user?: { login?: string };
-      content?: string;
-    }>;
+    const json = (await res.json()) as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            reactions?: {
+              nodes?: Array<{ content?: string; user?: { login?: string } }>;
+            };
+            comments?: {
+              nodes?: Array<{
+                reactions?: {
+                  nodes?: Array<{ content?: string; user?: { login?: string } }>;
+                };
+              }>;
+            };
+            reviewThreads?: {
+              nodes?: Array<{
+                comments?: {
+                  nodes?: Array<{
+                    reactions?: {
+                      nodes?: Array<{ content?: string; user?: { login?: string } }>;
+                    };
+                  }>;
+                };
+              }>;
+            };
+          };
+        };
+      };
+      errors?: unknown[];
+    };
 
-    const approved = reactions.some(
-      (r) =>
-        (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
-        r.content === '+1'
-    );
+    if (json.errors) return 'error';
 
-    return approved ? 'approved' : 'waiting';
+    const pr = json.data?.repository?.pullRequest;
+    if (!pr) return 'error';
+
+    const isCodexPlusOne = (r: { content?: string; user?: { login?: string } }): boolean =>
+      (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
+      r.content === '+1';
+
+    // PR body reactions
+    if (pr.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
+
+    // Issue comments
+    for (const comment of pr.comments?.nodes ?? []) {
+      if (comment.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
+    }
+
+    // Review comments
+    for (const thread of pr.reviewThreads?.nodes ?? []) {
+      for (const comment of thread.comments?.nodes ?? []) {
+        if (comment.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
+      }
+    }
+
+    return 'waiting';
   } catch {
     return 'error';
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

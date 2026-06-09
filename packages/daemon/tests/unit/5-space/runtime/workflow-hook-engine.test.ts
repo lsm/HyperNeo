@@ -972,6 +972,49 @@ describe('WorkflowHookEngine', () => {
     expect(params.data).toContain('truncated');
   });
 
+  test('built-in validators receive full unbounded params even when data exceeds budget', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          validator: { kind: 'built_in', id: 'review_posted' },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (_hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    const bigData = {
+      review_url: 'https://github.com/test/repo/pull/1',
+      summary: 'x'.repeat(10_000),
+    };
+    await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi', data: bigData },
+      defaultMeta
+    );
+
+    const params = (capturedContext as { params: Record<string, unknown> }).params;
+    expect((params.data as Record<string, unknown>).review_url).toBe(
+      'https://github.com/test/repo/pull/1'
+    );
+    expect((params.data as Record<string, unknown>).summary).toBe('x'.repeat(10_000));
+  });
+
   test('large arrays in params are capped', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();

@@ -1719,7 +1719,8 @@ function mergeHooksFromTemplate(
   return [...existingHooks, ...missingTemplateHooks];
 }
 
-function mergeChannelsFromTemplate(
+/** @internal Exported for testing. */
+export function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
   templateChannels: SpaceWorkflow['channels'],
   templateNodes: WorkflowNode[],
@@ -1731,19 +1732,18 @@ function mergeChannelsFromTemplate(
   );
   if (!existingChannels) return remappedTemplateChannels;
 
-  const existingKeys = new Set(
-    existingChannels.map((channel) =>
-      JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
-    )
+  // Template channels are the source of truth for from→to pairs. Replace
+  // any existing channel with the same from→to so that gate changes
+  // (including ungating) are reflected on re-stamp.
+  const templateFromTo = new Set(
+    remappedTemplateChannels.map((ch) => JSON.stringify({ from: ch.from, to: ch.to }))
   );
-  const missingTemplateChannels = remappedTemplateChannels.filter(
-    (channel) =>
-      !existingKeys.has(
-        JSON.stringify({ from: channel.from, to: channel.to, gateId: channel.gateId ?? null })
-      )
-  );
+  const keptExisting = existingChannels.filter((ch) => {
+    const key = JSON.stringify({ from: ch.from, to: ch.to });
+    return !templateFromTo.has(key);
+  });
 
-  return [...existingChannels, ...missingTemplateChannels];
+  return [...keptExisting, ...remappedTemplateChannels];
 }
 
 /** @internal Exported for testing. */
@@ -1758,10 +1758,10 @@ export function mergeGateStructuralFieldsFromTemplate(
   const existingGateIds = new Set(existingGates.map((gate) => gate.id));
   const missingTemplateGates = templateGates.filter((gate) => !existingGateIds.has(gate.id));
 
-  return existingGates
+  const mergedExisting = existingGates
+    .filter((gate) => templateGatesById.has(gate.id))
     .map((gate) => {
-      const templateGate = templateGatesById.get(gate.id);
-      if (!templateGate) return gate;
+      const templateGate = templateGatesById.get(gate.id)!;
 
       const templateFieldsByName = new Map(
         (templateGate.fields ?? []).map((field) => [field.name, field])
@@ -1794,9 +1794,10 @@ export function mergeGateStructuralFieldsFromTemplate(
         ...gate,
         fields,
         features: nextFeatures,
-      };
-    })
-    .concat(missingTemplateGates);
+      } as Gate;
+    });
+
+  return [...mergedExisting, ...missingTemplateGates];
 }
 
 /**

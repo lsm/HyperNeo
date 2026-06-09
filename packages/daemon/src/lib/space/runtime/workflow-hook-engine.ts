@@ -702,7 +702,7 @@ export class WorkflowHookEngine {
       runId: this.config.workflowRunId,
       hookId: hook.id,
       methodName,
-      params: this.boundParams(params),
+      params: hook.validator.kind === 'built_in' ? params : this.boundParams(params),
       nodeId: meta.nodeId,
       nodeName,
       sessionId: meta.sessionId,

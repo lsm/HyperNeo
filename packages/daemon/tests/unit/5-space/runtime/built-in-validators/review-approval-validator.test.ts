@@ -175,11 +175,39 @@ describe('reviewApprovalValidator', () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = 'test-token';
-    globalThis.fetch = async () =>
-      ({
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
         ok: true,
-        json: async () => [{ user: { login: 'codex[bot]' }, content: '+1' }],
-      }) as Response;
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                reactions: { nodes: [] },
+                comments: {
+                  nodes: [
+                    {
+                      reactions: {
+                        nodes: [{ user: { login: 'codex[bot]' }, content: '+1' }],
+                      },
+                    },
+                  ],
+                },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
 
     const ctx = makeCtx({
       params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
