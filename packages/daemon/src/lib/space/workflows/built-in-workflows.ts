@@ -1196,6 +1196,44 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       label: 'Plan Review → Planning (revision requested)',
     },
   ],
+  hooks: [
+    {
+      id: 'codex-review-check',
+      enabled: true,
+      sourceNode: 'Plan Review',
+      method: 'submit_for_approval',
+      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
+      authorizedCallers: [
+        {
+          sourceNode: 'Plan Review',
+          agentSlots: [
+            'architecture-reviewer',
+            'security-reviewer',
+            'correctness-reviewer',
+            'ux-reviewer',
+          ],
+        },
+      ],
+    },
+    {
+      id: 'codex-review-check-approve',
+      enabled: true,
+      sourceNode: 'Plan Review',
+      method: 'approve_task',
+      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
+      authorizedCallers: [
+        {
+          sourceNode: 'Plan Review',
+          agentSlots: [
+            'architecture-reviewer',
+            'security-reviewer',
+            'correctness-reviewer',
+            'ux-reviewer',
+          ],
+        },
+      ],
+    },
+  ],
 };
 
 /**
@@ -1387,6 +1425,24 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       to: 'Coding',
       maxCycles: 6,
       label: 'QA → Coding (issues found)',
+    },
+  ],
+  hooks: [
+    {
+      id: 'codex-review-check',
+      enabled: true,
+      sourceNode: 'Review',
+      method: 'submit_for_approval',
+      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+    },
+    {
+      id: 'codex-review-check-approve',
+      enabled: true,
+      sourceNode: 'Review',
+      method: 'approve_task',
+      validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
     },
   ],
 };

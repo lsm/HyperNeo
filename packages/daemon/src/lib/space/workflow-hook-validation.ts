@@ -15,7 +15,14 @@ const VALID_METHODS = new Set([
 ]);
 // Built-in validators are not yet implemented; reject them at validation time
 // so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>([]);
+const VALID_BUILT_IN_VALIDATORS = new Set<string>([
+  'pr_open',
+  'pr_mergeable',
+  'github_review_approved',
+  'codex_review_approved',
+  'artifact_exists',
+  'task_reported_status',
+]);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',
@@ -294,6 +301,17 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
         errors.push(
           `${loc}.validator.id: unknown built-in validator ${JSON.stringify(validator.id)}`
         );
+      }
+      if (validator.externalLookups !== undefined) {
+        if (!Array.isArray(validator.externalLookups)) {
+          errors.push(`${loc}.validator.externalLookups: expected array`);
+        } else {
+          for (let j = 0; j < validator.externalLookups.length; j++) {
+            if (!VALID_EXTERNAL_LOOKUPS.has(validator.externalLookups[j] as string)) {
+              errors.push(`${loc}.validator.externalLookups[${j}]: only "github" is allowed`);
+            }
+          }
+        }
       }
     } else if (validator.kind === 'script') {
       if (validator.interpreter !== 'bash') {

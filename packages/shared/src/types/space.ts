@@ -1559,6 +1559,7 @@ export interface WorkflowHookScriptValidator {
 export interface WorkflowHookBuiltInValidator {
   kind: 'built_in';
   id: WorkflowHookValidatorId;
+  externalLookups?: WorkflowHookExternalLookup[];
 }
 
 export type WorkflowHookValidator = WorkflowHookBuiltInValidator | WorkflowHookScriptValidator;

@@ -117,9 +117,9 @@ describe('workflow hook validation', () => {
     );
   });
 
-  test('rejects unimplemented built-in validators', () => {
+  test('rejects unknown built-in validators', () => {
     const errors = validateWorkflowHooks(
-      [validHook({ validator: { kind: 'built_in', id: 'pr_open' } })],
+      [validHook({ validator: { kind: 'built_in', id: 'unknown_validator_xyz' } })],
       nodes
     ).join('\n');
     expect(errors).toContain('unknown built-in validator');

@@ -16,7 +16,6 @@
  */
 
 import type { BuiltInValidatorFn } from '../hook-executor';
-import type { WorkflowHookResult } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -52,6 +51,7 @@ interface ParsedPr {
   owner: string;
   repo: string;
   number: number;
+  host: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ function parsePrUrl(url: string): ParsedPr | null {
     if (parts.length >= 4 && parts[2] === 'pull') {
       const num = parseInt(parts[3], 10);
       if (!Number.isNaN(num)) {
-        return { owner: parts[0], repo: parts[1], number: num };
+        return { owner: parts[0], repo: parts[1], number: num, host: u.host };
       }
     }
   } catch {
@@ -114,6 +114,26 @@ async function fetchGitHubJson(url: string, token: string): Promise<unknown> {
   return res.json();
 }
 
+function getApiBase(host: string): string {
+  return host === 'github.com' ? 'https://api.github.com' : `https://${host}/api/v3`;
+}
+
+async function fetchAllReactions(pr: ParsedPr, token: string): Promise<GitHubReaction[]> {
+  const apiBase = getApiBase(pr.host);
+  const results: GitHubReaction[] = [];
+  let page = 1;
+  while (true) {
+    const data = (await fetchGitHubJson(
+      `${apiBase}/repos/${pr.owner}/${pr.repo}/issues/${pr.number}/reactions?per_page=100&page=${page}`,
+      token
+    )) as GitHubReaction[];
+    results.push(...data);
+    if (data.length < 100) break;
+    page++;
+  }
+  return results;
+}
+
 function toEpochMs(iso: string): number {
   const t = Date.parse(iso);
   return Number.isNaN(t) ? 0 : t;
@@ -136,11 +156,14 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
   // Load persisted state from previous invocation
   const persisted = (lastResult?.data ?? {}) as CodexPersistedState;
 
-  // Terminal shortcut — once decided, stay decided
-  if (persisted.terminalOutcome === 'allow') {
+  // Fast terminal shortcut — if we have a prior SHA and no evidence of change,
+  // skip the network call entirely. If head might have changed, we still need
+  // to fetch to verify.
+  const hasPriorSha = persisted.currentHeadSha !== undefined;
+  if (persisted.terminalOutcome === 'allow' && hasPriorSha) {
     return { type: 'allow' };
   }
-  if (persisted.terminalOutcome === 'block') {
+  if (persisted.terminalOutcome === 'block' && hasPriorSha) {
     return {
       type: 'block',
       reason: 'Codex review did not pass',
@@ -181,8 +204,9 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
   try {
     // Resolve current PR head SHA
+    const apiBase = getApiBase(prInfo.host);
     const prData = (await fetchGitHubJson(
-      `https://api.github.com/repos/${prInfo.owner}/${prInfo.repo}/pulls/${prInfo.number}`,
+      `${apiBase}/repos/${prInfo.owner}/${prInfo.repo}/pulls/${prInfo.number}`,
       token
     )) as { head?: { sha?: string } };
 
@@ -195,32 +219,43 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       };
     }
 
+    const headChanged = hasPriorSha && persisted.currentHeadSha !== currentHeadSha;
+
+    // Re-check terminal outcome after confirming head has not changed
+    if (persisted.terminalOutcome === 'allow' && !headChanged) {
+      return { type: 'allow' };
+    }
+    if (persisted.terminalOutcome === 'block' && !headChanged) {
+      return {
+        type: 'block',
+        reason: 'Codex review did not pass',
+        data: { currentHeadSha: persisted.currentHeadSha },
+      };
+    }
+
     const now = Date.now();
-    const headChanged =
-      persisted.currentHeadSha !== undefined && persisted.currentHeadSha !== currentHeadSha;
-    const currentHeadBecameHeadAt = headChanged ? now : (persisted.currentHeadBecameHeadAt ?? 0);
+    const isFirstCheck = persisted.currentHeadSha === undefined;
+    const currentHeadBecameHeadAt = headChanged ? now : (persisted.currentHeadBecameHeadAt ?? now);
     const checkStartedAt = persisted.checkStartedAt ?? now;
 
-    // Fetch reactions (PRs are issues for reaction API)
-    const reactions = (await fetchGitHubJson(
-      `https://api.github.com/repos/${prInfo.owner}/${prInfo.repo}/issues/${prInfo.number}/reactions?per_page=100`,
-      token
-    )) as GitHubReaction[];
-
+    // Fetch all reactions (PRs are issues for reaction API)
+    const reactions = await fetchAllReactions(prInfo, token);
     const codexReactions = reactions.filter((r) => CODEX_BOTS.has(r.user?.login));
 
-    // Fresh = created at or after the current head became head
-    const freshReactions = codexReactions.filter(
-      (r) => toEpochMs(r.created_at) >= currentHeadBecameHeadAt
-    );
+    // On first check, accept any reaction on the current head as fresh.
+    // On subsequent checks, only reactions posted after we first observed this head count.
+    const freshReactions = isFirstCheck
+      ? codexReactions
+      : codexReactions.filter((r) => toEpochMs(r.created_at) >= currentHeadBecameHeadAt);
 
     const freshPlusOnes = freshReactions.filter((r) => r.content === '+1');
     const freshEyes = freshReactions.filter((r) => r.content === 'eyes');
 
-    // Stale = exists but predates current head
-    const stalePlusOnes = codexReactions.filter(
-      (r) => r.content === '+1' && toEpochMs(r.created_at) < currentHeadBecameHeadAt
-    );
+    const stalePlusOnes = isFirstCheck
+      ? []
+      : codexReactions.filter(
+          (r) => r.content === '+1' && toEpochMs(r.created_at) < currentHeadBecameHeadAt
+        );
 
     // Determine the latest observed reaction (fresh or stale) for UX state
     const allSorted = [...codexReactions].sort(
@@ -236,8 +271,9 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       if (latest.content === 'eyes') {
         lastReaction = 'eyes';
       } else if (latest.content === '+1') {
-        lastReaction =
-          toEpochMs(latest.created_at) >= currentHeadBecameHeadAt
+        lastReaction = isFirstCheck
+          ? 'current_plus_one'
+          : toEpochMs(latest.created_at) >= currentHeadBecameHeadAt
             ? 'current_plus_one'
             : 'stale_plus_one';
       }
@@ -247,7 +283,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     // Timeout check
     if (elapsedMs >= CODEX_TIMEOUT_MS) {
-      const result: WorkflowHookResult = {
+      return {
         type: 'block',
         reason: `Codex review did not pass: timeout after ${Math.round(elapsedMs / 1000)}s on head ${currentHeadSha}`,
         data: {
@@ -258,12 +294,11 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           terminalOutcome: 'block',
         },
       };
-      return result;
     }
 
     // Fresh +1 → allow
     if (freshPlusOnes.length > 0) {
-      const result: WorkflowHookResult = {
+      return {
         type: 'allow',
         data: {
           currentHeadSha,
@@ -273,7 +308,6 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
           terminalOutcome: 'allow',
         },
       };
-      return result;
     }
 
     // Eyes or stale +1 → retryable

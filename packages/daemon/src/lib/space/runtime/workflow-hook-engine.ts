@@ -660,7 +660,7 @@ export class WorkflowHookEngine {
     }
 
     const permittedExternalLookups: string[] =
-      hook.validator.kind === 'script' ? (hook.validator.externalLookups ?? []) : [];
+      'externalLookups' in hook.validator ? (hook.validator.externalLookups ?? []) : [];
 
     // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
     const mappedArtifacts: Array<{
