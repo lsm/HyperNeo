@@ -75,6 +75,25 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
     }
   >();
 
+  function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function deepMerge(
+    base: Record<string, unknown>,
+    patch: Record<string, unknown>
+  ): Record<string, unknown> {
+    const next: Record<string, unknown> = { ...base };
+    for (const [key, value] of Object.entries(patch)) {
+      if (isPlainRecord(value) && isPlainRecord(next[key])) {
+        next[key] = deepMerge(next[key] as Record<string, unknown>, value);
+      } else {
+        next[key] = value;
+      }
+    }
+    return next;
+  }
+
   return {
     get: (runId: string, hookId: string) => {
       const key = `${runId}:${hookId}`;
@@ -135,7 +154,7 @@ function makeMockHookStateRepo(): WorkflowHookStateRepository {
       if (!s || s.version !== patch.expectedVersion) return null;
       s.version += 1;
       if (patch.localState) {
-        s.localState = { ...s.localState, ...patch.localState };
+        s.localState = deepMerge(s.localState, patch.localState);
       }
       if (patch.lastResult !== undefined) {
         s.lastResult = patch.lastResult;
@@ -440,6 +459,78 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.stateUpdates[0].hookId).toBe('hook-1');
     expect(outcome.stateUpdates[0].state).toEqual({ count: 1 });
     expect(outcome.userState.status).toBe('state_recorded');
+  });
+
+  test('concurrent vote deep-merge round-trip: two blocks with partial votes accumulate', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'vote-hook',
+          classification: 'validation',
+          validator: { kind: 'built_in', id: 'review_approval' },
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    // Simulate the built-in validator returning block with partial votes.
+    // First call: architecture reviewer votes.
+    mockExecutor.setResult('vote-hook', {
+      type: 'block',
+      reason: 'Waiting for approvals (1/4)',
+      state: { approvals: { architecture: 'approved' } },
+    });
+
+    const outcome1 = await engine.executeAction(
+      'send_message',
+      { target: 'Task Dispatcher', message: 'arch approved' },
+      { ...defaultMeta, agentName: 'architecture-reviewer' }
+    );
+
+    expect(outcome1.decision).toBe('block');
+    expect(outcome1.stateUpdates).toHaveLength(1);
+    expect(outcome1.stateUpdates[0].state).toEqual({
+      approvals: { architecture: 'approved' },
+    });
+
+    // Persist the first vote via wrapHandlerWithHooks logic.
+    const ok1 = engine.persistStateUpdate('vote-hook', outcome1.stateUpdates[0].state);
+    expect(ok1).toBe(true);
+
+    // Second call: security reviewer votes while architecture vote is already in state.
+    mockExecutor.setResult('vote-hook', {
+      type: 'block',
+      reason: 'Waiting for approvals (2/4)',
+      state: { approvals: { security: 'approved' } },
+    });
+
+    const outcome2 = await engine.executeAction(
+      'send_message',
+      { target: 'Task Dispatcher', message: 'sec approved' },
+      { ...defaultMeta, agentName: 'security-reviewer' }
+    );
+
+    expect(outcome2.decision).toBe('block');
+    expect(outcome2.stateUpdates).toHaveLength(1);
+
+    // The mock repo now deep-merges, so both votes should coexist.
+    const ok2 = engine.persistStateUpdate('vote-hook', outcome2.stateUpdates[0].state);
+    expect(ok2).toBe(true);
+
+    const finalState = hookStateRepo.get('run-1', 'vote-hook');
+    expect(finalState?.localState.approvals).toEqual({
+      architecture: 'approved',
+      security: 'approved',
+    });
   });
 
   test('side_effect patch_params is ignored', async () => {

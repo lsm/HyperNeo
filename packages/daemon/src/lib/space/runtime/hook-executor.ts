@@ -40,6 +40,7 @@ export interface HookExecutorContext {
   nodeName: string;
   sessionId: string;
   taskId: string;
+  agentName: string;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
   currentArtifacts: Record<string, unknown>[];

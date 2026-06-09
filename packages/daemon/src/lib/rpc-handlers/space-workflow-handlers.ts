@@ -124,6 +124,7 @@ function buildTemplateUpdateParams(
     ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
     : null;
   const newGates = template.gates ? [...template.gates] : null;
+  const newHooks = template.hooks ? [...template.hooks] : null;
   const templateHash = computeWorkflowHash(template);
 
   return {
@@ -135,6 +136,7 @@ function buildTemplateUpdateParams(
     endNodeId: newEndNodeId ?? null,
     channels: newChannels,
     gates: newGates,
+    hooks: newHooks,
     tags: [...template.tags],
     completionAutonomyLevel: template.completionAutonomyLevel,
     templateName: template.name,

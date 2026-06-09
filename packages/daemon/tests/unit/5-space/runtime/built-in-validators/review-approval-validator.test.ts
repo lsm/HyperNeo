@@ -86,7 +86,7 @@ describe('reviewApprovalValidator', () => {
     expect(result.type).toBe('block');
     expect((result as { reason: string }).reason).toContain('rejected');
     expect((result as { state?: Record<string, unknown> }).state).toEqual({
-      approvals: {},
+      approvals: null,
     });
   });
 
@@ -172,13 +172,23 @@ describe('reviewApprovalValidator', () => {
   });
 
   test('allows immediately when codex already approved', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async () =>
+      ({
+        ok: true,
+        json: async () => [{ user: { login: 'codex[bot]' }, content: '+1' }],
+      }) as Response;
+
     const ctx = makeCtx({
-      params: { data: { approved: true } },
-      hookLocalState: { approvals: { _codex_status: 'approved' } },
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
       templateData: { threshold: 1, requireCodex: true },
     });
 
     const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
     expect((result as { message?: string }).message).toContain('codex approval');

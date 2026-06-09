@@ -154,17 +154,20 @@ export class WorkflowHookEngine {
     state: Record<string, unknown>,
     lastResult?: WorkflowHookResult
   ): boolean {
-    try {
-      const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
-      const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
-        expectedVersion: repoState?.version ?? 0,
-        localState: state,
-        lastResult,
-      });
-      return result !== null;
-    } catch {
-      return false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const repoState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
+        const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+          expectedVersion: repoState?.version ?? 0,
+          localState: state,
+          lastResult,
+        });
+        if (result !== null) return true;
+      } catch {
+        // retry on version conflict or error
+      }
     }
+    return false;
   }
 
   /**
@@ -704,6 +707,7 @@ export class WorkflowHookEngine {
       nodeName,
       sessionId: meta.sessionId,
       taskId: meta.taskId,
+      agentName: meta.agentName,
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
       currentArtifacts: mappedArtifacts,

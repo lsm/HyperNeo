@@ -34,7 +34,8 @@ function getTemplateData(ctx: HookExecutorContext): ReviewApprovalTemplateData {
 
 function extractIncomingVotes(
   data: Record<string, unknown> | undefined,
-  voteKey: string
+  voteKey: string,
+  agentName: string
 ): Record<string, unknown> | undefined {
   if (!data) return undefined;
 
@@ -45,8 +46,9 @@ function extractIncomingVotes(
   }
 
   // Boolean-style vote: { approved: true }
+  // Use agentName as key so multiple reviewers don't collide.
   if (data.approved === true) {
-    return { _approved: 'approved' };
+    return { [agentName]: 'approved' };
   }
 
   return undefined;
@@ -60,6 +62,61 @@ function hasRejection(votes: Record<string, unknown>): boolean {
   return Object.values(votes).some(
     (v) => v === 'rejected' || v === 'reject' || v === 'denied' || v === 'deny'
   );
+}
+
+function getVotes(state: Record<string, unknown>, voteKey: string): Record<string, unknown> {
+  const raw = state[voteKey];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return {};
+}
+
+function parsePrUrl(url: string): { owner: string; repo: string; number: number } | null {
+  const m = url.match(/https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2], number: Number(m[3]) };
+}
+
+/**
+ * Check GitHub for a codex[bot] +1 reaction on the PR.
+ * Returns 'approved' if found, 'waiting' if not, 'error' on failure.
+ */
+async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting' | 'error'> {
+  const parsed = parsePrUrl(prUrl);
+  if (!parsed) return 'error';
+
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!token) return 'error';
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}/reactions?per_page=100`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    );
+    if (!res.ok) return 'error';
+
+    const reactions = (await res.json()) as Array<{
+      user?: { login?: string };
+      content?: string;
+    }>;
+
+    const approved = reactions.some(
+      (r) =>
+        (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
+        r.content === '+1'
+    );
+
+    return approved ? 'approved' : 'waiting';
+  } catch {
+    return 'error';
+  }
 }
 
 /**
@@ -78,8 +135,8 @@ export async function reviewApprovalValidator(
   const state = ctx.hookLocalState;
 
   // Merge incoming votes into existing state
-  const currentVotes = (state[voteKey] as Record<string, unknown> | undefined) ?? {};
-  const incoming = extractIncomingVotes(data, voteKey);
+  const currentVotes = getVotes(state, voteKey);
+  const incoming = extractIncomingVotes(data, voteKey, ctx.agentName);
 
   let mergedVotes = { ...currentVotes };
   if (incoming) {
@@ -88,12 +145,12 @@ export async function reviewApprovalValidator(
     }
   }
 
-  // Handle rejection reset
+  // Handle rejection reset — use null so deepMerge overwrites instead of merging
   if (resetOnRejection && hasRejection(mergedVotes)) {
     return {
       type: 'block',
       reason: 'Approval rejected. Resetting vote state and requesting revision.',
-      state: { [voteKey]: {} },
+      state: { [voteKey]: null },
     };
   }
 
@@ -111,17 +168,33 @@ export async function reviewApprovalValidator(
 
   // Threshold met → check codex if required
   if (template.requireCodex) {
-    const codexKey = '_codex_status';
-    const codexStatus = mergedVotes[codexKey];
+    const prUrl =
+      typeof data?.pr_url === 'string'
+        ? data.pr_url
+        : typeof state._pr_url === 'string'
+          ? (state._pr_url as string)
+          : undefined;
 
-    if (codexStatus === 'approved') {
-      return {
-        type: 'allow',
-        message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
-      };
+    if (prUrl) {
+      const codexResult = await checkCodexApproval(prUrl);
+      if (codexResult === 'approved') {
+        return {
+          type: 'allow',
+          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
+        };
+      }
+      if (codexResult === 'error') {
+        // Fail closed on GitHub error — retryable so the agent can retry
+        return {
+          type: 'retryable_block',
+          reason: 'Threshold met. Unable to verify codex[bot] status (GitHub API error). Retrying.',
+          retryAfterMs: 60_000,
+          state: nextState,
+        };
+      }
     }
 
-    // Codex not yet approved → retryable block
+    // Codex not yet approved → retryable block with timeout
     const timeoutMs =
       typeof template.codexTimeoutMs === 'number' ? template.codexTimeoutMs : 600_000;
     const codexStartedAt = state._codex_started_at as number | undefined;
@@ -133,7 +206,7 @@ export async function reviewApprovalValidator(
         type: 'retryable_block',
         reason: 'Threshold met. Waiting for codex[bot] approval.',
         retryAfterMs: 60_000,
-        state: { ...nextState, _codex_started_at: now },
+        state: { ...nextState, _codex_started_at: now, _pr_url: prUrl },
       };
     }
 

@@ -86,6 +86,16 @@ describe('reviewPostedValidator', () => {
     expect((result as { message?: string }).message).toContain('message_data');
   });
 
+  test('blocks when review_url is not a valid GitHub PR URL', async () => {
+    const ctx = makeCtx({
+      params: { data: { review_url: 'https://example.com/anything' } },
+    });
+    const result = await reviewPostedValidator(ctx);
+
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('No review evidence');
+  });
+
   test('blocks when artifact has no review_url', async () => {
     const ctx = makeCtx({
       currentArtifacts: [

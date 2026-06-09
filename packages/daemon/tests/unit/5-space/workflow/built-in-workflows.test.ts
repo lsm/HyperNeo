@@ -935,10 +935,10 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
     expect(ids).toContain('plan-pr-gate');
   });
 
-  test('has one hook: plan-approval-hook on send_message from Plan Review to Task Dispatcher', () => {
+  test('has two hooks: plan-approval-hook and plan-approval-reset-hook', () => {
     expect(PLAN_AND_DECOMPOSE_WORKFLOW.hooks).toBeDefined();
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.hooks).toHaveLength(1);
-    const hook = PLAN_AND_DECOMPOSE_WORKFLOW.hooks![0];
+    expect(PLAN_AND_DECOMPOSE_WORKFLOW.hooks).toHaveLength(2);
+    const hook = PLAN_AND_DECOMPOSE_WORKFLOW.hooks!.find((h) => h.id === 'plan-approval-hook')!;
     expect(hook.id).toBe('plan-approval-hook');
     expect(hook.sourceNode).toBe('Plan Review');
     expect(hook.targetNode).toBe('Task Dispatcher');
@@ -1514,13 +1514,13 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf.gates![0].id).toBe('plan-pr-gate');
   });
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 1 hook: plan-approval-hook', async () => {
+  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 2 hooks: plan-approval-hook + plan-approval-reset-hook', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
     expect(wf.hooks).toBeDefined();
-    expect(wf.hooks).toHaveLength(1);
+    expect(wf.hooks).toHaveLength(2);
     const hook = wf.hooks![0];
     expect(hook.id).toBe('plan-approval-hook');
     expect(hook.sourceNode).toBe('Plan Review');
@@ -3310,10 +3310,10 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     );
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW has one hook: review-approval-hook on send_message from Review to QA', () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW has three hooks: review-approval-hook + two reset hooks', () => {
     expect(FULLSTACK_QA_LOOP_WORKFLOW.hooks).toBeDefined();
-    expect(FULLSTACK_QA_LOOP_WORKFLOW.hooks).toHaveLength(1);
-    const hook = FULLSTACK_QA_LOOP_WORKFLOW.hooks![0];
+    expect(FULLSTACK_QA_LOOP_WORKFLOW.hooks).toHaveLength(3);
+    const hook = FULLSTACK_QA_LOOP_WORKFLOW.hooks!.find((h) => h.id === 'review-approval-hook')!;
     expect(hook.id).toBe('review-approval-hook');
     expect(hook.sourceNode).toBe('Review');
     expect(hook.targetNode).toBe('QA');

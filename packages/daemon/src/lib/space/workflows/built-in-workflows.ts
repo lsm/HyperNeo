@@ -1122,6 +1122,21 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
       ],
       label: 'Plan Approval',
     },
+    {
+      id: 'plan-approval-reset-hook',
+      enabled: true,
+      sourceNode: 'Plan Review',
+      targetNode: 'Planning',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source: 'echo \'{"type":"record_state","state":{"approvals":null}}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'Plan Review' }],
+      label: 'Plan Approval Reset',
+    },
   ],
 };
 
@@ -1313,6 +1328,38 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
       templateData: { threshold: 1, requireCodex: true, codexTimeoutMs: 600_000 },
       authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
       label: 'Review Approval',
+    },
+    {
+      id: 'review-approval-reset-hook',
+      enabled: true,
+      sourceNode: 'Review',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null}}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'Review' }],
+      label: 'Review Approval Reset',
+    },
+    {
+      id: 'qa-approval-reset-hook',
+      enabled: true,
+      sourceNode: 'QA',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'side_effect',
+      validator: {
+        kind: 'script',
+        interpreter: 'bash',
+        source:
+          'echo \'{"type":"record_state","state":{"approvals":null,"_codex_started_at":null}}\'',
+      },
+      authorizedCallers: [{ sourceNode: 'QA' }],
+      label: 'QA Approval Reset',
     },
   ],
 };
@@ -1874,7 +1921,6 @@ export function seedBuiltInWorkflows(
           mergedGates ?? row.gates ?? []
         );
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
-        const hasNewTemplateHooks = (mergedHooks?.length ?? 0) > (row.hooks?.length ?? 0);
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1882,10 +1928,9 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: mergedHooks ?? null,
           nodes: migratedNodes,
+          hooks: mergedHooks ?? null,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
-          ...(hasNewTemplateHooks ? { hooks: mergedHooks } : {}),
           templateHash: expectedHash,
         });
         restamped.push(template.name);
