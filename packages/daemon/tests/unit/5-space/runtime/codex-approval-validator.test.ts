@@ -154,6 +154,38 @@ describe('codexReviewApprovedValidator', () => {
     expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
   });
 
+  test('allow on pre-existing +1 on first invocation (no prior SHA)', async () => {
+    // Simulates Codex approving before the agent calls submit_for_approval.
+    // The +1 was posted in the past, but on first call we have no prior head
+    // SHA so it must be treated as fresh.
+    fetchMock = async (url) => {
+      if (url.includes('/pulls/42')) {
+        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
+      }
+      if (url.includes('/issues/42/reactions')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 1,
+              user: { login: 'codex[bot]' },
+              content: '+1',
+              created_at: '2026-01-01T00:00:00Z',
+            },
+          ]),
+          { status: 200 }
+        );
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    const ctx = makeContext({
+      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
+  });
+
   test('retryable_block on eyes reaction', async () => {
     fetchMock = async (url) => {
       if (url.includes('/pulls/42')) {
@@ -207,6 +239,11 @@ describe('codexReviewApprovedValidator', () => {
 
     const ctx = makeContext({
       currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      lastResult: {
+        type: 'retryable_block',
+        reason: 'Waiting',
+        data: { currentHeadSha: 'old-sha', checkStartedAt: Date.now() - 10_000 },
+      } as WorkflowHookResult,
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('retryable_block');

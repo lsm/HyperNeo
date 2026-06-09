@@ -55,6 +55,16 @@ export function validateGateFeatures(gate: Gate): string[] {
   return errors;
 }
 
+export function isApprovalGate(gate: Gate): boolean {
+  return (gate.fields ?? []).some((f) => {
+    const check = f.check as { op?: unknown; match?: unknown; value?: unknown } | undefined;
+    if (f.name === 'approved') return true;
+    if (f.type === 'boolean' && check?.op === '==' && check.value === true) return true;
+    if (f.type === 'map' && check?.op === 'count' && check.match === 'approved') return true;
+    return false;
+  });
+}
+
 /**
  * Returns true when the gate has a script or poll injected by a registered
  * gate feature.

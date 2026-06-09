@@ -196,8 +196,9 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     }
 
     const now = Date.now();
-    const headChanged = persisted.currentHeadSha !== currentHeadSha;
-    const currentHeadBecameHeadAt = headChanged ? now : (persisted.currentHeadBecameHeadAt ?? now);
+    const headChanged =
+      persisted.currentHeadSha !== undefined && persisted.currentHeadSha !== currentHeadSha;
+    const currentHeadBecameHeadAt = headChanged ? now : (persisted.currentHeadBecameHeadAt ?? 0);
     const checkStartedAt = persisted.checkStartedAt ?? now;
 
     // Fetch reactions (PRs are issues for reaction API)
