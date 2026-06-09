@@ -175,6 +175,28 @@ async function seedDemoTask(page: Page, spaceId: string): Promise<string | null>
   );
 }
 
+async function seedDemoForge(page: Page, spaceId: string): Promise<void> {
+  await page.evaluate(async (sid) => {
+    const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+    if (!hub?.request) throw new Error('MessageHub not available');
+    const scopeResult = (await hub.request('evolution.scope.create', {
+      params: {
+        spaceId: sid,
+        kind: 'custom',
+        name: 'Demo Forge scope',
+        objective: 'Dry-run seeding',
+      },
+    })) as { scope: { id: string } };
+    await hub.request('evolution.evidence.create', {
+      params: {
+        scopeId: scopeResult.scope.id,
+        kind: 'manual_note',
+        summary: 'Demo evidence seeded by the dry-run script.',
+      },
+    });
+  }, spaceId);
+}
+
 async function deleteDemoSession(page: Page, sessionId: string) {
   try {
     await page.evaluate(async (sid) => {
@@ -256,7 +278,16 @@ async function main() {
     'space-overview',
     async () => {
       if (!spaceId) throw new Error('no spaceId');
-      await page.goto(`/space/${spaceId}`);
+      // Drive the same UI path the operator uses: Spaces list → click dev-NeoKai.
+      await page.goto('/spaces');
+      await waitForWebSocketConnected(page);
+      await page.locator('[data-testid="space-switcher"]').waitFor({ state: 'visible' });
+      await page
+        .locator('[data-testid="space-switcher"]')
+        .getByText(DEMO_SPACE_NAME)
+        .first()
+        .click();
+      await page.waitForURL(/\/space\//);
       await waitForWebSocketConnected(page);
       await page.locator('[data-testid="space-overview-view"]').waitFor({ state: 'visible' });
       await screenshot(page, '01-space-overview');
@@ -270,6 +301,16 @@ async function main() {
       if (!spaceId) throw new Error('no spaceId');
       demoTaskId = await seedDemoTask(page, spaceId);
       console.log(`  taskId=${demoTaskId}`);
+    },
+    page
+  );
+
+  await safeStep(
+    'seed-forge',
+    async () => {
+      if (!spaceId) throw new Error('no spaceId');
+      await seedDemoForge(page, spaceId);
+      console.log('  forge seeded');
     },
     page
   );
@@ -322,7 +363,7 @@ async function main() {
     async () => {
       if (!spaceId) throw new Error('no spaceId');
       await page.goto(`/space/${spaceId}/forge`);
-      await page.locator('[data-testid="space-detail-forge"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="space-forge-view"]').waitFor({ state: 'visible' });
       await screenshot(page, '05-forge-view');
     },
     page
@@ -334,13 +375,45 @@ async function main() {
       if (!spaceId) throw new Error('no spaceId');
       // Drive the same UI path the operator uses: Sessions nav → Create session button.
       await page.goto(`/space/${spaceId}/sessions`);
+
+      // Capture pre-click session IDs so we can recover the created session even if
+      // navigation fails, avoiding orphaned sessions in the demo Space.
+      const preSessions = await page.evaluate(async (sid) => {
+        const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+        if (!hub?.request) return [] as string[];
+        const overview = (await hub.request('space.overview', { id: sid })) as {
+          sessions: string[];
+        };
+        return overview.sessions;
+      }, spaceId);
+
       await page.getByRole('button', { name: 'Create session' }).first().click();
-      await page.waitForURL(
-        new RegExp(`^${BASE_URL.replace(/\//g, '\\/')}\\/space\\/${spaceId}\\/session\\/.+`)
-      );
-      const sessionId = page.url().split('/session/')[1]?.split('?')[0];
-      if (!sessionId) throw new Error('Could not extract sessionId from URL');
-      createdSessionId = sessionId;
+
+      try {
+        await page.waitForURL(
+          new RegExp(`^${BASE_URL.replace(/\//g, '\\/')}\\/space\\/${spaceId}\\/session\\/.+`)
+        );
+        const sessionId = page.url().split('/session/')[1]?.split('?')[0];
+        if (sessionId) createdSessionId = sessionId;
+      } catch {
+        // Navigation failed; fall back to diffing sessions.
+      }
+
+      if (!createdSessionId) {
+        const postSessions = await page.evaluate(async (sid) => {
+          const hub = (window as any).__messageHub || (window as any).appState?.messageHub;
+          if (!hub?.request) return [] as string[];
+          const overview = (await hub.request('space.overview', { id: sid })) as {
+            sessions: string[];
+          };
+          return overview.sessions;
+        }, spaceId);
+        const newSession = postSessions.find((id) => !preSessions.includes(id));
+        if (newSession) createdSessionId = newSession;
+      }
+
+      if (!createdSessionId) throw new Error('Could not determine created session id');
+
       await page
         .locator('textarea[placeholder="Ask or make anything..."]')
         .first()
