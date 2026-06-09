@@ -44,6 +44,8 @@ export interface HookExecutorContext {
   permittedExternalLookups: string[];
   /** Optional bounded template data from the hook definition. */
   templateData?: Record<string, unknown>;
+  /** Optional ISO8601 timestamp of workflowRun.createdAt for time-window checks. */
+  workflowStartIso?: string;
 }
 
 /** Result of executing a single hook validator. */
@@ -187,6 +189,10 @@ function buildHookRestrictedEnv(
   env['NEOKAI_NODE_NAME'] = context.nodeName;
   env['NEOKAI_SESSION_ID'] = context.sessionId;
   env['NEOKAI_TASK_ID'] = context.taskId;
+
+  if (context.workflowStartIso) {
+    env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
+  }
 
   if (context.targetNode) {
     env['NEOKAI_TARGET_NODE'] = context.targetNode;

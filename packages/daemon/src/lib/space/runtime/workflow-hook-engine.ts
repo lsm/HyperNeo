@@ -25,6 +25,7 @@ import type {
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
 import { Logger } from '../../logger';
@@ -90,6 +91,7 @@ export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
   nodeExecutionRepo: NodeExecutionRepository;
+  workflowRunRepo?: SpaceWorkflowRunRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
@@ -688,6 +690,9 @@ export class WorkflowHookEngine {
       mappedArtifacts.push(item);
     }
 
+    const run = this.config.workflowRunRepo?.getRun(this.config.workflowRunId);
+    const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
+
     return {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
@@ -703,6 +708,7 @@ export class WorkflowHookEngine {
       currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,
+      workflowStartIso,
     };
   }
 

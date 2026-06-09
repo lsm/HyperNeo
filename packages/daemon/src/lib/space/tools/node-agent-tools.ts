@@ -853,6 +853,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
           const gatedChannel = (workflow.channels ?? []).find((ch) => {
             if (!ch.gateId) return false;
+            // Skip hook-managed channels — hooks validate at MCP action time;
+            // no legacy gate data write or evaluation is performed.
+            if (ch.hookIds && ch.hookIds.length > 0) return false;
             if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
             const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
             const candidateTargets = uniqueTargetRefs([

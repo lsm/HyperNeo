@@ -516,7 +516,9 @@ export class ChannelRouter {
       return { allowed: true };
     }
     const { channel, index } = match;
+    this.validateChannelExclusivity(channel);
     const gateSourceName = this.getChannelSourceName(workflow, channel, fromRole);
+    const hookManaged = this.isHookManagedChannel(channel);
 
     const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
 
@@ -532,12 +534,15 @@ export class ChannelRouter {
     }
 
     // ── Gate condition evaluation ────────────────────────────────────────
+    // Hook-managed channels skip legacy gate evaluation; the hook engine
+    // validates the MCP action as the single authorization decision.
+    //
     // Cache optimization: skip re-evaluation when the gate was previously
     // opened (by a prior deliverMessage or onGateDataChanged), unless cyclic
     // with `resetOnCycle`. canDeliver does NOT write to the cache — it is a
     // non-mutating probe and must remain side-effect free so that a UI
     // readiness check cannot permanently cache a gate as open.
-    if (channel.gateId) {
+    if (channel.gateId && !hookManaged) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
         !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
@@ -644,11 +649,15 @@ export class ChannelRouter {
 
     const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
     const channel = match?.channel;
+    if (channel) {
+      this.validateChannelExclusivity(channel);
+    }
     const channelIndex = match?.index ?? -1;
     const gateSourceName = channel
       ? this.getChannelSourceName(workflow, channel, fromRole)
       : undefined;
     const channelIsCyclic = match ? this.isChannelCyclicByIndex(channelIndex, workflow) : false;
+    const hookManaged = channel ? this.isHookManagedChannel(channel) : false;
 
     // ── 2. Target resolution: agent name → DM, node name → fan-out ────────
     // Target resolution itself is non-mutating — only `activateNode` below
@@ -695,7 +704,9 @@ export class ChannelRouter {
     // re-evaluation on subsequent messages. Exception: cyclic channels
     // whose gate has `resetOnCycle: true` must always re-evaluate because
     // their gate data is reset on each cycle traversal.
-    if (channel?.gateId) {
+    // Hook-managed channels skip legacy gate evaluation entirely; the hook
+    // engine has already validated the MCP action before this method is called.
+    if (channel?.gateId && !hookManaged) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
         !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
@@ -742,9 +753,12 @@ export class ChannelRouter {
     // the common case without creating pending executions; this second
     // check is the correctness backstop.
     //
+    // Hook-managed channels skip this legacy gate re-check; the hook
+    // engine's validation is the single authorization decision.
+    //
     // Cache optimization: same as step 3 — skip re-evaluation when the gate
     // was previously opened, unless cyclic with `resetOnCycle`.
-    if (channel?.gateId) {
+    if (channel?.gateId && !hookManaged) {
       const skipEval =
         this.isGateCachedOpen(runId, channel.gateId, workflow) &&
         !this.mustReevaluateGate(channel.gateId, channelIsCyclic, workflow, gateSourceName);
@@ -810,16 +824,18 @@ export class ChannelRouter {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];
 
-    // Archive is the only tombstone. Done / cancelled runs are reopened
-    // below when the gate re-evaluation opens a channel requiring activation.
+    // Archive is the only tombstone.
     if (this.isParentTaskArchived(runId)) {
       this.evictRunCache(runId);
       return [];
     }
 
-    // Evict gate-open cache for terminal runs. Same rationale as deliverMessage.
+    // Terminal runs are not reopened by gate-data changes. Allowed
+    // reactivation paths are explicit cyclic send_message re-entry and
+    // manual human resume/retry only.
     if (run.status === 'done' || run.status === 'cancelled' || run.status === 'blocked') {
       this.evictRunCache(runId);
+      return [];
     }
 
     const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
@@ -827,8 +843,12 @@ export class ChannelRouter {
 
     if (!this.config.gateDataRepo) return [];
 
-    // Find all channels in this workflow that reference this gate
-    const channels = (workflow.channels ?? []).filter((ch) => ch.gateId === gateId);
+    // Find all channels in this workflow that reference this gate.
+    // Skip hook-managed channels — they are evaluated by the hook engine
+    // at MCP action time, not by gate data writes.
+    const channels = (workflow.channels ?? []).filter(
+      (ch) => ch.gateId === gateId && !this.isHookManagedChannel(ch)
+    );
     if (channels.length === 0) return [];
 
     // --- Auto-approval: pre-write approval data when the space's autonomy level meets or
@@ -929,9 +949,12 @@ export class ChannelRouter {
         }
         if (!targetNode) continue;
 
-        // Only activate if no active tasks for this node
-        const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
-        if (activeTasks.length === 0) {
+        // Only activate nodes that have never been activated. Completed node
+        // executions must not be reactivated via onGateDataChanged — allowed
+        // reactivation paths are explicit cyclic send_message re-entry and
+        // manual human resume/retry only.
+        const allExecutions = this.config.nodeExecutionRepo.listByNode(runId, targetNode.id);
+        if (allExecutions.length === 0) {
           nodeIdsToActivate.add(targetNode.id);
         }
       }
@@ -1418,6 +1441,28 @@ export class ChannelRouter {
       return false;
     });
     return index >= 0 ? { channel: channels[index], index } : undefined;
+  }
+
+  /**
+   * Returns true when a channel is managed by hooks instead of legacy gates.
+   * A channel is hook-managed when it has a non-empty `hookIds` array.
+   */
+  private isHookManagedChannel(channel: WorkflowChannel): boolean {
+    return Array.isArray(channel.hookIds) && channel.hookIds.length > 0;
+  }
+
+  /**
+   * Validates that a channel does not reference both legacy `gateId` and `hookIds`.
+   * If both appear in persisted JSON the runtime fails closed with a workflow
+   * validation error until the workflow is migrated.
+   */
+  private validateChannelExclusivity(channel: WorkflowChannel): void {
+    if (channel.gateId && this.isHookManagedChannel(channel)) {
+      throw new ActivationError(
+        `Channel "${channel.id ?? 'unknown'}" references both gateId "${channel.gateId}" and hookIds [${channel.hookIds!.join(', ')}]. ` +
+          `A channel may reference either legacy gateId or hookIds, never both. Migrate the workflow to resolve.`
+      );
+    }
   }
 
   /**

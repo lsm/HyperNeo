@@ -3836,6 +3836,7 @@ export class TaskAgentManager {
         workflow,
         workflowRunId,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
+        workflowRunRepo: this.config.workflowRunRepo,
         artifactRepo: this.config.artifactRepo,
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
         hookExecutor,
