@@ -1558,6 +1558,95 @@ describe('WorkflowHookEngine', () => {
     expect(outcome.executionLog).toHaveLength(1);
     expect(outcome.executionLog[0].hookId).toBe('review-gate');
   });
+
+  test('first-match channel semantics: specific channel governs over later wildcard', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'specific-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+      makeHook({
+        id: 'wildcard-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    // Specific channel first, then wildcard — router would use the specific one
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['specific-gate'] },
+      { id: 'ch-2', from: 'Coding', to: '*', hookIds: ['wildcard-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('specific-gate', { type: 'allow' });
+    // wildcard-gate is NOT set — if first-match fails, it would block
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    // Only specific-gate should run because the specific channel matches first
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('specific-gate');
+  });
+
+  test('first-match channel with no hookIds allows action without channel-bound hooks', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'workflow-hook',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    // Open channel first, then wildcard hook-managed — router uses the open one
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review' },
+      { id: 'ch-2', from: 'Coding', to: '*', hookIds: ['wildcard-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('workflow-hook', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    // workflow-hook runs because it's not channel-bound and matches on its own
+    // criteria. The wildcard channel's hookIds are ignored because the first
+    // matching channel (ch-1) has no hookIds.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('workflow-hook');
+  });
 });
 
 describe('wrapHandlerWithHooks', () => {

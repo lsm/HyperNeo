@@ -15,16 +15,18 @@
  *   - `record_state` persists hook-local state
  */
 
-import type {
-  WorkflowHook,
-  WorkflowHookResult,
-  WorkflowHookUserState,
-  SpaceWorkflow,
-  WorkflowRunArtifact,
+import {
+  resolveNodeAgents,
+  type WorkflowHook,
+  type WorkflowHookResult,
+  type WorkflowHookUserState,
+  type SpaceWorkflow,
+  type WorkflowRunArtifact,
 } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
@@ -98,8 +100,8 @@ export interface WorkflowHookEngineConfig {
   workspacePath?: string;
   /** Optional resolved PR URL for this workflow run (injected into hook script env). */
   prUrl?: string;
-  /** Optional JSON-serialized gate data for this run, keyed by gateId (injected into hook script env). */
-  gateDataJson?: string;
+  /** Optional gate data repository for building fresh NEOKAI_GATE_DATA_JSON per action. */
+  gateDataRepo?: GateDataRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -638,31 +640,52 @@ export class WorkflowHookEngine {
     }
 
     // For send_message, intersect resolved hooks with the hookIds declared on
-    // the matching workflow channels. If any matched channel has hookIds, only
-    // hooks in that set are authoritative for this action.
+    // the matching workflow channels. Use first-match semantics (same as
+    // ChannelRouter.findMatchingWorkflowChannel) for single-string targets so
+    // overlapping routes don't pull in unrelated hooks.
     const channelHookIds = new Set<string>();
     let hasChannelHookIds = false;
     let mixedGateHookChannel = false;
     if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
-      for (const ch of workflow?.channels ?? []) {
-        const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
-        if (!fromMatches) continue;
-        const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        const toMatches = toList.some(
-          (t) => t === '*' || actionTargets.has(t) || rawActionTargets.has(t)
-        );
-        if (!toMatches) continue;
+      const target = params.target;
+      const isSingleString = typeof target === 'string' && target.trim() !== '*';
 
-        // Reject mixed gate/hook channels before any hooks run
-        if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
-          mixedGateHookChannel = true;
-          break;
+      if (isSingleString) {
+        // First-match semantics: only the first matching channel governs delivery.
+        const firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, target.trim());
+        if (firstCh) {
+          if (firstCh.gateId && firstCh.hookIds && firstCh.hookIds.length > 0) {
+            mixedGateHookChannel = true;
+          } else if (firstCh.hookIds && firstCh.hookIds.length > 0) {
+            hasChannelHookIds = true;
+            for (const hid of firstCh.hookIds) {
+              channelHookIds.add(hid);
+            }
+          }
         }
+      } else {
+        // Broadcast (*) or array targets: multiple deliveries may use different
+        // channels, so collect hookIds from all matching channels (fail-closed).
+        for (const ch of workflow?.channels ?? []) {
+          const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
+          if (!fromMatches) continue;
+          const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+          const toMatches = toList.some(
+            (t) => t === '*' || actionTargets.has(t) || rawActionTargets.has(t)
+          );
+          if (!toMatches) continue;
 
-        if (ch.hookIds && ch.hookIds.length > 0) {
-          hasChannelHookIds = true;
-          for (const hid of ch.hookIds) {
-            channelHookIds.add(hid);
+          // Reject mixed gate/hook channels before any hooks run
+          if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+            mixedGateHookChannel = true;
+            break;
+          }
+
+          if (ch.hookIds && ch.hookIds.length > 0) {
+            hasChannelHookIds = true;
+            for (const hid of ch.hookIds) {
+              channelHookIds.add(hid);
+            }
           }
         }
       }
@@ -795,6 +818,22 @@ export class WorkflowHookEngine {
     const run = this.config.workflowRunRepo.getRun(this.config.workflowRunId);
     const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
 
+    // Build fresh gate data JSON per action so long-lived sessions don't
+    // validate against stale gate data or missing PR URLs.
+    let gateDataJson: string | undefined;
+    if (this.config.gateDataRepo) {
+      try {
+        const records = this.config.gateDataRepo.listByRun(this.config.workflowRunId);
+        const gateData: Record<string, unknown> = {};
+        for (const record of records) {
+          gateData[record.gateId] = record.data;
+        }
+        gateDataJson = JSON.stringify(gateData);
+      } catch {
+        // best effort — hook scripts that depend on gate data will fail closed
+      }
+    }
+
     return {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
@@ -812,7 +851,7 @@ export class WorkflowHookEngine {
       templateData: hook.templateData,
       workflowStartIso,
       prUrl: this.config.prUrl,
-      gateDataJson: this.config.gateDataJson,
+      gateDataJson,
     };
   }
 
@@ -1108,6 +1147,50 @@ export class WorkflowHookEngine {
     }
 
     return decoded;
+  }
+
+  /**
+   * Find the first matching workflow channel for a given fromRole → toTarget pair,
+   * using the same semantics as ChannelRouter.findMatchingWorkflowChannel.
+   *
+   * Returns undefined when no channel matches (open topology).
+   */
+  private findFirstMatchingChannel(
+    workflow: SpaceWorkflow | undefined,
+    fromRole: string,
+    toTarget: string
+  ): import('@neokai/shared').WorkflowChannel | undefined {
+    if (!workflow) return undefined;
+
+    const fromNodeName = workflow.nodes.find((n) => {
+      try {
+        return resolveNodeAgents(n).some((a) => a.name === fromRole);
+      } catch {
+        return false;
+      }
+    })?.name;
+
+    const toNodeName =
+      workflow.nodes.find((n) => {
+        try {
+          return resolveNodeAgents(n).some((a) => a.name === toTarget);
+        } catch {
+          return false;
+        }
+      })?.name ?? workflow.nodes.find((n) => n.name === toTarget)?.name;
+
+    for (const ch of workflow.channels ?? []) {
+      if (ch.from !== '*' && ch.from !== fromRole && ch.from !== fromNodeName) continue;
+      const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+      if (
+        toList.includes('*') ||
+        toList.includes(toTarget) ||
+        (toNodeName && toList.includes(toNodeName))
+      ) {
+        return ch;
+      }
+    }
+    return undefined;
   }
 
   private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

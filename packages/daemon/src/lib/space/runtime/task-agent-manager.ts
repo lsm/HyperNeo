@@ -3838,22 +3838,6 @@ export class TaskAgentManager {
     if (workflow && ((workflow.hooks && workflow.hooks.length > 0) || hasHookManagedChannels)) {
       const hookExecutor = new HookExecutor({ workspacePath });
 
-      // Build gate data JSON for hook script environments so converted gate
-      // scripts can read the same context they had in the legacy gate path.
-      let gateDataJson: string | undefined;
-      if (this.config.gateDataRepo) {
-        try {
-          const records = this.config.gateDataRepo.listByRun(workflowRunId);
-          const gateData: Record<string, unknown> = {};
-          for (const record of records) {
-            gateData[record.gateId] = record.data;
-          }
-          gateDataJson = JSON.stringify(gateData);
-        } catch {
-          // best effort — hook scripts that depend on gate data will fail closed
-        }
-      }
-
       hookEngine = new WorkflowHookEngine({
         workflow,
         workflowRunId,
@@ -3864,7 +3848,7 @@ export class TaskAgentManager {
         hookExecutor,
         workspacePath,
         prUrl: this.resolvePrUrlForRun(workflowRunId) || undefined,
-        gateDataJson,
+        gateDataRepo: this.config.gateDataRepo,
       });
     }
 
