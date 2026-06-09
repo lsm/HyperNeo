@@ -422,4 +422,63 @@ describe('reviewApprovalValidator', () => {
 
     expect(requestedUrl).toBe('https://github.enterprise.com/api/graphql');
   });
+
+  test('finds pr_url in gate data when not in message data or artifacts', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'abc123',
+                reactions: { nodes: [] },
+                comments: {
+                  nodes: [
+                    {
+                      reactions: {
+                        nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }],
+                      },
+                    },
+                  ],
+                },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true } },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://github.com/test/repo/pull/42' },
+          updatedAt: Date.now(),
+        },
+      ],
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('allow');
+    expect((result as { message?: string }).message).toContain('codex approval');
+  });
 });

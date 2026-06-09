@@ -3840,6 +3840,7 @@ export class TaskAgentManager {
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
         hookExecutor,
         workspacePath,
+        gateDataRepo: this.config.gateDataRepo,
       });
     }
 

@@ -47,6 +47,8 @@ export interface HookExecutorContext {
   permittedExternalLookups: string[];
   /** Optional bounded template data from the hook definition. */
   templateData?: Record<string, unknown>;
+  /** Current gate runtime data for this workflow run, when available. */
+  gateData?: Record<string, unknown>[];
 }
 
 /** Result of executing a single hook validator. */

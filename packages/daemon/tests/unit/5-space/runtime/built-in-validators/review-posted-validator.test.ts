@@ -133,4 +133,46 @@ describe('reviewPostedValidator', () => {
 
     expect(result.type).toBe('allow');
   });
+
+  test('rejects stale review artifact when newer non-review work exists', async () => {
+    const now = Date.now();
+    const ctx = makeCtx({
+      currentArtifacts: [
+        {
+          id: 'a2',
+          nodeId: 'node-coding',
+          type: 'result',
+          key: 'revision-2',
+          data: { pr_url: 'https://github.com/test/repo/pull/1' },
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'a1',
+          nodeId: 'node-review',
+          type: 'review',
+          key: 'cycle-0',
+          data: { review_url: 'https://github.com/test/repo/pull/1#discussion_r1' },
+          createdAt: now - 10_000,
+          updatedAt: now - 10_000,
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('No review evidence');
+  });
+
+  test('accepts enterprise GitHub host for review URL', async () => {
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://github.enterprise.com/org/repo/pull/42#discussion_r1' },
+      },
+    });
+    const result = await reviewPostedValidator(ctx);
+
+    expect(result.type).toBe('allow');
+    expect((result as { message?: string }).message).toContain('message_data');
+  });
 });

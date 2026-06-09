@@ -26,6 +26,10 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
+import type {
+  GateDataRepository,
+  GateDataRecord,
+} from '../../../storage/repositories/gate-data-repository';
 import { ChannelResolver } from './channel-resolver';
 import { Logger } from '../../logger';
 import { parseAddress } from '../../../../../messaging/src/address';
@@ -94,6 +98,8 @@ export interface WorkflowHookEngineConfig {
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
   workspacePath?: string;
+  /** Optional gate data repository for exposing runtime gate data to hook validators. */
+  gateDataRepo?: GateDataRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -702,6 +708,21 @@ export class WorkflowHookEngine {
       mappedArtifacts.push(item);
     }
 
+    // Load current gate data when available
+    let gateData: Record<string, unknown>[] | undefined;
+    try {
+      const records = this.config.gateDataRepo?.listByRun(this.config.workflowRunId);
+      if (records) {
+        gateData = records.map((r: GateDataRecord) => ({
+          gateId: r.gateId,
+          data: r.data,
+          updatedAt: r.updatedAt,
+        }));
+      }
+    } catch {
+      // best effort
+    }
+
     return {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
@@ -718,6 +739,7 @@ export class WorkflowHookEngine {
       currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,
+      gateData,
     };
   }
 

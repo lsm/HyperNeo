@@ -82,6 +82,11 @@ function findPrUrl(ctx: HookExecutorContext): string | undefined {
     if (typeof artifactData?.pr_url === 'string') return artifactData.pr_url;
   }
 
+  for (const gate of ctx.gateData ?? []) {
+    const gateData = gate.data as Record<string, unknown> | undefined;
+    if (typeof gateData?.pr_url === 'string') return gateData.pr_url;
+  }
+
   return undefined;
 }
 
