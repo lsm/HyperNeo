@@ -85,10 +85,12 @@ function findPrUrl(ctx: HookExecutorContext): string | undefined {
   return undefined;
 }
 
-function parsePrUrl(url: string): { owner: string; repo: string; number: number } | null {
-  const m = url.match(/https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+function parsePrUrl(
+  url: string
+): { owner: string; repo: string; number: number; host: string } | null {
+  const m = url.match(/https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (!m) return null;
-  return { owner: m[1], repo: m[2], number: Number(m[3]) };
+  return { host: m[1], owner: m[2], repo: m[3], number: Number(m[4]) };
 }
 
 /**
@@ -96,25 +98,34 @@ function parsePrUrl(url: string): { owner: string; repo: string; number: number 
  * or review comments. Uses the GraphQL API to query all reaction locations
  * in a single request.
  *
- * Returns 'approved' if found, 'waiting' if not, 'error' on failure.
+ * Returns status 'approved' if found, 'waiting' if not, 'error' on failure,
+ * plus the current PR head SHA when available.
  */
-async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting' | 'error'> {
+async function checkCodexApproval(
+  prUrl: string
+): Promise<{ status: 'approved' | 'waiting' | 'error'; headSha?: string }> {
   const parsed = parsePrUrl(prUrl);
-  if (!parsed) return 'error';
+  if (!parsed) return { status: 'error' };
 
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-  if (!token) return 'error';
+  if (!token) return { status: 'error' };
+
+  const endpoint =
+    parsed.host === 'github.com'
+      ? 'https://api.github.com/graphql'
+      : `https://${parsed.host}/api/graphql`;
 
   const query = `
     query($owner:String!,$name:String!,$number:Int!) {
       repository(owner:$owner,name:$name) {
         pullRequest(number:$number) {
-          reactions(first:10) {
+          headRefOid
+          reactions(first:100) {
             nodes { content user { login } }
           }
           comments(first:100) {
             nodes {
-              reactions(first:10) {
+              reactions(first:100) {
                 nodes { content user { login } }
               }
             }
@@ -123,7 +134,7 @@ async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting'
             nodes {
               comments(first:100) {
                 nodes {
-                  reactions(first:10) {
+                  reactions(first:100) {
                     nodes { content user { login } }
                   }
                 }
@@ -139,7 +150,7 @@ async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting'
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    const res = await fetch('https://api.github.com/graphql', {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -153,12 +164,13 @@ async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting'
     });
     clearTimeout(timeout);
 
-    if (!res.ok) return 'error';
+    if (!res.ok) return { status: 'error' };
 
     const json = (await res.json()) as {
       data?: {
         repository?: {
           pullRequest?: {
+            headRefOid?: string;
             reactions?: {
               nodes?: Array<{ content?: string; user?: { login?: string } }>;
             };
@@ -186,33 +198,35 @@ async function checkCodexApproval(prUrl: string): Promise<'approved' | 'waiting'
       errors?: unknown[];
     };
 
-    if (json.errors) return 'error';
+    if (json.errors) return { status: 'error' };
 
     const pr = json.data?.repository?.pullRequest;
-    if (!pr) return 'error';
+    if (!pr) return { status: 'error' };
+
+    const headSha = pr.headRefOid;
 
     const isCodexPlusOne = (r: { content?: string; user?: { login?: string } }): boolean =>
       (r.user?.login === 'codex[bot]' || r.user?.login === 'chatgpt-codex-connector[bot]') &&
       r.content === 'THUMBS_UP';
 
     // PR body reactions
-    if (pr.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
+    if (pr.reactions?.nodes?.some(isCodexPlusOne)) return { status: 'approved', headSha };
 
     // Issue comments
     for (const comment of pr.comments?.nodes ?? []) {
-      if (comment.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
+      if (comment.reactions?.nodes?.some(isCodexPlusOne)) return { status: 'approved', headSha };
     }
 
     // Review comments
     for (const thread of pr.reviewThreads?.nodes ?? []) {
       for (const comment of thread.comments?.nodes ?? []) {
-        if (comment.reactions?.nodes?.some(isCodexPlusOne)) return 'approved';
+        if (comment.reactions?.nodes?.some(isCodexPlusOne)) return { status: 'approved', headSha };
       }
     }
 
-    return 'waiting';
+    return { status: 'waiting', headSha };
   } catch {
-    return 'error';
+    return { status: 'error' };
   } finally {
     clearTimeout(timeout);
   }
@@ -271,9 +285,57 @@ export async function reviewApprovalValidator(
     const timeoutMs =
       typeof template.codexTimeoutMs === 'number' ? template.codexTimeoutMs : 600_000;
     const codexStartedAt = state._codex_started_at as number | undefined;
+    const storedHeadSha = state._codex_head_sha as string | undefined;
     const now = Date.now();
 
-    // Timeout already elapsed — allow regardless of API state
+    if (prUrl) {
+      const codexResult = await checkCodexApproval(prUrl);
+
+      // New revision pushed — reset codex timer so stale approvals don't release
+      if (codexResult.headSha && storedHeadSha && storedHeadSha !== codexResult.headSha) {
+        return {
+          type: 'retryable_block',
+          reason: 'New PR revision detected. Resetting codex timer.',
+          retryAfterMs: 60_000,
+          state: {
+            ...nextState,
+            _codex_started_at: now,
+            _codex_head_sha: codexResult.headSha,
+            _pr_url: prUrl,
+          },
+        };
+      }
+
+      // Timeout already elapsed — allow regardless of API state
+      if (codexStartedAt !== undefined && now - codexStartedAt > timeoutMs) {
+        return {
+          type: 'allow',
+          message: `Threshold met (${approvalCount}/${threshold}). Codex approval timed out after ${timeoutMs}ms; allowing.`,
+        };
+      }
+
+      if (codexResult.status === 'approved') {
+        return {
+          type: 'allow',
+          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
+        };
+      }
+
+      // Not yet approved (or API error). Start or continue timeout.
+      return {
+        type: 'retryable_block',
+        reason: 'Threshold met. Waiting for codex[bot] approval.',
+        retryAfterMs: 60_000,
+        state: {
+          ...nextState,
+          _codex_started_at: codexStartedAt ?? now,
+          _codex_head_sha: codexResult.headSha ?? storedHeadSha,
+          _pr_url: prUrl,
+        },
+      };
+    }
+
+    // No PR URL available — rely on timeout only
     if (codexStartedAt !== undefined && now - codexStartedAt > timeoutMs) {
       return {
         type: 'allow',
@@ -281,17 +343,6 @@ export async function reviewApprovalValidator(
       };
     }
 
-    if (prUrl) {
-      const codexResult = await checkCodexApproval(prUrl);
-      if (codexResult === 'approved') {
-        return {
-          type: 'allow',
-          message: `Threshold met (${approvalCount}/${threshold}) with codex approval.`,
-        };
-      }
-    }
-
-    // Not yet approved (or API error / no prUrl). Start or continue timeout.
     return {
       type: 'retryable_block',
       reason: 'Threshold met. Waiting for codex[bot] approval.',

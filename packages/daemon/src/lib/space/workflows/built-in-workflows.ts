@@ -1113,6 +1113,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
         voteKey: 'approvals',
         voteMatch: 'approved',
         resetOnRejection: true,
+        requireCodex: true,
       },
       authorizedCallers: [
         { sourceNode: 'Plan Review', agentSlots: ['architecture-reviewer'] },

@@ -191,6 +191,7 @@ describe('reviewApprovalValidator', () => {
           data: {
             repository: {
               pullRequest: {
+                headRefOid: 'abc123',
                 reactions: { nodes: [] },
                 comments: {
                   nodes: [
@@ -242,6 +243,7 @@ describe('reviewApprovalValidator', () => {
           data: {
             repository: {
               pullRequest: {
+                headRefOid: 'abc123',
                 reactions: { nodes: [] },
                 comments: {
                   nodes: [
@@ -321,5 +323,103 @@ describe('reviewApprovalValidator', () => {
     expect((result as { state?: Record<string, unknown> }).state).toEqual({
       approvals: { a: 'approved' },
     });
+  });
+
+  test('resets codex timer when PR head SHA changes', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'new-sha-456',
+                reactions: { nodes: [{ user: { login: 'codex[bot]' }, content: 'THUMBS_UP' }] },
+                comments: { nodes: [] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: { data: { approved: true, pr_url: 'https://github.com/test/repo/pull/42' } },
+      hookLocalState: {
+        _codex_started_at: Date.now() - 10_000,
+        _codex_head_sha: 'old-sha-123',
+      },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    const result = await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(result.type).toBe('retryable_block');
+    const state = (result as { state?: Record<string, unknown> }).state;
+    expect(state?._codex_head_sha).toBe('new-sha-456');
+    expect(state?._codex_started_at).toBeTypeOf('number');
+    expect((result as { reason: string }).reason).toContain('New PR revision');
+  });
+
+  test('uses enterprise GraphQL endpoint for non-github.com hosts', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let requestedUrl = '';
+    globalThis.fetch = async (url, init) => {
+      requestedUrl = url as string;
+      const body = JSON.parse((init as { body: string }).body);
+      const query = body.query as string;
+      const isGraphQL = query.includes('repository(owner:$owner,name:$name)');
+      if (!isGraphQL) {
+        return {
+          ok: true,
+          json: async () => ({ data: { repository: null } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: 'ent-sha-789',
+                reactions: { nodes: [] },
+                comments: { nodes: [] },
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { approved: true, pr_url: 'https://github.enterprise.com/org/repo/pull/42' },
+      },
+      templateData: { threshold: 1, requireCodex: true },
+    });
+
+    await reviewApprovalValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(requestedUrl).toBe('https://github.enterprise.com/api/graphql');
   });
 });
