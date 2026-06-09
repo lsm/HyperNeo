@@ -182,7 +182,24 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const hooks = this.resolveMatchingHooks(methodName, params, meta);
+    const { hooks, missingChannelHooks } = this.resolveMatchingHooks(methodName, params, meta);
+
+    // Fail closed when a hook-managed channel declares hookIds but no matching
+    // hooks resolve (disabled, missing, or misconfigured).
+    if (missingChannelHooks) {
+      return {
+        decision: 'block',
+        finalParams: params,
+        followUpRequests: [],
+        stateUpdates: [],
+        userState: {
+          status: 'blocked_by_hook',
+          reason:
+            'Channel declares hookIds but no matching hooks were found. Action blocked (fail closed).',
+        },
+        executionLog: [],
+      };
+    }
 
     if (hooks.length === 0) {
       return {
@@ -481,9 +498,9 @@ export class WorkflowHookEngine {
     methodName: string,
     params: Record<string, unknown>,
     meta: HookActionMeta
-  ): WorkflowHook[] {
+  ): { hooks: WorkflowHook[]; missingChannelHooks: boolean } {
     const workflow = this.config.workflow;
-    if (!workflow?.hooks) return [];
+    if (!workflow?.hooks) return { hooks: [], missingChannelHooks: false };
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
@@ -576,7 +593,28 @@ export class WorkflowHookEngine {
       }
     }
 
-    return workflow.hooks.filter((hook) => {
+    // For send_message, intersect resolved hooks with the hookIds declared on
+    // the matching workflow channels. If any matched channel has hookIds, only
+    // hooks in that set are authoritative for this action.
+    const channelHookIds = new Set<string>();
+    let hasChannelHookIds = false;
+    if (methodName === 'send_message' && actionTargets.size > 0) {
+      for (const ch of workflow.channels ?? []) {
+        const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
+        if (!fromMatches) continue;
+        const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+        const toMatches = toList.some((t) => t === '*' || actionTargets.has(t));
+        if (!toMatches) continue;
+        if (ch.hookIds && ch.hookIds.length > 0) {
+          hasChannelHookIds = true;
+          for (const hid of ch.hookIds) {
+            channelHookIds.add(hid);
+          }
+        }
+      }
+    }
+
+    const matchedHooks = workflow.hooks.filter((hook) => {
       if (!hook.enabled) return false;
       if (hook.method !== methodName) return false;
 
@@ -594,12 +632,18 @@ export class WorkflowHookEngine {
       if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
       if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
 
+      // Channel hookIds are the authoritative binding when present
+      if (hasChannelHookIds && !channelHookIds.has(hook.id)) return false;
+
       return hook.authorizedCallers.some((caller) => {
         if (caller.sourceNode !== nodeName) return false;
         if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
         return caller.agentSlots.includes(meta.agentName);
       });
     });
+
+    const missingChannelHooks = hasChannelHookIds && matchedHooks.length === 0;
+    return { hooks: matchedHooks, missingChannelHooks };
   }
 
   private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
@@ -1140,14 +1184,19 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           message: req.message,
         } as unknown as Record<string, unknown>);
 
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(
+          timeoutHandle = setTimeout(
             () => reject(new Error('Follow-up dispatch timed out')),
             DEFAULT_FOLLOW_UP_TIMEOUT_MS
           );
         });
 
-        return Promise.race([dispatchPromise, timeoutPromise]);
+        return Promise.race([dispatchPromise, timeoutPromise]).finally(() => {
+          if (timeoutHandle !== undefined) {
+            clearTimeout(timeoutHandle);
+          }
+        });
       });
 
       try {

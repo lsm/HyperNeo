@@ -18,7 +18,7 @@ import {
   MAX_BUFFER_BYTES,
   parseJsonStdout,
 } from './gate-script-executor';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
@@ -301,127 +301,139 @@ export async function executeHookScript(
   const hookHome = mkdtempSync(join(tmpdir(), 'neokai-hook-'));
   restrictedEnv['HOME'] = hookHome;
 
-  let proc;
-  try {
-    proc = Bun.spawn(args, {
-      cwd: context.workspacePath,
-      env: restrictedEnv,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      detached: true,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      result: {
-        type: 'block',
-        reason: `Failed to spawn ${validator.interpreter}: ${message}`,
-      },
-    };
-  }
+  const runScript = async (): Promise<HookExecutorResult> => {
+    let proc;
+    try {
+      proc = Bun.spawn(args, {
+        cwd: context.workspacePath,
+        env: restrictedEnv,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        detached: true,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        result: {
+          type: 'block',
+          reason: `Failed to spawn ${validator.interpreter}: ${message}`,
+        },
+      };
+    }
 
-  const controller = new AbortController();
-  let killed = false;
+    const controller = new AbortController();
+    let killed = false;
 
-  const [stdoutResult, stderrResult, exitCode] = await Promise.all([
-    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal),
-    collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal),
-    (async () => {
-      const killTimer = setTimeout(() => {
-        killed = true;
-        // Kill the entire process group so background children are reaped.
+    const [stdoutResult, stderrResult, exitCode] = await Promise.all([
+      collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal),
+      collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal),
+      (async () => {
+        const killTimer = setTimeout(() => {
+          killed = true;
+          // Kill the entire process group so background children are reaped.
+          try {
+            if (proc.pid) {
+              process.kill(-proc.pid, 'SIGKILL');
+            } else {
+              proc.kill('SIGKILL');
+            }
+          } catch {
+            proc.kill('SIGKILL');
+          }
+          controller.abort();
+        }, timeoutMs);
+
+        const code = await proc.exited;
+        clearTimeout(killTimer);
+
+        // Reap any background children in the process group after the main
+        // script exits (success, failure, or timeout).
         try {
           if (proc.pid) {
             process.kill(-proc.pid, 'SIGKILL');
-          } else {
-            proc.kill('SIGKILL');
           }
         } catch {
-          proc.kill('SIGKILL');
+          // process group already gone
         }
-        controller.abort();
-      }, timeoutMs);
 
-      const code = await proc.exited;
-      clearTimeout(killTimer);
+        return { code, timedOut: killed };
+      })(),
+    ]);
 
-      // Reap any background children in the process group after the main
-      // script exits (success, failure, or timeout).
-      try {
-        if (proc.pid) {
-          process.kill(-proc.pid, 'SIGKILL');
-        }
-      } catch {
-        // process group already gone
-      }
+    if (exitCode.timedOut) {
+      return {
+        result: {
+          type: 'block',
+          reason: `Hook script timed out after ${timeoutMs}ms`,
+        },
+      };
+    }
 
-      return { code, timedOut: killed };
-    })(),
-  ]);
+    if (exitCode.code !== 0) {
+      const stderrText = stderrResult.text.trim();
+      return {
+        result: {
+          type: 'block',
+          reason: stderrText || `Hook script exited with code ${exitCode.code}`,
+        },
+      };
+    }
 
-  if (exitCode.timedOut) {
-    return {
-      result: {
-        type: 'block',
-        reason: `Hook script timed out after ${timeoutMs}ms`,
-      },
-    };
+    // Exit 0 — parse JSON stdout as WorkflowHookResult
+    const parsed = parseJsonStdout(stdoutResult.text);
+    if (!parsed) {
+      return {
+        result: {
+          type: 'block',
+          reason: 'Hook script produced empty or non-JSON stdout',
+        },
+      };
+    }
+
+    // Validate that parsed result has a recognized type
+    const validTypes = new Set([
+      'allow',
+      'block',
+      'retryable_block',
+      'patch_params',
+      'emit_follow_up',
+      'record_state',
+    ]);
+    if (typeof parsed.type !== 'string' || !validTypes.has(parsed.type)) {
+      return {
+        result: {
+          type: 'block',
+          reason: `Hook script returned unrecognized result type: ${JSON.stringify(parsed.type)}`,
+        },
+      };
+    }
+
+    // Validate required fields for the specific result type
+    const validationErrors = validateWorkflowHookResult(parsed);
+    if (validationErrors.length > 0) {
+      return {
+        result: {
+          type: 'block',
+          reason: `Hook script returned malformed result: ${validationErrors.join('; ')}`,
+        },
+      };
+    }
+
+    // Merge parsed data into the result shape
+    const result = deepMergeWithDepthLimit({}, parsed) as unknown as WorkflowHookResult;
+
+    return { result };
+  };
+
+  try {
+    return await runScript();
+  } finally {
+    try {
+      rmSync(hookHome, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
   }
-
-  if (exitCode.code !== 0) {
-    const stderrText = stderrResult.text.trim();
-    return {
-      result: {
-        type: 'block',
-        reason: stderrText || `Hook script exited with code ${exitCode.code}`,
-      },
-    };
-  }
-
-  // Exit 0 — parse JSON stdout as WorkflowHookResult
-  const parsed = parseJsonStdout(stdoutResult.text);
-  if (!parsed) {
-    return {
-      result: {
-        type: 'block',
-        reason: 'Hook script produced empty or non-JSON stdout',
-      },
-    };
-  }
-
-  // Validate that parsed result has a recognized type
-  const validTypes = new Set([
-    'allow',
-    'block',
-    'retryable_block',
-    'patch_params',
-    'emit_follow_up',
-    'record_state',
-  ]);
-  if (typeof parsed.type !== 'string' || !validTypes.has(parsed.type)) {
-    return {
-      result: {
-        type: 'block',
-        reason: `Hook script returned unrecognized result type: ${JSON.stringify(parsed.type)}`,
-      },
-    };
-  }
-
-  // Validate required fields for the specific result type
-  const validationErrors = validateWorkflowHookResult(parsed);
-  if (validationErrors.length > 0) {
-    return {
-      result: {
-        type: 'block',
-        reason: `Hook script returned malformed result: ${validationErrors.join('; ')}`,
-      },
-    };
-  }
-
-  // Merge parsed data into the result shape
-  const result = deepMergeWithDepthLimit({}, parsed) as unknown as WorkflowHookResult;
-
-  return { result };
 }
 
 // ---------------------------------------------------------------------------
