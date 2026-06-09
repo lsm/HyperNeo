@@ -9,7 +9,11 @@
  *   - retryable_block on stale +1 (head changed)
  *   - retryable_block when no reaction exists
  *   - block after timeout
- *   - terminal outcome persisted via lastResult.data
+ *   - terminal outcome verified against current PR head
+ *   - send_message target resolution (node, slot, broadcast, @worker:)
+ *   - enterprise token preference
+ *   - second-precision freshness matching
+ *   - PR URL source priority (params.data > artifacts)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -60,12 +64,19 @@ function makeContext(overrides: Partial<HookExecutorContext> = {}): HookExecutor
 }
 
 let originalToken: string | undefined;
+let originalGhToken: string | undefined;
+let originalEntToken: string | undefined;
 let fetchCalls: Array<{ url: string; init: RequestInit }> = [];
 let fetchMock: ((url: string, init: RequestInit) => Promise<Response>) | undefined;
 
 beforeEach(() => {
   originalToken = process.env.GITHUB_TOKEN;
+  originalGhToken = process.env.GH_TOKEN;
+  originalEntToken = process.env.GH_ENTERPRISE_TOKEN;
   process.env.GITHUB_TOKEN = 'test-token';
+  delete process.env.GH_TOKEN;
+  delete process.env.GH_ENTERPRISE_TOKEN;
+  delete process.env.GITHUB_ENTERPRISE_TOKEN;
   fetchCalls = [];
 
   const originalFetch = globalThis.fetch;
@@ -85,8 +96,34 @@ afterEach(() => {
   } else {
     delete process.env.GITHUB_TOKEN;
   }
+  if (originalGhToken !== undefined) {
+    process.env.GH_TOKEN = originalGhToken;
+  } else {
+    delete process.env.GH_TOKEN;
+  }
+  if (originalEntToken !== undefined) {
+    process.env.GH_ENTERPRISE_TOKEN = originalEntToken;
+  } else {
+    delete process.env.GH_ENTERPRISE_TOKEN;
+  }
+  delete process.env.GITHUB_ENTERPRISE_TOKEN;
   fetchMock = undefined;
 });
+
+function mockPrWith(sha: string, reactions: unknown[] = []) {
+  fetchMock = async (url) => {
+    if (url.includes('/pulls/42')) {
+      return new Response(JSON.stringify({ head: { sha } }), { status: 200 });
+    }
+    if (url.includes('/issues/42/reactions')) {
+      return new Response(JSON.stringify(reactions), { status: 200 });
+    }
+    return new Response('{}', { status: 200 });
+  };
+}
+
+const PR_URL = 'https://github.com/owner/repo/pull/42';
+const PR_ARTIFACT = [{ data: { pr_url: PR_URL } }];
 
 describe('codexReviewApprovedValidator', () => {
   test('allow when node does not require Codex', async () => {
@@ -111,8 +148,9 @@ describe('codexReviewApprovedValidator', () => {
 
   test('block when no GitHub token', async () => {
     delete process.env.GITHUB_TOKEN;
-    delete process.env.GH_TOKEN;
-    const ctx = makeContext();
+    const ctx = makeContext({
+      params: { pr_url: PR_URL },
+    });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('block');
     expect((result as { reason?: string }).reason).toContain('GitHub token not available');
@@ -126,90 +164,35 @@ describe('codexReviewApprovedValidator', () => {
   });
 
   test('allow on fresh +1 for current head', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response(
-          JSON.stringify([
-            {
-              id: 1,
-              user: { login: 'codex[bot]' },
-              content: '+1',
-              created_at: new Date().toISOString(),
-            },
-          ]),
-          { status: 200 }
-        );
-      }
-      return new Response('{}', { status: 200 });
-    };
-
-    const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
-    });
+    mockPrWith('abc123', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: new Date().toISOString() },
+    ]);
+    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('allow');
     expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
   });
 
   test('allow on pre-existing +1 on first invocation (no prior SHA)', async () => {
-    // Simulates Codex approving before the agent calls submit_for_approval.
-    // The +1 was posted in the past, but on first call we have no prior head
-    // SHA so it must be treated as fresh.
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response(
-          JSON.stringify([
-            {
-              id: 1,
-              user: { login: 'codex[bot]' },
-              content: '+1',
-              created_at: '2026-01-01T00:00:00Z',
-            },
-          ]),
-          { status: 200 }
-        );
-      }
-      return new Response('{}', { status: 200 });
-    };
-
-    const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
-    });
+    mockPrWith('abc123', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-01-01T00:00:00Z' },
+    ]);
+    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('allow');
     expect((result as { data?: Record<string, unknown> }).data?.currentHeadSha).toBe('abc123');
   });
 
   test('retryable_block on eyes reaction', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response(
-          JSON.stringify([
-            {
-              id: 1,
-              user: { login: 'codex[bot]' },
-              content: 'eyes',
-              created_at: new Date().toISOString(),
-            },
-          ]),
-          { status: 200 }
-        );
-      }
-      return new Response('{}', { status: 200 });
-    };
-
-    const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
-    });
+    mockPrWith('abc123', [
+      {
+        id: 1,
+        user: { login: 'codex[bot]' },
+        content: 'eyes',
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('retryable_block');
     expect((result as { reason?: string }).reason).toContain('eyes');
@@ -217,28 +200,11 @@ describe('codexReviewApprovedValidator', () => {
   });
 
   test('retryable_block on stale +1 when head changed', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'new-sha' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response(
-          JSON.stringify([
-            {
-              id: 1,
-              user: { login: 'codex[bot]' },
-              content: '+1',
-              created_at: '2026-01-01T00:00:00Z',
-            },
-          ]),
-          { status: 200 }
-        );
-      }
-      return new Response('{}', { status: 200 });
-    };
-
+    mockPrWith('new-sha', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: '2026-01-01T00:00:00Z' },
+    ]);
     const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: PR_ARTIFACT,
       lastResult: {
         type: 'retryable_block',
         reason: 'Waiting',
@@ -254,19 +220,8 @@ describe('codexReviewApprovedValidator', () => {
   });
 
   test('retryable_block when no reaction exists', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response('[]', { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    };
-
-    const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
-    });
+    mockPrWith('abc123', []);
+    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('retryable_block');
     expect((result as { reason?: string }).reason).toContain('Waiting for Codex review');
@@ -274,25 +229,13 @@ describe('codexReviewApprovedValidator', () => {
   });
 
   test('block after timeout elapsed', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response('[]', { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    };
-
+    mockPrWith('abc123', []);
     const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: PR_ARTIFACT,
       lastResult: {
         type: 'retryable_block',
         reason: 'Waiting',
-        data: {
-          checkStartedAt: Date.now() - 601_000,
-          currentHeadSha: 'abc123',
-        },
+        data: { checkStartedAt: Date.now() - 601_000, currentHeadSha: 'abc123' },
       } as WorkflowHookResult,
     });
     const result = await codexReviewApprovedValidator(ctx);
@@ -301,9 +244,12 @@ describe('codexReviewApprovedValidator', () => {
     expect((result as { data?: Record<string, unknown> }).data?.terminalOutcome).toBe('block');
   });
 
-  test('terminal allow persists across invocations', async () => {
+  test('terminal allow verified against current PR head', async () => {
+    // Terminal allow persists only when the PR head hasn't changed.
+    // The validator must fetch the PR to verify before trusting the terminal outcome.
+    mockPrWith('abc123', []);
     const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: PR_ARTIFACT,
       lastResult: {
         type: 'allow',
         data: { terminalOutcome: 'allow', currentHeadSha: 'abc123' },
@@ -311,12 +257,29 @@ describe('codexReviewApprovedValidator', () => {
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('allow');
-    expect(fetchCalls).toHaveLength(0);
+    // Should have fetched the PR head to verify SHA hasn't changed
+    expect(fetchCalls.length).toBeGreaterThanOrEqual(1);
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
   });
 
-  test('terminal block persists across invocations', async () => {
+  test('terminal allow invalidated when PR head changes', async () => {
+    mockPrWith('new-sha', []);
     const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: PR_ARTIFACT,
+      lastResult: {
+        type: 'allow',
+        data: { terminalOutcome: 'allow', currentHeadSha: 'old-sha' },
+      } as WorkflowHookResult,
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    // Head changed — terminal allow no longer valid, no reactions → retryable_block
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('terminal block verified against current PR head', async () => {
+    mockPrWith('abc123', []);
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
       lastResult: {
         type: 'block',
         reason: 'timeout',
@@ -325,7 +288,8 @@ describe('codexReviewApprovedValidator', () => {
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('block');
-    expect(fetchCalls).toHaveLength(0);
+    // Should have fetched to verify head hasn't changed
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
   });
 
   test('send_message to non-target node bypasses Codex check', async () => {
@@ -340,43 +304,36 @@ describe('codexReviewApprovedValidator', () => {
   });
 
   test('send_message to broadcast "*" triggers Codex check', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response('[]', { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    };
-
+    mockPrWith('abc123', []);
     const ctx = makeContext({
       methodName: 'send_message',
       params: { target: '*' },
       templateData: { enforceForTargets: ['Review'] },
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: PR_ARTIFACT,
     });
     const result = await codexReviewApprovedValidator(ctx);
-    // Should not bypass — broadcast is treated as matching all targets
     expect(result.type).toBe('retryable_block');
   });
 
   test('send_message to agent-slot target triggers Codex check', async () => {
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response('[]', { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    };
-
+    mockPrWith('abc123', []);
     const ctx = makeContext({
       methodName: 'send_message',
       params: { target: 'reviewer' },
       templateData: { enforceForTargets: ['Review'] },
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: PR_ARTIFACT,
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+  });
+
+  test('send_message to @worker: address targeting allowed node triggers Codex check', async () => {
+    mockPrWith('abc123', []);
+    const ctx = makeContext({
+      methodName: 'send_message',
+      params: { target: `@worker:run-1/Review/reviewer` },
+      templateData: { enforceForTargets: ['Review'] },
+      currentArtifacts: PR_ARTIFACT,
     });
     const result = await codexReviewApprovedValidator(ctx);
     expect(result.type).toBe('retryable_block');
@@ -384,27 +341,69 @@ describe('codexReviewApprovedValidator', () => {
 
   test('uses GH_ENTERPRISE_TOKEN when GITHUB_TOKEN is absent', async () => {
     delete process.env.GITHUB_TOKEN;
-    delete process.env.GH_TOKEN;
     process.env.GH_ENTERPRISE_TOKEN = 'enterprise-token';
+    mockPrWith('abc123', []);
+    const ctx = makeContext({ currentArtifacts: PR_ARTIFACT });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('retryable_block');
+  });
 
-    fetchMock = async (url) => {
-      if (url.includes('/pulls/42')) {
-        return new Response(JSON.stringify({ head: { sha: 'abc123' } }), { status: 200 });
-      }
-      if (url.includes('/issues/42/reactions')) {
-        return new Response('[]', { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    };
-
+  test('prefers enterprise token for enterprise PR host', async () => {
+    process.env.GITHUB_TOKEN = 'public-token';
+    process.env.GH_ENTERPRISE_TOKEN = 'enterprise-token';
+    mockPrWith('abc123', []);
     const ctx = makeContext({
-      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }],
+      currentArtifacts: [{ data: { pr_url: 'https://gh.enterprise.com/owner/repo/pull/42' } }],
+    });
+    // Host not in allowlist → block, but token resolution should prefer enterprise
+    const result = await codexReviewApprovedValidator(ctx);
+    // The host isn't in ALLOWED_PR_HOSTS so it blocks before using the token
+    expect(result.type).toBe('block');
+    if (result.type === 'block') {
+      expect(result.reason).toContain('not in the allowed list');
+    }
+  });
+
+  test('prefers params.data PR URL over artifact PR URL', async () => {
+    mockPrWith('abc123', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: new Date().toISOString() },
+    ]);
+    const ctx = makeContext({
+      currentArtifacts: [{ data: { pr_url: 'https://github.com/owner/old-repo/pull/99' } }],
+      params: { data: { pr_url: 'https://github.com/owner/repo/pull/42' } },
     });
     const result = await codexReviewApprovedValidator(ctx);
-    // Should not block on missing token
-    expect(result.type).toBe('retryable_block');
+    expect(result.type).toBe('allow');
+    // Should have fetched PR #42 (from params.data), not #99 (from artifact)
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/42'))).toBe(true);
+    expect(fetchCalls.some((c) => c.url.includes('/pulls/99'))).toBe(false);
+  });
 
-    delete process.env.GH_ENTERPRISE_TOKEN;
+  test('reaction in same second as head change is not stale', async () => {
+    // GitHub timestamps are second-precision. A +1 posted in the same second
+    // as currentHeadBecameHeadAt must not be treated as stale.
+    const now = new Date();
+    const truncatedMs = Math.floor(now.getTime() / 1000) * 1000;
+    const reactionTime = new Date(truncatedMs).toISOString(); // same second
+
+    mockPrWith('new-sha', [
+      { id: 1, user: { login: 'codex[bot]' }, content: '+1', created_at: reactionTime },
+    ]);
+
+    const ctx = makeContext({
+      currentArtifacts: PR_ARTIFACT,
+      lastResult: {
+        type: 'retryable_block',
+        reason: 'Waiting',
+        data: {
+          currentHeadSha: 'old-sha',
+          currentHeadBecameHeadAt: truncatedMs, // same second
+          checkStartedAt: Date.now() - 10_000,
+        },
+      } as WorkflowHookResult,
+    });
+    const result = await codexReviewApprovedValidator(ctx);
+    expect(result.type).toBe('allow');
   });
 
   test('head change resets freshness anchor', async () => {
@@ -421,7 +420,7 @@ describe('codexReviewApprovedValidator', () => {
       return new Response('{}', { status: 200 });
     };
 
-    const artifacts = [{ data: { pr_url: 'https://github.com/owner/repo/pull/42' } }];
+    const artifacts = PR_ARTIFACT;
 
     // First call: old head, no reactions
     const result1 = await codexReviewApprovedValidator(

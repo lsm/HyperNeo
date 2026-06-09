@@ -16,6 +16,8 @@
  */
 
 import type { BuiltInValidatorFn } from '../hook-executor';
+import type { SpaceWorkflow } from '@neokai/shared';
+import { parseAddress } from '../../../../../../messaging/src/address';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -81,18 +83,7 @@ function resolvePrUrl(
   }>,
   params: Record<string, unknown>
 ): string | null {
-  for (const artifact of currentArtifacts) {
-    const data = artifact.data as Record<string, unknown> | undefined;
-    if (data) {
-      const url =
-        (typeof data.prUrl === 'string' && data.prUrl) ||
-        (typeof data.pr_url === 'string' && data.pr_url) ||
-        '';
-      if (url) return url;
-    }
-  }
-
-  // For send_message hooks, the PR URL may be nested in params.data
+  // Prefer the current handoff's PR URL (params.data) over stale artifacts
   const nestedData = params.data as Record<string, unknown> | undefined;
   if (nestedData) {
     const url =
@@ -107,6 +98,18 @@ function resolvePrUrl(
     (typeof params.pr_url === 'string' && params.pr_url) ||
     '';
   if (url) return url;
+
+  // Fall back to run artifacts
+  for (const artifact of currentArtifacts) {
+    const data = artifact.data as Record<string, unknown> | undefined;
+    if (data) {
+      const artUrl =
+        (typeof data.prUrl === 'string' && data.prUrl) ||
+        (typeof data.pr_url === 'string' && data.pr_url) ||
+        '';
+      if (artUrl) return artUrl;
+    }
+  }
 
   return null;
 }
@@ -149,6 +152,98 @@ function toEpochMs(iso: string): number {
   return Number.isNaN(t) ? 0 : t;
 }
 
+/** Truncate to second precision to match GitHub reaction timestamps. */
+function toEpochSeconds(ms: number): number {
+  return Math.floor(ms / 1000) * 1000;
+}
+
+function resolveTokenForHost(host: string): string {
+  const isEnterprise = host !== 'github.com';
+  const enterpriseToken =
+    process.env.GH_ENTERPRISE_TOKEN || process.env.GITHUB_ENTERPRISE_TOKEN || '';
+  const publicToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+  if (isEnterprise && enterpriseToken) return enterpriseToken;
+  return publicToken || enterpriseToken;
+}
+
+/**
+ * Resolve a raw target string to node names, handling @worker: and @role:
+ * address formats, node IDs, agent slot names, and bare node names.
+ */
+function resolveTargetToNodeNames(
+  rawTarget: string,
+  workflow: SpaceWorkflow | undefined
+): string[] {
+  if (!workflow) return [rawTarget];
+
+  const trimmed = rawTarget.trim();
+  const nodes = workflow.nodes ?? [];
+
+  // Build lookup maps
+  const nodeIdToName = new Map<string, string>();
+  const slotToNodes = new Map<string, string[]>();
+  const nodeNames = new Set<string>();
+
+  for (const node of nodes) {
+    if (node.name) {
+      nodeNames.add(node.name);
+      if (node.id) nodeIdToName.set(node.id, node.name);
+    }
+    for (const agent of node.agents ?? []) {
+      if (agent.name) {
+        const existing = slotToNodes.get(agent.name) ?? [];
+        existing.push(node.name);
+        slotToNodes.set(agent.name, existing);
+      }
+    }
+  }
+
+  // Node ID lookup
+  if (nodeIdToName.has(trimmed)) return [nodeIdToName.get(trimmed)!];
+
+  // Exact node name
+  if (nodeNames.has(trimmed)) return [trimmed];
+
+  // Agent slot name
+  const slotMatches = slotToNodes.get(trimmed);
+  if (slotMatches) return [...slotMatches];
+
+  // @worker: address
+  if (trimmed.startsWith('@worker:')) {
+    try {
+      const addr = parseAddress(trimmed);
+      if (addr.kind === 'worker') {
+        const decoded = decodeURIComponent(addr.nodeId);
+        if (nodeIdToName.has(decoded)) return [nodeIdToName.get(decoded)!];
+        const decodedSlots = slotToNodes.get(decoded);
+        if (decodedSlots) return [...decodedSlots];
+        return [decoded];
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // @role: address
+  if (trimmed.startsWith('@role:')) {
+    const role = trimmed.slice(6);
+    const actorRolePrefix = 'actor-role:';
+    if (role.startsWith(actorRolePrefix)) {
+      const value = decodeURIComponent(role.slice(actorRolePrefix.length));
+      if (nodeIdToName.has(value)) return [nodeIdToName.get(value)!];
+      const valueSlots = slotToNodes.get(value);
+      if (valueSlots) return [...valueSlots];
+      return [value];
+    }
+    if (nodeIdToName.has(role)) return [nodeIdToName.get(role)!];
+    const roleSlots = slotToNodes.get(role);
+    if (roleSlots) return [...roleSlots];
+    return [role];
+  }
+
+  return [trimmed];
+}
+
 // ---------------------------------------------------------------------------
 // Validator
 // ---------------------------------------------------------------------------
@@ -174,24 +269,25 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
   }
 
   // For send_message hooks, only enforce when the target matches configured handoff targets.
-  // Targets may be node names or agent slot names belonging to those nodes.
+  // Targets may be node names, agent slot names, or @worker:/@role: addresses.
   if (methodName === 'send_message') {
     const enforceForTargets = templateData?.enforceForTargets as string[] | undefined;
     if (enforceForTargets && enforceForTargets.length > 0) {
-      const target = (params as Record<string, unknown>).target;
-      const targets = Array.isArray(target) ? target : [target];
-      const allowedTargets = new Set(enforceForTargets);
-      // Also include agent slot names belonging to the allowed nodes
-      for (const nodeName of enforceForTargets) {
-        const node = workflow?.nodes?.find((n) => n.name === nodeName);
-        for (const agent of node?.agents ?? []) {
-          if (agent.name) allowedTargets.add(agent.name);
-        }
-      }
+      const rawTarget = (params as Record<string, unknown>).target;
+      const rawTargets: string[] = Array.isArray(rawTarget) ? rawTarget : [rawTarget];
+
       // Broadcast '*' fans out to all permitted targets, so treat it as matching
-      const isBroadcast = targets.includes('*');
-      if (!isBroadcast && !targets.some((t) => typeof t === 'string' && allowedTargets.has(t))) {
-        return { type: 'allow' };
+      const isBroadcast = rawTargets.includes('*');
+      if (!isBroadcast) {
+        // Resolve each raw target to node names, then check against enforceForTargets
+        const matched = rawTargets.some((t) => {
+          if (typeof t !== 'string') return false;
+          const resolved = resolveTargetToNodeNames(t, workflow);
+          return resolved.some((rn) => enforceForTargets.includes(rn));
+        });
+        if (!matched) {
+          return { type: 'allow' };
+        }
       }
     }
   }
@@ -199,38 +295,10 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
   // Load persisted state from previous invocation
   const persisted = (lastResult?.data ?? {}) as CodexPersistedState;
 
-  // Fast terminal shortcut — if we have a prior SHA and no evidence of change,
-  // skip the network call entirely. If head might have changed, we still need
-  // to fetch to verify.
-  const hasPriorSha = persisted.currentHeadSha !== undefined;
-  if (persisted.terminalOutcome === 'allow' && hasPriorSha) {
-    return { type: 'allow' };
-  }
-  if (persisted.terminalOutcome === 'block' && hasPriorSha) {
-    return {
-      type: 'block',
-      reason: 'Codex review did not pass',
-      data: { currentHeadSha: persisted.currentHeadSha },
-    };
-  }
-
   if (!permittedExternalLookups.includes('github')) {
     return {
       type: 'block',
       reason: 'Codex review check requires github external lookup permission',
-    };
-  }
-
-  const token =
-    process.env.GH_TOKEN ||
-    process.env.GITHUB_TOKEN ||
-    process.env.GH_ENTERPRISE_TOKEN ||
-    process.env.GITHUB_ENTERPRISE_TOKEN ||
-    '';
-  if (!token) {
-    return {
-      type: 'block',
-      reason: 'GitHub token not available for Codex review check',
     };
   }
 
@@ -257,8 +325,17 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
     };
   }
 
+  const token = resolveTokenForHost(prInfo.host);
+  if (!token) {
+    return {
+      type: 'block',
+      reason: 'GitHub token not available for Codex review check',
+    };
+  }
+
   try {
-    // Resolve current PR head SHA
+    // Always fetch current PR head SHA — never trust terminal outcomes without
+    // verifying the head hasn't changed since the last check.
     const apiBase = getApiBase(prInfo.host);
     const prData = (await fetchGitHubJson(
       `${apiBase}/repos/${prInfo.owner}/${prInfo.repo}/pulls/${prInfo.number}`,
@@ -274,6 +351,7 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
       };
     }
 
+    const hasPriorSha = persisted.currentHeadSha !== undefined;
     const headChanged = hasPriorSha && persisted.currentHeadSha !== currentHeadSha;
 
     // Re-check terminal outcome after confirming head has not changed
@@ -290,7 +368,11 @@ export const codexReviewApprovedValidator: BuiltInValidatorFn = async (context) 
 
     const now = Date.now();
     const isFirstCheck = persisted.currentHeadSha === undefined;
-    const currentHeadBecameHeadAt = headChanged ? now : (persisted.currentHeadBecameHeadAt ?? now);
+    // Truncate to second precision so comparisons with GitHub timestamps
+    // (which are second-precision) don't treat same-second reactions as stale.
+    const currentHeadBecameHeadAt = toEpochSeconds(
+      headChanged ? now : (persisted.currentHeadBecameHeadAt ?? now)
+    );
     const checkStartedAt = headChanged ? now : (persisted.checkStartedAt ?? now);
 
     // Fetch all reactions (PRs are issues for reaction API)
