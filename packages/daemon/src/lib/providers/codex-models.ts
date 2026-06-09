@@ -90,6 +90,16 @@ export function getModelContextWindow(modelId: string): number | undefined {
  *
  * The bridge then maps the Anthropic ID back to the real Codex model ID via
  * `modelAliases` (plus per-session overrides) before forwarding to OpenAI.
+ *
+ * Architectural limitation: multiple Codex models share the same SDK alias
+ * (e.g. gpt-5.5, gpt-5.3-codex, gpt-5.4 all map to claude-opus-4-1-20250805).
+ * The bridge cannot distinguish between different logical uses of the same
+ * alias (primary vs fallback vs sub-agent tier). Per-session overrides use
+ * last-wins semantics so model switching works correctly. Known trade-offs:
+ *   - Opus sub-agents use the user's selected model instead of gpt-5.5
+ *   - Same-tier fallback registration overwrites the primary model override
+ * Both are acceptable: sub-agent tier routing is approximate, and same-tier
+ * fallback is rare (models are similar within a tier).
  */
 export const CODEX_TO_SDK_ANTHROPIC_MODEL: Record<CodexBridgeModelId, string> = {
   'gpt-5.5': 'claude-opus-4-1-20250805',

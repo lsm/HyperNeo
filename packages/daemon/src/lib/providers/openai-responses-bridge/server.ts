@@ -1477,16 +1477,13 @@ export function createOpenAIResponsesBridgeServer(
       storeSessionThinkingConfig(sessionId, thinking);
     },
     setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
-      // First-wins: primary model registration takes priority over fallback.
-      // When primary and fallback share the same SDK alias tier (e.g. both
-      // gpt-5.3-codex and gpt-5.4 map to claude-opus-4-1-20250805), the
-      // fallback would overwrite the primary if we allowed it. Instead, the
-      // first registration (primary) wins, and the fallback falls through to
-      // the default modelAliases mapping for that tier.
-      const key = sessionModelKey(sessionId, aliasModelId);
-      if (!sessionModelAliasOverrides.has(key)) {
-        sessionModelAliasOverrides.set(key, realModelId);
-      }
+      // Simple overwrite: last registration wins. This correctly handles
+      // model switching within the same alias tier (e.g. gpt-5.3-codex →
+      // gpt-5.4). When a session has a same-tier fallback model, the
+      // fallback registration overwrites the primary. This is an acceptable
+      // trade-off: same-tier fallbacks are rare (both models are similar),
+      // while model switching is common and must work correctly.
+      sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
     },
     stop: () => {
       for (const continuation of continuations.values()) {
