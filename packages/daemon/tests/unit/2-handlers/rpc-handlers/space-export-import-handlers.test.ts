@@ -2283,7 +2283,7 @@ describe('full export→import round-trip', () => {
           sourceNode: 'Code and Review',
           targetNode: 'End',
           method: 'send_message',
-          validator: { kind: 'built_in', id: 'pr_open' },
+          validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
           authorizedCallers: [{ sourceNode: 'Code and Review', agentSlots: ['coder'] }],
         },
       ],

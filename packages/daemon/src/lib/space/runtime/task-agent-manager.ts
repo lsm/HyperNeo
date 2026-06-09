@@ -105,6 +105,9 @@ import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { executeGateScript } from './gate-script-executor';
+import { HookExecutor } from './hook-executor';
+import { WorkflowHookEngine } from './workflow-hook-engine';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import {
   buildCustomAgentTaskMessage,
   resolveAgentInit,
@@ -3825,6 +3828,21 @@ export class TaskAgentManager {
       }
     };
 
+    // Build workflow hook engine when the workflow defines hooks.
+    let hookEngine: WorkflowHookEngine | undefined;
+    if (workflow?.hooks && workflow.hooks.length > 0) {
+      const hookExecutor = new HookExecutor({ workspacePath });
+      hookEngine = new WorkflowHookEngine({
+        workflow,
+        workflowRunId,
+        nodeExecutionRepo: this.config.nodeExecutionRepo,
+        artifactRepo: this.config.artifactRepo,
+        hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
+        hookExecutor,
+        workspacePath,
+      });
+    }
+
     return createNodeAgentMcpServer({
       mySessionId: subSessionId,
       myAgentName: agentName,
@@ -3871,6 +3889,7 @@ export class TaskAgentManager {
         const registry = this.config.replyRoutingRegistry;
         return registry ? registry.get(taskId, fromAgentName) : null;
       },
+      hookEngine,
     });
   }
 
