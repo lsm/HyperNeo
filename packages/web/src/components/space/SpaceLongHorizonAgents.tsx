@@ -581,7 +581,7 @@ export function SpaceLongHorizonAgents({
                   </p>
                 )}
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-400">
-                  {selectedAgent.source === 'space-agent' && <span>Configured Space Agent</span>}
+                  {selectedAgent.source === 'space-agent' && <span>Configured Worker Agent</span>}
                   {selectedAgentAutonomyLevel(selectedAgent) && (
                     <span>
                       L{selectedAgentAutonomyLevel(selectedAgent)}{' '}

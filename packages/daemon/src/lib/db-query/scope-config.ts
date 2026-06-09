@@ -86,7 +86,7 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
   inbox_items: ['raw_event', 'security_check'],
   job_queue: ['payload'],
   space_agents: ['system_prompt'],
-  space_workflows: ['config', 'gates', 'channels'],
+  space_workflows: ['config', 'gates', 'channels', 'hooks'],
   tasks: ['restrictions'], // internal use — agent-imposed task constraints
   space_workflow_nodes: ['config'],
 };
@@ -284,6 +284,28 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     },
     blacklistedColumns: [],
     description: 'Gate evaluation data for human-in-the-loop approval checkpoints in workflows.',
+  },
+  {
+    tableName: 'workflow_hook_state',
+    scopeJoin: {
+      localColumn: 'run_id',
+      joinTable: 'space_workflow_runs',
+      joinPkColumn: 'id',
+      scopeColumn: 'space_id',
+    },
+    blacklistedColumns: ['local_state', 'last_result', 'vote_maps'],
+    description: 'Per-run workflow hook state with CAS versioning, retry metadata, and vote maps.',
+  },
+  {
+    tableName: 'workflow_hook_result_artifacts',
+    scopeJoin: {
+      localColumn: 'run_id',
+      joinTable: 'space_workflow_runs',
+      joinPkColumn: 'id',
+      scopeColumn: 'space_id',
+    },
+    blacklistedColumns: ['result'],
+    description: 'Append-only workflow hook result history for audit and debugging.',
   },
   {
     tableName: 'channel_cycles',
@@ -523,6 +545,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_agent_memory_fts_data',
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
+  // Migration bookkeeping — internal one-time migration markers.
+  'migration_markers',
   // Dropped tables (no longer exist in schema)
   'space_session_groups',
   'space_session_group_members',

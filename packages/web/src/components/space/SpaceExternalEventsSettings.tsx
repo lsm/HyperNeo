@@ -45,6 +45,13 @@ interface GitHubWatchedRepo {
   webhookEnabled: boolean;
   pollingEnabled: boolean;
   webhookSecret: 'configured' | null;
+  webhookRemoteId: number | null;
+  webhookUrl: string | null;
+  webhookAutoRegistered: boolean;
+  webhookActive: boolean | null;
+  webhookLastCheckedAt: number | null;
+  webhookLastError: string | null;
+  webhookConfiguredAt: number | null;
   lastWebhookAt: number | null;
   lastPollAt: number | null;
 }
@@ -124,6 +131,7 @@ export function SpaceExternalEventsSettings({
   const githubGloballyEnabled = githubExtension?.config.globallyEnabled ?? false;
   const githubRpcConfigEnabled = githubExtension?.config.capabilities.rpcConfig ?? false;
   const githubPollingEnabled = githubExtension?.config.capabilities.polling === true;
+  const githubWebhooksEnabled = githubExtension?.config.capabilities.webhooks !== false;
   const githubControlsEnabled = githubGloballyEnabled && githubRpcConfigEnabled;
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
   const webhookUrl = useMemo(getWebhookUrl, []);
@@ -283,8 +291,8 @@ export function SpaceExternalEventsSettings({
     }
   }
 
-  async function addRepo(event: Event): Promise<void> {
-    event.preventDefault();
+  async function addRepo(event?: Event, autoConfigure = false): Promise<void> {
+    event?.preventDefault();
     const actionSpaceId = spaceIdRef.current;
     const parsed = splitRepoInput(repoInput);
     if (!parsed) {
@@ -297,25 +305,38 @@ export function SpaceExternalEventsSettings({
       return;
     }
     try {
-      setBusy('repo:add');
+      setBusy(autoConfigure ? 'repo:add:auto' : 'repo:add');
       setFormError(null);
       const secret = webhookSecret.trim();
-      if (!secret && !githubPollingEnabled) {
+      if (!secret && !githubPollingEnabled && !autoConfigure) {
         setFormError('Webhook secret is required because polling is disabled for GitHub');
         return;
       }
-      await hub.request('space.github.watchRepo', {
-        spaceId: actionSpaceId,
-        owner: parsed.owner,
-        repo: parsed.repo,
-        webhookSecret: secret || undefined,
-        webhookEnabled: Boolean(secret),
-        pollingEnabled: !secret,
-      });
+      await hub.request(
+        autoConfigure ? 'space.github.autoConfigureWebhook' : 'space.github.watchRepo',
+        autoConfigure
+          ? {
+              spaceId: actionSpaceId,
+              owner: parsed.owner,
+              repo: parsed.repo,
+            }
+          : {
+              spaceId: actionSpaceId,
+              owner: parsed.owner,
+              repo: parsed.repo,
+              webhookSecret: secret || undefined,
+              webhookEnabled: Boolean(secret),
+              pollingEnabled: !secret,
+            }
+      );
       if (!isActionCurrent(actionSpaceId)) return;
       setRepoInput('');
       setWebhookSecret('');
-      toast.success(`Watching ${parsed.owner}/${parsed.repo}`);
+      toast.success(
+        autoConfigure
+          ? `Configured GitHub webhook for ${parsed.owner}/${parsed.repo}`
+          : `Watching ${parsed.owner}/${parsed.repo}`
+      );
       await refresh();
     } catch (err) {
       if (!isActionCurrent(actionSpaceId)) return;
@@ -362,6 +383,72 @@ export function SpaceExternalEventsSettings({
       toast.error(
         `Failed to update ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
       );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function autoConfigureWebhook(repo: GitHubWatchedRepo): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy(`webhook:${repo.id}`);
+      await hub.request('space.github.autoConfigureWebhook', {
+        spaceId: actionSpaceId,
+        owner: repo.owner,
+        repo: repo.repo,
+      });
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.success(`Configured GitHub webhook for ${repo.owner}/${repo.repo}`);
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to configure webhook for ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function checkWebhook(repo: GitHubWatchedRepo): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy(`webhook:${repo.id}`);
+      const result = await hub.request<{ watchedRepo?: GitHubWatchedRepo }>(
+        'space.github.checkWebhook',
+        {
+          spaceId: actionSpaceId,
+          owner: repo.owner,
+          repo: repo.repo,
+        }
+      );
+      if (!isActionCurrent(actionSpaceId)) return;
+      if (result.watchedRepo?.webhookActive === false) {
+        toast.error(
+          result.watchedRepo.webhookLastError
+            ? `GitHub webhook is inactive for ${repo.owner}/${repo.repo}: ${result.watchedRepo.webhookLastError}`
+            : `GitHub webhook is inactive for ${repo.owner}/${repo.repo}`
+        );
+      } else {
+        toast.success(`GitHub webhook is active for ${repo.owner}/${repo.repo}`);
+      }
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to check webhook for ${repo.owner}/${repo.repo}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      await refresh();
     } finally {
       setBusy(null);
     }
@@ -469,8 +556,8 @@ export function SpaceExternalEventsSettings({
             </div>
 
             <form
-              onSubmit={addRepo}
-              class="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+              onSubmit={(event) => addRepo(event)}
+              class="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]"
             >
               <input
                 type="text"
@@ -496,6 +583,21 @@ export function SpaceExternalEventsSettings({
               >
                 Add watch
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                loading={busy === 'repo:add:auto'}
+                disabled={
+                  disabled ||
+                  !githubControlsEnabled ||
+                  !githubWebhooksEnabled ||
+                  busy === 'repo:add:auto'
+                }
+                onClick={() => addRepo(undefined, true)}
+              >
+                Auto-configure
+              </Button>
             </form>
             {formError && <p class="mt-2 text-xs text-red-300">{formError}</p>}
 
@@ -509,9 +611,18 @@ export function SpaceExternalEventsSettings({
                   <GitHubRepoRow
                     key={repo.id}
                     repo={repo}
-                    disabled={disabled || busy === `repo:${repo.id}` || !githubControlsEnabled}
+                    disabled={
+                      disabled ||
+                      busy === `repo:${repo.id}` ||
+                      busy === `webhook:${repo.id}` ||
+                      !githubControlsEnabled
+                    }
+                    webhookBusy={busy === `webhook:${repo.id}`}
+                    webhooksEnabled={githubWebhooksEnabled}
                     pollingEnabled={githubPollingEnabled}
                     onUpdate={(patch) => updateRepo(repo, patch)}
+                    onAutoConfigureWebhook={() => autoConfigureWebhook(repo)}
+                    onCheckWebhook={() => checkWebhook(repo)}
                     onRemove={() => removeRepo(repo)}
                   />
                 ))
@@ -809,12 +920,26 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
 interface GitHubRepoRowProps {
   repo: GitHubWatchedRepo;
   disabled: boolean;
+  webhookBusy: boolean;
+  webhooksEnabled: boolean;
   pollingEnabled: boolean;
   onUpdate: (patch: Partial<GitHubWatchedRepo>) => Promise<void>;
+  onAutoConfigureWebhook: () => Promise<void>;
+  onCheckWebhook: () => Promise<void>;
   onRemove: () => Promise<void>;
 }
 
-function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: GitHubRepoRowProps) {
+function GitHubRepoRow({
+  repo,
+  disabled,
+  webhookBusy,
+  webhooksEnabled,
+  pollingEnabled,
+  onUpdate,
+  onAutoConfigureWebhook,
+  onCheckWebhook,
+  onRemove,
+}: GitHubRepoRowProps) {
   return (
     <div
       class={cn(
@@ -829,18 +954,43 @@ function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: G
           </div>
           <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-400">
             <span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
+            <WebhookStatus repo={repo} />
             <span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
             <span>last poll {formatTimestamp(repo.lastPollAt)}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={disabled}
-          class="text-xs text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
-        >
-          Remove
-        </button>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            loading={webhookBusy}
+            disabled={disabled || webhookBusy || !webhooksEnabled}
+            onClick={onAutoConfigureWebhook}
+          >
+            Auto-configure webhook
+          </Button>
+          {repo.webhookRemoteId && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              loading={false}
+              disabled={disabled || webhookBusy || !webhooksEnabled}
+              onClick={onCheckWebhook}
+            >
+              Check webhook
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={disabled}
+            class="text-xs text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
+          >
+            Remove
+          </button>
+        </div>
       </div>
       <div class="mt-3 flex flex-wrap gap-4">
         <label class="flex items-center gap-2 text-xs text-gray-300">
@@ -876,4 +1026,17 @@ function GitHubRepoRow({ repo, disabled, pollingEnabled, onUpdate, onRemove }: G
       </div>
     </div>
   );
+}
+
+function WebhookStatus({ repo }: { repo: GitHubWatchedRepo }) {
+  if (!repo.webhookRemoteId) {
+    return <span>webhook manual</span>;
+  }
+  if (repo.webhookActive === true) {
+    return <span class="text-green-300">webhook active</span>;
+  }
+  if (repo.webhookActive === false) {
+    return <span class="text-red-300">webhook inactive</span>;
+  }
+  return <span>webhook status unknown</span>;
 }

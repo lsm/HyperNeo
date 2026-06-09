@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@neokai/shared';
@@ -35,6 +36,7 @@ function makeModelInfo(id: string, alias: string, provider = 'anthropic'): Model
 describe('SpaceAgentManager', () => {
   let db: Database;
   let repo: SpaceAgentRepository;
+  let longHorizonRepo: SpaceLongHorizonAgentRepository;
   let manager: SpaceAgentManager;
 
   beforeEach(() => {
@@ -42,7 +44,8 @@ describe('SpaceAgentManager', () => {
     createSpaceAgentSchema(db);
     insertSpace(db);
     repo = new SpaceAgentRepository(db as any);
-    manager = new SpaceAgentManager(repo);
+    longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+    manager = new SpaceAgentManager(repo, longHorizonRepo);
     // Clear models cache so model validation is skipped by default
     setModelsCache(new Map());
   });
@@ -92,6 +95,37 @@ describe('SpaceAgentManager', () => {
       if (!second.ok) throw new Error('expected ok');
       expect(second.value.handle.length).toBeLessThanOrEqual(60);
       expect(second.value.handle.endsWith('-2')).toBe(true);
+    });
+
+    it('auto-generates handles around long-horizon agent collisions', async () => {
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scout',
+        displayName: 'Scout',
+      });
+
+      const result = await manager.create({ spaceId: 'space-1', name: 'Scout' });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.handle).toBe('scout-2');
+    });
+
+    it('rejects explicit handles used by long-horizon agents', async () => {
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scout',
+        displayName: 'Scout',
+      });
+
+      const result = await manager.create({
+        spaceId: 'space-1',
+        name: 'Worker Scout',
+        handle: 'scout',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('handle "scout"');
     });
 
     it('creates agents with all valid roles', async () => {
@@ -264,6 +298,37 @@ describe('SpaceAgentManager', () => {
       const bad = await manager.update(created.value.id, { model: 'gpt-4' });
       expect(bad.ok).toBe(false);
       if (!bad.ok) expect(bad.error).toMatch(/anthropic/);
+    });
+
+    it('rejects handles used by long-horizon agents on update', async () => {
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scout',
+        displayName: 'Scout',
+      });
+      const created = await manager.create({ spaceId: 'space-1', name: 'Worker' });
+      if (!created.ok) throw new Error('create failed');
+
+      const result = await manager.update(created.value.id, { handle: 'scout' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('handle "scout"');
+    });
+
+    it('allows shared-ID agents to keep their own long-horizon handle on update', async () => {
+      const created = await manager.create({ spaceId: 'space-1', name: 'Worker' });
+      if (!created.ok) throw new Error('create failed');
+      longHorizonRepo.create({
+        id: created.value.id,
+        spaceId: 'space-1',
+        handle: 'shared-handle',
+        displayName: 'Shared Agent',
+      });
+
+      const result = await manager.update(created.value.id, { handle: 'shared-handle' });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.handle).toBe('shared-handle');
     });
 
     it('returns error for unknown agent id', async () => {

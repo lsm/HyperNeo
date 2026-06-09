@@ -6,10 +6,12 @@ import {
   SpaceActorRegistryAdapter,
 } from '../../../src/lib/space/actor-registry';
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
+import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
@@ -44,6 +46,7 @@ describe('SpaceActorRegistryAdapter', () => {
   let spaceRepo: SpaceRepository;
   let sessionRepo: SessionRepository;
   let spaceAgentRepo: SpaceAgentRepository;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
@@ -57,6 +60,7 @@ describe('SpaceActorRegistryAdapter', () => {
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
     spaceAgentRepo = new SpaceAgentRepository(db);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -65,6 +69,7 @@ describe('SpaceActorRegistryAdapter', () => {
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,
@@ -123,6 +128,11 @@ describe('SpaceActorRegistryAdapter', () => {
     const agent = spaceAgentRepo.create({
       spaceId: space.id,
       name: 'Long Term Agent',
+    });
+    const longHorizonAgent = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'mcp-created-agent',
+      displayName: 'MCP Created Agent',
     });
     sessionRepo.createSession(
       makeSession(longTermAgentSessionId(space.id, agent.id), {
@@ -287,6 +297,14 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'active',
     });
     expect(actors).toContainEqual({
+      actorId: `agent:${longHorizonAgent.id}`,
+      kind: 'agent',
+      spaceId: space.id,
+      handle: '@mcp-created-agent',
+      roles: ['actor-role:mcp-created-agent', 'space-agent'],
+      status: 'active',
+    });
+    expect(actors).toContainEqual({
       actorId: `agent:${reservedNameAgent.id}`,
       kind: 'agent',
       spaceId: space.id,
@@ -384,6 +402,113 @@ describe('SpaceActorRegistryAdapter', () => {
     }
   });
 
+  it('preserves long-horizon handle when shared-ID handles diverge', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    longHorizonAgentRepo.create({
+      id: worker.id,
+      spaceId: space.id,
+      handle: 'long-horizon-handle',
+      displayName: 'Long Horizon Agent',
+    });
+
+    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+
+    expect(actor?.handle).toBe('@long-horizon-handle');
+    expect(actor?.roles).toEqual([
+      'actor-role:legacy-worker',
+      'actor-role:long-horizon-handle',
+      'space-agent',
+    ]);
+  });
+
+  it('marks non-active long-horizon agents unroutable even with stale sessions', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const paused = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'paused-agent',
+      displayName: 'Paused Agent',
+      status: 'paused',
+    });
+    const disabled = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'disabled-agent',
+      displayName: 'Disabled Agent',
+      status: 'disabled',
+    });
+    const archived = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'archived-agent',
+      displayName: 'Archived Agent',
+      status: 'archived',
+    });
+    for (const agent of [paused, disabled, archived]) {
+      sessionRepo.createSession(
+        makeSession(longTermAgentSessionId(space.id, agent.id), { context: { spaceId: space.id } })
+      );
+    }
+
+    expect(registry.getActor(space.id, `agent:${paused.id}`)?.status).toBe('archived');
+    expect(registry.getActor(space.id, `agent:${disabled.id}`)?.status).toBe('archived');
+    expect(registry.getActor(space.id, `agent:${archived.id}`)?.status).toBe('archived');
+  });
+
+  it('keeps shared-ID non-active long-horizon agents unroutable despite worker sessions', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    longHorizonAgentRepo.create({
+      id: worker.id,
+      spaceId: space.id,
+      handle: 'legacy-worker',
+      displayName: 'Legacy Worker',
+      status: 'paused',
+    });
+    sessionRepo.createSession(
+      makeSession(longTermAgentSessionId(space.id, worker.id), { context: { spaceId: space.id } })
+    );
+
+    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+
+    expect(actor?.handle).toBe('@legacy-worker');
+    expect(actor?.status).toBe('archived');
+  });
+
+  it('does not expose long-horizon coordinator row as separate actor', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    longHorizonAgentRepo.ensureCoordinator(space.id);
+
+    const actors = registry.listActors(space.id);
+
+    expect(actors).toContainEqual({
+      actorId: `agent:coordinator:${space.id}`,
+      kind: 'agent',
+      spaceId: space.id,
+      handle: '@coordinator',
+      roles: ['coordinator', 'space-agent'],
+      status: 'inactive',
+    });
+    expect(
+      actors.some((actor) => actor.actorId === `agent:${coordinatorLongHorizonAgentId(space.id)}`)
+    ).toBe(false);
+    expect(actors.filter((actor) => actor.handle === '@coordinator')).toHaveLength(1);
+  });
+
   it('returns row-backed inactive coordinator when no space chat session exists', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
@@ -411,6 +536,7 @@ describe('SpaceActorRegistryAdapter', () => {
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,

@@ -5,7 +5,7 @@
  *
  * Responsibilities:
  * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
- * - Protect custom agents that are referenced by nodes
+ * - Protect worker agents that are referenced by nodes
  *
  * Workflow selection: either explicit workflowId provided by the caller, or
  * AI auto-select at runtime via list_workflows + start_workflow_run. There is
@@ -21,6 +21,7 @@ import type {
   WorkflowChannel,
   Gate,
 } from '@neokai/shared';
+import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
@@ -51,7 +52,7 @@ export function isReservedWorkflowAgentName(name: string): boolean {
 
 /**
  * Minimal interface the manager needs from SpaceAgentManager to validate
- * custom agent references in workflow nodes.
+ * worker agent references in workflow nodes.
  */
 export interface SpaceAgentLookup {
   /** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
@@ -108,6 +109,8 @@ export class SpaceWorkflowManager {
     if (params.gates && params.gates.length > 0) {
       this.validateGates(params.gates);
     }
+
+    this.validateHooks(params.hooks ?? [], nodes);
 
     this.validateCodexApprovalAgainstScriptedGates(
       nodes,
@@ -334,6 +337,9 @@ export class SpaceWorkflowManager {
       params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);
     const effectiveGates =
       params.gates === undefined ? (existing.gates ?? []) : (params.gates ?? []);
+    const effectiveHooks =
+      params.hooks === undefined ? (existing.hooks ?? []) : (params.hooks ?? []);
+    this.validateHooks(effectiveHooks, effectiveNodes);
     this.validateCodexApprovalAgainstScriptedGates(
       effectiveNodes,
       effectiveChannels,
@@ -389,7 +395,7 @@ export class SpaceWorkflowManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Returns all workflows whose nodes reference the given custom agent.
+   * Returns all workflows whose nodes reference the given worker agent.
    * Used by SpaceAgentManager to block deletion of in-use agents.
    */
   getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
@@ -700,6 +706,13 @@ export class SpaceWorkflowManager {
       if (errors.length > 0) {
         throw new WorkflowValidationError(`gates[${gi}]: ${errors.join('; ')}`);
       }
+    }
+  }
+
+  private validateHooks(hooks: unknown[], nodes: WorkflowNodeInput[]): void {
+    const errors = validateWorkflowHooks(hooks, nodes);
+    if (errors.length > 0) {
+      throw new WorkflowValidationError(errors.join('; '));
     }
   }
 
