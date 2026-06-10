@@ -13,11 +13,15 @@ import {
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
-import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
+import {
+  HookExecutor,
+  type HookExecutorContext,
+} from '../../../../src/lib/space/runtime/hook-executor';
 import type { WorkflowHook, WorkflowHookResult, SpaceWorkflow } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type { ToolResult } from '../../../../src/lib/space/tools/tool-result';
 
 // ---------------------------------------------------------------------------
@@ -168,6 +172,16 @@ function makeMockArtifactRepo(): WorkflowRunArtifactRepository {
   } as unknown as WorkflowRunArtifactRepository;
 }
 
+function makeMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
+  return {
+    getRun: () =>
+      ({
+        id: 'run-1',
+        createdAt: Date.now(),
+      }) as unknown as import('@neokai/shared').SpaceWorkflowRun,
+  } as unknown as SpaceWorkflowRunRepository;
+}
+
 function makeWorkflow(hooks: WorkflowHook[]): SpaceWorkflow {
   return {
     id: 'wf-1',
@@ -210,6 +224,7 @@ function makeEngine(hooks: WorkflowHook[]): {
     workflow: makeWorkflow(hooks),
     workflowRunId: 'run-1',
     nodeExecutionRepo: makeMockNodeExecutionRepo(),
+    workflowRunRepo: makeMockWorkflowRunRepo(),
     artifactRepo: makeMockArtifactRepo(),
     hookStateRepo: makeMockHookStateRepo(),
     hookExecutor: mockExecutor,
@@ -524,6 +539,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -566,6 +582,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -729,6 +746,7 @@ describe('WorkflowHookEngine', () => {
       workflow,
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
       hookExecutor: mockExecutor,
@@ -758,6 +776,7 @@ describe('WorkflowHookEngine', () => {
       workflow,
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
       hookExecutor: mockExecutor,
@@ -803,6 +822,7 @@ describe('WorkflowHookEngine', () => {
       workflow,
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo: makeMockHookStateRepo(),
       hookExecutor: mockExecutor,
@@ -828,6 +848,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -858,6 +879,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -889,6 +911,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -922,6 +945,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -958,6 +982,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1003,6 +1028,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1054,6 +1080,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1135,6 +1162,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1170,6 +1198,7 @@ describe('WorkflowHookEngine', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1207,6 +1236,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo,
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1251,6 +1281,7 @@ describe('WorkflowHookEngine', () => {
       workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo,
       hookStateRepo,
       hookExecutor: mockExecutor,
@@ -1285,6 +1316,769 @@ describe('WorkflowHookEngine', () => {
 
     expect(outcome.decision).toBe('block');
     expect(outcome.userState.reason).toContain('Patched params invalid');
+  });
+
+  test('slot-addressed channel with hookIds resolves when target is agent slot name', async () => {
+    // Channel uses agent slot name 'reviewer' as to-address instead of node name 'Review'
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('missing one of multiple declared hookIds fails closed', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'hook-a',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['hook-a', 'hook-b'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-a', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+  });
+
+  test('mixed gateId and hookIds channel fails closed before hooks run', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', gateId: 'legacy-gate', hookIds: ['review-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('mixed configuration');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('empty hooks array with hook-managed channel fails closed', async () => {
+    const workflow = makeWorkflow([]);
+    workflow.hooks = [];
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['missing-hook'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+  });
+
+  test('@worker address with agent slot matches slot-addressed channel', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:run-1/Review/reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('@role address with agent slot matches slot-addressed channel', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@role:reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('broadcast * matches slot-addressed channels', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    // Channel uses agent slot name 'reviewer' and wildcard permits all
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '*', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('first-match channel semantics: specific channel governs over later wildcard', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'specific-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+      makeHook({
+        id: 'wildcard-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    // Specific channel first, then wildcard — router would use the specific one
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['specific-gate'] },
+      { id: 'ch-2', from: 'Coding', to: '*', hookIds: ['wildcard-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('specific-gate', { type: 'allow' });
+    // wildcard-gate is NOT set — if first-match fails, it would block
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    // Only specific-gate should run because the specific channel matches first
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('specific-gate');
+  });
+
+  test('first-match channel with no hookIds allows action without channel-bound hooks', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'workflow-hook',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    // Open channel first, then wildcard hook-managed — router uses the open one
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review' },
+      { id: 'ch-2', from: 'Coding', to: '*', hookIds: ['wildcard-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('workflow-hook', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    // workflow-hook runs because it's not channel-bound and matches on its own
+    // criteria. The wildcard channel's hookIds are ignored because the first
+    // matching channel (ch-1) has no hookIds.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('workflow-hook');
+  });
+
+  test('@worker address first-matches slot-addressed channel', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'reviewer', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:run-1/Review/reviewer', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('side_effect channel-bound hook fails closed', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'side-hook',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        classification: 'side_effect',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['side-hook'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('side-hook', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.status).toBe('blocked_by_hook');
+    expect(outcome.userState.reason).toContain('not all declared hooks resolve');
+  });
+
+  test('PR_URL env var injected alongside NEOKAI_PR_URL', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'side_effect' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+      prUrl: 'https://github.com/lsm/neokai/pull/42',
+    });
+
+    let capturedContext: unknown;
+    mockExecutor.execute = async (hook, context) => {
+      capturedContext = context;
+      return { result: { type: 'allow' } };
+    };
+
+    await engine.executeAction('send_message', { target: 'Review' }, defaultMeta);
+
+    const ctx = capturedContext as { prUrl?: string };
+    expect(ctx.prUrl).toBe('https://github.com/lsm/neokai/pull/42');
+  });
+
+  test('node-id target first-matches channel by resolved node name', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'review-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['review-gate'] }];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('review-gate', { type: 'allow' });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'node-review', message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('review-gate');
+  });
+
+  test('array target uses first-match per element', async () => {
+    const workflow = makeWorkflow([
+      makeHook({
+        id: 'specific-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+      makeHook({
+        id: 'wildcard-gate',
+        sourceNode: 'Coding',
+        method: 'send_message',
+        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      }),
+    ]);
+    workflow.channels = [
+      { id: 'ch-1', from: 'Coding', to: 'Review', hookIds: ['specific-gate'] },
+      { id: 'ch-2', from: 'Coding', to: '*', hookIds: ['wildcard-gate'] },
+    ];
+
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('specific-gate', { type: 'allow' });
+    // wildcard-gate not set — would block if union behavior still applied
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review'], message: 'hi' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('specific-gate');
+  });
+
+  test('space-agent target skips channel hook binding', async () => {
+    // No hooks in workflow.hooks — channel only references a missing hook.
+    const workflow = makeWorkflow([]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: '*', hookIds: ['missing-gate'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'space-agent', message: 'escalate' },
+      defaultMeta
+    );
+
+    // Channel hook binding is skipped for space-agent, so missing-gate
+    // does not trigger fail-closed.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('@session: reply target skips channel hook binding', async () => {
+    // Wildcard hook-managed channel should not bind @session: targets.
+    const workflow = makeWorkflow([]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: '*', hookIds: ['missing-gate'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@session:abc-123', message: 'reply to human' },
+      defaultMeta
+    );
+
+    // @session: targets route outside channel topology — no channel hook binding.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('send_message data is merged into gate data context', async () => {
+    const capturedContexts: HookExecutorContext[] = [];
+    const capturingExecutor = new (class extends HookExecutor {
+      constructor() {
+        super({ workspacePath: '/tmp' });
+      }
+      override async execute(
+        hook: WorkflowHook,
+        context: HookExecutorContext
+      ): Promise<{ result: WorkflowHookResult }> {
+        capturedContexts.push(context);
+        return { result: { type: 'allow' } };
+      }
+    })();
+
+    const mockGateDataRepo = {
+      listByRun: () => [{ gateId: 'g1', data: { existing_field: true }, runId: 'run-1' }],
+      get: () => null,
+    };
+
+    const hook: WorkflowHook = {
+      id: 'test-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+
+    const workflow = makeWorkflow([hook]);
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: capturingExecutor,
+      workspacePath: '/tmp',
+      gateDataRepo: mockGateDataRepo as any,
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'done', data: { pr_url: 'https://github.com/pull/1' } },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(capturedContexts).toHaveLength(1);
+    const gateData = JSON.parse(capturedContexts[0].gateDataJson ?? '{}');
+    // Both persisted gate data and in-flight params.data should be present
+    expect(gateData.existing_field).toBe(true);
+    expect(gateData.pr_url).toBe('https://github.com/pull/1');
+  });
+
+  test('generic handle target skips channel hook binding', async () => {
+    // @some-agent is a generic handle — routes through SpaceDeliveryFacade,
+    // not channelRouter.deliverMessage, so channel hooks must not bind.
+    const workflow = makeWorkflow([]);
+    workflow.channels = [{ id: 'ch-1', from: 'Coding', to: '*', hookIds: ['missing-gate'] }];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@some-agent', message: 'hello' },
+      defaultMeta
+    );
+
+    // Generic handle bypasses channel topology — no channel hook binding.
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(0);
+  });
+
+  test('@worker address with URL-encoded agent name decodes for channel matching', async () => {
+    // Agent slot name contains '/' which is URL-encoded in @worker addresses.
+    const hook: WorkflowHook = {
+      id: 'encoded-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+
+    const workflow = makeWorkflow([hook]);
+    workflow.nodes = [
+      { id: 'node-coding', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+      {
+        id: 'node-review',
+        name: 'Review',
+        agents: [{ name: 'reviewer/lead', agentId: 'agent-reviewer' }],
+      },
+    ];
+    // Channel targets the decoded agent slot name
+    workflow.channels = [
+      { id: 'ch-encoded', from: 'Coding', to: 'reviewer/lead', hookIds: ['encoded-hook'] },
+    ];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      // @worker:Review/reviewer%2Flead — encoded form of reviewer/lead
+      { target: '@worker:Review/reviewer%2Flead', message: 'review please' },
+      defaultMeta
+    );
+
+    // URL-encoded agent name is decoded to match the channel's to: 'reviewer/lead'
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('encoded-hook');
+  });
+
+  test('array targets each resolve their own channel independently', async () => {
+    // Two channels with different hookIds — each array element must match
+    // its own channel, not the sibling's.
+    const hookReview: WorkflowHook = {
+      id: 'review-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+    const hookQa: WorkflowHook = {
+      id: 'qa-hook',
+      method: 'send_message',
+      sourceNode: 'Coding',
+      enabled: true,
+      classification: 'validation',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+      validator: { kind: 'built_in', id: 'pr_open' as const },
+    };
+
+    const workflow = makeWorkflow([hookReview, hookQa]);
+    workflow.nodes = [
+      { id: 'node-coding', name: 'Coding', agents: [{ name: 'coder', agentId: 'agent-coder' }] },
+      {
+        id: 'node-review',
+        name: 'Review',
+        agents: [{ name: 'reviewer', agentId: 'agent-reviewer' }],
+      },
+      { id: 'node-qa', name: 'QA', agents: [{ name: 'qa', agentId: 'agent-qa' }] },
+    ];
+    workflow.channels = [
+      { id: 'ch-coder-reviewer', from: 'Coding', to: 'Review', hookIds: ['review-hook'] },
+      { id: 'ch-coder-qa', from: 'Coding', to: 'QA', hookIds: ['qa-hook'] },
+    ];
+
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo: makeMockHookStateRepo(),
+      hookExecutor: new MockHookExecutor(),
+      workspacePath: '/tmp',
+    });
+
+    const outcome = await engine.executeAction(
+      'send_message',
+      // Node-id targets — each should resolve to its own node name
+      { target: ['node-review', 'node-qa'], message: 'check both' },
+      defaultMeta
+    );
+
+    // Both channels' hooks should be collected (not just Review's)
+    expect(outcome.decision).toBe('allow');
+    const hookIds = outcome.executionLog.map((r) => r.hookId).sort();
+    expect(hookIds).toEqual(['qa-hook', 'review-hook']);
   });
 });
 
@@ -1354,6 +2148,7 @@ describe('wrapHandlerWithHooks', () => {
       ]),
       workflowRunId: 'run-1',
       nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      workflowRunRepo: makeMockWorkflowRunRepo(),
       artifactRepo: makeMockArtifactRepo(),
       hookStateRepo,
       hookExecutor: mockExecutor,

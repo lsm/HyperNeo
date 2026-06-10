@@ -15,16 +15,19 @@
  *   - `record_state` persists hook-local state
  */
 
-import type {
-  WorkflowHook,
-  WorkflowHookResult,
-  WorkflowHookUserState,
-  SpaceWorkflow,
-  WorkflowRunArtifact,
+import {
+  resolveNodeAgents,
+  type WorkflowHook,
+  type WorkflowHookResult,
+  type WorkflowHookUserState,
+  type SpaceWorkflow,
+  type WorkflowRunArtifact,
 } from '@neokai/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 import { ChannelResolver } from './channel-resolver';
 import { Logger } from '../../logger';
@@ -90,10 +93,15 @@ export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
   nodeExecutionRepo: NodeExecutionRepository;
+  workflowRunRepo: SpaceWorkflowRunRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
   hookExecutor: HookExecutor;
   workspacePath?: string;
+  /** Optional resolved PR URL for this workflow run (injected into hook script env). */
+  prUrl?: string;
+  /** Optional gate data repository for building fresh NEOKAI_GATE_DATA_JSON per action. */
+  gateDataRepo?: GateDataRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +188,45 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const hooks = this.resolveMatchingHooks(methodName, params, meta);
+    const { hooks, missingChannelHooks, mixedGateHookChannel } = this.resolveMatchingHooks(
+      methodName,
+      params,
+      meta
+    );
+
+    // Reject mixed gate/hook channels before any hooks run.
+    if (mixedGateHookChannel) {
+      return {
+        decision: 'block',
+        finalParams: params,
+        followUpRequests: [],
+        stateUpdates: [],
+        userState: {
+          status: 'blocked_by_hook',
+          reason:
+            'Channel references both gateId and hookIds. Action blocked (mixed configuration).',
+        },
+        executionLog: [],
+      };
+    }
+
+    // Fail closed when a hook-managed channel declares hookIds but one or more
+    // declared hooks do not resolve (disabled, missing, misconfigured, or wrong
+    // source/target).
+    if (missingChannelHooks) {
+      return {
+        decision: 'block',
+        finalParams: params,
+        followUpRequests: [],
+        stateUpdates: [],
+        userState: {
+          status: 'blocked_by_hook',
+          reason:
+            'Channel declares hookIds but not all declared hooks resolve. Action blocked (fail closed).',
+        },
+        executionLog: [],
+      };
+    }
 
     if (hooks.length === 0) {
       return {
@@ -479,15 +525,13 @@ export class WorkflowHookEngine {
     methodName: string,
     params: Record<string, unknown>,
     meta: HookActionMeta
-  ): WorkflowHook[] {
+  ): { hooks: WorkflowHook[]; missingChannelHooks: boolean; mixedGateHookChannel: boolean } {
     const workflow = this.config.workflow;
-    if (!workflow?.hooks) return [];
-
-    const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+    const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
     // Build slot-to-nodes map so duplicate slot names across nodes are preserved
     const slotToNodes = new Map<string, string[]>();
-    for (const node of workflow.nodes) {
+    for (const node of workflow?.nodes ?? []) {
       for (const agent of node.agents ?? []) {
         const arr = slotToNodes.get(agent.name) ?? [];
         if (!arr.includes(node.name)) {
@@ -498,12 +542,16 @@ export class WorkflowHookEngine {
     }
 
     const fromNode = nodeName;
-    const nodeIdToName = new Map(workflow.nodes.map((n) => [n.id, n.name]));
-    const nodeNames = new Set(workflow.nodes.map((n) => n.name));
-    const resolver = new ChannelResolver(workflow.channels ?? []);
+    const nodeIdToName = new Map((workflow?.nodes ?? []).map((n) => [n.id, n.name]));
+    const nodeNames = new Set((workflow?.nodes ?? []).map((n) => n.name));
+    const resolver = new ChannelResolver(workflow?.channels ?? []);
 
-    // Resolve action target(s) for send_message
+    // Resolve action target(s) for send_message.
+    // Keep both raw targets (slot names, node IDs, bare strings) and resolved
+    // node names so channel matching works for slot-addressed channels like
+    // { from: 'coder', to: 'reviewer', hookIds: [...] }.
     const actionTargets = new Set<string>();
+    const rawActionTargets = new Set<string>();
     if (methodName === 'send_message') {
       const target = params.target;
       if (typeof target === 'string') {
@@ -512,11 +560,16 @@ export class WorkflowHookEngine {
           const permittedSlot = resolver.getPermittedTargets(meta.agentName);
           const permitted = [...new Set([...permittedNode, ...permittedSlot])];
           if (permitted.includes('*')) {
-            for (const node of workflow.nodes) {
+            for (const node of workflow?.nodes ?? []) {
               actionTargets.add(node.name);
+            }
+            // Also add permitted slot/node names so slot-addressed channels match
+            for (const t of permitted) {
+              if (t !== '*') rawActionTargets.add(t);
             }
           } else {
             for (const t of permitted) {
+              rawActionTargets.add(t);
               for (const resolved of this.resolveTargetEntries(
                 t,
                 nodeIdToName,
@@ -528,6 +581,10 @@ export class WorkflowHookEngine {
             }
           }
         } else {
+          rawActionTargets.add(target);
+          for (const decoded of this.decodeTargetSlotNames(target)) {
+            rawActionTargets.add(decoded);
+          }
           for (const resolved of this.resolveTargetEntries(
             target,
             nodeIdToName,
@@ -545,11 +602,15 @@ export class WorkflowHookEngine {
             const permittedSlot = resolver.getPermittedTargets(meta.agentName);
             const permitted = [...new Set([...permittedNode, ...permittedSlot])];
             if (permitted.includes('*')) {
-              for (const node of workflow.nodes) {
+              for (const node of workflow?.nodes ?? []) {
                 actionTargets.add(node.name);
+              }
+              for (const pt of permitted) {
+                if (pt !== '*') rawActionTargets.add(pt);
               }
             } else {
               for (const pt of permitted) {
+                rawActionTargets.add(pt);
                 for (const resolved of this.resolveTargetEntries(
                   pt,
                   nodeIdToName,
@@ -561,6 +622,10 @@ export class WorkflowHookEngine {
               }
             }
           } else {
+            rawActionTargets.add(t);
+            for (const decoded of this.decodeTargetSlotNames(t)) {
+              rawActionTargets.add(decoded);
+            }
             for (const resolved of this.resolveTargetEntries(
               t,
               nodeIdToName,
@@ -574,7 +639,132 @@ export class WorkflowHookEngine {
       }
     }
 
-    return workflow.hooks.filter((hook) => {
+    // For send_message, intersect resolved hooks with the hookIds declared on
+    // the matching workflow channels. Use first-match semantics (same as
+    // ChannelRouter.findMatchingWorkflowChannel) so overlapping routes don't
+    // pull in unrelated hooks.
+    const channelHookIds = new Set<string>();
+    let hasChannelHookIds = false;
+    let mixedGateHookChannel = false;
+    if (methodName === 'send_message' && (actionTargets.size > 0 || rawActionTargets.size > 0)) {
+      const target = params.target;
+
+      // Skip targets that route outside workflow channel topology:
+      // - space-agent: built-in escalation
+      // - @session: reply-session targets (direct Space Agent reply routes)
+      // - Generic handles (@some-agent): routed through SpaceDeliveryFacade,
+      //   not channelRouter.deliverMessage, so channel hooks cannot govern them
+      // Only @worker: and @role: addresses map to workflow node agents.
+      const isOutsideChannelTopology = (t: string) => {
+        if (t === 'space-agent') return true;
+        if (t.startsWith('@session:')) return true;
+        if (t.startsWith('@') && !t.startsWith('@worker:') && !t.startsWith('@role:')) {
+          // Generic handle — routes through SpaceDeliveryFacade, not channels.
+          return true;
+        }
+        return false;
+      };
+
+      const processFirstMatch = (rawTarget: string): boolean => {
+        const trimmed = rawTarget.trim();
+        if (isOutsideChannelTopology(trimmed)) return false;
+
+        // Try raw target, then decoded slot names, then per-element resolved
+        // node names (NOT the global actionTargets set — each array element
+        // must first-match its own channel, not a sibling's channel).
+        let firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, trimmed);
+        if (!firstCh) {
+          for (const decoded of this.decodeTargetSlotNames(trimmed)) {
+            firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, decoded);
+            if (firstCh) break;
+          }
+        }
+        if (!firstCh) {
+          for (const resolved of this.resolveTargetEntries(
+            trimmed,
+            nodeIdToName,
+            slotToNodes,
+            nodeNames
+          )) {
+            firstCh = this.findFirstMatchingChannel(workflow, meta.agentName, resolved);
+            if (firstCh) break;
+          }
+        }
+
+        if (!firstCh) return false;
+
+        if (firstCh.gateId && firstCh.hookIds && firstCh.hookIds.length > 0) {
+          mixedGateHookChannel = true;
+          return true;
+        }
+        if (firstCh.hookIds && firstCh.hookIds.length > 0) {
+          hasChannelHookIds = true;
+          for (const hid of firstCh.hookIds) {
+            channelHookIds.add(hid);
+          }
+        }
+        return true;
+      };
+
+      if (typeof target === 'string' && target.trim() !== '*') {
+        processFirstMatch(target);
+      } else if (Array.isArray(target)) {
+        // First-match per array element so a specific channel governs each target.
+        const seenChannels = new Set<string>();
+        for (const t of target) {
+          if (typeof t !== 'string') continue;
+          if (t.trim() === '*') {
+            // Broadcast: fall back to union over all matching non-escalation channels.
+            for (const ch of workflow?.channels ?? []) {
+              const fromMatches =
+                ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
+              if (!fromMatches) continue;
+              const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+              const toMatches = toList.some(
+                (to) => to === '*' || actionTargets.has(to) || rawActionTargets.has(to)
+              );
+              if (!toMatches) continue;
+              if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+                mixedGateHookChannel = true;
+                break;
+              }
+              if (ch.hookIds && ch.hookIds.length > 0) {
+                hasChannelHookIds = true;
+                for (const hid of ch.hookIds) {
+                  channelHookIds.add(hid);
+                }
+              }
+            }
+          } else if (!seenChannels.has(t)) {
+            seenChannels.add(t);
+            processFirstMatch(t);
+          }
+        }
+      } else if (target === '*' || (typeof target === 'string' && target.trim() === '*')) {
+        // Broadcast: union over all matching non-escalation channels.
+        for (const ch of workflow?.channels ?? []) {
+          const fromMatches = ch.from === fromNode || ch.from === meta.agentName || ch.from === '*';
+          if (!fromMatches) continue;
+          const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+          const toMatches = toList.some(
+            (to) => to === '*' || actionTargets.has(to) || rawActionTargets.has(to)
+          );
+          if (!toMatches) continue;
+          if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+            mixedGateHookChannel = true;
+            break;
+          }
+          if (ch.hookIds && ch.hookIds.length > 0) {
+            hasChannelHookIds = true;
+            for (const hid of ch.hookIds) {
+              channelHookIds.add(hid);
+            }
+          }
+        }
+      }
+    }
+
+    const matchedHooks = (workflow?.hooks ?? []).filter((hook) => {
       if (!hook.enabled) return false;
       if (hook.method !== methodName) return false;
 
@@ -592,12 +782,27 @@ export class WorkflowHookEngine {
       if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
       if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
 
+      // Channel hookIds are the authoritative binding when present
+      if (hasChannelHookIds && !channelHookIds.has(hook.id)) return false;
+
       return hook.authorizedCallers.some((caller) => {
         if (caller.sourceNode !== nodeName) return false;
         if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
         return caller.agentSlots.includes(meta.agentName);
       });
     });
+
+    // Fail closed when any declared channel hookId does not resolve to a
+    // runnable validation hook. Side_effect hooks cannot block delivery, so
+    // they do not count as resolved validators for a channel.
+    const resolvedHookIds = new Set(
+      matchedHooks
+        .filter((h) => (h.classification ?? 'validation') === 'validation')
+        .map((h) => h.id)
+    );
+    const missingChannelHooks =
+      hasChannelHookIds && [...channelHookIds].some((hid) => !resolvedHookIds.has(hid));
+    return { hooks: matchedHooks, missingChannelHooks, mixedGateHookChannel };
   }
 
   private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
@@ -688,6 +893,49 @@ export class WorkflowHookEngine {
       mappedArtifacts.push(item);
     }
 
+    const run = this.config.workflowRunRepo.getRun(this.config.workflowRunId);
+    const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
+
+    // Build fresh gate data JSON per action so long-lived sessions don't
+    // validate against stale gate data or missing PR URLs.
+    // Flat-merge all gate data objects for backward compatibility with
+    // converted gate scripts that expect a single flat object shape.
+    // Also merge the current `params.data` (from send_message's `data` arg)
+    // so that converted gate scripts see the in-flight payload without
+    // requiring a separate gate data write first — matching legacy behavior
+    // where the gate write happened before evaluation.
+    let gateDataJson: string | undefined;
+    {
+      try {
+        const records = this.config.gateDataRepo?.listByRun(this.config.workflowRunId) ?? [];
+        const flatGateData: Record<string, unknown> = {};
+        for (const record of records) {
+          Object.assign(flatGateData, record.data);
+        }
+        // Merge current action data so hooks evaluating in the same MCP call
+        // see the payload the agent is sending (e.g. { pr_url }) without
+        // needing a prior gate data write.
+        if (
+          methodName === 'send_message' &&
+          params.data &&
+          typeof params.data === 'object' &&
+          !Array.isArray(params.data)
+        ) {
+          try {
+            const dataBytes = new TextEncoder().encode(JSON.stringify(params.data)).length;
+            if (dataBytes <= MAX_PARAM_DATA_BYTES) {
+              Object.assign(flatGateData, params.data as Record<string, unknown>);
+            }
+          } catch {
+            // non-serializable data — skip merge
+          }
+        }
+        gateDataJson = JSON.stringify(flatGateData);
+      } catch {
+        // best effort — hook scripts that depend on gate data will fail closed
+      }
+    }
+
     return {
       workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
@@ -705,6 +953,9 @@ export class WorkflowHookEngine {
       templateData: hook.templateData,
       workflow: this.config.workflow ?? undefined,
       lastResult: hookState.lastResult,
+      workflowStartIso,
+      prUrl: this.config.prUrl,
+      gateDataJson,
     };
   }
 
@@ -972,6 +1223,86 @@ export class WorkflowHookEngine {
     return [trimmed];
   }
 
+  /**
+   * Extract decoded slot/agent names from generic target strings so that
+   * slot-addressed channels (e.g. to: 'reviewer') match even when the agent
+   * uses the explicit address form (@worker:.../reviewer or @role:reviewer).
+   */
+  private decodeTargetSlotNames(target: string): string[] {
+    const decoded: string[] = [];
+    const trimmed = target.trim();
+
+    if (trimmed.startsWith('@worker:')) {
+      try {
+        const addr = parseAddress(trimmed);
+        if (addr.kind === 'worker' && addr.agentName) {
+          // Decode URL-encoded agent names (e.g. reviewer%2Flead → reviewer/lead)
+          // so slot-addressed channels with special characters match correctly.
+          decoded.push(decodeURIComponent(addr.agentName));
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    if (trimmed.startsWith('@role:')) {
+      const role = trimmed.slice(6);
+      const actorRolePrefix = 'actor-role:';
+      if (role.startsWith(actorRolePrefix)) {
+        const actorRoleValue = decodeURIComponent(role.slice(actorRolePrefix.length));
+        decoded.push(actorRoleValue);
+      } else {
+        decoded.push(role);
+      }
+    }
+
+    return decoded;
+  }
+
+  /**
+   * Find the first matching workflow channel for a given fromRole → toTarget pair,
+   * using the same semantics as ChannelRouter.findMatchingWorkflowChannel.
+   *
+   * Returns undefined when no channel matches (open topology).
+   */
+  private findFirstMatchingChannel(
+    workflow: SpaceWorkflow | undefined,
+    fromRole: string,
+    toTarget: string
+  ): import('@neokai/shared').WorkflowChannel | undefined {
+    if (!workflow) return undefined;
+
+    const fromNodeName = workflow.nodes.find((n) => {
+      try {
+        return resolveNodeAgents(n).some((a) => a.name === fromRole);
+      } catch {
+        return false;
+      }
+    })?.name;
+
+    const toNodeName =
+      workflow.nodes.find((n) => {
+        try {
+          return resolveNodeAgents(n).some((a) => a.name === toTarget);
+        } catch {
+          return false;
+        }
+      })?.name ?? workflow.nodes.find((n) => n.name === toTarget)?.name;
+
+    for (const ch of workflow.channels ?? []) {
+      if (ch.from !== '*' && ch.from !== fromRole && ch.from !== fromNodeName) continue;
+      const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+      if (
+        toList.includes('*') ||
+        toList.includes(toTarget) ||
+        (toNodeName && toList.includes(toNodeName))
+      ) {
+        return ch;
+      }
+    }
+    return undefined;
+  }
+
   private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
     const keysA = Object.keys(a);
     const keysB = Object.keys(b);
@@ -1140,14 +1471,19 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           message: req.message,
         } as unknown as Record<string, unknown>);
 
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(
+          timeoutHandle = setTimeout(
             () => reject(new Error('Follow-up dispatch timed out')),
             DEFAULT_FOLLOW_UP_TIMEOUT_MS
           );
         });
 
-        return Promise.race([dispatchPromise, timeoutPromise]);
+        return Promise.race([dispatchPromise, timeoutPromise]).finally(() => {
+          if (timeoutHandle !== undefined) {
+            clearTimeout(timeoutHandle);
+          }
+        });
       });
 
       try {

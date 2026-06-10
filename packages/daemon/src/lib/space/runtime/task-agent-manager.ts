@@ -3828,18 +3828,27 @@ export class TaskAgentManager {
       }
     };
 
-    // Build workflow hook engine when the workflow defines hooks.
+    // Build workflow hook engine when the workflow defines hooks OR when any
+    // channel declares hookIds (so missing-hook fail-closed checks run even
+    // when the hooks array is empty or omitted).
+    const hasHookManagedChannels = (workflow?.channels ?? []).some(
+      (ch) => ch.hookIds && ch.hookIds.length > 0
+    );
     let hookEngine: WorkflowHookEngine | undefined;
-    if (workflow?.hooks && workflow.hooks.length > 0) {
+    if (workflow && ((workflow.hooks && workflow.hooks.length > 0) || hasHookManagedChannels)) {
       const hookExecutor = new HookExecutor({ workspacePath });
+
       hookEngine = new WorkflowHookEngine({
         workflow,
         workflowRunId,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
+        workflowRunRepo: this.config.workflowRunRepo,
         artifactRepo: this.config.artifactRepo,
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
         hookExecutor,
         workspacePath,
+        prUrl: this.resolvePrUrlForRun(workflowRunId) || undefined,
+        gateDataRepo: this.config.gateDataRepo,
       });
     }
 

@@ -2886,6 +2886,63 @@ describe('node-agent-tools: async gate evaluation', () => {
     expect(data.gateWrite.gateOpen).toBe(true);
   });
 
+  test('evaluateTerminalGateFeatures rejects mixed gateId+hookIds channel', async () => {
+    const gate: Gate = {
+      id: 'mixed-gate',
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGate(gate, ctx.spaceId, {
+      nodes: [
+        {
+          id: 'node-coder',
+          name: 'Coding',
+          agents: [{ agentId: 'agent-coder', name: 'coder' }],
+        },
+        {
+          id: 'node-planner',
+          name: 'Planning',
+          agents: [{ agentId: 'agent-planner', name: 'planner' }],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-mixed',
+          from: 'coder',
+          to: 'planner',
+          gateId: 'mixed-gate',
+          hookIds: ['some-hook'],
+        },
+      ],
+    });
+
+    const gateDataRepo = new GateDataRepository(ctx.db);
+    gateDataRepo.set(ctx.workflowRunId, gate.id, { approved: true });
+    const mockExecutor = async () => ({ success: true, data: {}, error: null });
+
+    const result = await evaluateTerminalGateFeatures(
+      workflow,
+      gateDataRepo,
+      ctx.workflowRunId,
+      mockExecutor,
+      {
+        workspacePath: '/tmp',
+        runId: ctx.workflowRunId,
+        gateId: gate.id,
+      },
+      'node-coder',
+      ctx.artifactRepo
+    );
+
+    expect(result).not.toBeNull();
+    const data = JSON.parse(result!.content[0].text);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('references both gateId');
+    expect(data.error).toContain('hookIds');
+  });
+
   test('scriptExecutor receives correct context with gateId via send_message', async () => {
     const gate: Gate = {
       id: 'gate-context-check',
