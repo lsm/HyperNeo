@@ -2280,7 +2280,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(gate.poll?.script).toBe('echo custom poll');
   });
 
-  test('mergeNodeStructuralFieldsFromTemplate clears removed template Codex approval flags', () => {
+  test('mergeNodeStructuralFieldsFromTemplate preserves existing Codex approval flags when template omits them', () => {
     const existingNodes = FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
       node.name === 'Review' ? { ...node, requireCodexApproval: true } : node
     );
@@ -2295,7 +2295,7 @@ describe('seedBuiltInWorkflows()', () => {
     );
 
     const reviewNode = result.find((node) => node.name === 'Review')!;
-    expect(reviewNode.requireCodexApproval).toBeUndefined();
+    expect(reviewNode.requireCodexApproval).toBe(true);
   });
 
   test('re-stamp migrates codex gate to node toggle and strips feature', () => {
@@ -2341,6 +2341,86 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewNode.requireCodexApproval).toBe(true);
     expect(codexHook.enabled).toBe(true);
     expect(migratedGate.features?.codex_review_bot).toBeUndefined();
+
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'post-migration-drift-hash',
+      workflow.id
+    );
+
+    const secondResult = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(secondResult.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+    const secondAfter = manager.getWorkflow(workflow.id)!;
+    expect(secondAfter.nodes.find((node) => node.name === 'Review')?.requireCodexApproval).toBe(
+      true
+    );
+    expect(secondAfter.hooks!.find((hook) => hook.id === 'codex-review-check')?.enabled).toBe(true);
+  });
+
+  test('re-stamp remaps Codex hooks for renamed source nodes', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const renamedNodes = workflow.nodes.map((node) =>
+      node.name === 'Review' ? { ...node, name: 'Code Review' } : node
+    );
+    repo.updateWorkflow(workflow.id, { nodes: renamedNodes });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-renamed-source-hook-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const codexHook = after.hooks!.find((hook) => hook.id === 'codex-review-check')!;
+    expect(codexHook.sourceNode).toBe('Code Review');
+    expect(codexHook.authorizedCallers?.[0]?.sourceNode).toBe('Code Review');
+  });
+
+  test('re-stamp remaps Codex hook caller slots for renamed agent slots', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const workflow = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+    const renamedNodes = workflow.nodes.map((node) =>
+      node.name !== 'Plan Review'
+        ? node
+        : {
+            ...node,
+            agents: node.agents.map((agent) =>
+              agent.name === 'architecture-reviewer' ? { ...agent, name: 'arch-reviewer' } : agent
+            ),
+          }
+    );
+    manager.updateWorkflow(workflow.id, {
+      nodes: renamedNodes,
+      hooks: workflow.hooks?.map((hook) =>
+        hook.id !== 'codex-review-check'
+          ? hook
+          : {
+              ...hook,
+              authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+                ...caller,
+                agentSlots: ['arch-reviewer'],
+              })),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_name = ?, template_hash = ? WHERE id = ?`).run(
+      PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      'pre-renamed-slot-hook-hash',
+      workflow.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.errors).toEqual([]);
+    expect(result.restamped).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
+
+    const after = manager.getWorkflow(workflow.id)!;
+    const codexHook = after.hooks!.find((hook) => hook.id === 'codex-review-check')!;
+    expect(codexHook.authorizedCallers?.[0]?.agentSlots?.[0]).toBe('arch-reviewer');
   });
 
   test('mergeGateStructuralFieldsFromTemplate clears non-codex features when template removes them', () => {

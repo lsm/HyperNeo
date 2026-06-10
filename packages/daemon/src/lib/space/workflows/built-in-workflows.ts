@@ -1552,12 +1552,14 @@ export function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
-      requireCodexApproval: templateNode
-        ? templateNode.requireCodexApproval
-        : node.requireCodexApproval,
-      codexPollIntervalMs: templateNode
-        ? templateNode.codexPollIntervalMs
-        : node.codexPollIntervalMs,
+      requireCodexApproval:
+        templateNode?.requireCodexApproval !== undefined
+          ? templateNode.requireCodexApproval
+          : node.requireCodexApproval,
+      codexPollIntervalMs:
+        templateNode?.codexPollIntervalMs !== undefined
+          ? templateNode.codexPollIntervalMs
+          : node.codexPollIntervalMs,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateGuards = templateAgentsByKey.get(key);
@@ -1682,6 +1684,76 @@ function remapTemplateChannel(
     from: remapRef(channel.from),
     to: Array.isArray(channel.to) ? channel.to.map(remapRef) : remapRef(channel.to),
   };
+}
+
+function findExistingNodeForTemplateNode(
+  templateNode: WorkflowNode,
+  existingNodes: WorkflowNode[]
+): WorkflowNode | undefined {
+  return (
+    existingNodes.find((node) => node.name === templateNode.name) ??
+    existingNodes.find((node) =>
+      templateNode.agents.some((templateAgent) =>
+        node.agents.some((agent) => agent.name && agent.name === templateAgent.name)
+      )
+    )
+  );
+}
+
+function remapTemplateAgentSlot(
+  slot: string,
+  sourceNode: string,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): string {
+  const templateNode =
+    templateNodes.find((node) => node.name === sourceNode) ??
+    templateNodes.find((node) => nodeReferences(node).has(sourceNode));
+  if (!templateNode) return slot;
+
+  const templateAgentIndex = templateNode.agents.findIndex((agent) => agent.name === slot);
+  if (templateAgentIndex < 0) return slot;
+
+  const existingNode = findExistingNodeForTemplateNode(templateNode, existingNodes);
+  return existingNode?.agents[templateAgentIndex]?.name ?? slot;
+}
+
+function remapTemplateHook(
+  hook: WorkflowHook,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): WorkflowHook {
+  const remapRef = (ref: string) => remapTemplateChannelRef(ref, templateNodes, existingNodes);
+  return {
+    ...hook,
+    sourceNode: remapRef(hook.sourceNode),
+    targetNode: hook.targetNode ? remapRef(hook.targetNode) : hook.targetNode,
+    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+      ...caller,
+      sourceNode: remapRef(caller.sourceNode),
+      agentSlots: caller.agentSlots?.map((slot) =>
+        remapTemplateAgentSlot(slot, caller.sourceNode, templateNodes, existingNodes)
+      ),
+    })),
+    templateData: hook.templateData
+      ? {
+          ...hook.templateData,
+          enforceForTargets: Array.isArray(hook.templateData.enforceForTargets)
+            ? hook.templateData.enforceForTargets.map((target) =>
+                typeof target === 'string' ? remapRef(target) : target
+              )
+            : hook.templateData.enforceForTargets,
+        }
+      : hook.templateData,
+  };
+}
+
+function remapTemplateHooks(
+  hooks: WorkflowHook[] | null | undefined,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): WorkflowHook[] | null | undefined {
+  return hooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes));
 }
 
 function mergeChannelsFromTemplate(
@@ -1873,6 +1945,16 @@ export function seedBuiltInWorkflows(
           row.gates ?? []
         );
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
+        const remappedTemplateHooks = remapTemplateHooks(template.hooks, template.nodes, row.nodes);
+        const preserveCodexApproval =
+          migratedCodexApproval ||
+          migratedNodes.some((node) => node.requireCodexApproval === true) ||
+          (row.hooks ?? []).some(
+            (hook) =>
+              hook.enabled &&
+              hook.validator.kind === 'built_in' &&
+              hook.validator.id === 'codex_review_approved'
+          );
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1880,7 +1962,7 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: setCodexHookEnabled(template.hooks ?? null, migratedCodexApproval) ?? null,
+          hooks: setCodexHookEnabled(remappedTemplateHooks ?? null, preserveCodexApproval) ?? null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
