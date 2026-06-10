@@ -15,7 +15,7 @@ const VALID_METHODS = new Set([
 ]);
 // Built-in validators are not yet implemented; reject them at validation time
 // so workflows cannot declare IDs that would unconditionally block at runtime.
-const VALID_BUILT_IN_VALIDATORS = new Set<string>([]);
+const VALID_BUILT_IN_VALIDATORS = new Set<string>(['pr_ready']);
 const VALID_RESULT_TYPES = new Set([
   'allow',
   'block',

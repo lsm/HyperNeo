@@ -23,7 +23,6 @@
 import type {
   DeclarativeToolGuard,
   GateField,
-  GatePoll,
   GateScript,
   Gate,
   SpaceWorkflow,
@@ -114,48 +113,6 @@ function validateGateFieldWriters(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Shared gate poll: PR inline review comments
-// ---------------------------------------------------------------------------
-
-/**
- * Shared poll config that fetches all unresolved PR review thread comments.
- *
- * Uses the GitHub GraphQL API to query review threads with isResolved=false,
- * then formats the **latest** comment of each unresolved thread (using
- * `comments(last:1)`) with author, body, and URL. This ensures that follow-up
- * replies in existing threads change the poll output and trigger re-injection.
- *
- * NOTE: Capped at 100 review threads per query. Cursor-based pagination could
- * be added for PRs exceeding this, but 100 threads covers virtually all PRs.
- *
- * Available env vars (injected by GatePollManager):
- *   PR_URL, PR_NUMBER, REPO_OWNER, REPO_NAME, TASK_ID, SPACE_ID, WORKFLOW_RUN_ID
- */
-const PR_INLINE_COMMENTS_POLL: GatePoll = {
-  intervalMs: 30_000,
-  script: [
-    'GATE_PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-    'PR_URL="${GATE_PR_URL:-${PR_URL:-}}"',
-    'if [ -z "$PR_URL" ]; then exit 0; fi',
-    'PR_HOST="${PR_HOST:-}"',
-    'if [ -z "${REPO_OWNER:-}" ] || [ -z "${REPO_NAME:-}" ] || [ -z "${PR_NUMBER:-}" ] || [ -z "$PR_HOST" ]; then',
-    '  PR_META=$(jq -nr --arg url "$PR_URL" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
-    '  if [ -z "$PR_META" ]; then exit 0; fi',
-    '  REPO_OWNER="${REPO_OWNER:-$(jq -r .owner <<< "$PR_META")}"',
-    '  REPO_NAME="${REPO_NAME:-$(jq -r .repo <<< "$PR_META")}"',
-    '  PR_NUMBER="${PR_NUMBER:-$(jq -r .number <<< "$PR_META")}"',
-    '  PR_HOST="${PR_HOST:-$(jq -r .host <<< "$PR_META")}"',
-    'fi',
-    'GH_HOST_ARGS=()',
-    'if [ -n "$PR_HOST" ]; then GH_HOST_ARGS=(--hostname "$PR_HOST"); fi',
-    "QUERY='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(last:1){nodes{author{login} body url}}}}}}}'",
-    'gh api graphql "${GH_HOST_ARGS[@]}" -f query="$QUERY" -f owner="$REPO_OWNER" -f name="$REPO_NAME" -F number="$PR_NUMBER" --jq \'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .comments.nodes[0] | "- **" + .author.login + "**: " + .body + "\\n  " + .url] | join("\\n\\n")\'',
-  ].join('\n'),
-  target: 'from',
-  messageTemplate: 'Unresolved PR review comments:\n{{output}}',
-};
-
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
 // ---------------------------------------------------------------------------
@@ -174,71 +131,6 @@ const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
 const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
-
-const REVIEW_THREAD_CHECK_BASH_FUNCTION = [
-  'check_unresolved_review_threads() {',
-  '  local pr_url="$1"',
-  '  local pr_meta owner repo number gh_hostname threads_json unresolved_count unresolved_urls cursor has_more',
-  '  pr_meta=$(jq -nr --arg url "$pr_url" \'$url | capture("https?://(?<host>[^/]+)/(?<owner>[^/]+)/(?<repo>[^/]+)/pull/(?<number>[0-9]+)")\' 2>/dev/null || true)',
-  '  if [ -z "$pr_meta" ]; then',
-  '    echo "Unable to parse GitHub PR URL for review-thread check: ${pr_url}" >&2',
-  '    exit 1',
-  '  fi',
-  '  owner=$(jq -r .owner <<< "$pr_meta")',
-  '  repo=$(jq -r .repo <<< "$pr_meta")',
-  '  number=$(jq -r .number <<< "$pr_meta")',
-  '  gh_hostname=$(jq -r .host <<< "$pr_meta")',
-  '  local gh_host_args=("--hostname" "$gh_hostname")',
-  '  unresolved_count=0',
-  '  unresolved_urls=""',
-  '  cursor=""',
-  '  while true; do',
-  '    local page_args=("-f" "owner=$owner" "-f" "name=$repo" "-F" "number=$number")',
-  '    local page_query',
-  '    if [ -n "$cursor" ]; then',
-  '      page_args+=("-f" "cursor=$cursor")',
-  "      page_query='query($owner:String!,$name:String!,$number:Int!,$cursor:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
-  '    else',
-  "      page_query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{url}}} pageInfo{hasNextPage endCursor}}}}}'",
-  '    fi',
-  '    page_args+=("-f" "query=$page_query")',
-  '    if ! threads_json=$(gh api graphql "${gh_host_args[@]}" "${page_args[@]}"); then',
-  '      echo "Failed to retrieve review conversations for ${pr_url}" >&2',
-  '      exit 1',
-  '    fi',
-  '    if [ "$(jq \'.errors\' <<< "$threads_json")" != "null" ]; then',
-  '      echo "GraphQL errors when retrieving review conversations for ${pr_url}: $(jq -c \'.errors\' <<< "$threads_json")" >&2',
-  '      exit 1',
-  '    fi',
-  '    if [ "$(jq \'.data.repository.pullRequest.reviewThreads\' <<< "$threads_json")" = "null" ]; then',
-  '      echo "Incomplete GraphQL response for ${pr_url} — reviewThreads data missing" >&2',
-  '      exit 1',
-  '    fi',
-  '    local page_unresolved',
-  '    page_unresolved=$(jq \'[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length\' <<< "$threads_json")',
-  '    unresolved_count=$((unresolved_count + page_unresolved))',
-  '    if [ "$page_unresolved" != "0" ]; then',
-  '      local page_urls',
-  '      page_urls=$(jq -r \'.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false) | (.comments.nodes[0].url // .id)\' <<< "$threads_json")',
-  '      unresolved_urls="${unresolved_urls}${page_urls}"$\'\\n\'',
-  '    fi',
-  '    has_more=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false\' <<< "$threads_json")',
-  '    if [ "$has_more" != "true" ]; then',
-  '      break',
-  '    fi',
-  '    cursor=$(jq -r \'.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""\' <<< "$threads_json")',
-  '    if [ -z "$cursor" ]; then',
-  '      echo "Incomplete pagination for ${pr_url}: hasNextPage is true but endCursor is missing" >&2',
-  '      exit 1',
-  '    fi',
-  '  done',
-  '  if [ "$unresolved_count" != "0" ]; then',
-  '    echo "PR has ${unresolved_count} unresolved review conversation(s); resolve them before handoff:" >&2',
-  '    printf \'%s\\n\' "$unresolved_urls" >&2',
-  '    exit 1',
-  '  fi',
-  '}',
-].join('\n');
 
 const VALIDATION_NO_CHANGES_BASH_SCRIPT = [
   'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
@@ -268,50 +160,6 @@ const VALIDATION_NO_CHANGES_BASH_SCRIPT = [
   '  exit 1',
   'fi',
   'jq -n --arg mode "validation_only" --argjson changed_files 0 \'{"completion_mode":$mode,"changed_files":$changed_files}\'',
-].join('\n');
-
-const PR_READY_BASH_SCRIPT = [
-  REVIEW_THREAD_CHECK_BASH_FUNCTION,
-  '# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
-  'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
-  '# When pr_url is supplied, validate that exact PR rather than rediscovering via branch filters.',
-  'if [ -n "$PR_TARGET" ]; then',
-  '  PR_VIEW_SCOPE="$PR_TARGET"',
-  '  if ! PR_JSON=$(gh pr view "$PR_TARGET" --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-  '    echo "Failed to retrieve PR info for target ${PR_TARGET} (not authenticated, invalid PR URL, or network error)" >&2',
-  '    exit 1',
-  '  fi',
-  'else',
-  '  PR_VIEW_SCOPE="current branch"',
-  '  if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-  '    echo "Failed to retrieve PR info for current branch (not authenticated, no PR, or network error)" >&2',
-  '    exit 1',
-  '  fi',
-  'fi',
-  'PR_URL=$(jq -r \'.url\' <<< "$PR_JSON")',
-  'if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then',
-  '  echo "No PR URL found for ${PR_VIEW_SCOPE}" >&2',
-  '  exit 1',
-  'fi',
-  'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
-  'if [ "$PR_STATE" != "OPEN" ]; then',
-  '  echo "No open PR found for ${PR_VIEW_SCOPE} (state: ${PR_STATE:-none})" >&2',
-  '  exit 1',
-  'fi',
-  'PR_MERGEABLE=$(jq -r \'.mergeable\' <<< "$PR_JSON")',
-  '# Block on UNKNOWN — orchestrator retries until GitHub resolves mergeability',
-  'if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then',
-  '  echo "PR is not mergeable (mergeable: ${PR_MERGEABLE:-unknown})" >&2',
-  '  exit 1',
-  'fi',
-  'PR_STATUS=$(jq -r \'.mergeStateStatus\' <<< "$PR_JSON")',
-  '# Block on UNKNOWN — orchestrator retries until GitHub resolves status',
-  'if [ "$PR_STATUS" != "CLEAN" ] && [ "$PR_STATUS" != "HAS_HOOKS" ] && [ "$PR_STATUS" != "BLOCKED" ]; then',
-  '  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
-  '  exit 1',
-  'fi',
-  'check_unresolved_review_threads "$PR_URL"',
-  'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
 /**
@@ -412,10 +260,9 @@ const PD_PLANNING_PROMPT =
   'Write the plan to `plan.md` at the repo root, commit it, and open/update a PR targeting the ' +
   'default branch. After the PR is open and mergeable, hand off to Plan Review by calling ' +
   '`send_message(target="Plan Review", message="<short summary>", data: { pr_url: "<plan PR url>" })`. ' +
-  'The `data: { pr_url }` payload is auto-merged into `plan-pr-gate`; the gate script then ' +
-  'verifies the PR is open and mergeable before Plan Review activates. Without this explicit ' +
-  '`pr_url` write the gate stays closed and Plan Review never starts. Always re-supply ' +
-  '`data: { pr_url }` on every send to Plan Review — `plan-pr-gate` resets each cycle, so the ' +
+  'The hook validates the PR is open and mergeable before Plan Review activates. Without this explicit ' +
+  '`pr_url` the send is blocked. Always re-supply ' +
+  '`data: { pr_url }` on every send to Plan Review — the hook runs on every send, so the ' +
   'URL must be reasserted after every revision.';
 
 const CODEX_REACTION_APPROVAL_GUIDANCE =
@@ -512,10 +359,10 @@ const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
   'threads — including those where you disagree with the reviewer. First reply with your ' +
   'reasoning, then resolve the thread with the `resolveReviewThread` mutation. The ' +
-  'PR-ready gate blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
+  'PR-ready hook blocks on any unresolved thread, so leaving one open creates a deadlock. ' +
   'If the reviewer disagrees with your reasoning, they can re-open the thread. ' +
   'Use `gh api graphql` to verify no unresolved review conversations remain before ' +
-  'writing the PR-ready gate again. ' +
+  'sending a message to Review again. ' +
   'Never set a PR to auto-merge — auto-merge is not allowed.';
 
 const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
@@ -528,8 +375,9 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
   'write tests, and keep one PR updated across review and QA cycles.\n\n' +
-  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
-  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
+  'When implementation is ready, ensure the PR is open and mergeable and hand off to Review by ' +
+  'sending a message with `data: { pr_url: "<url>" }`. The hook validates PR readiness before ' +
+  'Review activates. Coding is not the end node — the task-completion tools ' +
   '(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
   REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
@@ -565,8 +413,8 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * Coding Workflow
  *
  * Two-node iterative graph: Coding ↔ Review (with cycle).
- * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
- *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
+ * - Coding → Review: validated by a `send_message` hook (`pr_ready`) that checks
+ *   the PR is open, mergeable, and has no unresolved review threads.
  * - Coding → Validation Complete: gated by `validation-complete-gate` — accepts
  *   no-code-change validation evidence (`completion_mode: "validation_only"`,
  *   `changed_files: 0`, `validation_outcome`) and bypasses PR validation.
@@ -602,14 +450,14 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '4. Run the test suite and fix any failures\n' +
               '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
               '6. If code changed: hand off by sending a message to Review with ' +
-              '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
+              '`data: { pr_url: "<url>" }`. The hook validates the PR is open and ' +
               'mergeable, so make sure it actually is before sending. ' +
-              '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
-              'data resets each cycle, so even on round 2+ you must re-supply it.\n' +
+              '**Always include `data: { pr_url }` on every send_message to Review** — the hook ' +
+              'runs on every send, so even on round 2+ you must re-supply it.\n' +
               '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
               'Instead, call `save_artifact({ type: "result", append: true, summary: "<validation outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<passed|failed + evidence>" } })`, then ' +
               '`send_message(target="Validation Complete", message="<short outcome>", data: { completion_mode: "validation_only", changed_files: 0, validation_outcome: "<outcome>" })`. ' +
-              'That validation-only handoff bypasses the PR-ready gate and closes the task without `pr_url`.\n\n' +
+              'That validation-only handoff bypasses the PR-ready hook and closes the task without `pr_url`.\n\n' +
               'If re-activated after review:\n' +
               '1. Read the incoming message `data` — you should find `review_url` and ' +
               '`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
@@ -694,27 +542,21 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   // Default coding loop — reviewer may auto-close when space runs at the
   // standard "trusted but supervised" tier (3).
   completionAutonomyLevel: 3,
-  gates: [
+  hooks: [
     {
-      id: 'code-ready-gate',
+      id: 'code-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Coder has opened an active, mergeable pull request',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['Coding', 'coder'],
-          check: { op: 'exists' },
-        },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Coding',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
+  ],
+  gates: [
     {
       id: 'validation-complete-gate',
       label: 'Validated',
@@ -781,7 +623,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Coding',
       to: 'Review',
-      gateId: 'code-ready-gate',
       label: 'Coding → Review',
     },
     {
@@ -811,7 +652,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  * Research Workflow
  *
  * Two-node iterative graph:
- *   Research → Review (gated by research-ready-gate: PR opened and mergeable)
+ *   Research → Review (validated by a send_message hook that checks PR is open/mergeable)
  *   Review → Research (ungated back-channel, max 5 cycles)
  *
  * Research agent researches thoroughly, commits findings, opens a PR.
@@ -843,7 +684,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               '2. Investigate using web search, code exploration, and available documentation\n' +
               '3. Write findings to well-structured markdown file(s)\n' +
               '4. Include sources, evidence, and clear conclusions\n' +
-              '5. Commit findings and open a PR with `gh pr create`\n\n' +
+              '5. Commit findings and open a PR with `gh pr create`\n' +
+              '6. Hand off to Review by calling `send_message(target="Review", message="<short summary>", data: { pr_url: "<PR url>" })`. ' +
+              'The hook validates the PR is open and mergeable before Review activates. ' +
+              'Always re-supply `data: { pr_url }` on every send — the hook runs on every send.\n\n' +
               'If re-activated after review feedback: address each point, expand research where requested, ' +
               'update the documents, and push new commits. ' +
               REVIEW_THREAD_RESOLUTION_GUIDANCE,
@@ -889,33 +733,24 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
   // Research is low-risk (read-only investigation + PR of findings) — permit
   // auto-close at a more conservative autonomy tier than coding loops.
   completionAutonomyLevel: 2,
-  gates: [
+  hooks: [
     {
-      id: 'research-ready-gate',
+      id: 'research-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Research agent has opened an active, mergeable pull request',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['*'],
-          check: { op: 'exists' },
-        },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Research',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Research', agentSlots: ['research'] }],
     },
   ],
   channels: [
     {
       from: 'Research',
       to: 'Review',
-      gateId: 'research-ready-gate',
       label: 'Research → Review',
     },
     {
@@ -981,7 +816,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  * should be broken into smaller standalone tasks before any coding starts.
  *
  * Main progression:
- *   Planning → Plan Review (plan-pr-gate: script verifies plan PR is open/mergeable)
+ *   Planning → Plan Review (send_message hook validates plan PR is open/mergeable)
  *   Plan Review → Task Dispatcher (plan-approval-gate: all 4 reviewers approve)
  *
  * Cyclic feedback:
@@ -1026,13 +861,12 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '4. Commit and open/update a PR against the default branch\n' +
               '5. Hand off to Plan Review by calling ' +
               '`send_message(target="Plan Review", message="<short summary>", ' +
-              'data: { pr_url: "<plan PR url>" })`. The `data: { pr_url }` write is ' +
-              'auto-merged into `plan-pr-gate`, which verifies the PR is open and ' +
-              'mergeable before Plan Review activates. Skipping this call leaves ' +
-              '`plan-pr-gate` closed and Plan Review never starts.\n' +
+              'data: { pr_url: "<plan PR url>" })`. The hook validates the PR is open and ' +
+              'mergeable before Plan Review activates. Skipping this call or an unready PR ' +
+              'blocks the send.\n' +
               '6. Wait for Plan Review feedback. If re-activated, address each reviewer ' +
               'comment, update `plan.md`, push to the same PR branch, then repeat step 5 ' +
-              '(re-supply `data: { pr_url }` — `plan-pr-gate` resets each cycle).',
+              '(re-supply `data: { pr_url }` — the hook runs on every send).',
           },
         },
       ],
@@ -1140,20 +974,21 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
   // destructive actions) but does alter the task graph — match the default
   // Coding Workflow tier.
   completionAutonomyLevel: 3,
-  gates: [
+  hooks: [
     {
-      id: 'plan-pr-gate',
+      id: 'plan-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Planning PR is open and mergeable so Plan Review can start.',
-      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Planning',
+      targetNode: 'Plan Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Planning', agentSlots: ['planner'] }],
     },
+  ],
+  gates: [
     {
       id: 'plan-approval-gate',
       label: 'Plan Approvals',
@@ -1181,7 +1016,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Planning',
       to: 'Plan Review',
-      gateId: 'plan-pr-gate',
       label: 'Planning → Plan Review',
     },
     {
@@ -1206,7 +1040,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  * and deeper QA validation (including browser-based checks).
  *
  * Main progression:
- *   Coding → Review (code-pr-gate: script verifies PR is open/mergeable)
+ *   Coding → Review (send_message hook validates PR is open/mergeable)
  *   Review → QA (review-approval-gate: reviewer approves)
  *
  * Feedback cycles:
@@ -1241,7 +1075,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
               '3. Open or update the PR and ensure it remains mergeable\n' +
-              '4. Write code-pr-gate with field pr_url so Review can activate\n' +
+              '4. Send a message to Review with `data: { pr_url: "<url>" }` so the hook can validate PR readiness\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
@@ -1328,22 +1162,21 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   // "work is good" signal. Post-approval runs only after that approval has
   // already happened.
   completionAutonomyLevel: 3,
-  gates: [
+  hooks: [
     {
-      id: 'code-pr-gate',
+      id: 'fullstack-code-pr-ready',
+      enabled: true,
       label: 'PR Ready',
-      description: 'Coding PR is open and mergeable for review.',
-      fields: [
-        { name: 'pr_url', type: 'string', writers: ['Coding', 'coder'], check: { op: 'exists' } },
-      ],
-      script: {
-        interpreter: 'bash',
-        source: PR_READY_BASH_SCRIPT,
-        timeoutMs: 30000,
-      },
-      poll: PR_INLINE_COMMENTS_POLL,
-      resetOnCycle: true,
+      sourceNode: 'Coding',
+      targetNode: 'Review',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
+  ],
+  gates: [
     {
       id: 'review-approval-gate',
       label: 'Review',
@@ -1368,7 +1201,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Coding',
       to: 'Review',
-      gateId: 'code-pr-gate',
       label: 'Coding → Review',
     },
     {
@@ -1720,6 +1552,31 @@ function mergeChannelsFromTemplate(
   return [...existingChannels, ...missingTemplateChannels];
 }
 
+function remapTemplateHook(
+  hook: NonNullable<SpaceWorkflow['hooks']>[number],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): NonNullable<SpaceWorkflow['hooks']>[number] {
+  const remapRef = (ref: string) => remapTemplateChannelRef(ref, templateNodes, existingNodes);
+  return {
+    ...hook,
+    sourceNode: remapRef(hook.sourceNode),
+    targetNode: hook.targetNode ? remapRef(hook.targetNode) : hook.targetNode,
+    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
+      ...caller,
+      sourceNode: remapRef(caller.sourceNode),
+    })),
+  };
+}
+
+function mergeHooksFromTemplate(
+  templateHooks: SpaceWorkflow['hooks'],
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): SpaceWorkflow['hooks'] {
+  return templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes));
+}
+
 /** @internal Exported for testing. */
 export function mergeGateStructuralFieldsFromTemplate(
   existingGates: Gate[] | undefined,
@@ -1896,7 +1753,7 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: template.hooks ?? null,
+          hooks: mergeHooksFromTemplate(template.hooks, template.nodes, row.nodes) ?? null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,

@@ -22,6 +22,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateWorkflowHookResult } from '../workflow-hook-validation';
+import { createPrReadyValidator } from './built-in-validators/pr-ready-validator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -137,6 +138,7 @@ registerBuiltInValidator('task_reported_status', async () => ({
   type: 'block',
   reason: NOT_IMPLEMENTED,
 }));
+registerBuiltInValidator('pr_ready', createPrReadyValidator());
 
 // ---------------------------------------------------------------------------
 // Environment builder
