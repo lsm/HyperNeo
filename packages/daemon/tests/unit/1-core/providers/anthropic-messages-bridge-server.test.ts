@@ -280,6 +280,95 @@ describe('AnthropicMessagesBridge', () => {
     });
   });
 
+  describe('/v1/models with model metadata', () => {
+    it('returns enriched model metadata when models are configured', async () => {
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://api.example.com',
+        apiKey: 'sk-test-key',
+        models: [
+          {
+            id: 'kimi-for-coding',
+            display_name: 'Kimi For Coding',
+            context_window: 262144,
+          },
+        ],
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+      expect(response.status).toBe(200);
+
+      const payload = (await response.json()) as {
+        data: Array<Record<string, unknown>>;
+        has_more: boolean;
+      };
+      expect(payload.has_more).toBe(false);
+      expect(payload.data).toHaveLength(1);
+      expect(payload.data[0]).toEqual({
+        id: 'kimi-for-coding',
+        type: 'model',
+        display_name: 'Kimi For Coding',
+        context_window: 262144,
+        max_context_window: 262144,
+        model_context_window: 262144,
+        max_input_tokens: 262144,
+        max_tokens: 16384,
+      });
+    });
+
+    it('returns the default stub when no models are configured', async () => {
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://api.example.com',
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+      expect(response.status).toBe(200);
+
+      const payload = (await response.json()) as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(payload.data).toEqual([
+        { id: 'default', type: 'model', display_name: 'Custom Anthropic Endpoint' },
+      ]);
+    });
+
+    it('supports multiple models', async () => {
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://api.example.com',
+        models: [
+          { id: 'model-a', display_name: 'Model A', context_window: 200000 },
+          { id: 'model-b', display_name: 'Model B', context_window: 500000 },
+        ],
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+      const payload = (await response.json()) as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(payload.data).toHaveLength(2);
+      expect(payload.data[0].context_window).toBe(200000);
+      expect(payload.data[1].context_window).toBe(500000);
+    });
+
+    it('respects custom max_tokens', async () => {
+      const server = createAnthropicMessagesBridgeServer({
+        baseUrl: 'https://api.example.com',
+        models: [
+          { id: 'custom', display_name: 'Custom', context_window: 128000, max_tokens: 8192 },
+        ],
+      });
+      servers.push(server);
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/v1/models`);
+      const payload = (await response.json()) as {
+        data: Array<Record<string, unknown>>;
+      };
+      expect(payload.data[0].max_tokens).toBe(8192);
+    });
+  });
+
   describe('count_tokens forwarding', () => {
     it('forwards /v1/messages/count_tokens to the upstream count endpoint', async () => {
       let capturedUrl = '';
