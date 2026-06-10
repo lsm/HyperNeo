@@ -1,0 +1,238 @@
+/**
+ * AcpMessageTranslator Tests
+ *
+ * Unit tests for chunk accumulation and notification translation.
+ */
+
+import { describe, expect, test, beforeEach } from 'bun:test';
+import { AcpMessageTranslator } from '../../../../src/lib/acp/acp-message-translator';
+import type {
+  AcpAgentMessageChunkUpdate,
+  AcpAgentThoughtChunkUpdate,
+  AcpToolCallUpdateNotification,
+  AcpToolCallUpdateUpdate,
+} from '@neokai/shared';
+
+describe('AcpMessageTranslator', () => {
+  let translator: AcpMessageTranslator;
+
+  beforeEach(() => {
+    translator = new AcpMessageTranslator('test-session');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Chunk accumulation
+  // ---------------------------------------------------------------------------
+
+  test('accumulates text chunks and emits on flush', () => {
+    translator.processUpdate(agentChunk('Hello'));
+    translator.processUpdate(agentChunk(' world'));
+
+    const messages = translator.flush();
+    expect(messages.length).toBe(1);
+    expect(messages[0].type).toBe('assistant');
+    expect(
+      (messages[0] as { message: { content: { type: string; text: string }[] } }).message.content
+    ).toEqual([{ type: 'text', text: 'Hello world' }]);
+  });
+
+  test('accumulates thinking chunks and emits before text', () => {
+    translator.processUpdate(thoughtChunk('Let me think'));
+    translator.processUpdate(agentChunk('Result'));
+
+    const messages = translator.flush();
+    expect(messages.length).toBe(1);
+    const content = (messages[0] as { message: { content: { type: string }[] } }).message.content;
+    expect(content.length).toBe(2);
+    expect(content[0]).toEqual({ type: 'thinking', thinking: 'Let me think' });
+    expect(content[1]).toEqual({ type: 'text', text: 'Result' });
+  });
+
+  test('flush returns empty array when nothing accumulated', () => {
+    const messages = translator.flush();
+    expect(messages.length).toBe(0);
+  });
+
+  test('flush clears buffers', () => {
+    translator.processUpdate(agentChunk('text'));
+    translator.flush();
+    const second = translator.flush();
+    expect(second.length).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool call boundary
+  // ---------------------------------------------------------------------------
+
+  test('flushes accumulated chunks before tool_call', () => {
+    translator.processUpdate(agentChunk('Before tool'));
+
+    const messages = translator.processUpdate(toolCall('tc-1', 'Read file', { path: '/tmp' }));
+
+    expect(messages.length).toBe(2);
+    expect(messages[0].type).toBe('assistant');
+    expect(
+      (messages[0] as { message: { content: { type: string; text: string }[] } }).message.content[0]
+    ).toEqual({
+      type: 'text',
+      text: 'Before tool',
+    });
+    expect(messages[1].type).toBe('assistant');
+    expect(
+      (messages[1] as { message: { content: { type: string }[] } }).message.content[0].type
+    ).toBe('tool_use');
+  });
+
+  test('flushes thinking and text before tool_call', () => {
+    translator.processUpdate(thoughtChunk('thinking'));
+    translator.processUpdate(agentChunk('text'));
+
+    const messages = translator.processUpdate(toolCall('tc-1', 'Edit file', {}));
+
+    expect(messages.length).toBe(2);
+    const firstContent = (messages[0] as { message: { content: { type: string }[] } }).message
+      .content;
+    expect(firstContent.length).toBe(2);
+    expect(firstContent[0].type).toBe('thinking');
+    expect(firstContent[1].type).toBe('text');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool call translation
+  // ---------------------------------------------------------------------------
+
+  test('translateToolCall produces tool_use block', () => {
+    const msg = translator.translateToolCall(
+      toolCall('tc-2', 'Write file', { path: '/tmp/f', content: 'hi' })
+    );
+
+    expect(msg.type).toBe('assistant');
+    expect(msg.session_id).toBe('test-session');
+    expect(msg.parent_tool_use_id).toBeNull();
+    const content = (
+      msg as { message: { content: { type: string; id: string; name: string; input: unknown }[] } }
+    ).message.content;
+    expect(content.length).toBe(1);
+    expect(content[0]).toEqual({
+      type: 'tool_use',
+      id: 'tc-2',
+      name: 'Write file',
+      input: { path: '/tmp/f', content: 'hi' },
+    });
+  });
+
+  test('translateToolCall defaults rawInput to empty object', () => {
+    const msg = translator.translateToolCall(toolCall('tc-3', 'Search', undefined));
+    const content = (msg as { message: { content: { input: unknown }[] } }).message.content;
+    expect(content[0].input).toEqual({});
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool call update translation
+  // ---------------------------------------------------------------------------
+
+  test('translateToolCallUpdate produces tool_progress message', () => {
+    const msg = translator.translateToolCallUpdate(toolCallUpdate('tc-4', 'Running test'));
+
+    expect(msg.type).toBe('tool_progress');
+    expect(msg.session_id).toBe('test-session');
+    expect(msg.tool_use_id).toBe('tc-4');
+    expect(msg.tool_name).toBe('Running test');
+    expect(msg.parent_tool_use_id).toBeNull();
+    expect(msg.elapsed_time_seconds).toBe(0);
+  });
+
+  test('translateToolCallUpdate defaults title to unknown', () => {
+    const msg = translator.translateToolCallUpdate(toolCallUpdate('tc-5', undefined));
+    expect(msg.tool_name).toBe('unknown');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Result translation
+  // ---------------------------------------------------------------------------
+
+  test('translateResult produces success result', () => {
+    const msg = translator.translateResult('end_turn');
+
+    expect(msg.type).toBe('result');
+    expect((msg as { subtype: string }).subtype).toBe('success');
+    expect(msg.session_id).toBe('test-session');
+    expect((msg as { is_error: boolean }).is_error).toBe(false);
+  });
+
+  test('translateResult produces error result when isError=true', () => {
+    const msg = translator.translateResult('cancelled', true);
+
+    expect((msg as { subtype: string }).subtype).toBe('error_during_execution');
+    expect((msg as { is_error: boolean }).is_error).toBe(true);
+    expect((msg as { errors: string[] }).errors).toContain('cancelled');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Ignored updates
+  // ---------------------------------------------------------------------------
+
+  test('ignores plan, config, mode, usage, commands updates', () => {
+    expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)).toEqual([]);
+    expect(
+      translator.processUpdate({
+        sessionUpdate: 'current_mode_update',
+        currentModeId: 'x',
+      } as never)
+    ).toEqual([]);
+    expect(
+      translator.processUpdate({
+        sessionUpdate: 'config_option_update',
+        configOptions: [],
+      } as never)
+    ).toEqual([]);
+    expect(
+      translator.processUpdate({ sessionUpdate: 'usage_update', size: 0, used: 0 } as never)
+    ).toEqual([]);
+    expect(
+      translator.processUpdate({
+        sessionUpdate: 'available_commands_update',
+        availableCommands: [],
+      } as never)
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function agentChunk(text: string): AcpAgentMessageChunkUpdate {
+  return {
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text },
+  };
+}
+
+function thoughtChunk(text: string): AcpAgentThoughtChunkUpdate {
+  return {
+    sessionUpdate: 'agent_thought_chunk',
+    content: { type: 'text', text },
+  };
+}
+
+function toolCall(
+  toolCallId: string,
+  title: string,
+  rawInput: Record<string, unknown> | undefined
+): AcpToolCallUpdateNotification {
+  return {
+    sessionUpdate: 'tool_call',
+    toolCallId,
+    title,
+    rawInput,
+  };
+}
+
+function toolCallUpdate(toolCallId: string, title: string | undefined): AcpToolCallUpdateUpdate {
+  return {
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    title,
+  };
+}

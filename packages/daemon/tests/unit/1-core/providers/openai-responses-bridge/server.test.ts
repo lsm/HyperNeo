@@ -472,6 +472,216 @@ describe('openai-responses-bridge server', () => {
     });
   });
 
+  it('resolves Anthropic SDK model aliases to real Codex IDs before sending upstream', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-sonnet-4-20250514': 'gpt-5.4-mini',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.model).toBe('gpt-5.5');
+  });
+
+  it('uses per-session model override when setSessionModelConfig is called', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+
+    const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    expect(capturedBody?.model).toBe('gpt-5.3-codex');
+  });
+
+  it('applies session override only when incoming model matches alias', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-sonnet-4-20250514': 'gpt-5.4-mini',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    // Primary model override: gpt-5.3-codex (alias: claude-opus-4-1-20250805)
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+
+    // Haiku call with different alias — should NOT be overridden to gpt-5.3-codex
+    const resp = await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(200);
+    // Resolves through modelAliases to gpt-5.4-mini, NOT overridden to gpt-5.3-codex
+    expect(capturedBody?.model).toBe('gpt-5.4-mini');
+  });
+
+  it('preserves primary model override when fallback is also registered', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+        'claude-sonnet-4-20250514': 'gpt-5.4-mini',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    // Primary model registration
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    // Fallback model registration (same session, different alias)
+    server.setSessionModelConfig?.('session-a', 'claude-sonnet-4-20250514', 'gpt-5.1-codex-mini');
+
+    // Primary request — should still resolve to gpt-5.3-codex
+    await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'primary' }],
+      }),
+    });
+    expect(capturedBody?.model).toBe('gpt-5.3-codex');
+
+    // Fallback request — should resolve to gpt-5.1-codex-mini
+    await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'fallback' }],
+      }),
+    });
+    expect(capturedBody?.model).toBe('gpt-5.1-codex-mini');
+  });
+
+  it('uses last-registered model when same-tier models share alias (last-wins)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      modelAliases: {
+        'claude-opus-4-1-20250805': 'gpt-5.5',
+      },
+      fetchImpl: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]);
+      },
+    });
+
+    // Primary model registration
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.3-codex');
+    // Model switch: user switches to gpt-5.4 (same alias tier)
+    server.setSessionModelConfig?.('session-a', 'claude-opus-4-1-20250805', 'gpt-5.4');
+
+    // Request should use the latest registration (gpt-5.4)
+    await fetch(`${server.baseUrlForSession?.('session-a')}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'switched' }],
+      }),
+    });
+    expect(capturedBody?.model).toBe('gpt-5.4');
+  });
+
   it('forwards image attachments to the OpenAI Responses API', async () => {
     let capturedBody: Record<string, unknown> | undefined;
     server = createOpenAIResponsesBridgeServer({

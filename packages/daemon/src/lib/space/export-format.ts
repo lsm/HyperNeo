@@ -147,7 +147,17 @@ const workflowHookSchema = z.object({
   enabled: z.boolean(),
   sourceNode: z.string().min(1),
   targetNode: z.string().min(1).optional(),
-  method: z.enum(['send_message', 'save_artifact', 'create_standalone_task', 'mark_complete']),
+  method: z.enum([
+    'send_message',
+    'save_artifact',
+    'create_standalone_task',
+    'mark_complete',
+    'submit_for_approval',
+    'approve_task',
+  ]),
+  classification: z.enum(['validation', 'side_effect']).optional(),
+  order: z.number().optional(),
+  label: z.string().optional(),
   templateData: z.record(z.string(), z.unknown()).optional(),
   validator: workflowHookValidatorSchema,
   retry: z

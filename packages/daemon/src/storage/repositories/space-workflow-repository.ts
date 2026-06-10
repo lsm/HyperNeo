@@ -556,7 +556,7 @@ export class SpaceWorkflowRepository {
   // -------------------------------------------------------------------------
 
   /**
-   * Find all workflows in a space whose nodes reference the given custom SpaceAgent ID.
+   * Find all workflows in a space whose nodes reference the given worker agent ID.
    * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
    *
    * Checks the `config` JSON column for multi-agent nodes (agents[] format).

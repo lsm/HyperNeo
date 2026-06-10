@@ -99,6 +99,8 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
 import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
+import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
+import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
 /**
  * Resolves the most recent PR URL for a workflow run by scanning gate
@@ -429,6 +431,12 @@ export interface NodeAgentToolsConfig {
    * visible MCP server names but performs no server-side reattachment.
    */
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
+  /**
+   * Optional workflow hook engine for intercepting and modifying MCP actions.
+   * When provided, registered hooks run before `send_message`, `save_artifact`,
+   * `submit_for_approval`, `approve_task`, and `mark_complete` handlers.
+   */
+  hookEngine?: WorkflowHookEngine;
 }
 
 // ---------------------------------------------------------------------------
@@ -557,7 +565,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     }
   }
 
-  return {
+  const handlers = {
     /**
      * List all peers (other group members) with their agent names, statuses, session IDs,
      * permitted channel connections, and completion state.
@@ -1723,6 +1731,38 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       });
     },
   };
+
+  // Wrap action handlers with workflow hooks when engine is provided.
+  if (config.hookEngine) {
+    const meta = {
+      sessionId: mySessionId,
+      agentName: myAgentName,
+      nodeId: workflowNodeId,
+      taskId: config.taskId,
+    };
+
+    const wrap = <T extends Record<string, unknown>>(
+      methodName: string,
+      handler: (args: T) => Promise<ToolResult>
+    ) =>
+      wrapHandlerWithHooks(
+        methodName,
+        handler,
+        config.hookEngine,
+        handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
+        meta
+      );
+
+    handlers.send_message = wrap('send_message', handlers.send_message);
+    handlers.save_artifact = wrap('save_artifact', handlers.save_artifact);
+    handlers.approve_task = wrap('approve_task', handlers.approve_task);
+    handlers.create_standalone_task = wrap(
+      'create_standalone_task',
+      handlers.create_standalone_task
+    );
+  }
+
+  return handlers;
 }
 
 // ---------------------------------------------------------------------------
@@ -1748,6 +1788,36 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
     );
     if (gateBlock) return gateBlock;
     return config.onSubmitForApproval!(args);
+  }
+
+  // Wrap submit_for_approval and mark_complete with hooks when engine is provided.
+  let wrappedSubmitForApproval = submitForApproval;
+  let wrappedMarkComplete = config.onMarkComplete;
+  if (config.hookEngine) {
+    const meta = {
+      sessionId: config.mySessionId,
+      agentName: config.myAgentName,
+      nodeId: config.workflowNodeId,
+      taskId: config.taskId,
+    };
+
+    wrappedSubmitForApproval = wrapHandlerWithHooks(
+      'submit_for_approval',
+      submitForApproval,
+      config.hookEngine,
+      handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
+      meta
+    );
+
+    if (wrappedMarkComplete) {
+      wrappedMarkComplete = wrapHandlerWithHooks(
+        'mark_complete',
+        wrappedMarkComplete,
+        config.hookEngine,
+        handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
+        meta
+      );
+    }
   }
 
   const tools = [
@@ -1905,11 +1975,11 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Same approval semantic and preconditions as approve_task: use only when work is approved/QA-passed, all findings are resolved, and required review/artifact evidence is saved. ' +
               'Use when autonomy blocks self-close or risk warrants human sign-off. Never use to defer judgment while findings, QA failures, or dispatch work remain open.',
             SubmitForApprovalSchema.shape,
-            submitForApproval
+            wrappedSubmitForApproval
           ),
         ]
       : []),
-    ...(config.onMarkComplete
+    ...(wrappedMarkComplete
       ? [
           tool(
             'mark_complete',
@@ -1920,7 +1990,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '`approve_task` handles `in_progress → approved`; `mark_complete` handles ' +
               '`approved → done`. Rejected if the task is not currently in `approved`.',
             MarkCompleteSchema.shape,
-            (args) => config.onMarkComplete!(args)
+            (args) => wrappedMarkComplete!(args)
           ),
         ]
       : []),

@@ -391,7 +391,7 @@ describe('SpaceAgentList', () => {
   it('does not render model span when model is not set', () => {
     mockAgents.value = [makeAgent({ model: undefined })];
     const { container } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-    // The TaskAgentCard shows the resolved model, so check within custom agent cards only.
+    // The TaskAgentCard shows the resolved model, so check within worker agent cards only.
     const agentCards = container.querySelectorAll('.bg-dark-850.border.border-dark-700');
     for (const card of agentCards) {
       const modelSpans = card.querySelectorAll('span.text-xs.text-gray-500.font-mono');

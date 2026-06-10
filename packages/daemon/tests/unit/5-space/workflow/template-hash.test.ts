@@ -179,7 +179,7 @@ describe('buildWorkflowFingerprint', () => {
           sourceNode: 'Coder',
           targetNode: 'Reviewer',
           method: 'send_message',
-          validator: { kind: 'built_in', id: 'pr_open' },
+          validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
           authorizedCallers: [{ sourceNode: 'Coder', agentSlots: ['Coder'] }],
         },
       ],
