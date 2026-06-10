@@ -2096,6 +2096,62 @@ describe('seedBuiltInWorkflows()', () => {
     ).toBe(true);
   });
 
+  test('re-stamp replaces legacy PR-ready gate channels with hook-validated channels', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const legacyChannels = coding.channels!.map((channel) =>
+      channel.from === 'Coding' && channel.to === 'Review'
+        ? { ...channel, gateId: 'code-ready-gate' }
+        : channel
+    );
+
+    repo.updateWorkflow(coding.id, { channels: legacyChannels });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'legacy-pr-gate-channel',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const codeToReview = after.channels!.filter(
+      (channel) => channel.from === 'Coding' && channel.to === 'Review'
+    );
+    expect(codeToReview).toHaveLength(1);
+    expect(codeToReview[0].gateId).toBeUndefined();
+  });
+
+  test('re-stamp remaps hook authorized slots when source agent slot was renamed', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
+    const renamedCodingNode = {
+      ...codingNode,
+      agents: codingNode.agents.map((agent) =>
+        agent.name === 'coder' ? { ...agent, name: 'engineer' } : agent
+      ),
+    };
+
+    db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = ?`).run(
+      JSON.stringify({ agents: renamedCodingNode.agents }),
+      codingNode.id
+    );
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'renamed-source-slot',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(0);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const hook = after.hooks!.find((h) => h.id === 'code-pr-ready')!;
+    expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
+  });
+
   test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;

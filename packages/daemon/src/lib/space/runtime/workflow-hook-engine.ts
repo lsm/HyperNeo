@@ -660,7 +660,11 @@ export class WorkflowHookEngine {
     }
 
     const permittedExternalLookups: string[] =
-      hook.validator.kind === 'script' ? (hook.validator.externalLookups ?? []) : [];
+      hook.validator.kind === 'script'
+        ? (hook.validator.externalLookups ?? [])
+        : hook.validator.id === 'pr_ready'
+          ? ['github']
+          : [];
 
     // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
     const mappedArtifacts: Array<{
@@ -694,6 +698,7 @@ export class WorkflowHookEngine {
       hookId: hook.id,
       methodName,
       params: this.boundParams(params),
+      rawParams: params,
       nodeId: meta.nodeId,
       nodeName,
       sessionId: meta.sessionId,

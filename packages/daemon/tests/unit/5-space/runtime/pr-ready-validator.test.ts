@@ -28,10 +28,12 @@ function streamFromString(text: string): ReadableStream<Uint8Array> {
 }
 
 function makeMockSpawn(
-  results: Array<{ stdout: string; stderr: string; exitCode: number }>
+  results: Array<{ stdout: string; stderr: string; exitCode: number }>,
+  calls?: Array<{ cmd: string[]; options?: unknown }>
 ): typeof Bun.spawn {
   let callIndex = 0;
-  return ((_cmd: string[], _options?: unknown) => {
+  return ((cmd: string[], options?: unknown) => {
+    calls?.push({ cmd, options });
     const result = results[callIndex++] ?? { stdout: '', stderr: '', exitCode: 1 };
     return {
       stdout: streamFromString(result.stdout),
@@ -190,6 +192,62 @@ describe('pr-ready validator', () => {
     const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
     expect(result.type).toBe('block');
     expect((result as { reason: string }).reason).toContain('not authenticated');
+  });
+
+  test('PR URL from rawParams when bounded params.data is truncated', async () => {
+    const prView = { ...VALID_PR_VIEW, url: 'https://github.com/acme/corp/pull/77' };
+    const spawn = makeMockSpawn([
+      { stdout: JSON.stringify(prView), stderr: '', exitCode: 0 },
+      { stdout: JSON.stringify(EMPTY_THREADS), stderr: '', exitCode: 0 },
+    ]);
+    const validator = createPrReadyValidator(spawn);
+    const ctx: HookExecutorContext = {
+      ...makeContext(),
+      params: { target: 'Review', message: 'hi', data: '[truncated: large data field omitted]' },
+      rawParams: {
+        target: 'Review',
+        message: 'hi',
+        data: { pr_url: 'https://github.com/acme/corp/pull/77', extra: 'large payload' },
+      },
+    };
+    const result = await validator(ctx);
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.pr_url).toBe(
+      'https://github.com/acme/corp/pull/77'
+    );
+  });
+
+  test('gh subprocess receives restricted GitHub-only env', async () => {
+    const calls: Array<{ cmd: string[]; options?: unknown }> = [];
+    const spawn = makeMockSpawn(
+      [
+        { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
+        { stdout: JSON.stringify(EMPTY_THREADS), stderr: '', exitCode: 0 },
+      ],
+      calls
+    );
+    const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    const previousClaudeToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const previousGhToken = process.env.GH_TOKEN;
+    process.env.ANTHROPIC_API_KEY = 'anthropic-secret';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'claude-secret';
+    process.env.GH_TOKEN = 'github-secret';
+    try {
+      const validator = createPrReadyValidator(spawn);
+      const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
+      expect(result.type).toBe('allow');
+      const env = (calls[0].options as { env?: Record<string, string> }).env ?? {};
+      expect(env.GH_TOKEN).toBe('github-secret');
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    } finally {
+      if (previousAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
+      if (previousClaudeToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousClaudeToken;
+      if (previousGhToken === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = previousGhToken;
+    }
   });
 
   test('PR URL from templateData when params.data missing', async () => {

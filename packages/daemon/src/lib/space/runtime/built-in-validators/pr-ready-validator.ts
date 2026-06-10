@@ -13,6 +13,15 @@ import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 1_048_576;
 
+const GITHUB_LOOKUP_ENV_KEYS = new Set([
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_ENTERPRISE_TOKEN',
+  'GITHUB_ENTERPRISE_TOKEN',
+  'GH_HOST',
+]);
+const BASIC_ENV_KEYS = new Set(['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'TMPDIR']);
+
 interface PrViewResult {
   url: string;
   state: string;
@@ -146,14 +155,12 @@ export function createPrReadyValidator(
 }
 
 function extractPrUrl(context: HookExecutorContext): string | undefined {
-  const paramsData = context.params?.data;
-  if (
-    typeof paramsData === 'object' &&
-    paramsData !== null &&
-    typeof (paramsData as Record<string, unknown>).pr_url === 'string'
-  ) {
-    return (paramsData as Record<string, unknown>).pr_url as string;
-  }
+  const boundedPrUrl = extractPrUrlFromParams(context.params);
+  if (boundedPrUrl) return boundedPrUrl;
+
+  const rawPrUrl = context.rawParams ? extractPrUrlFromParams(context.rawParams) : undefined;
+  if (rawPrUrl) return rawPrUrl;
+
   const templateData = context.templateData;
   if (
     typeof templateData === 'object' &&
@@ -161,6 +168,18 @@ function extractPrUrl(context: HookExecutorContext): string | undefined {
     typeof templateData.pr_url === 'string'
   ) {
     return templateData.pr_url;
+  }
+  return undefined;
+}
+
+function extractPrUrlFromParams(params: Record<string, unknown>): string | undefined {
+  const data = params.data;
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    typeof (data as Record<string, unknown>).pr_url === 'string'
+  ) {
+    return (data as Record<string, unknown>).pr_url as string;
   }
   return undefined;
 }
@@ -243,6 +262,17 @@ async function runReviewThreadsQuery(
   return { success: true, unresolvedUrls };
 }
 
+function buildGitHubLookupEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (BASIC_ENV_KEYS.has(key) || GITHUB_LOOKUP_ENV_KEYS.has(key)) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 async function runCommand<T>(
   args: string[],
   cwd: string,
@@ -253,6 +283,7 @@ async function runCommand<T>(
   try {
     proc = spawnImpl(args, {
       cwd,
+      env: buildGitHubLookupEnv(),
       stdout: 'pipe',
       stderr: 'pipe',
     });

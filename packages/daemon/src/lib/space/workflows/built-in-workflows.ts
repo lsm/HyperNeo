@@ -115,6 +115,13 @@ function validateGateFieldWriters(
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
+const LEGACY_PR_READY_GATE_IDS = new Set([
+  'code-ready-gate',
+  'research-ready-gate',
+  'plan-pr-gate',
+  'code-pr-gate',
+]);
+
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
@@ -1525,6 +1532,12 @@ function remapTemplateChannel(
   };
 }
 
+function removeLegacyPrReadyGateChannels(
+  channels: SpaceWorkflow['channels']
+): SpaceWorkflow['channels'] {
+  return channels?.filter((channel) => !LEGACY_PR_READY_GATE_IDS.has(channel.gateId ?? ''));
+}
+
 function mergeChannelsFromTemplate(
   existingChannels: SpaceWorkflow['channels'],
   templateChannels: SpaceWorkflow['channels'],
@@ -1552,6 +1565,40 @@ function mergeChannelsFromTemplate(
   return [...existingChannels, ...missingTemplateChannels];
 }
 
+function remapTemplateHookAgentSlots(
+  templateSourceNodeName: string,
+  existingSourceNodeName: string,
+  templateSlots: string[] | undefined,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): string[] | undefined {
+  if (!templateSlots || templateSlots.length === 0) return undefined;
+
+  const templateNode = templateNodes.find((node) => node.name === templateSourceNodeName);
+  const existingNode = existingNodes.find((node) => node.name === existingSourceNodeName);
+  if (!templateNode || !existingNode) return undefined;
+
+  const existingAgentNames = new Set(
+    existingNode.agents.map((agent) => agent.name).filter((name): name is string => !!name)
+  );
+  const mappedSlots: string[] = [];
+  for (const slot of templateSlots) {
+    if (existingAgentNames.has(slot)) {
+      mappedSlots.push(slot);
+      continue;
+    }
+
+    const templateSlotIndex = templateNode.agents.findIndex((agent) => agent.name === slot);
+    const existingSlotName =
+      templateSlotIndex >= 0 ? existingNode.agents[templateSlotIndex]?.name : undefined;
+    if (existingSlotName) {
+      mappedSlots.push(existingSlotName);
+    }
+  }
+
+  return mappedSlots.length === templateSlots.length ? mappedSlots : undefined;
+}
+
 function remapTemplateHook(
   hook: NonNullable<SpaceWorkflow['hooks']>[number],
   templateNodes: WorkflowNode[],
@@ -1562,10 +1609,19 @@ function remapTemplateHook(
     ...hook,
     sourceNode: remapRef(hook.sourceNode),
     targetNode: hook.targetNode ? remapRef(hook.targetNode) : hook.targetNode,
-    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
-      ...caller,
-      sourceNode: remapRef(caller.sourceNode),
-    })),
+    authorizedCallers: hook.authorizedCallers?.map((caller) => {
+      const sourceNode = remapRef(caller.sourceNode);
+      const agentSlots = remapTemplateHookAgentSlots(
+        caller.sourceNode,
+        sourceNode,
+        caller.agentSlots,
+        templateNodes,
+        existingNodes
+      );
+      if (agentSlots) return { ...caller, sourceNode, agentSlots };
+      const { agentSlots: _agentSlots, ...callerWithoutSlots } = caller;
+      return { ...callerWithoutSlots, sourceNode };
+    }),
   };
 }
 
@@ -1733,8 +1789,9 @@ export function seedBuiltInWorkflows(
           template.nodes,
           resolveAgentId
         );
+        const existingChannels = removeLegacyPrReadyGateChannels(row.channels);
         const mergedChannels = mergeChannelsFromTemplate(
-          row.channels,
+          existingChannels,
           template.channels,
           template.nodes,
           row.nodes
@@ -1745,7 +1802,10 @@ export function seedBuiltInWorkflows(
           mergedChannels ?? row.channels ?? [],
           mergedGates ?? row.gates ?? []
         );
-        const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
+        const removedLegacyPrReadyChannels =
+          (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
+        const hasNewTemplateChannels =
+          (mergedChannels?.length ?? 0) > (existingChannels?.length ?? 0);
 
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
@@ -1755,7 +1815,9 @@ export function seedBuiltInWorkflows(
           gates: migratedGates,
           hooks: mergeHooksFromTemplate(template.hooks, template.nodes, row.nodes) ?? null,
           nodes: migratedNodes,
-          ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
+          ...(hasNewTemplateChannels || removedLegacyPrReadyChannels
+            ? { channels: mergedChannels }
+            : {}),
           templateHash: expectedHash,
         });
         restamped.push(template.name);

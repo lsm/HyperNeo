@@ -34,7 +34,10 @@ export interface HookExecutorContext {
   runId: string;
   hookId: string;
   methodName: string;
+  /** Bounded action params safe for script env serialization. */
   params: Record<string, unknown>;
+  /** Original unbounded action params. Built-in validators may inspect routing fields here. */
+  rawParams?: Record<string, unknown>;
   nodeId: string;
   nodeName: string;
   sessionId: string;
