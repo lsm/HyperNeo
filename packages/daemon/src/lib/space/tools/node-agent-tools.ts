@@ -218,7 +218,17 @@ export async function evaluateTerminalGateFeatures(
       });
       const includeIncoming = incomingChannels.length === 1;
       for (const ch of workflow.channels) {
-        if (!ch.gateId) continue;
+        // Fail closed on mixed gate/hook channels — a channel referencing
+        // both gateId and hookIds is an invalid configuration that must not
+        // silently bypass terminal gate validation.
+        if (ch.gateId && ch.hookIds && ch.hookIds.length > 0) {
+          return jsonResult({
+            success: false,
+            error: `Channel "${ch.id ?? 'unknown'}" references both gateId "${ch.gateId}" and hookIds [${ch.hookIds.join(', ')}]. Terminal gate validation cannot proceed with mixed configuration.`,
+          });
+        }
+        // Skip hook-managed channels — terminal gate features only apply to legacy gates
+        if (!ch.gateId || (ch.hookIds && ch.hookIds.length > 0)) continue;
         const isOutgoing =
           ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
         let isIncoming = false;
@@ -853,6 +863,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
           const gatedChannel = (workflow.channels ?? []).find((ch) => {
             if (!ch.gateId) return false;
+            // Skip hook-managed channels — hooks validate at MCP action time;
+            // no legacy gate data write or evaluation is performed.
+            if (ch.hookIds && ch.hookIds.length > 0) return false;
             if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
             const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
             const candidateTargets = uniqueTargetRefs([

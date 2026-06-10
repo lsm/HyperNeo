@@ -1810,7 +1810,7 @@ describe('ChannelRouter', () => {
       expect(activated).toHaveLength(0);
     });
 
-    test('onGateDataChanged: re-activates target node when run is done but parent task is not archived', async () => {
+    test('onGateDataChanged: does NOT re-activate target node when run is done (terminal runs closed)', async () => {
       const gate: Gate = {
         id: 'done-gate',
         fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -1843,9 +1843,10 @@ describe('ChannelRouter', () => {
 
       gateDataRepo.set(run.id, 'done-gate', { done: true });
       const activated = await router.onGateDataChanged(run.id, 'done-gate');
-      expect(activated.length).toBeGreaterThan(0);
-      // The run was auto-reopened back to in_progress.
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      // Terminal runs are no longer reopened by onGateDataChanged.
+      // Allowed paths are explicit cyclic send_message re-entry and manual resume only.
+      expect(activated).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
     });
 
     // -----------------------------------------------------------------------
@@ -4151,6 +4152,419 @@ describe('ChannelRouter', () => {
         const result = await router.canDeliver(run.id, 'coder', 'planner');
         expect(result.allowed).toBe(false);
       });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook-managed channels (WI-3)
+  // -------------------------------------------------------------------------
+
+  describe('hook-managed channels', () => {
+    test('exclusivity: both gateId and hookIds fails closed in deliverMessage', async () => {
+      const channels: WorkflowChannel[] = [
+        {
+          id: 'ch-1',
+          from: 'Sender',
+          to: 'Receiver',
+          gateId: 'legacy-gate',
+          hookIds: ['hook-1'],
+        },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels,
+        []
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Exclusivity Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      await expect(
+        router.deliverMessage(run.id, 'coder', 'planner', 'hello')
+      ).rejects.toBeInstanceOf(ActivationError);
+      await expect(router.deliverMessage(run.id, 'coder', 'planner', 'hello')).rejects.toThrow(
+        /both gateId.*and hookIds/
+      );
+    });
+
+    test('exclusivity: both gateId and hookIds fails closed in canDeliver', async () => {
+      const channels: WorkflowChannel[] = [
+        {
+          id: 'ch-1',
+          from: 'Sender',
+          to: 'Receiver',
+          gateId: 'legacy-gate',
+          hookIds: ['hook-1'],
+        },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels,
+        []
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Exclusivity canDeliver Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      await expect(router.canDeliver(run.id, 'coder', 'planner')).rejects.toBeInstanceOf(
+        ActivationError
+      );
+      await expect(router.canDeliver(run.id, 'coder', 'planner')).rejects.toThrow(
+        /both gateId.*and hookIds/
+      );
+    });
+
+    test('hook-managed channel skips gate evaluation in deliverMessage', async () => {
+      const gate: Gate = {
+        id: 'blocked-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        {
+          id: 'ch-1',
+          from: 'Sender',
+          to: 'Receiver',
+          hookIds: ['hook-1'],
+        },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Hook Skip Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Gate data says blocked, but channel is hook-managed so gate is skipped
+      gateDataRepo.set(run.id, 'blocked-gate', { approved: false });
+
+      const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hello');
+      expect(result.fromRole).toBe('coder');
+      expect(result.toRole).toBe('planner');
+      expect(result.activatedTasks).toBeDefined();
+    });
+
+    test('hook-managed channel skips gate evaluation in canDeliver', async () => {
+      const gate: Gate = {
+        id: 'blocked-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        {
+          id: 'ch-1',
+          from: 'Sender',
+          to: 'Receiver',
+          hookIds: ['hook-1'],
+        },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Hook Skip canDeliver Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      gateDataRepo.set(run.id, 'blocked-gate', { approved: false });
+
+      const result = await router.canDeliver(run.id, 'coder', 'planner');
+      expect(result.allowed).toBe(true);
+    });
+
+    test('onGateDataChanged skips hook-managed channels', async () => {
+      const gate: Gate = {
+        id: 'legacy-gate',
+        fields: [
+          { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        {
+          id: 'ch-1',
+          from: 'Sender',
+          to: 'Receiver',
+          hookIds: ['hook-1'],
+        },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Hook Skip onGateDataChanged Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      gateDataRepo.set(run.id, 'legacy-gate', { approved: true });
+
+      // onGateDataChanged should not activate the target because the channel
+      // is hook-managed — gate data changes do not drive activation for hooks.
+      const activated = await router.onGateDataChanged(run.id, 'legacy-gate');
+      expect(activated).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // onGateDataChanged reactivation guards (WI-3)
+  // -------------------------------------------------------------------------
+
+  describe('onGateDataChanged reactivation guards', () => {
+    test('does not reactivate terminal runs (done)', async () => {
+      const gate: Gate = {
+        id: 'done-gate',
+        fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'done-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Terminal Done Run',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+
+      gateDataRepo.set(run.id, 'done-gate', { done: true });
+      const activated = await router.onGateDataChanged(run.id, 'done-gate');
+      expect(activated).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
+
+    test('does not reactivate terminal runs (cancelled)', async () => {
+      const gate: Gate = {
+        id: 'cancel-gate',
+        fields: [{ name: 'cancelled', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'cancel-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Terminal Cancelled Run',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'cancelled');
+
+      gateDataRepo.set(run.id, 'cancel-gate', { cancelled: true });
+      const activated = await router.onGateDataChanged(run.id, 'cancel-gate');
+      expect(activated).toHaveLength(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+    });
+
+    test('still evaluates and activates blocked runs via gate data changes', async () => {
+      const gate: Gate = {
+        id: 'blocked-gate',
+        fields: [{ name: 'blocked', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'blocked-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Blocked Run',
+      });
+      workflowRunRepo.updateStatusUnchecked(run.id, 'blocked');
+
+      gateDataRepo.set(run.id, 'blocked-gate', { blocked: true });
+      const activated = await router.onGateDataChanged(run.id, 'blocked-gate');
+      // Gate is open (field exists) → target node should be activated even though
+      // the run is blocked, so gate writes can unblock recoverable blocked runs.
+      expect(activated.length).toBeGreaterThan(0);
+      // Run stays blocked — activateNode does not auto-reopen blocked runs.
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+    });
+
+    test('does not reactivate nodes with completed executions', async () => {
+      const gate: Gate = {
+        id: 'reopen-gate',
+        fields: [
+          { name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'reopen-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Completed Execution Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Pre-activate planner node and then mark its execution as done
+      await router.activateNode(run.id, NODE_A);
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const executions = nodeExecutionRepo.listByNode(run.id, NODE_A);
+      expect(executions.length).toBeGreaterThan(0);
+      for (const e of executions) {
+        nodeExecutionRepo.update(e.id, { status: 'done', completedAt: Date.now() });
+      }
+
+      gateDataRepo.set(run.id, 'reopen-gate', { ready: true });
+      const activated = await router.onGateDataChanged(run.id, 'reopen-gate');
+      expect(activated).toHaveLength(0);
+    });
+
+    test('still activates never-activated nodes via onGateDataChanged', async () => {
+      const gate: Gate = {
+        id: 'first-activation-gate',
+        fields: [
+          { name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+        ],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'first-activation-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'First Activation Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Node A has never been activated
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(0);
+
+      gateDataRepo.set(run.id, 'first-activation-gate', { ready: true });
+      const activated = await router.onGateDataChanged(run.id, 'first-activation-gate');
+      expect(activated.length).toBeGreaterThan(0);
+      expect(activated[0].workflowRunId).toBe(run.id);
     });
   });
 });

@@ -1942,6 +1942,17 @@ export interface WorkflowChannel {
    * Each gate belongs to exactly one channel.
    */
   gateId?: string;
+  /**
+   * Optional references to WorkflowHook entities in `SpaceWorkflow.hooks`.
+   * When set, the referenced hooks validate the originating MCP action
+   * (e.g. `send_message`) before delivery is permitted. Hooks replace
+   * gate evaluation for guarded handoffs on this channel.
+   *
+   * A channel may reference either `gateId` or `hookIds`, never both.
+   * If both appear in persisted JSON the runtime fails closed with a
+   * workflow validation error until the workflow is migrated.
+   */
+  hookIds?: string[];
 }
 
 /**
@@ -2387,6 +2398,8 @@ export interface ExportedWorkflowChannel {
   maxCycles?: number;
   label?: string;
   gateId?: string;
+  /** Hook IDs that validate MCP actions on this channel */
+  hookIds?: string[];
 }
 
 /**
