@@ -133,6 +133,7 @@ export function getCodexBridgeModelInfos(): ModelInfo[] {
       id,
       name: details.name,
       alias: details.alias,
+      sdkModelIds: [CODEX_TO_SDK_ANTHROPIC_MODEL[id]].filter(Boolean),
       family: 'gpt',
       provider: 'anthropic-codex',
       contextWindow: MODEL_CONTEXT_WINDOWS[id],

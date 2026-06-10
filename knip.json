@@ -39,7 +39,8 @@
     "packages/daemon/src/lib/acp/acp-transport.ts",
     "packages/daemon/src/lib/acp/acp-client.ts",
     "packages/daemon/src/lib/acp/acp-message-translator.ts",
-    "packages/daemon/src/lib/acp/acp-query-adapter.ts"
+    "packages/daemon/src/lib/acp/acp-query-adapter.ts",
+    "packages/daemon/src/lib/providers/acp-provider.ts"
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
