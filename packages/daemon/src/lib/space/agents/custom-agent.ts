@@ -507,6 +507,38 @@ function buildRoleSection(
     );
   }
 
+  const gatedHandoffs = buildGatedHandoffLines(workflow, currentNode, agentSlotName);
+  if (gatedHandoffs.length > 0) {
+    lines.push('- Outbound gated handoffs:');
+    lines.push(...gatedHandoffs);
+  }
+
+  return lines;
+}
+
+function buildGatedHandoffLines(
+  workflow: SpaceWorkflow,
+  currentNode: WorkflowNode,
+  agentSlotName: string | undefined
+): string[] {
+  const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
+  const outboundGatedChannels = (workflow.channels ?? []).filter(
+    (channel) => channel.gateId && isChannelFromNode(channel, currentNode.name)
+  );
+  const lines: string[] = [];
+
+  for (const channel of outboundGatedChannels) {
+    const gate = gateById.get(channel.gateId!);
+    const writableFields = (gate?.fields ?? []).filter((field) =>
+      isGateWritableFromNode([field], currentNode.name, agentSlotName)
+    );
+    if (writableFields.length === 0) continue;
+
+    lines.push(
+      `  - ${describeChannel(channel)}: call \`send_message(target=${formatSendMessageTarget(channel.to)}, message="<short summary>", data: ${formatGateDataShape(writableFields)})\`; \`save_artifact\` alone does not deliver this gated handoff.`
+    );
+  }
+
   return lines;
 }
 
@@ -518,6 +550,31 @@ function isChannelFromNode(channel: WorkflowChannel, nodeName: string): boolean 
 function describeChannel(channel: WorkflowChannel): string {
   const target = Array.isArray(channel.to) ? channel.to.join(', ') : channel.to;
   return channel.label ? `${target} (${channel.label})` : target;
+}
+
+function formatSendMessageTarget(target: string | string[]): string {
+  if (Array.isArray(target)) return `[${target.map((item) => JSON.stringify(item)).join(', ')}]`;
+  return JSON.stringify(target);
+}
+
+function formatGateDataShape(fields: Array<{ name: string; type: string }>): string {
+  const entries = fields.map((field) => `${field.name}: ${formatGateDataPlaceholder(field)}`);
+  return `{ ${entries.join(', ')} }`;
+}
+
+function formatGateDataPlaceholder(field: { name: string; type: string }): string {
+  switch (field.type) {
+    case 'string':
+      return `"<${field.name}>"`;
+    case 'number':
+      return '<number>';
+    case 'boolean':
+      return '<boolean>';
+    case 'map':
+      return '{ "<key>": "<value>" }';
+    default:
+      return '<value>';
+  }
 }
 
 function isGateWritableFromNode(

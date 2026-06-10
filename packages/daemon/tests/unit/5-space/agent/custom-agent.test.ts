@@ -395,6 +395,23 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toMatch(/code-pr-gate/);
   });
 
+  it('renders exact send_message handoff for outbound gated channels from workflow graph', () => {
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow: makeWorkflow(),
+        workflowRun: makeWorkflowRun(),
+        nodeId: 'node-1', // "Plan" node
+        agentSlotName: 'Coder',
+      })
+    );
+
+    expect(message).toContain('- Outbound gated handoffs:');
+    expect(message).toContain(
+      'Code (Plan → Code): call `send_message(target="Code", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
+
   it('does not contain node UUIDs', () => {
     const workflow = makeWorkflow();
     const message = buildCustomAgentTaskMessage(
@@ -613,6 +630,45 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('Channels from this node:');
     expect(message).not.toContain('Gates you can write:');
   });
+
+  it('injects exact Coding workflow send_message handoff into future task messages', () => {
+    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow: CODING_WORKFLOW,
+        workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
+        nodeId: codingNode.id,
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
+
+  it('injects exact handoff even when persisted workflow slot prompt is stale', () => {
+    const workflow = structuredClone(CODING_WORKFLOW);
+    const codingNode = workflow.nodes.find((node) => node.name === 'Coding')!;
+    codingNode.agents[0].customPrompt = {
+      value: 'Legacy wording: write code-pr-gate with field pr_url so Review can activate.',
+    };
+
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: codingNode.id,
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { pr_url: "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
 });
 
 describe('createCustomAgentInit', () => {
@@ -639,7 +695,7 @@ describe('createCustomAgentInit', () => {
     expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
   });
 
-  it('injects Coding workflow send_message handoff instructions into future task prompts', () => {
+  it('injects Coding workflow behavioral handoff guidance into system prompt', () => {
     const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const codingSlot = codingNode.agents[0];
     const init = createCustomAgentInit(
@@ -664,12 +720,11 @@ describe('createCustomAgentInit', () => {
     );
 
     const prompt = init.systemPrompt?.append ?? '';
-    expect(prompt).toContain(
-      '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`'
-    );
-    expect(prompt).toContain('The `data.pr_url` payload is auto-merged into `code-ready-gate`');
+    expect(prompt).toContain('hand off by calling `send_message` on the outbound gated');
+    expect(prompt).toContain('Use the current target and required data fields');
     expect(prompt).toContain('`save_artifact` alone is insufficient');
-    expect(prompt).toContain('only `send_message` delivers the gated handoff');
+    expect(prompt).not.toContain('send_message(target="Review"');
+    expect(prompt).not.toContain('code-ready-gate');
   });
 
   it('uses the agent custom prompt when no slot override is defined', () => {

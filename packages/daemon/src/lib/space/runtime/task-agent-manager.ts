@@ -2386,6 +2386,11 @@ export class TaskAgentManager {
           continue;
         }
 
+        const targetArg = this.formatSendMessageTarget(channel.to);
+        const dataShape = this.formatGateDataShape(writableFields);
+        lines.push(
+          `  - When ready, call \`send_message(target=${targetArg}, message="<short summary>", data: ${dataShape})\`; this is required to activate the target. \`save_artifact\` alone does not deliver gated handoffs.`
+        );
         lines.push(`  - Include in send_message data:`);
         for (const field of writableFields) {
           lines.push(
@@ -2425,6 +2430,33 @@ export class TaskAgentManager {
     if (check.op === '==') return `== ${JSON.stringify(check.value)}`;
     if (check.op === '!=') return `!= ${JSON.stringify(check.value)}`;
     return check.op;
+  }
+
+  private formatSendMessageTarget(target: string | string[]): string {
+    if (Array.isArray(target)) return `[${target.map((item) => JSON.stringify(item)).join(', ')}]`;
+    return JSON.stringify(target);
+  }
+
+  private formatGateDataShape(fields: Array<{ name: string; type: string }>): string {
+    const entries = fields.map(
+      (field) => `${field.name}: ${this.formatGateDataPlaceholder(field)}`
+    );
+    return `{ ${entries.join(', ')} }`;
+  }
+
+  private formatGateDataPlaceholder(field: { name: string; type: string }): string {
+    switch (field.type) {
+      case 'string':
+        return `"<${field.name}>"`;
+      case 'number':
+        return '<number>';
+      case 'boolean':
+        return '<boolean>';
+      case 'map':
+        return '{ "<key>": "<value>" }';
+      default:
+        return '<value>';
+    }
   }
 
   private normalizeAgentNameToken(value: string): string {

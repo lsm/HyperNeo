@@ -143,15 +143,15 @@ describe('CODING_WORKFLOW template', () => {
     expect(prompt).toContain('The reviewer handles the merge.');
   });
 
-  test('coder prompt requires send_message handoff to Review with pr_url', () => {
+  test('coder prompt gives behavioral handoff guidance without hard-coded gate details', () => {
     const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
-    expect(prompt).toContain(
-      '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`'
-    );
-    expect(prompt).toContain('The `data.pr_url` payload is auto-merged into `code-ready-gate`');
+    expect(prompt).toContain('hand off by calling `send_message` on the outbound gated');
+    expect(prompt).toContain('Use the current target and required data fields');
+    expect(prompt).toContain('Runtime Execution Contract');
     expect(prompt).toContain('`save_artifact` alone is insufficient');
-    expect(prompt).toContain('only `send_message` delivers the gated handoff');
-    expect(prompt).toContain('again to re-trigger the review cycle');
+    expect(prompt).toContain('Re-supplying the PR URL data field is required');
+    expect(prompt).not.toContain('send_message(target="Review"');
+    expect(prompt).not.toContain('code-ready-gate');
   });
 
   test('coder and validator slots have toolGuards with gh pr merge deny rule', () => {
@@ -2080,6 +2080,44 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterAgent.customPrompt?.value).toBe(sentinel);
     expect(afterAgent.agentId).toBe(reviewAgent.agentId);
     expect(afterReviewNode.id).toBe(reviewNode.id);
+    expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
+  });
+
+  test('re-stamp patches known retired built-in node agent prompt text', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+    const stalePrompt =
+      'Legacy prompt: hand off by sending a message to Review with `data: { pr_url: "<url>" }`.';
+
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stalePrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-prompt-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
+    const afterPrompt = afterCodingNode.agents[0].customPrompt?.value;
+    expect(afterPrompt).toBe(
+      CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0].customPrompt?.value
+    );
+    expect(afterPrompt).toContain('hand off by calling `send_message` on the outbound gated');
+    expect(afterPrompt).not.toContain('send_message(target="Review"');
     expect(after.templateHash).toBe(computeWorkflowHash(CODING_WORKFLOW));
   });
 
@@ -4352,16 +4390,15 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(prField.check).toEqual({ op: 'exists' });
   });
 
-  test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt requires send_message handoff to Review', () => {
+  test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt uses behavioral gated handoff wording', () => {
     const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
     const prompt = codingNode.agents[0].customPrompt!.value;
 
-    expect(prompt).toContain(
-      '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`'
-    );
-    expect(prompt).toContain('The `data.pr_url` payload is auto-merged into `code-pr-gate`');
+    expect(prompt).toContain('call `send_message` on the outbound gated review channel');
+    expect(prompt).toContain('Use the current target and required data fields');
     expect(prompt).toContain('`save_artifact` alone is insufficient');
-    expect(prompt).toContain('only `send_message` delivers the gated handoff');
+    expect(prompt).not.toContain('send_message(target="Review"');
+    expect(prompt).not.toContain('code-pr-gate');
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW has layout entries for actual template node IDs', () => {
