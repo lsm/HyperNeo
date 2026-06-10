@@ -1,0 +1,249 @@
+/**
+ * Unit tests for ACP Provider
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+
+describe('AcpProvider', () => {
+  let provider: AcpProvider;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    delete process.env.NEOKAI_ACP_COMMAND;
+    delete process.env.NEOKAI_ACP_CONTEXT_WINDOW;
+    provider = new AcpProvider();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  describe('basic properties', () => {
+    it('should have correct ID and display name', () => {
+      expect(provider.id).toBe('acp');
+      expect(provider.displayName).toBe('ACP Agent');
+    });
+
+    it('should have correct capabilities', () => {
+      expect(provider.capabilities).toEqual({
+        streaming: true,
+        extendedThinking: true,
+        maxContextWindow: 200000,
+        functionCalling: true,
+        vision: false,
+        thinkingModes: 'granular',
+      });
+    });
+
+    it('should use configured context window in capabilities', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '123456';
+
+      expect(provider.capabilities.maxContextWindow).toBe(123456);
+    });
+  });
+
+  describe('isAvailable', () => {
+    it('should return true when NEOKAI_ACP_COMMAND is set', () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      expect(provider.isAvailable()).toBe(true);
+    });
+
+    it('should return false when no NEOKAI_ACP_COMMAND is set', () => {
+      expect(provider.isAvailable()).toBe(false);
+    });
+
+    it('should return false when NEOKAI_ACP_COMMAND is empty', () => {
+      process.env.NEOKAI_ACP_COMMAND = '';
+      expect(provider.isAvailable()).toBe(false);
+    });
+  });
+
+  describe('getAcpCommand', () => {
+    it('should return the command from env', () => {
+      process.env.NEOKAI_ACP_COMMAND = 'devin';
+      expect(provider.getAcpCommand()).toBe('devin');
+    });
+
+    it('should return undefined when not set', () => {
+      expect(provider.getAcpCommand()).toBeUndefined();
+    });
+  });
+
+  describe('getContextWindow', () => {
+    it('should return default context window when env is not set', () => {
+      expect(provider.getContextWindow()).toBe(200000);
+    });
+
+    it('should return context window from env', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000';
+
+      expect(provider.getContextWindow()).toBe(64000);
+    });
+
+    it('should truncate fractional context window values', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000.9';
+
+      expect(provider.getContextWindow()).toBe(64000);
+    });
+
+    it('should return default context window for invalid env values', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = 'not-a-number';
+      expect(provider.getContextWindow()).toBe(200000);
+
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '0';
+      expect(provider.getContextWindow()).toBe(200000);
+
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '-1';
+      expect(provider.getContextWindow()).toBe(200000);
+    });
+  });
+
+  describe('getModels', () => {
+    it('should return default models when ACP command is available', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+
+      const models = await provider.getModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe('acp-default');
+      expect(models[0].provider).toBe('acp');
+      expect(models[0].contextWindow).toBe(200000);
+    });
+
+    it('should use configured context window in default models', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000';
+
+      const models = await provider.getModels();
+
+      expect(models[0].contextWindow).toBe(64000);
+    });
+
+    it('should return empty array when ACP command is not available', async () => {
+      const models = await provider.getModels();
+      expect(models).toEqual([]);
+    });
+
+    it('should return cached models when set', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      const cached = [
+        {
+          id: 'acp-cached',
+          name: 'ACP Cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          available: true,
+        },
+      ];
+      provider.setCachedModels(cached);
+
+      const models = await provider.getModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe('acp-cached');
+    });
+
+    it('should fall back to defaults after clearing cache', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      provider.setCachedModels([
+        {
+          id: 'cached',
+          name: 'Cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          available: true,
+        },
+      ]);
+      provider.clearModelCache();
+
+      const models = await provider.getModels();
+
+      expect(models[0].id).toBe('acp-default');
+    });
+  });
+
+  describe('ownsModel', () => {
+    it('should own acp model IDs', () => {
+      expect(provider.ownsModel('acp')).toBe(true);
+      expect(provider.ownsModel('acp-default')).toBe(true);
+      expect(provider.ownsModel('acp-custom')).toBe(true);
+      expect(provider.ownsModel('ACP-DEFAULT')).toBe(true);
+    });
+
+    it('should not own other provider models', () => {
+      expect(provider.ownsModel('default')).toBe(false);
+      expect(provider.ownsModel('glm-5')).toBe(false);
+      expect(provider.ownsModel('claude-sonnet-4-5')).toBe(false);
+      expect(provider.ownsModel('kimi-for-coding')).toBe(false);
+    });
+  });
+
+  describe('getModelForTier', () => {
+    it('should map all tiers to acp-default', () => {
+      expect(provider.getModelForTier('haiku')).toBe('acp-default');
+      expect(provider.getModelForTier('sonnet')).toBe('acp-default');
+      expect(provider.getModelForTier('opus')).toBe('acp-default');
+      expect(provider.getModelForTier('default')).toBe('acp-default');
+    });
+  });
+
+  describe('buildSdkConfig', () => {
+    it('should return empty env vars with isAnthropicCompatible false', () => {
+      const config = provider.buildSdkConfig('acp-default');
+
+      expect(config.envVars).toEqual({});
+      expect(config.isAnthropicCompatible).toBe(false);
+    });
+
+    it('should ignore session config overrides', () => {
+      const config = provider.buildSdkConfig('acp-default', {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.com',
+      });
+
+      expect(config.envVars).toEqual({});
+      expect(config.isAnthropicCompatible).toBe(false);
+    });
+  });
+
+  describe('translateModelIdForSdk', () => {
+    it('should translate any model to default', () => {
+      expect(provider.translateModelIdForSdk('acp-default')).toBe('default');
+      expect(provider.translateModelIdForSdk('acp-custom')).toBe('default');
+    });
+  });
+
+  describe('getTitleGenerationModel', () => {
+    it('should return acp-default', () => {
+      expect(provider.getTitleGenerationModel()).toBe('acp-default');
+    });
+  });
+
+  describe('getAuthStatus', () => {
+    it('should return authenticated when command is set', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      const status = await provider.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.error).toBeUndefined();
+    });
+
+    it('should return not authenticated when no command', async () => {
+      const status = await provider.getAuthStatus();
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.error).toContain('NEOKAI_ACP_COMMAND');
+    });
+  });
+
+  describe('static models', () => {
+    it('should have correct static model definitions', () => {
+      expect(AcpProvider.MODELS).toHaveLength(1);
+      expect(AcpProvider.MODELS[0].id).toBe('acp-default');
+      expect(AcpProvider.MODELS[0].contextWindow).toBe(200000);
+      expect(AcpProvider.MODELS[0].provider).toBe('acp');
+    });
+  });
+});
