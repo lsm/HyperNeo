@@ -108,6 +108,11 @@ const FOLLOW_UP_METHODS = new Set(['send_message']);
 /** Maximum follow-up execution latency budget (30 seconds default). */
 const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 
+/** Default delay for queued retryable hook actions when validator omits retryAfterMs. */
+const DEFAULT_RETRYABLE_ACTION_DELAY_MS = 30_000;
+
+const pendingRetryableHookActions = new Map<string, ReturnType<typeof setTimeout>>();
+
 /** Maximum bytes for an artifact data payload injected into hook context. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 
@@ -1003,6 +1008,61 @@ type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<A
   [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;
 };
 
+function buildRetryableActionKey(
+  methodName: string,
+  args: Record<string, unknown>,
+  meta: HookActionMeta
+): string {
+  return JSON.stringify({
+    runScopedTaskId: meta.taskId,
+    nodeId: meta.nodeId,
+    sessionId: meta.sessionId,
+    agentName: meta.agentName,
+    methodName,
+    args,
+  });
+}
+
+function scheduleRetryableAction<T extends Record<string, unknown>>(options: {
+  actionKey: string;
+  delayMs: number;
+  methodName: string;
+  args: T;
+  handler: (args: T) => Promise<AnyToolResult>;
+  engine: WorkflowHookEngine;
+  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
+  meta: HookActionMeta;
+  isFollowUp: boolean;
+}): void {
+  if (pendingRetryableHookActions.has(options.actionKey)) return;
+
+  const timer = setTimeout(() => {
+    pendingRetryableHookActions.delete(options.actionKey);
+    const retryHandler = wrapHandlerWithHooks(
+      options.methodName,
+      options.handler,
+      options.engine,
+      options.handlers,
+      options.meta,
+      options.isFollowUp
+    );
+    void retryHandler(options.args).catch((err) => {
+      log.warn(
+        `Retryable hook action retry failed for ${options.methodName}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+  }, options.delayMs);
+
+  pendingRetryableHookActions.set(options.actionKey, timer);
+}
+
+function clearRetryableAction(actionKey: string): void {
+  const timer = pendingRetryableHookActions.get(actionKey);
+  if (!timer) return;
+  clearTimeout(timer);
+  pendingRetryableHookActions.delete(actionKey);
+}
+
 /**
  * Wrap an MCP tool handler with the workflow hook engine.
  *
@@ -1025,6 +1085,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   if (!engine) return handler;
 
   const wrapped = async (args: T) => {
+    const actionKey = buildRetryableActionKey(methodName, args as Record<string, unknown>, meta);
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
     // Batch persist hook state updates and execution results.
@@ -1055,6 +1116,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Handle block
     if (outcome.decision === 'block') {
+      clearRetryableAction(actionKey);
       return hookResult(
         {
           success: false,
@@ -1072,12 +1134,41 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
     // Handle retryable block
     if (outcome.decision === 'retryable_block') {
+      const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
+      if (methodName === 'send_message') {
+        scheduleRetryableAction({
+          actionKey,
+          delayMs: retryAfterMs,
+          methodName,
+          args,
+          handler,
+          engine,
+          handlers,
+          meta,
+          isFollowUp,
+        });
+        return hookResult({
+          success: true,
+          queued: true,
+          retryable: true,
+          retryAfterMs,
+          hookStatus: outcome.userState.status,
+          hookLabel: outcome.userState.hookLabel,
+          hookMethod: outcome.userState.method,
+          hookReason: outcome.userState.reason,
+          hookRemediation: outcome.userState.remediation,
+          sourceNode: outcome.userState.sourceNode,
+          message:
+            outcome.userState.reason ??
+            `Action queued until hook "${outcome.userState.hookLabel ?? outcome.blockedByHookId ?? 'unknown'}" allows it.`,
+        });
+      }
       return hookResult(
         {
           success: false,
           error: outcome.userState.reason ?? 'Action blocked by hook (retryable).',
           retryable: true,
-          retryAfterMs: outcome.userState.retryAfterMs,
+          retryAfterMs,
           hookStatus: outcome.userState.status,
           hookLabel: outcome.userState.hookLabel,
           hookMethod: outcome.userState.method,
@@ -1088,6 +1179,8 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         true
       );
     }
+
+    clearRetryableAction(actionKey);
 
     // Skip nested follow-up emission — only one level of follow-up is allowed
     const nestedFollowUpSuppressed = outcome.followUpRequests.length > 0 && isFollowUp;

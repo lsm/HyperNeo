@@ -19,8 +19,18 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_ENTERPRISE_TOKEN',
   'GITHUB_ENTERPRISE_TOKEN',
   'GH_HOST',
+  'GH_CONFIG_DIR',
 ]);
-const BASIC_ENV_KEYS = new Set(['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'TERM', 'TMPDIR']);
+const BASIC_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'XDG_CONFIG_HOME',
+]);
 
 interface PrViewResult {
   url: string;

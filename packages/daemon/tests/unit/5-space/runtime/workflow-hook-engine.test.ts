@@ -1448,9 +1448,66 @@ describe('wrapHandlerWithHooks', () => {
     expect(data.success).toBe(true);
   });
 
-  test('retryable block returns retryable error with metadata', async () => {
+  test('retryable send_message queues the action and dispatches after retry delay', async () => {
     const { engine, mockExecutor } = makeEngine([
-      makeHook({ id: 'hook-1', classification: 'validation' }),
+      makeHook({ id: 'hook-1', classification: 'validation', order: 0 }),
+      makeHook({ id: 'hook-side', classification: 'side_effect', order: 1 }),
+    ]);
+    mockExecutor.setResult('hook-1', {
+      type: 'retryable_block',
+      reason: 'Retry me',
+      retryAfterMs: 5,
+    });
+
+    let handlerCallCount = 0;
+    let followUpCallCount = 0;
+    const handler = async (args: { target: string; message: string }) => {
+      handlerCallCount++;
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify({ success: true, target: args.target }) },
+        ],
+      };
+    };
+    const followUpHandler = async () => {
+      followUpCallCount++;
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+      };
+    };
+
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      handler,
+      engine,
+      { send_message: followUpHandler },
+      defaultMeta
+    );
+    const result = await wrapped({ target: 'Review', message: 'hi' });
+
+    const data = JSON.parse(result.content[0].text);
+    expect(data.success).toBe(true);
+    expect(data.queued).toBe(true);
+    expect(data.retryable).toBe(true);
+    expect(data.retryAfterMs).toBe(5);
+    expect(data.hookStatus).toBe('waiting_on_hook_retry');
+    expect(handlerCallCount).toBe(0);
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+    mockExecutor.setResult('hook-side', {
+      type: 'emit_follow_up',
+      targetNode: 'Review',
+      message: 'follow-up',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(followUpCallCount).toBe(1);
+    expect(handlerCallCount).toBe(1);
+  });
+
+  test('non-message retryable block returns retryable error with metadata', async () => {
+    const { engine, mockExecutor } = makeEngine([
+      makeHook({ id: 'hook-1', method: 'save_artifact', classification: 'validation' }),
     ]);
     mockExecutor.setResult('hook-1', {
       type: 'retryable_block',
@@ -1462,8 +1519,8 @@ describe('wrapHandlerWithHooks', () => {
       content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
     });
 
-    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
-    const result = await wrapped({ target: 'Review' });
+    const wrapped = wrapHandlerWithHooks('save_artifact', handler, engine, {}, defaultMeta);
+    const result = await wrapped({ type: 'progress' });
 
     const data = JSON.parse(result.content[0].text);
     expect(data.success).toBe(false);

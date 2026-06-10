@@ -229,15 +229,21 @@ describe('pr-ready validator', () => {
     const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
     const previousClaudeToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const previousGhToken = process.env.GH_TOKEN;
+    const previousGhConfigDir = process.env.GH_CONFIG_DIR;
+    const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
     process.env.ANTHROPIC_API_KEY = 'anthropic-secret';
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'claude-secret';
     process.env.GH_TOKEN = 'github-secret';
+    process.env.GH_CONFIG_DIR = '/tmp/gh-config';
+    process.env.XDG_CONFIG_HOME = '/tmp/xdg-config';
     try {
       const validator = createPrReadyValidator(spawn);
       const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
       expect(result.type).toBe('allow');
       const env = (calls[0].options as { env?: Record<string, string> }).env ?? {};
       expect(env.GH_TOKEN).toBe('github-secret');
+      expect(env.GH_CONFIG_DIR).toBe('/tmp/gh-config');
+      expect(env.XDG_CONFIG_HOME).toBe('/tmp/xdg-config');
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     } finally {
@@ -247,6 +253,10 @@ describe('pr-ready validator', () => {
       else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousClaudeToken;
       if (previousGhToken === undefined) delete process.env.GH_TOKEN;
       else process.env.GH_TOKEN = previousGhToken;
+      if (previousGhConfigDir === undefined) delete process.env.GH_CONFIG_DIR;
+      else process.env.GH_CONFIG_DIR = previousGhConfigDir;
+      if (previousXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
     }
   });
 
