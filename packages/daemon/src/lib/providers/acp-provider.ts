@@ -18,6 +18,18 @@ import type {
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
 
+const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
+const ACP_CONTEXT_WINDOW_ENV_VAR = 'NEOKAI_ACP_CONTEXT_WINDOW';
+
+function parseContextWindow(value: string | undefined): number {
+  if (!value) return DEFAULT_ACP_CONTEXT_WINDOW;
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ACP_CONTEXT_WINDOW;
+
+  return Math.trunc(parsed);
+}
+
 /**
  * ACP provider implementation
  */
@@ -25,14 +37,19 @@ export class AcpProvider implements Provider {
   readonly id = 'acp';
   readonly displayName = 'ACP Agent';
 
-  readonly capabilities: ProviderCapabilities = {
-    streaming: true,
-    extendedThinking: true,
-    thinkingModes: 'granular',
-    maxContextWindow: 200000,
-    functionCalling: true,
-    vision: false,
-  };
+  static readonly DEFAULT_CONTEXT_WINDOW = DEFAULT_ACP_CONTEXT_WINDOW;
+  static readonly CONTEXT_WINDOW_ENV_VAR = ACP_CONTEXT_WINDOW_ENV_VAR;
+
+  get capabilities(): ProviderCapabilities {
+    return {
+      streaming: true,
+      extendedThinking: true,
+      thinkingModes: 'granular',
+      maxContextWindow: this.getContextWindow(),
+      functionCalling: true,
+      vision: false,
+    };
+  }
 
   /**
    * Static default models for ACP agents.
@@ -45,7 +62,7 @@ export class AcpProvider implements Provider {
       alias: 'acp',
       family: 'acp',
       provider: 'acp',
-      contextWindow: 200000,
+      contextWindow: DEFAULT_ACP_CONTEXT_WINDOW,
       description: 'ACP-compatible agent default model',
       releaseDate: '2026-01-01',
       available: true,
@@ -75,6 +92,13 @@ export class AcpProvider implements Provider {
     return this.env.NEOKAI_ACP_COMMAND;
   }
 
+  /**
+   * Get the configured ACP context window.
+   */
+  getContextWindow(): number {
+    return parseContextWindow(this.env[ACP_CONTEXT_WINDOW_ENV_VAR]);
+  }
+
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const command = this.getAcpCommand();
     return {
@@ -92,7 +116,13 @@ export class AcpProvider implements Provider {
     if (this.cachedModels) {
       return this.cachedModels;
     }
-    return this.isAvailable() ? AcpProvider.MODELS : [];
+    if (!this.isAvailable()) return [];
+
+    const contextWindow = this.getContextWindow();
+    return AcpProvider.MODELS.map((model) => ({
+      ...model,
+      contextWindow,
+    }));
   }
 
   /**

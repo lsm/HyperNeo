@@ -12,6 +12,7 @@ describe('AcpProvider', () => {
   beforeEach(() => {
     originalEnv = { ...process.env };
     delete process.env.NEOKAI_ACP_COMMAND;
+    delete process.env.NEOKAI_ACP_CONTEXT_WINDOW;
     provider = new AcpProvider();
   });
 
@@ -34,6 +35,12 @@ describe('AcpProvider', () => {
         vision: false,
         thinkingModes: 'granular',
       });
+    });
+
+    it('should use configured context window in capabilities', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '123456';
+
+      expect(provider.capabilities.maxContextWindow).toBe(123456);
     });
   });
 
@@ -64,6 +71,35 @@ describe('AcpProvider', () => {
     });
   });
 
+  describe('getContextWindow', () => {
+    it('should return default context window when env is not set', () => {
+      expect(provider.getContextWindow()).toBe(200000);
+    });
+
+    it('should return context window from env', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000';
+
+      expect(provider.getContextWindow()).toBe(64000);
+    });
+
+    it('should truncate fractional context window values', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000.9';
+
+      expect(provider.getContextWindow()).toBe(64000);
+    });
+
+    it('should return default context window for invalid env values', () => {
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = 'not-a-number';
+      expect(provider.getContextWindow()).toBe(200000);
+
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '0';
+      expect(provider.getContextWindow()).toBe(200000);
+
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '-1';
+      expect(provider.getContextWindow()).toBe(200000);
+    });
+  });
+
   describe('getModels', () => {
     it('should return default models when ACP command is available', async () => {
       process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
@@ -73,6 +109,16 @@ describe('AcpProvider', () => {
       expect(models).toHaveLength(1);
       expect(models[0].id).toBe('acp-default');
       expect(models[0].provider).toBe('acp');
+      expect(models[0].contextWindow).toBe(200000);
+    });
+
+    it('should use configured context window in default models', async () => {
+      process.env.NEOKAI_ACP_COMMAND = 'claude --acp';
+      process.env.NEOKAI_ACP_CONTEXT_WINDOW = '64000';
+
+      const models = await provider.getModels();
+
+      expect(models[0].contextWindow).toBe(64000);
     });
 
     it('should return empty array when ACP command is not available', async () => {
