@@ -2086,8 +2086,30 @@ describe('seedBuiltInWorkflows()', () => {
     const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
     expect(approvedField.writers).toEqual(['Review', 'reviewer']);
     expect(approvedField.check).toEqual({ op: '==', value: true });
-    // Template no longer hardcodes codex as a gate feature; it is opt-in via node config.
+    // Template no longer hardcodes codex as a gate feature; Codex is opt-in via a disabled hook.
     expect(gate.features?.codex_review_bot).toBeUndefined();
+  });
+
+  test('Codex hook is present but disabled by default in seeded templates', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const fullstack = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === FULLSTACK_QA_LOOP_WORKFLOW.name)!;
+    const planAndDecompose = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+
+    const fullstackHook = fullstack.hooks!.find((hook) => hook.id === 'codex-review-check')!;
+    const planHook = planAndDecompose.hooks!.find((hook) => hook.id === 'codex-review-check')!;
+
+    expect(fullstackHook.enabled).toBe(false);
+    expect(planHook.enabled).toBe(false);
+    expect(
+      fullstack.nodes.find((node) => node.name === 'Review')?.requireCodexApproval
+    ).toBeUndefined();
+    expect(
+      planAndDecompose.nodes.find((node) => node.name === 'Plan Review')?.requireCodexApproval
+    ).toBeUndefined();
   });
 
   test('re-stamp does not copy features onto gates with custom script', () => {
@@ -2121,9 +2143,10 @@ describe('seedBuiltInWorkflows()', () => {
     const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
     expect(gate.script?.source).toBe('echo custom');
     expect(gate.features).toBeUndefined();
-    // requireCodexApproval is no longer stripped for scripted gates; hooks replace
-    // gate-feature injection, so the node-level flag remains valid.
-    expect(after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval).toBe(true);
+    // Default template leaves Codex off unless legacy codex_review_bot migration opts it in.
+    expect(
+      after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval
+    ).toBeUndefined();
   });
 
   test('workflow allows wildcard opt-in with scripted approval gates', () => {
@@ -2314,7 +2337,9 @@ describe('seedBuiltInWorkflows()', () => {
     const after = manager.getWorkflow(workflow.id)!;
     const reviewNode = after.nodes.find((node) => node.name === 'Review')!;
     const migratedGate = after.gates!.find((gate) => gate.id === 'review-approval-gate')!;
+    const codexHook = after.hooks!.find((hook) => hook.id === 'codex-review-check')!;
     expect(reviewNode.requireCodexApproval).toBe(true);
+    expect(codexHook.enabled).toBe(true);
     expect(migratedGate.features?.codex_review_bot).toBeUndefined();
   });
 

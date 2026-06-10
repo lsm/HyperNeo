@@ -28,6 +28,7 @@ import type {
   Gate,
   SpaceWorkflow,
   WorkflowChannel,
+  WorkflowHook,
   WorkflowNode,
 } from '@neokai/shared';
 import { generateUUID, resolveNodeAgents, hasEnabledGateFeature } from '@neokai/shared';
@@ -1039,7 +1040,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
     {
       id: PD_PLAN_REVIEW_NODE,
       name: 'Plan Review',
-      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1199,7 +1199,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
   hooks: [
     {
       id: 'codex-review-check',
-      enabled: true,
+      enabled: false,
       sourceNode: 'Plan Review',
       method: 'send_message',
       validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
@@ -1271,7 +1271,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
     {
       id: FULLSTACK_REVIEW_NODE,
       name: 'Review',
-      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1413,7 +1412,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   hooks: [
     {
       id: 'codex-review-check',
-      enabled: true,
+      enabled: false,
       sourceNode: 'Review',
       method: 'send_message',
       validator: { kind: 'built_in', id: 'codex_review_approved', externalLookups: ['github'] },
@@ -1583,10 +1582,11 @@ export function mergeNodeStructuralFieldsFromTemplate(
 function migrateCodexFeatureToNodeToggle(
   nodes: WorkflowNode[],
   channels: WorkflowChannel[],
-  gates: Gate[]
-): { nodes: WorkflowNode[]; gates: Gate[] } {
+  gates: Gate[],
+  legacyGates: Gate[] = gates
+): { nodes: WorkflowNode[]; gates: Gate[]; migratedCodexApproval: boolean } {
   const codexGateIds = new Set(
-    gates.filter((g) => hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
+    legacyGates.filter((g) => hasEnabledGateFeature(g, 'codex_review_bot')).map((g) => g.id)
   );
 
   const nodesToFlag = new Set<string>();
@@ -1629,7 +1629,20 @@ function migrateCodexFeatureToNodeToggle(
     };
   });
 
-  return { nodes: migratedNodes, gates: migratedGates };
+  return {
+    nodes: migratedNodes,
+    gates: migratedGates,
+    migratedCodexApproval: nodesToFlag.size > 0,
+  };
+}
+
+function setCodexHookEnabled(hooks: WorkflowHook[] | null | undefined, enabled: boolean) {
+  if (!hooks) return hooks;
+  return hooks.map((hook) =>
+    hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
+      ? { ...hook, enabled }
+      : hook
+  );
 }
 
 function nodeReferences(node: WorkflowNode): Set<string> {
@@ -1849,10 +1862,15 @@ export function seedBuiltInWorkflows(
           row.nodes
         );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
+        const {
+          nodes: migratedNodes,
+          gates: migratedGates,
+          migratedCodexApproval,
+        } = migrateCodexFeatureToNodeToggle(
           mergedNodes,
           mergedChannels ?? row.channels ?? [],
-          mergedGates ?? row.gates ?? []
+          mergedGates ?? row.gates ?? [],
+          row.gates ?? []
         );
         const hasNewTemplateChannels = (mergedChannels?.length ?? 0) > (row.channels?.length ?? 0);
 
@@ -1862,7 +1880,7 @@ export function seedBuiltInWorkflows(
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
           gates: migratedGates,
-          hooks: template.hooks ?? null,
+          hooks: setCodexHookEnabled(template.hooks ?? null, migratedCodexApproval) ?? null,
           nodes: migratedNodes,
           ...(hasNewTemplateChannels ? { channels: mergedChannels } : {}),
           templateHash: expectedHash,
