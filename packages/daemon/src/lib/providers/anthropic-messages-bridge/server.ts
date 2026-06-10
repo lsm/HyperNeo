@@ -31,6 +31,16 @@ export type AnthropicMessagesBridgeServer = {
   stop(): void;
 };
 
+/** Model metadata returned by the bridge's `/v1/models` endpoint. */
+export type AnthropicMessagesBridgeModel = {
+  id: string;
+  display_name: string;
+  /** Context window in tokens — the bridge reports this to the SDK so it knows
+   * the real limit instead of falling back to a hardcoded default. */
+  context_window: number;
+  max_tokens?: number;
+};
+
 export type AnthropicMessagesBridgeConfig = {
   /** Upstream base URL, e.g. `https://api.example.com` or `.../anthropic`. */
   baseUrl: string;
@@ -44,6 +54,13 @@ export type AnthropicMessagesBridgeConfig = {
   headers?: Record<string, string>;
   /** Override fetch (tests). */
   fetchImpl?: typeof fetch;
+  /**
+   * Optional model metadata for `/v1/models`. When provided, the bridge
+   * returns context window information so the SDK uses the correct limit
+   * instead of falling back to its hardcoded default (~200 k tokens).
+   * Without this, `/v1/models` returns a minimal stub.
+   */
+  models?: AnthropicMessagesBridgeModel[];
 };
 
 function sendJsonError(status: number, type: AnthropicErrorType, message: string): Response {
@@ -126,6 +143,21 @@ export function createAnthropicMessagesBridgeServer(
       const url = new URL(req.url);
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
       if (url.pathname === '/v1/models' && req.method === 'GET') {
+        if (config.models?.length) {
+          const data = config.models.map((model) => ({
+            id: model.id,
+            type: 'model',
+            display_name: model.display_name,
+            context_window: model.context_window,
+            max_context_window: model.context_window,
+            model_context_window: model.context_window,
+            max_input_tokens: model.context_window,
+            max_tokens: model.max_tokens ?? 16384,
+          }));
+          return new Response(JSON.stringify({ data, has_more: false }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
         return new Response(
           JSON.stringify({
             data: [{ id: 'default', type: 'model', display_name: 'Custom Anthropic Endpoint' }],

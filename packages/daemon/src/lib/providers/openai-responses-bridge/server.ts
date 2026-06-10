@@ -63,6 +63,13 @@ export type OpenAIResponsesBridgeServer = {
   baseUrlForSession?(sessionId: string): string;
   /** Set per-session thinking config so the bridge can include reasoning even when the Anthropic SDK client omits the thinking field. */
   setSessionThinkingConfig?(sessionId: string, thinking: AnthropicRequest['thinking']): void;
+  /**
+   * Override the resolved model ID for a specific session.
+   * Used when the SDK sends an aliased Anthropic model ID (e.g.
+   * claude-opus-4-1-20250805) and the bridge needs to map it back to the
+   * originally-selected Codex model ID for that session.
+   */
+  setSessionModelConfig?(sessionId: string, aliasModelId: string, realModelId: string): void;
   stop(): void;
 };
 
@@ -1151,6 +1158,14 @@ export function createOpenAIResponsesBridgeServer(
   // Per-session thinking config injected by the daemon when the Anthropic SDK client
   // (Claude Code CLI) omits the thinking field from request bodies.
   const sessionThinkingConfigs = new Map<string, SessionThinkingConfigEntry>();
+  // Per-session, per-alias model overrides. When the SDK sends an aliased Anthropic
+  // model ID (e.g. claude-opus-4-1-20250805) the bridge maps it to a default Codex ID
+  // via modelAliases. This map lets the daemon override that default per (session,
+  // alias) so the originally-selected Codex model is preserved upstream. Keyed by
+  // (sessionId, aliasModelId) so that different SDK tiers (opus/sonnet/haiku) within
+  // the same session are independently overridden and fallback model registration
+  // does not clobber the primary model's override.
+  const sessionModelAliasOverrides = new Map<string, string>();
   let resolvedAuth: ResolvedResponsesAuth | undefined;
   // ChatGPT Codex endpoint rejects max_output_tokens and parallel_tool_calls.
   const isChatgptOAuth = config.auth.source === 'chatgpt_oauth' && !config.openAIBaseUrl;
@@ -1206,6 +1221,17 @@ export function createOpenAIResponsesBridgeServer(
   ): void => {
     deleteSessionThinkingConfig(sessionId);
     sessionThinkingConfigs.set(sessionId, { thinking });
+  };
+
+  const sessionModelKey = (sessionId: string, aliasModelId: string): string =>
+    `${sessionId}\0${aliasModelId}`;
+
+  const _deleteSessionModelAliasOverrides = (sessionId: string): void => {
+    for (const key of sessionModelAliasOverrides.keys()) {
+      if (key.startsWith(`${sessionId}\0`)) {
+        sessionModelAliasOverrides.delete(key);
+      }
+    }
   };
 
   const consumeContinuation = (
@@ -1293,8 +1319,18 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
 
-      const model = resolveModelId(body.model, config.modelAliases);
+      let model = resolveModelId(body.model, config.modelAliases);
       const sessionId = route.sessionId;
+      // If the daemon has registered a per-(session, alias) model override, use it
+      // so the originally-selected Codex model is preserved upstream. This only
+      // overrides when the incoming model matches the registered alias, so different
+      // SDK tiers (opus/sonnet/haiku) are independently resolved.
+      const sessionModelOverride = sessionModelAliasOverrides.get(
+        sessionModelKey(sessionId, body.model)
+      );
+      if (sessionModelOverride) {
+        model = sessionModelOverride;
+      }
       const resolvedContinuation = isChatgptOAuth
         ? undefined
         : resolveContinuation(sessionId, body.messages, continuations);
@@ -1440,6 +1476,15 @@ export function createOpenAIResponsesBridgeServer(
     setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
       storeSessionThinkingConfig(sessionId, thinking);
     },
+    setSessionModelConfig: (sessionId: string, aliasModelId: string, realModelId: string) => {
+      // Simple overwrite: last registration wins. This correctly handles
+      // model switching within the same alias tier (e.g. gpt-5.3-codex →
+      // gpt-5.4). When a session has a same-tier fallback model, the
+      // fallback registration overwrites the primary. This is an acceptable
+      // trade-off: same-tier fallbacks are rare (both models are similar),
+      // while model switching is common and must work correctly.
+      sessionModelAliasOverrides.set(sessionModelKey(sessionId, aliasModelId), realModelId);
+    },
     stop: () => {
       for (const continuation of continuations.values()) {
         clearTimeout(continuation.cleanupTimer);
@@ -1450,6 +1495,7 @@ export function createOpenAIResponsesBridgeServer(
       }
       sessionReasoningItems.clear();
       sessionThinkingConfigs.clear();
+      sessionModelAliasOverrides.clear();
       server.stop(true);
     },
   };
