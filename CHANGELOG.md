@@ -2,6 +2,27 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.37.0] - 2026-06-09
+
+ACP protocol client with query adapter and message translator, runtime hook engine with MCP action integration, ACP protocol type definitions with JSON-RPC stdio transport, workflow hook schema storage with validation and persistence, separation of worker and long-horizon agent types, provider context window fix for non-native models, and terminology sweep with boundary tests. 7 commits since v0.36.0.
+
+### Added
+
+- **ACP client + query adapter + message translator**: Implemented ACP protocol client with lifecycle management (initialize, authenticate, createSession, sendPrompt, cancel, close), server-to-client request delegation, streaming chunk accumulation into SDK messages, and query-contract adapter with interrupt and close support
+- **Runtime hook engine and MCP action integration**: Hook executor with sandboxed script execution using Bun.spawn, restricted env, credential stripping, timeout SIGKILL, and bounded stdout capture. Extended workflow hook types for runtime with submit_for_approval and approve_task methods
+- **ACP protocol types + JSON-RPC stdio transport**: Added ACP (Agent Client Protocol) JSON-RPC 2.0 type definitions covering initialization, authentication, session lifecycle, content blocks, tool calls, permission requests, file system operations, and MCP server configurations
+- **Workflow hook schema storage**: Typed hook definitions, validation, persistence, and per-run hook state storage so workflow hooks can be introduced without removing legacy gates. Includes export/import round-trip support and runtime bounds enforcement
+- **Separate worker and long-horizon agents**: Worker agents and long-horizon agents are now distinct agent types with separate lifecycle management
+
+### Changed
+
+- **Terminology sweep**: Replaced "custom agent" / "SpaceAgent ID" with "worker agent" / "long-horizon agent" across tool descriptions, comments, and user-facing labels. Added boundary design doc with developer guidance
+
+### Fixed
+
+- **Prefer provider metadata context window for non-native providers**: Non-Anthropic providers (GLM, Kimi, Ollama, MiniMax, custom endpoints) now use their own model metadata contextWindow instead of the SDK's assumed capacity. Only Anthropic and Anthropic Copilot continue to trust SDK-reported values by default
+- Fixed legacy long-horizon migration test to use the correct migration function (runMigration155) and added wrong-ID validation tests for goal/scope/reminder tools rejecting worker-only agent IDs
+
 ## [0.36.0] - 2026-06-02
 
 Auto-fetch model list from custom endpoints, refresh models on provider changes, Forge completed-task automation and task-result backfill, Codex auth reliability fixes, long-horizon event subscription rehydration, agent event subscription UI, external event delivery log UI, auto-configure GitHub webhooks for spaces, and mobile Space tab fixes. 18 commits since v0.35.0.

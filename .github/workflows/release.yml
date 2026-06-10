@@ -526,10 +526,18 @@ jobs:
             ASSETS+=("$asset")
           done < <(find dist/desktop -type f | sort)
 
-          gh release create "v$VERSION" \
-            "${ASSETS[@]}" \
-            --title "v$VERSION" \
-            --notes-file /tmp/release-notes.md
-          echo "GitHub Release created: v$VERSION"
+          if gh release view "v$VERSION" &>/dev/null; then
+            echo "::warning::Release v$VERSION already exists, skipping creation"
+            if [ ${#ASSETS[@]} -gt 0 ]; then
+              echo "Uploading assets to existing release..."
+              gh release upload "v$VERSION" "${ASSETS[@]}" --clobber
+            fi
+          else
+            gh release create "v$VERSION" \
+              "${ASSETS[@]}" \
+              --title "v$VERSION" \
+              --notes-file /tmp/release-notes.md
+          fi
+          echo "GitHub Release ready: v$VERSION"
         env:
           GH_TOKEN: ${{ github.token }}
