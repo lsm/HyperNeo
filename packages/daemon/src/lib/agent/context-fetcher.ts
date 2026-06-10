@@ -24,7 +24,10 @@ import type {
 import { Logger } from '../logger';
 
 type ContextMetadata =
-  | Pick<ModelInfo, 'id' | 'alias' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'>
+  | Pick<
+      ModelInfo,
+      'id' | 'alias' | 'sdkModelIds' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'
+    >
   | null
   | undefined;
 
@@ -92,19 +95,42 @@ export class ContextFetcher {
     const isNativeProvider =
       modelMetadata?.provider && NATIVE_CONTEXT_WINDOW_PROVIDERS.has(modelMetadata.provider);
     const isGenericSdkModel = responseModel ? SDK_GENERIC_MODEL_IDS.has(responseModel) : false;
+    const sdkModelIds = modelMetadata?.sdkModelIds;
+    const matchesSdkModelId =
+      responseModel && sdkModelIds ? sdkModelIds.includes(responseModel) : false;
     const metadataMatchesResponse =
       !responseModel ||
       modelMetadata?.id === responseModel ||
       modelMetadata?.alias === responseModel ||
+      matchesSdkModelId ||
       (!isNativeProvider && isGenericSdkModel);
     const metadataCapacity = metadataMatchesResponse
       ? positiveInteger(modelMetadata?.contextWindow)
       : undefined;
+    const metadataCapacityAny = positiveInteger(modelMetadata?.contextWindow);
     const shouldPreferMetadata = modelMetadata?.preferContextWindowMetadata ?? !isNativeProvider;
-    const capacity =
-      shouldPreferMetadata && metadataCapacity
-        ? metadataCapacity
-        : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
+    // For non-native providers the SDK's capacity is often a generic fallback
+    // (1 M, 200 k, etc.) that doesn't reflect the upstream model's real limit.
+    // When the SDK reports a capacity larger than the provider's metadata, or
+    // when the SDK capacity is unavailable, trust metadata even if the response
+    // model name doesn't exactly match. Native Anthropic providers keep the
+    // exact-match safety guard so fallback/switched models don't display stale
+    // metadata.
+    const sdkCapacityValue = sdkRawCapacity ?? sdkCapacity;
+    const sdkOverreporting =
+      shouldPreferMetadata &&
+      metadataCapacityAny !== undefined &&
+      sdkCapacityValue !== undefined &&
+      sdkCapacityValue > metadataCapacityAny;
+    const sdkCapacityUnavailable =
+      shouldPreferMetadata &&
+      metadataCapacityAny !== undefined &&
+      (sdkCapacityValue === undefined || sdkCapacityValue === 0);
+    const useMetadata =
+      (shouldPreferMetadata && metadataCapacity) || sdkOverreporting || sdkCapacityUnavailable;
+    const capacity = useMetadata
+      ? (metadataCapacityAny ?? 0)
+      : (sdkRawCapacity ?? sdkCapacity ?? metadataCapacity ?? 0);
     for (const category of response.categories ?? []) {
       // Compute percent relative to capacity (SDK response doesn't carry it).
       // Round to 1 decimal place to match the display the UI already expects.

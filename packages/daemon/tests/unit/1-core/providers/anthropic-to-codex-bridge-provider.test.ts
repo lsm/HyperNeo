@@ -804,6 +804,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(contextWindows.get('gpt-5.1-codex-mini')).toBe(128000);
     });
 
+    it('advertises SDK Anthropic aliases so ContextFetcher matches SDK-reported model names', async () => {
+      provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
+      const models = await provider.getModels();
+      const sdkIds = new Map(models.map((model) => [model.id, model.sdkModelIds]));
+
+      expect(sdkIds.get('gpt-5.5')).toContain('claude-opus-4-1-20250805');
+      expect(sdkIds.get('gpt-5.3-codex')).toContain('claude-opus-4-1-20250805');
+      expect(sdkIds.get('gpt-5.4')).toContain('claude-opus-4-1-20250805');
+      expect(sdkIds.get('gpt-5.4-mini')).toContain('claude-sonnet-4-20250514');
+      expect(sdkIds.get('gpt-5.1-codex-mini')).toContain('claude-sonnet-4-20250514');
+    });
+
     it('sets thinkingModes to granular when Responses adapter is active', async () => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
       const models = await provider.getModels();
