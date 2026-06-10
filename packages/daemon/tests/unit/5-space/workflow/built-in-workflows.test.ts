@@ -143,6 +143,17 @@ describe('CODING_WORKFLOW template', () => {
     expect(prompt).toContain('The reviewer handles the merge.');
   });
 
+  test('coder prompt requires send_message handoff to Review with pr_url', () => {
+    const prompt = CODING_WORKFLOW.nodes[0].agents[0]?.customPrompt?.value;
+    expect(prompt).toContain(
+      '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`'
+    );
+    expect(prompt).toContain('The `data.pr_url` payload is auto-merged into `code-ready-gate`');
+    expect(prompt).toContain('`save_artifact` alone is insufficient');
+    expect(prompt).toContain('only `send_message` delivers the gated handoff');
+    expect(prompt).toContain('again to re-trigger the review cycle');
+  });
+
   test('coder and validator slots have toolGuards with gh pr merge deny rule', () => {
     for (const agent of [CODING_WORKFLOW.nodes[0].agents[0], CODING_WORKFLOW.nodes[1].agents[0]]) {
       const guards = agent?.toolGuards;
@@ -4339,6 +4350,18 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(prField.type).toBe('string');
     expect(prField.writers).toEqual(['Coding', 'coder']);
     expect(prField.check).toEqual({ op: 'exists' });
+  });
+
+  test('FULLSTACK_QA_LOOP_WORKFLOW coder prompt requires send_message handoff to Review', () => {
+    const codingNode = FULLSTACK_QA_LOOP_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const prompt = codingNode.agents[0].customPrompt!.value;
+
+    expect(prompt).toContain(
+      '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`'
+    );
+    expect(prompt).toContain('The `data.pr_url` payload is auto-merged into `code-pr-gate`');
+    expect(prompt).toContain('`save_artifact` alone is insufficient');
+    expect(prompt).toContain('only `send_message` delivers the gated handoff');
   });
 
   test('FULLSTACK_QA_LOOP_WORKFLOW has layout entries for actual template node IDs', () => {

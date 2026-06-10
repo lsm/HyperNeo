@@ -19,6 +19,7 @@ import {
   type CustomAgentConfig,
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
+import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
   return {
@@ -636,6 +637,39 @@ describe('createCustomAgentInit', () => {
     );
 
     expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
+  });
+
+  it('injects Coding workflow send_message handoff instructions into future task prompts', () => {
+    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+    const codingSlot = codingNode.agents[0];
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ id: codingSlot.agentId, name: 'Coder', customPrompt: null }),
+        workflow: CODING_WORKFLOW,
+        workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
+        nodeId: codingNode.id,
+        agentSlotName: codingSlot.name,
+        slotOverrides: {
+          customPrompt: codingSlot.customPrompt?.value,
+          resolutionContext: {
+            agentId: codingSlot.agentId,
+            agentName: codingSlot.name,
+            workflowRunId: 'run-1',
+            workflowId: CODING_WORKFLOW.id,
+            nodeId: codingNode.id,
+            nodeName: codingNode.name,
+          },
+        },
+      })
+    );
+
+    const prompt = init.systemPrompt?.append ?? '';
+    expect(prompt).toContain(
+      '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`'
+    );
+    expect(prompt).toContain('The `data.pr_url` payload is auto-merged into `code-ready-gate`');
+    expect(prompt).toContain('`save_artifact` alone is insufficient');
+    expect(prompt).toContain('only `send_message` delivers the gated handoff');
   });
 
   it('uses the agent custom prompt when no slot override is defined', () => {

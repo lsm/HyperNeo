@@ -528,9 +528,12 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
 const FULLSTACK_CODING_PROMPT =
   'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
   'write tests, and keep one PR updated across review and QA cycles.\n\n' +
-  'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
-  'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
-  '(`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
+  'When implementation is ready, ensure the PR is open and mergeable, then call ' +
+  '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+  'The `data.pr_url` payload is auto-merged into `code-pr-gate`; the gate script verifies ' +
+  'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+  'only `send_message` delivers the gated handoff. Coding is not the end node — the ' +
+  'task-completion tools (`approve_task`, `submit_for_approval`) are not available to you.\n\n' +
   REVIEW_THREAD_RESOLUTION_GUIDANCE;
 
 const FULLSTACK_REVIEW_PROMPT =
@@ -601,9 +604,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               '3. Write or update tests to cover new behavior\n' +
               '4. Run the test suite and fix any failures\n' +
               '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n' +
-              '6. If code changed: hand off by sending a message to Review with ' +
-              '`data: { pr_url: "<url>" }`. The gate script verifies the PR is open and ' +
-              'mergeable, so make sure it actually is before sending. ' +
+              '6. If code changed: hand off by calling ' +
+              '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`. ' +
+              'The `data.pr_url` payload is auto-merged into `code-ready-gate`; the gate script verifies ' +
+              'the PR is open and mergeable before Review activates. `save_artifact` alone is insufficient; ' +
+              'only `send_message` delivers the gated handoff. ' +
               '**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
               'data resets each cycle, so even on round 2+ you must re-supply it.\n' +
               '7. If the task is validation-only and produced no code changes: do NOT create an empty commit or PR. ' +
@@ -625,8 +630,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               REVIEW_THREAD_RESOLUTION_GUIDANCE +
               '\n' +
               '6. Verify no unresolved review conversations remain, verify tests still pass, ' +
-              'then send_message to Review again (again with `data: { pr_url }`) to ' +
-              're-trigger the review cycle',
+              'then call `send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })` ' +
+              'again to re-trigger the review cycle. Re-supplying `data.pr_url` is required; ' +
+              '`save_artifact` alone will not open `code-ready-gate`.',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
         },
@@ -1241,7 +1247,9 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
               '1. Implement backend and frontend changes with focused commits\n' +
               '2. Add/update unit, integration, and UI tests as needed\n' +
               '3. Open or update the PR and ensure it remains mergeable\n' +
-              '4. Write code-pr-gate with field pr_url so Review can activate\n' +
+              '4. Hand off to Review by calling ' +
+              '`send_message(target="Review", message="<short summary>", data: { pr_url: "<url>" })`; ' +
+              '`save_artifact` alone will not open `code-pr-gate`\n' +
               '5. Share blockers clearly with Reviewer/QA when needed',
           },
           toolGuards: [CODER_NO_MERGE_GUARD],
