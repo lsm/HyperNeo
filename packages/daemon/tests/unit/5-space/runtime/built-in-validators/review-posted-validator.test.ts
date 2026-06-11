@@ -167,7 +167,9 @@ describe('reviewPostedValidator', () => {
   test('accepts enterprise GitHub host for review URL', async () => {
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.GH_ENTERPRISE_TOKEN;
+    const originalGhHost = process.env.GH_HOST;
     process.env.GH_ENTERPRISE_TOKEN = 'test-token';
+    process.env.GH_HOST = 'github.enterprise.com';
     globalThis.fetch = async () =>
       ({
         ok: true,
@@ -199,6 +201,7 @@ describe('reviewPostedValidator', () => {
     const result = await reviewPostedValidator(ctx);
     globalThis.fetch = originalFetch;
     process.env.GH_ENTERPRISE_TOKEN = originalToken;
+    process.env.GH_HOST = originalGhHost;
 
     expect(result.type).toBe('allow');
     expect((result as { message?: string }).message).toContain('message_data');
@@ -260,5 +263,35 @@ describe('reviewPostedValidator', () => {
     process.env.GITHUB_TOKEN = originalToken;
 
     expect(result.type).toBe('allow');
+  });
+
+  test('does not send credentials to untrusted review URL host', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'test-token';
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: true, json: async () => ({}) } as Response;
+    };
+
+    const ctx = makeCtx({
+      params: {
+        data: { review_url: 'https://attacker.example/org/repo/pull/1#discussion_r42' },
+      },
+      gateData: [
+        {
+          gateId: 'code-pr-gate',
+          data: { pr_url: 'https://attacker.example/org/repo/pull/1' },
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+    const result = await reviewPostedValidator(ctx);
+    globalThis.fetch = originalFetch;
+    process.env.GITHUB_TOKEN = originalToken;
+
+    expect(fetchCalled).toBe(false);
+    expect(result.type).toBe('block');
   });
 });

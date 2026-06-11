@@ -39,12 +39,27 @@ function getActivePrUrl(ctx: HookExecutorContext): string | undefined {
   return undefined;
 }
 
+function trustedGithubHosts(): Set<string> {
+  const trustedHosts = new Set(['github.com']);
+  const ghHost = process.env.GH_HOST;
+  if (ghHost) trustedHosts.add(ghHost);
+  const extraHosts = process.env.NEOKAI_TRUSTED_GITHUB_HOSTS;
+  if (extraHosts) {
+    for (const h of extraHosts.split(',')) {
+      const trimmed = h.trim();
+      if (trimmed) trustedHosts.add(trimmed);
+    }
+  }
+  return trustedHosts;
+}
+
 async function verifyReviewEvidenceOnGithub(
   prUrl: string,
   sinceIso?: string
 ): Promise<'verified' | 'missing' | 'error'> {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return 'error';
+  if (!trustedGithubHosts().has(parsed.host)) return 'error';
 
   const query = `
     query($owner:String!,$name:String!,$number:Int!) {
