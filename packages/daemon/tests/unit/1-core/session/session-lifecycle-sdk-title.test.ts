@@ -57,50 +57,46 @@ class MockMcpServerForSdk {
   disconnect(): void {}
 }
 let _toolBatch: Array<{ name: string; def: object }> = [];
-function installSdkMock() {
-  mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-    query: (params: { prompt: string; options?: Record<string, unknown> }) => {
-      const opts = params.options ?? {};
-      // Capture options only from the title-generation call, which is the one
-      // that carries thinking: { type: 'disabled' }. Model-loading calls use
-      // maxTurns: 0 with no thinking option and are not interesting here.
-      if ('thinking' in opts) {
-        lastTitleQueryOptions = opts;
-        lastTitleProcessEnv = {
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-          ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
-        };
-      }
-      return makeQueryMock(mockSdkMessages);
-    },
-    interrupt: mock(async () => {}),
-    supportedModels: mock(async () => {
-      throw new Error('SDK unavailable in unit test');
-    }),
-    createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => {
-      const server = new MockMcpServerForSdk();
-      for (const { name, def } of _toolBatch) {
-        server._registeredTools[name] = def;
-      }
-      _toolBatch = [];
-      return {
-        type: 'sdk' as const,
-        name: _options.name,
-        version: _options.version ?? '1.0.0',
-        tools: _options.tools ?? [],
-        instance: server,
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+  query: (params: { prompt: string; options?: Record<string, unknown> }) => {
+    const opts = params.options ?? {};
+    // Capture options only from the title-generation call, which is the one
+    // that carries thinking: { type: 'disabled' }. Model-loading calls use
+    // maxTurns: 0 with no thinking option and are not interesting here.
+    if ('thinking' in opts) {
+      lastTitleQueryOptions = opts;
+      lastTitleProcessEnv = {
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
       };
-    }),
-    tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => {
-      const def = { name, description, inputSchema, handler };
-      _toolBatch.push({ name, def });
-      return def;
-    },
-  }));
-}
-
-installSdkMock();
+    }
+    return makeQueryMock(mockSdkMessages);
+  },
+  interrupt: mock(async () => {}),
+  supportedModels: mock(async () => {
+    throw new Error('SDK unavailable in unit test');
+  }),
+  createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => {
+    const server = new MockMcpServerForSdk();
+    for (const { name, def } of _toolBatch) {
+      server._registeredTools[name] = def;
+    }
+    _toolBatch = [];
+    return {
+      type: 'sdk' as const,
+      name: _options.name,
+      version: _options.version ?? '1.0.0',
+      tools: _options.tools ?? [],
+      instance: server,
+    };
+  }),
+  tool: (name: string, description: string, inputSchema: unknown, handler: unknown) => {
+    const def = { name, description, inputSchema, handler };
+    _toolBatch.push({ name, def });
+    return def;
+  },
+}));
 
 mock.module('@neokai/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
@@ -185,11 +181,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     };
   };
 
-  beforeEach(async () => {
-    installSdkMock();
-    const { resetProviderRegistry } = await import('../../../../src/lib/providers/registry');
-    resetProviderRegistry();
-
+  beforeEach(() => {
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
     // Default: assistant message with a plain text block
